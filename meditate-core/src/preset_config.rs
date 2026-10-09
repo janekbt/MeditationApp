@@ -309,6 +309,52 @@ pub enum ApplyError {
     DbError(String),
 }
 
+/// The starred presets of `mode` whose settings are exactly Setup's
+/// as stored: the ones Setup shows as active. Only what Setup shows
+/// for the mode counts (a Timer preset's saved Box Breath cues don't).
+/// Derived, never stored, so it follows every change, local or synced.
+pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::HashSet<String> {
+    use crate::settings_keys::{breathing_from_db, read_bool, stopwatch_key_for_mode, timer_session_secs_from_db};
+    let stopwatch = read_bool(db, stopwatch_key_for_mode(mode), false);
+    let timing = if mode == SessionMode::BoxBreath {
+        let (p, duration_secs) = breathing_from_db(db);
+        PresetTiming::BoxBreath {
+            stopwatch,
+            inhale_secs: p.in_secs,
+            hold_full_secs: p.hold_in,
+            exhale_secs: p.out_secs,
+            hold_empty_secs: p.hold_out,
+            duration_secs,
+        }
+    } else {
+        PresetTiming::Timer { stopwatch, duration_secs: timer_session_secs_from_db(db) }
+    };
+    let current = snapshot(db, mode, timing);
+    let shown = |mut c: PresetConfig| {
+        let vis = setup_visibility(mode);
+        if !vis.starting_bell {
+            c.starting_bell = PresetStartingBell::default();
+        }
+        if !vis.interval_bells {
+            c.interval_bells = PresetIntervalBells::default();
+        }
+        if !vis.boxbreath_phase {
+            c.box_breath_cues = PresetBoxBreathCues::default();
+        } else if c.box_breath_cues.phases.is_empty() {
+            // A preset without phase cues leaves them as they are.
+            c.box_breath_cues.phases.clone_from(&current.box_breath_cues.phases);
+        }
+        c
+    };
+    let current_shown = shown(current.clone());
+    crate::db::list_starred_presets_for_mode_from_db(db, mode)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| PresetConfig::from_json(&p.config_json).is_ok_and(|c| shown(c) == current_shown))
+        .map(|p| p.uuid.to_string())
+        .collect()
+}
+
 /// Snapshot the current setup state into a `PresetConfig`. The shell
 /// builds `timing` from its widget / Cell state (no Database has the
 /// in-flight Box-Breath pattern or countdown target — those are gtk-
@@ -1024,6 +1070,70 @@ mod tests {
         assert_eq!(bells.len(), 1, "old bell should be deleted, only cfg's bell remains");
         assert_eq!(bells[0].minutes, 5);
         assert_eq!(bells[0].jitter_pct, 10);
+    }
+
+    #[test]
+    fn the_active_preset_is_the_one_matching_setup() {
+        let (db, sound, pattern) = fresh_db();
+        let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
+        let config = cfg_with_known_uuids(timing.clone(), &sound, &pattern);
+        apply(&db, &config, SessionMode::Timer).unwrap();
+        db.set_setting("timer_session_secs", "1200").unwrap();
+        let quiet = snapshot(&db, SessionMode::Timer, timing.clone());
+        db.insert_preset("Quiet", SessionMode::Timer, true, &quiet.to_json()).unwrap();
+        db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "false" } else { "true" }).unwrap();
+        let other = snapshot(&db, SessionMode::Timer, timing.clone());
+        db.insert_preset("Other", SessionMode::Timer, true, &other.to_json()).unwrap();
+        db.insert_preset("Unstarred", SessionMode::Timer, false, &other.to_json()).unwrap();
+        let names = || -> Vec<String> {
+            let uuids = active_presets(&db, SessionMode::Timer);
+            let mut names: Vec<String> = crate::db::list_presets_for_mode_from_db(&db, SessionMode::Timer)
+                .unwrap()
+                .into_iter()
+                .filter(|p| uuids.contains(p.uuid.as_str()))
+                .map(|p| p.name)
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names(), ["Other"], "only starred ones show");
+        db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "true" } else { "false" }).unwrap();
+        assert_eq!(names(), ["Quiet"], "set back, it matches again");
+        db.set_setting("timer_session_secs", "1500").unwrap();
+        assert!(names().is_empty(), "another duration matches none");
+        db.set_setting("timer_session_secs", "1200").unwrap();
+        db.set_setting("timer_stopwatch_active", "true").unwrap();
+        assert!(names().is_empty(), "the stopwatch toggle counts too");
+    }
+
+    #[test]
+    fn only_what_setup_shows_decides_the_active_preset() {
+        // On the phone no preset ever matched: Timer presets carry the
+        // Box Breath cues as they were when saved, and the bundled
+        // Box Breath presets carry no phase cues at all.
+        let (db, sound, pattern) = fresh_db();
+        let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
+        apply(&db, &cfg_with_known_uuids(timing.clone(), &sound, &pattern), SessionMode::Timer).unwrap();
+        db.set_setting("timer_session_secs", "1200").unwrap();
+        let timer = snapshot(&db, SessionMode::Timer, timing);
+        db.insert_preset("Sit", SessionMode::Timer, true, &timer.to_json()).unwrap();
+        let mut breath = snapshot(&db, SessionMode::BoxBreath, PresetTiming::BoxBreath {
+            stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 300,
+        });
+        breath.box_breath_cues.phases.clear();
+        db.insert_preset("Box", SessionMode::BoxBreath, true, &breath.to_json()).unwrap();
+        db.set_box_breath_phase(
+            crate::db::BoxBreathPhaseId::In, false, SignalMode::Vibration, &sound, &pattern, Default::default(),
+        )
+        .unwrap();
+        db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "false" } else { "true" }).unwrap();
+        db.set_setting("breathing_session_secs", "300").unwrap();
+
+        assert!(active_presets(&db, SessionMode::Timer).is_empty(), "the interval bells show in Timer");
+        db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "true" } else { "false" }).unwrap();
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "changed Box Breath cues don't count in Timer");
+        db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "false" } else { "true" }).unwrap();
+        assert_eq!(active_presets(&db, SessionMode::BoxBreath).len(), 1, "hidden bells and unset phase cues don't count");
     }
 
     #[test]

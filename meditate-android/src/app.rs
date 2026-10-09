@@ -1091,6 +1091,25 @@ mod tests {
         assert!(!lib.contains("fn build_session_settings("));
     }
 
+    /// Nothing showed which preset Setup currently matches. The
+    /// matching one is tinted with its name in the accent colour, and
+    /// every local change re-checks it.
+    #[test]
+    fn the_active_preset_is_highlighted() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let item = &slint[slint.find("export struct PresetItem {").unwrap()..];
+        assert!(item[..item.find('}').unwrap()].contains("    selected: bool,"));
+        assert!(slint.contains("background: item.selected ? MaterialPalette.secondary-container"));
+        assert!(slint.contains("color: item.selected ? MaterialPalette.primary : MaterialPalette.on-surface;"));
+        assert!(slint.contains("accessible-checked: item.selected;"));
+        let starred = &lib[lib.find("fn list_starred_presets_for_mode(").unwrap()..];
+        assert!(starred[..starred.find("\n}\n").unwrap()].contains("meditate_core::preset_config::active_presets(&db, mode)"));
+        let watch = lib.find("if local_watch.as_mut().is_some_and(|w| w.take_new()) {").unwrap();
+        assert!(lib[watch..watch + 300].contains("refresh_preset_chips(&ui, current_mode.get().into());"));
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).

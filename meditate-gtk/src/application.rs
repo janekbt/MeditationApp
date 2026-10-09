@@ -774,6 +774,24 @@ mod tests {
         }
     }
 
+    /// Nothing showed which preset Setup currently matches. Its row
+    /// gets the selection check and the accent title, and every local
+    /// change re-checks it.
+    #[test]
+    fn the_active_preset_is_marked() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let timer = std::fs::read_to_string(root.join("src/timer/imp.rs")).unwrap();
+        let at = timer.find("pub fn rebuild_starred_presets_list(&self) {").unwrap();
+        let body = &timer[at..at + timer[at..].find("\n    }\n").unwrap()];
+        assert!(body.contains("meditate_core::preset_config::active_presets(db.core(), session_mode)"));
+        assert!(body.contains("check.add_css_class(\"selected-check\");"));
+        assert!(body.contains("row.add_css_class(\"accent\");"));
+        assert!(body.contains("gtk::accessible::State::Selected(Some(true))"));
+        let poll = timer.find("let mut watch: Option<meditate_core::db::LocalChangeWatch> = None;").expect("local changes re-mark");
+        let poll = &timer[poll..poll + 900];
+        assert!(poll.contains("if w.take_new() { imp.rebuild_starred_presets_list(); }"));
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

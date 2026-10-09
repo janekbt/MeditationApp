@@ -360,6 +360,24 @@ impl ObjectImpl for TimerView {
         });
         self.breathing_session_secs.set(meditate_core::session::BREATHING_DEFAULT_SECS);
         self.setup_buttons();
+        // A changed setting can make another preset active: re-mark the
+        // starred list after every local change. The watch starts once
+        // the app (and its database) is there.
+        let mut watch: Option<meditate_core::db::LocalChangeWatch> = None;
+        glib::timeout_add_local(Duration::from_millis(500), clone!(
+            #[weak(rename_to = this)] self.obj(),
+            #[upgrade_or] glib::ControlFlow::Break,
+            move || {
+                let imp = this.imp();
+                match watch.as_mut() {
+                    Some(w) => if w.take_new() { imp.rebuild_starred_presets_list(); },
+                    None => watch = imp.get_app().and_then(|app| app.with_db(|db| {
+                        meditate_core::db::LocalChangeWatch::new(db.core().local_changes())
+                    })),
+                }
+                glib::ControlFlow::Continue
+            }
+        ));
         self.build_breathing_setup();
         self.configure_preparation_time_secs_row();
         self.setup_boxbreath_phase_cues();
@@ -3228,6 +3246,10 @@ impl TimerView {
             .into_iter()
             .map(|l| (l.uuid.0, l.name))
             .collect();
+        let active = app_opt
+            .as_ref()
+            .and_then(|app| app.with_db(|db| meditate_core::preset_config::active_presets(db.core(), session_mode)))
+            .unwrap_or_default();
 
         let obj = self.obj();
         let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(presets.len());
@@ -3237,6 +3259,15 @@ impl TimerView {
                 .subtitle(preset_subtitle(&p, &label_names))
                 .activatable(true)
                 .build();
+            if active.contains(&p.uuid.0) {
+                // Setup matches this preset: the choosers' check plus
+                // the accent title.
+                let check = gtk::Image::from_icon_name("object-select-symbolic");
+                check.add_css_class("selected-check");
+                row.add_suffix(&check);
+                row.add_css_class("accent");
+                row.update_state(&[gtk::accessible::State::Selected(Some(true))]);
+            }
             let uuid = p.uuid.0.clone();
             row.connect_activated(clone!(
                 #[weak(rename_to = this)] obj,

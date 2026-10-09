@@ -260,6 +260,8 @@ export struct PresetItem {
     name: string,
     subtitle: string,
     is-starred: bool,
+    // Setup currently matches it: the starred list shows it tinted.
+    selected: bool,
 }
 
 // One row in the Guided "Starred Files" list (GM-F3). `subtitle`
@@ -3178,9 +3180,13 @@ export component MainWindow inherits Window {
                         Rectangle {
                             // Grows when a long name wraps (like GTK's rows).
                             height: max(64px, preset-row-layout.preferred-height);
-                            background: preset-row-touch.has-hover
-                                ? MaterialPalette.surface-container-high
+                            background: item.selected ? MaterialPalette.secondary-container
+                                : preset-row-touch.has-hover ? MaterialPalette.surface-container-high
                                 : transparent;
+                            accessible-role: button;
+                            accessible-label: item.name;
+                            accessible-checkable: true;
+                            accessible-checked: item.selected;
 
                             preset-row-touch := TouchArea {
                                 clicked => {
@@ -3204,7 +3210,7 @@ export component MainWindow inherits Window {
                                         text: item.name;
                                         wrap: word-wrap;
                                         font-size: 16px;
-                                        color: MaterialPalette.on-surface;
+                                        color: item.selected ? MaterialPalette.primary : MaterialPalette.on-surface;
                                     }
                                     if item.subtitle != "" : Text {
                                         text: item.subtitle;

@@ -612,10 +612,12 @@ fn list_starred_presets_for_mode(
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
             .collect();
+    let active = meditate_core::preset_config::active_presets(&db, mode);
     meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode)
         .unwrap_or_default()
         .into_iter()
         .map(|p| PresetItem {
+            selected: active.contains(p.uuid.as_str()),
             uuid: p.uuid.to_string().into(),
             subtitle: preset_subtitle(ui, &p.config_json, &label_names).into(),
             name: p.name.into(),
@@ -725,6 +727,7 @@ fn list_presets_for_mode(
             subtitle: preset_subtitle(ui, &p.config_json, &label_names).into(),
             name: p.name.into(),
             is_starred: p.is_starred,
+            selected: false,
         })
         .collect()
 }
@@ -4333,6 +4336,8 @@ fn build_ui() -> MainWindow {
                 // push it (bursts collapse into one sync).
                 if local_watch.as_mut().is_some_and(|w| w.take_new()) {
                     trigger_sync("local change");
+                    // A changed setting can make another preset active.
+                    refresh_preset_chips(&ui, current_mode.get().into());
                 }
                 // Sync started/finished (SY-4): refresh the
                 // indicator exactly on the edges the trigger +
