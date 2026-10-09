@@ -1082,6 +1082,15 @@ mod tests {
         assert!(!po("de").contains("Kategorie"), "one German term");
     }
 
+    /// A session's settings come from core, as in GTK (R3).
+    #[test]
+    fn session_settings_come_from_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("meditate_core::session::SessionSettings::from_db(&db, shape)"));
+        assert!(!lib.contains("fn build_session_settings("));
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).
@@ -1388,10 +1397,10 @@ mod tests {
         for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
             assert!(!source.contains(literal), "found `{literal}`");
         }
-        assert_eq!(source.matches("bells::session_bells_from_db(&db, target, display, mode)").count(), 1);
-        assert_eq!(source.matches("bells::starting_bell_cue_from_db(&db, mode)").count(), 1);
-        assert_eq!(source.matches("session_bells_from_db(").count(), 1);
-        assert_eq!(source.matches("starting_bell_cue_from_db(").count(), 1);
+        // Core's SessionSettings::from_db reads them, with the shape's mode (R3).
+        assert_eq!(source.matches("SessionSettings::from_db(").count(), 1);
+        assert_eq!(source.matches("session_bells_from_db(").count(), 0);
+        assert_eq!(source.matches("starting_bell_cue_from_db(").count(), 0);
     }
 
     use super::*;

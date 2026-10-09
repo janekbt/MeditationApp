@@ -15,7 +15,6 @@ use meditate_core::breath::BreathPattern;
 use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
 
-use meditate_core::bells::ActiveBell;
 use meditate_core::session::{
     Effect as CoreSessionEffect,
     Session as CoreSession,
@@ -2040,33 +2039,21 @@ impl TimerView {
             toast.dismiss();
         }
 
-        // Timer mode + Preparation Time on: enter Preparing, defer the
-        // real cores + starting bell until the prep tick transitions.
-        // Box Breathing skips prep entirely (it's a Timer-only feature).
-        let prep = if mode == TimerMode::Timer {
-            self.get_app()
-                .and_then(|app| {
-                    app.with_db(|db| meditate_core::format::prep_plan_from_db(db.core()))
-                })
-                .flatten()
-        } else {
-            None
-        };
-
-        match mode {
+        // Each mode builds only its shape; the settings come from core
+        // (preparation, bells, cues), and `CoreSession::start` opens in
+        // Prep when `prep_secs` is set.
+        let stopwatch_on = self.stopwatch_toggle_on.get();
+        let shape = match mode {
             TimerMode::Timer => {
-                // Validate countdown target up front so a 0-target
-                // countdown doesn't even start (regardless of prep).
-                if !self.stopwatch_toggle_on.get()
-                    && self.countdown_target_secs.get() == 0
-                {
-                    return;
-                }
-                // Anchor the boot time once. Without prep the Session
-                // is built directly in the no-prep arm below; with
-                // prep it's built in the prep-setup arm further down.
-                if prep.is_none() {
-                    self.start_boot_time.set(Some(boot_time_now()));
+                // A 0-target countdown doesn't start at all.
+                if stopwatch_on {
+                    CoreSessionShape::TimerStopwatch
+                } else {
+                    let target_secs = self.countdown_target_secs.get();
+                    if target_secs == 0 {
+                        return;
+                    }
+                    CoreSessionShape::TimerCountdown { target_secs }
                 }
             }
             TimerMode::Breathing => {
@@ -2077,43 +2064,18 @@ impl TimerView {
                 let target = pattern.cycle_aligned_target_secs(
                     u64::from(self.breathing_session_secs.get()),
                 );
-                self.start_boot_time.set(Some(boot_time_now()));
                 // Stopwatch toggle on → BoxBreathStopwatch (no auto-end;
                 // user must press Stop). Off → BoxBreathCountdown,
                 // cycle-aligned end fires off `target_secs`. Either
                 // way Box Breath shows count-up elapsed.
-                let shape = if self.stopwatch_toggle_on.get() {
+                if stopwatch_on {
                     CoreSessionShape::BoxBreathStopwatch { pattern }
                 } else {
                     CoreSessionShape::BoxBreathCountdown {
                         pattern,
                         target_secs: target as u32,
                     }
-                };
-                let Some(app) = self.get_app() else { return; };
-                let (bells, bell_rng_seed) = self.build_session_bells(
-                    shape.target_secs().map(u64::from),
-                    self.stopwatch_toggle_on.get(),
-                    SessionMode::BoxBreath,
-                );
-                let core_settings = CoreSessionSettings {
-                    shape,
-                    prep_secs: None,
-                    bells,
-                    bell_rng_seed,
-                    signal_mode_override: self.read_signal_mode_override(
-                        &app, SessionMode::BoxBreath,
-                    ),
-                    starting_bell: self.build_starting_bell_cue(&app, SessionMode::BoxBreath),
-                    end_bell: self.build_end_bell_cue(&app),
-                    box_breath_cues: Some(self.build_box_breath_cues(&app)),
-                };
-                let (session, start_effects) = CoreSession::start(
-                    core_settings,
-                    std::time::Duration::ZERO,
-                );
-                self.dispatch_session_effects(&start_effects);
-                *self.core_session.borrow_mut() = Some(session);
+                }
             }
             TimerMode::Guided => {
                 // Build the countdown core (drives the hero) AND the
@@ -2168,101 +2130,27 @@ impl TimerView {
                     }
                 }
 
-                self.start_boot_time.set(Some(boot_time_now()));
                 // Guided always carries a target (the file's probed
                 // duration); the stopwatch toggle only flips the
                 // running display between count-up and count-down.
-                let Some(app) = self.get_app() else { return; };
-                let shape = CoreSessionShape::Guided {
+                CoreSessionShape::Guided {
                     duration_secs: target as u32,
-                    count_up_display: self.stopwatch_toggle_on.get(),
-                };
-                // Core leaves out the starting and interval bells here
-                // (the file is the "start"); the end bell fires when
-                // the file ends or the user clicks Finish.
-                let (bells, bell_rng_seed) = self.build_session_bells(
-                    shape.target_secs().map(u64::from),
-                    self.stopwatch_toggle_on.get(),
-                    SessionMode::Guided,
-                );
-                let core_settings = CoreSessionSettings {
-                    shape,
-                    prep_secs: None,
-                    bells,
-                    bell_rng_seed,
-                    signal_mode_override: self.read_signal_mode_override(
-                        &app, SessionMode::Guided,
-                    ),
-                    starting_bell: self.build_starting_bell_cue(&app, SessionMode::Guided),
-                    end_bell: self.build_end_bell_cue(&app),
-                    box_breath_cues: None,
-                };
-                let (session, start_effects) = CoreSession::start(
-                    core_settings,
-                    std::time::Duration::ZERO,
-                );
-                self.dispatch_session_effects(&start_effects);
-                *self.core_session.borrow_mut() = Some(session);
-            }
-        }
-
-        // Prep / no-prep Timer share the same SessionSettings build;
-        // only `prep_secs` differs, and `CoreSession::start` picks the
-        // opening phase from it.
-        let build_timer_settings = |prep_dur: Option<Duration>| {
-            let app = self.get_app()?;
-            let stopwatch_on = self.stopwatch_toggle_on.get();
-            let shape = if stopwatch_on {
-                CoreSessionShape::TimerStopwatch
-            } else {
-                CoreSessionShape::TimerCountdown {
-                    target_secs: self.countdown_target_secs.get(),
+                    count_up_display: stopwatch_on,
                 }
-            };
-            let (bells, bell_rng_seed) = self.build_session_bells(
-                shape.target_secs().map(u64::from),
-                stopwatch_on,
-                SessionMode::Timer,
-            );
-            Some(CoreSessionSettings {
-                shape,
-                prep_secs: prep_dur.map(|d| d.as_secs() as u32),
-                bells,
-                bell_rng_seed,
-                signal_mode_override: self.read_signal_mode_override(
-                    &app, SessionMode::Timer,
-                ),
-                starting_bell: self.build_starting_bell_cue(&app, SessionMode::Timer),
-                end_bell: self.build_end_bell_cue(&app),
-                box_breath_cues: None,
-            })
+            }
         };
 
-        if let Some(prep_dur) = prep {
-            // Prep path: Session owns prep ticking + the prep→Running
-            // transition internally; bells are pre-built so the
-            // schedule survives the transition unchanged.
-            self.start_boot_time.set(Some(boot_time_now()));
-            let Some(core_settings) = build_timer_settings(Some(prep_dur)) else { return; };
-            let (session, start_effects) = CoreSession::start(
-                core_settings,
-                std::time::Duration::ZERO,
-            );
-            self.dispatch_session_effects(&start_effects);
-            *self.core_session.borrow_mut() = Some(session);
-        } else {
-            // No-prep Timer: build bells + start Session directly in
-            // Running. Same SessionSettings shape as the prep path.
-            if mode == TimerMode::Timer {
-                let Some(core_settings) = build_timer_settings(None) else { return; };
-                let (session, start_effects) = CoreSession::start(
-                    core_settings,
-                    std::time::Duration::ZERO,
-                );
-                self.dispatch_session_effects(&start_effects);
-                *self.core_session.borrow_mut() = Some(session);
-            }
-        }
+        let Some(app) = self.get_app() else { return; };
+        let core_settings = app
+            .with_db(|db| CoreSessionSettings::from_db(db.core(), shape.clone()))
+            .unwrap_or(CoreSessionSettings { shape, ..Default::default() });
+        self.start_boot_time.set(Some(boot_time_now()));
+        let (session, start_effects) = CoreSession::start(
+            core_settings,
+            std::time::Duration::ZERO,
+        );
+        self.dispatch_session_effects(&start_effects);
+        *self.core_session.borrow_mut() = Some(session);
 
         self.session_start_time.set(unix_now());
 
@@ -3934,84 +3822,6 @@ impl TimerView {
 /// slots so polyphony works the way users expect: starting bell
 /// supersedes its own prior playback; end bell supersedes its
 use meditate_core::session::FireChannel;
-
-// ── Interval / fixed bell scheduling ─────────────────────────────────────────
-
-impl TimerView {
-    /// Build the per-session bell schedule + seed for the running
-    /// Session. Reads the user's bell library from the DB, applies
-    /// the master-toggle gate (`interval_bells_active`), and hands
-    /// the rest to `meditate_core::bells::build_active_bells` —
-    /// schedule construction + jitter rolls live in core. Returns
-    /// `(empty Vec, fresh seed)` when the master toggle is off so
-    /// Session's per-tick check has nothing to do.
-    ///
-    /// Session-config builders — one-line wrappers around the
-    /// `core::bells::*_from_db` readers so the shell's setup-state
-    /// assembly hands the same SessionSettings to Session that the
-    /// Android shell will. The math lives in core; this is just the
-    /// `app.with_db(...)` ceremony.
-    fn build_session_bells(
-        &self,
-        total_target_secs: Option<u64>,
-        stopwatch_on: bool,
-        mode: SessionMode,
-    ) -> (Vec<ActiveBell>, u64) {
-        self.get_app()
-            .and_then(|app| {
-                app.with_db(|db| {
-                    meditate_core::bells::session_bells_from_db(
-                        db.core(),
-                        total_target_secs,
-                        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
-                        mode,
-                    )
-                })
-            })
-            .unwrap_or_else(|| (Vec::new(), meditate_core::time::seed_now()))
-    }
-
-    fn read_signal_mode_override(
-        &self,
-        app: &crate::application::MeditateApplication,
-        mode: SessionMode,
-    ) -> crate::db::SignalMode {
-        app.with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode))
-            .unwrap_or(crate::db::SignalMode::Both)
-    }
-
-    fn build_starting_bell_cue(
-        &self,
-        app: &crate::application::MeditateApplication,
-        mode: SessionMode,
-    ) -> Option<meditate_core::bells::BellCue> {
-        app.with_db(|db| meditate_core::bells::starting_bell_cue_from_db(db.core(), mode))
-            .flatten()
-    }
-
-    fn build_end_bell_cue(
-        &self,
-        app: &crate::application::MeditateApplication,
-    ) -> Option<meditate_core::bells::BellCue> {
-        let stopwatch_on = self.stopwatch_toggle_on.get();
-        app.with_db(|db| {
-            meditate_core::bells::end_bell_cue_from_db(
-                db.core(),
-                meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
-                self.current_mode().into(),
-            )
-        })
-        .flatten()
-    }
-
-    fn build_box_breath_cues(
-        &self,
-        app: &crate::application::MeditateApplication,
-    ) -> meditate_core::bells::BoxBreathCueConfig {
-        app.with_db(|db| meditate_core::bells::box_breath_cues_from_db(db.core()))
-            .unwrap_or_default()
-    }
-}
 
 // ── Public refresh hooks ─────────────────────────────────────────────────────
 

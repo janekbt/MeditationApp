@@ -762,6 +762,18 @@ mod tests {
         assert_eq!(live.matches("Kategorie").count(), 1, "only the sound category keeps the word");
     }
 
+    /// A session's settings come from core, built once per start (R3).
+    #[test]
+    fn session_settings_come_from_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let timer = std::fs::read_to_string(root.join("src/timer/imp.rs")).unwrap();
+        assert_eq!(timer.matches("CoreSessionSettings::from_db(db.core(), ").count(), 1);
+        for gone in ["signal_mode_override:", "fn build_session_bells(", "fn build_starting_bell_cue(",
+                     "fn build_end_bell_cue(", "fn build_box_breath_cues(", "fn read_signal_mode_override("] {
+            assert!(!timer.contains(gone), "{gone}");
+        }
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

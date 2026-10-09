@@ -406,65 +406,6 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     }
 }
 
-/// Assemble the full `SessionSettings` from the persisted DB
-/// rows — the Android analogue of GTK's `build_timer_settings`
-/// (`meditate-gtk/src/timer/imp.rs`). Every cue decision lives in
-/// `meditate_core::bells::*_from_db`; this only wires the shell
-/// context (shape, stopwatch flag, mode) into those helpers. Prep
-/// is Timer-only (mirrors GTK gating prep to the timer path);
-/// box-breath cues only attach for BoxBreath. Falls back to a
-/// bare default session if the DB isn't available (shouldn't
-/// happen post-startup, but a no-cue session beats a panic).
-fn build_session_settings(
-    shape: meditate_core::session::SessionShape,
-    stopwatch_on: bool,
-    mode: meditate_core::SessionMode,
-) -> meditate_core::session::SessionSettings {
-    use meditate_core::bells;
-    use meditate_core::session::SessionSettings;
-
-    let display = bells::DisplayMode::from_stopwatch_flag(stopwatch_on);
-    let target = shape.target_secs().map(u64::from);
-
-    let Some(db) = lock_db() else {
-        return SessionSettings { shape, ..Default::default() };
-    };
-
-    // Prep is Timer-only (GTK gates it to the timer path) and the
-    // core helper AND-gates `preparation_time_active &&
-    // starting_bell_active` — no starting bell ⇒ no prep. Routing
-    // through `prep_plan_from_db` (the exact call GTK's on_start
-    // uses) keeps that decision in core for both shells; the
-    // earlier direct `preparation_time_active` read skipped the
-    // starting-bell gate (the bug Janek hit).
-    let prep_secs = if matches!(mode, meditate_core::SessionMode::Timer) {
-        meditate_core::format::prep_plan_from_db(&db)
-            .map(|d| d.as_secs() as u32)
-    } else {
-        None
-    };
-
-    let (session_bells, bell_rng_seed) =
-        bells::session_bells_from_db(&db, target, display, mode);
-    let box_breath_cues =
-        if matches!(mode, meditate_core::SessionMode::BoxBreath) {
-            Some(bells::box_breath_cues_from_db(&db))
-        } else {
-            None
-        };
-
-    SessionSettings {
-        shape,
-        prep_secs,
-        bells: session_bells,
-        bell_rng_seed,
-        signal_mode_override: bells::signal_mode_override_from_db(&db, mode),
-        starting_bell: bells::starting_bell_cue_from_db(&db, mode),
-        end_bell: bells::end_bell_cue_from_db(&db, display, mode),
-        box_breath_cues,
-    }
-}
-
 // Tick interval driving the mm:ss redraw + Running→Finished detection.
 // 200ms keeps the seconds digit visually responsive without burning
 // CPU on a phone display.
@@ -4186,12 +4127,10 @@ fn build_ui() -> MainWindow {
                     if NOTICE.with_borrow_mut(app::Notice::session_started) {
                         finish_notice(&ui);
                     }
-                    let settings = build_session_settings(
-                        shape,
-                        ui.get_stopwatch_on(),
-                        TimerMode::from_chip_index(ui.get_setup_mode())
-                            .into(),
-                    );
+                    let settings = match lock_db() {
+                        Some(db) => meditate_core::session::SessionSettings::from_db(&db, shape),
+                        None => meditate_core::session::SessionSettings { shape, ..Default::default() },
+                    };
                     AppState::start_session(settings, now)
                 }
             };

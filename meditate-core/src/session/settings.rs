@@ -48,6 +48,16 @@ impl SessionShape {
         }
     }
 
+    /// Whether the mode's stopwatch toggle is on: the stopwatch shapes,
+    /// and Guided counting up. Interval and end bells key off it.
+    pub fn stopwatch_on(&self) -> bool {
+        match self {
+            Self::TimerStopwatch | Self::BoxBreathStopwatch { .. } => true,
+            Self::Guided { count_up_display, .. } => *count_up_display,
+            Self::TimerCountdown { .. } | Self::BoxBreathCountdown { .. } => false,
+        }
+    }
+
     /// Target session length in seconds when the shape has one;
     /// `None` for stopwatch sessions. Drives the Running→Overtime
     /// transition and Box-Breath's cycle-aligned end.
@@ -104,6 +114,35 @@ pub struct SessionSettings {
     pub box_breath_cues: Option<BoxBreathCueConfig>,
 }
 
+impl SessionSettings {
+    /// Everything a session of `shape` needs from the stored settings:
+    /// preparation (Timer only, and only with the starting bell), the
+    /// interval-bell schedule, signal mode, starting and end bell, and
+    /// Box Breath's phase cues. Both shells start every session with it.
+    pub fn from_db(db: &crate::db::Database, shape: SessionShape) -> Self {
+        use crate::bells;
+        let mode = shape.mode();
+        let display = bells::DisplayMode::from_stopwatch_flag(shape.stopwatch_on());
+        let prep_secs = if mode == SessionMode::Timer {
+            crate::format::prep_plan_from_db(db).map(|d| d.as_secs() as u32)
+        } else {
+            None
+        };
+        let (bells, bell_rng_seed) =
+            bells::session_bells_from_db(db, shape.target_secs().map(u64::from), display, mode);
+        Self {
+            prep_secs,
+            bells,
+            bell_rng_seed,
+            signal_mode_override: bells::signal_mode_override_from_db(db, mode),
+            starting_bell: bells::starting_bell_cue_from_db(db, mode),
+            end_bell: bells::end_bell_cue_from_db(db, display, mode),
+            box_breath_cues: (mode == SessionMode::BoxBreath).then(|| bells::box_breath_cues_from_db(db)),
+            shape,
+        }
+    }
+}
+
 impl Default for SessionSettings {
     /// A no-frills Timer session: 10-minute countdown, no prep, no
     /// bells, no cues, signal-mode wide open. Useful as a starting
@@ -120,5 +159,89 @@ impl Default for SessionSettings {
             end_bell: None,
             box_breath_cues: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bells::{self, DisplayMode};
+    use crate::db::{Database, IntervalBellKind};
+    use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+
+    /// The composition each shell built by hand before `from_db`.
+    fn by_hand(db: &Database, shape: SessionShape, stopwatch_on: bool) -> SessionSettings {
+        let mode = shape.mode();
+        let display = DisplayMode::from_stopwatch_flag(stopwatch_on);
+        let prep_secs = matches!(mode, SessionMode::Timer)
+            .then(|| crate::format::prep_plan_from_db(db).map(|d| d.as_secs() as u32))
+            .flatten();
+        let (bells, bell_rng_seed) =
+            bells::session_bells_from_db(db, shape.target_secs().map(u64::from), display, mode);
+        SessionSettings {
+            prep_secs,
+            bells,
+            bell_rng_seed,
+            signal_mode_override: bells::signal_mode_override_from_db(db, mode),
+            starting_bell: bells::starting_bell_cue_from_db(db, mode),
+            end_bell: bells::end_bell_cue_from_db(db, display, mode),
+            box_breath_cues: matches!(mode, SessionMode::BoxBreath).then(|| bells::box_breath_cues_from_db(db)),
+            shape,
+        }
+    }
+
+    fn same(a: &SessionSettings, b: &SessionSettings) -> bool {
+        let strip = |s: &SessionSettings| format!("{:?}", SessionSettings { bell_rng_seed: 0, ..s.clone() });
+        strip(a) == strip(b)
+    }
+
+    fn configured_db() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        for (k, v) in [
+            ("preparation_time_active", "true"),
+            ("starting_bell_active", "true"),
+            ("interval_bells_active", "true"),
+            ("boxbreath_cues_active", "true"),
+        ] {
+            db.set_setting(k, v).unwrap();
+        }
+        db.insert_interval_bell(
+            IntervalBellKind::Interval, 2, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn from_db_builds_what_the_shells_built() {
+        let db = configured_db();
+        let pattern = BreathPattern::default();
+        for (shape, stopwatch_on) in [
+            (SessionShape::TimerCountdown { target_secs: 600 }, false),
+            (SessionShape::TimerStopwatch, true),
+            (SessionShape::BoxBreathCountdown { pattern, target_secs: 320 }, false),
+            (SessionShape::BoxBreathStopwatch { pattern }, true),
+            (SessionShape::Guided { duration_secs: 900, count_up_display: false }, false),
+            (SessionShape::Guided { duration_secs: 900, count_up_display: true }, true),
+        ] {
+            let got = SessionSettings::from_db(&db, shape.clone());
+            assert!(same(&got, &by_hand(&db, shape.clone(), stopwatch_on)), "{shape:?}");
+        }
+    }
+
+    #[test]
+    fn from_db_gates_prep_starting_bell_and_cues_by_mode() {
+        let db = configured_db();
+        let timer = SessionSettings::from_db(&db, SessionShape::TimerCountdown { target_secs: 600 });
+        assert!(timer.prep_secs.is_some() && timer.starting_bell.is_some());
+        assert!(!timer.bells.is_empty() && timer.box_breath_cues.is_none());
+        let breath = SessionSettings::from_db(
+            &db,
+            SessionShape::BoxBreathCountdown { pattern: BreathPattern::default(), target_secs: 320 },
+        );
+        assert!(breath.prep_secs.is_none(), "prep is Timer-only");
+        assert!(breath.box_breath_cues.is_some());
+        let guided = SessionSettings::from_db(&db, SessionShape::Guided { duration_secs: 900, count_up_display: false });
+        assert!(guided.starting_bell.is_none(), "the file is the start");
     }
 }

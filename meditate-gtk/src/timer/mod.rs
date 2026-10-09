@@ -159,10 +159,8 @@ mod tests {
         for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
             assert!(!code.contains(literal), "found `{literal}`");
         }
-        let sessions = code.matches("CoreSessionSettings {").count();
-        assert!(sessions >= 3, "Timer, Box Breath and Guided: {sessions}");
-        assert_eq!(code.matches("self.build_session_bells(").count(), sessions);
-        assert_eq!(code.matches("self.build_starting_bell_cue(").count(), sessions);
+        // One build for every mode, in core (R3).
+        assert_eq!(code.matches("CoreSessionSettings::from_db(").count(), 1);
     }
 
     /// Start dismisses the "'X' applied" toast: its Undo would
@@ -186,7 +184,7 @@ mod tests {
         let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(!code.contains("start_signals"));
         let starts: Vec<usize> = code.match_indices("CoreSession::start(").map(|(i, _)| i).collect();
-        assert_eq!(starts.len(), 4, "Timer with and without prep, Box Breath, Guided");
+        assert_eq!(starts.len(), 1, "one start for every mode, prep or not");
         for at in starts {
             let rest = &code[at..];
             let dispatch = rest
@@ -194,7 +192,7 @@ mod tests {
                 .expect("start effects dispatched");
             assert!(!rest[1..dispatch].contains("CoreSession::start("), "dispatched right after its own start");
         }
-        assert_eq!(code.matches("let (session, start_effects) = CoreSession::start(").count(), 4);
+        assert_eq!(code.matches("let (session, start_effects) = CoreSession::start(").count(), 1);
     }
 
     /// Every bell with a Bell Sound row in the Setup view has a Volume

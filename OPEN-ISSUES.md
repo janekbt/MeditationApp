@@ -218,13 +218,7 @@ Slint layout and translation content. Check: phone in German and Russian, and th
 
 Only together with other work in the same area; none has a bug behind it.
 
-- **R3 step 1, `settings_from_db(db, shape)`:** one core builder for the session settings instead of Android's `build_session_settings` and GTK's three copies (about -70 GTK, -30 Android). It changes how every session type starts, so it needs a full round of all modes on phone and desktop.
-- **R7(b), a session record:** `Active { session, PendingSession }` and `Finished(PendingSession)` instead of `session_start_unix`, `pending_done` and the `SESSION_GUIDED_FILE` static; leaving Finished emits `StopActiveSignals` in one place. About -30 lines, but it rewrites about 54 test chains.
 - **R12, sync runner into core** (with batch A if that grows into more sync work): core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Do it when sync needs work.
-- **R15(c), `SlidePage`** (with batch H if it touches the pages anyway): one frame (slide, scroll area, tap catcher) for 13 pages. Several pages reach into their own Flickable by id (note release, Diagnostics scroll), so each needs rework and a retest.
-- **R15(d), merge `VerticalSpinBox` and `StepperRow`** (with batch B, whose duration dialog uses `VerticalSpinBox`): they share about 20 lines of commit logic; merging touches every number field's focus and keyboard handling for about -40 lines.
-- **R13 small duplicates:** fold `hm_mins_key` into `hm_secs_key` (they differ at 0); one `session_payload()` helper for the three session `json!` copies, next time the session payload changes (batch C touches sessions but not the payload).
-- **R2b, all database writes off the UI thread:** one background writer per app (about 175 call sites, L). Only if the 1 s lock wait is noticeable in practice, or a feature needs long writes.
 
 ## Considered and rejected
 
@@ -234,6 +228,11 @@ So these aren't proposed again:
 - A run token on every drop file: only imports needed one (done).
 - Number fields that commit on every keystroke: intermediate values go stale or clamp mid-typing.
 - Removing the picker's `transient.<ext>` copies: one per extension, overwritten by the next pick, and the guided play-now selection plays the copy in place, so cleanup needs three separate paths for a few MB.
+- R13, small duplicates (`hm_mins_key` into `hm_secs_key`, one `session_payload()`): too little gain for touching the sync payload.
+- R7(b), a session record instead of loose session state: about -30 lines for about 54 rewritten test chains.
+- R15(c), one `SlidePage` frame for 13 pages: every page reaches into its own Flickable, so each needs rework and a retest, for a repeated frame and no bug.
+- R15(d), merging `VerticalSpinBox` and `StepperRow`: about -40 lines in the focus and keyboard code the cursor bugs came from.
+- R2b, all database writes off the UI thread: about 175 call sites, and no lock wait noticed in practice.
 - Closing the file picker before its copy ends (#37): the read grant on the picked file can end with that screen, so every pick path would need the file opened first; a local copy takes about a second.
 - A `guided_file_uuid` CSV column (#7): after a restore the uuid points at no file, and synced devices get their sessions by sync anyway.
 - Typed `BellSlot` through Slint: large, with no host safety net.
