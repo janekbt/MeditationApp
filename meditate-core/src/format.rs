@@ -391,6 +391,12 @@ pub fn log_card_minutes(duration_secs: i64) -> u64 {
     mins.max(1)
 }
 
+/// A card's rounded minutes in seconds: a day caption sums these, so
+/// its total agrees with the cards under it.
+pub fn log_card_total_secs(duration_secs: i64) -> i64 {
+    log_card_minutes(duration_secs) as i64 * 60
+}
+
 /// Duration a Log edit saves, from the dialog's whole hours and
 /// minutes. `original_secs` is the edited session's length (`None`
 /// when adding one). The dialog can only show whole minutes, so while
@@ -857,6 +863,14 @@ mod tests {
         assert_eq!(log_edit_duration_secs(None, 0, 0), None);
         assert_eq!(log_edit_duration_secs(None, 0, 10), Some(600));
         assert_eq!(log_edit_duration_secs(Some(0), 0, 0), None);
+    }
+
+    #[test]
+    fn a_day_caption_sums_the_card_minutes() {
+        // Two 10m40s cards read "11 min" each; the caption said 21m (#35).
+        let total: i64 = [640, 640].into_iter().map(log_card_total_secs).sum();
+        assert_eq!(total, 22 * 60);
+        assert_eq!(log_card_total_secs(10), 60, "a card never shows 0");
     }
 
     #[test]

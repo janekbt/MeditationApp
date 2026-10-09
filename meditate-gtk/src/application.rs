@@ -707,6 +707,18 @@ mod tests {
         assert!(!log.contains("Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0)"));
     }
 
+    /// Stats inputs come from core (#18), and the day caption sums
+    /// the cards (#35).
+    #[test]
+    fn stats_inputs_and_day_caption_come_from_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let stats = std::fs::read_to_string(root.join("src/stats/imp.rs")).unwrap();
+        let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
+        assert!(stats.contains("meditate_core::insights::input_from_db(db.core(), "));
+        assert!(stats.contains("meditate_core::goal::today_from_db(db.core(), "));
+        assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 4);
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

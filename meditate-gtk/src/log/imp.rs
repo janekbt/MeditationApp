@@ -245,7 +245,7 @@ impl LogView {
         sec.cards_box.append(&card);
         self.cards_by_id.borrow_mut().insert(session.id, card);
         sec.count.set(sec.count.get() + 1);
-        sec.total_secs.set(sec.total_secs.get() + session.duration_secs);
+        sec.total_secs.set(sec.total_secs.get() + meditate_core::format::log_card_total_secs(session.duration_secs));
         sec.caption.set_label(
             &section_caption_text(sec.count.get(), sec.total_secs.get()),
         );
@@ -285,7 +285,7 @@ impl LogView {
             // on top of its cards_box so the newest is visually first.
             sec.cards_box.prepend(&card);
             sec.count.set(sec.count.get() + 1);
-            sec.total_secs.set(sec.total_secs.get() + session.duration_secs);
+            sec.total_secs.set(sec.total_secs.get() + meditate_core::format::log_card_total_secs(session.duration_secs));
             sec.caption.set_label(
                 &section_caption_text(sec.count.get(), sec.total_secs.get()),
             );
@@ -297,14 +297,14 @@ impl LogView {
             cards_box.append(&card);
             self.feed_box.prepend(&section_box);
             caption_label.set_label(
-                &section_caption_text(1, session.duration_secs),
+                &section_caption_text(1, meditate_core::format::log_card_total_secs(session.duration_secs)),
             );
             let section = DateSection {
                 outer:      section_box,
                 caption:    caption_label,
                 cards_box,
                 count:      Cell::new(1),
-                total_secs: Cell::new(session.duration_secs),
+                total_secs: Cell::new(meditate_core::format::log_card_total_secs(session.duration_secs)),
             };
             sections.insert(key, section);
         }

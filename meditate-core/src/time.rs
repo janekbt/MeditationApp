@@ -278,7 +278,7 @@ mod tests {
     fn unix_to_local_iso_produces_iso_8601_shape() {
         // Fixed-width YYYY-MM-DDTHH:MM:SS — exactly 19 chars, 'T' between
         // date and time. Lexicographic ordering is then chronological,
-        // which several core queries (e.g. total_secs_since) depend on.
+        // which several core queries (e.g. the stats date bounds) depend on.
         let iso = unix_to_local_iso(1_700_000_000);
         assert_eq!(iso.len(), 19);
         assert_eq!(&iso[10..11], "T");

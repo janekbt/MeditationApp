@@ -97,6 +97,8 @@ export global Tr {
     public pure function minutes-per-month() -> string { return @tr("MINUTES / MONTH"); }
     // Insights
     public pure function ins-streak-title() -> string { return @tr("Current streak"); }
+    public pure function streak-zero() -> string { return @tr("Start your streak today"); }
+    public pure function streak-days(n: int) -> string { return @tr("1 day streak" | "{n} day streak" % n); }
     public pure function ins-streak-record(days: int) -> string { return @tr("{n} day: new record" | "{n} days: new record" % days); }
     public pure function ins-streak-best(days: int, best: int) -> string { return @tr("{n} day · best was {0}" | "{n} days · best was {0}" % days, best); }
     public pure function ins-streak-keep-going() -> string { return @tr("1 day · keep going"); }
@@ -4679,19 +4681,13 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     spacing: 12px;
 
-                    HorizontalLayout {
-                        alignment: center;
-                        SegmentedButton {
-                            current-index <=> root.stat-chart-period;
-                            items: [
-                                { text: @tr("Week") },
-                                { text: @tr("Month") },
-                                { text: @tr("3 Months") },
-                                { text: @tr("Year") },
-                            ];
-                            index-changed(idx) => {
-                                root.chart-period-changed(idx);
-                            }
+                    // Equal segments across the card: Material's padded
+                    // ones overflowed with "3 Monate".
+                    ModeToggle {
+                        current-index <=> root.stat-chart-period;
+                        labels: [@tr("Week"), @tr("Month"), @tr("3 Months"), @tr("Year")];
+                        changed(idx) => {
+                            root.chart-period-changed(idx);
                         }
                     }
 

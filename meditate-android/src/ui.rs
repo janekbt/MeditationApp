@@ -1561,14 +1561,8 @@ fn refresh_stats(ui: &MainWindow) {
     // week-start derivation went with it; the heatmap's
     // week-start comes from `locale_week_start_dow()` at its own
     // call site). Mirrors GTK's `reload_goal_ring`.
-    use chrono::Datelike;
     let today = meditate_core::time::today_local();
-    // Daily goal: today's seconds only.
-    let today_secs =
-        meditate_core::db::total_secs_since_from_db(&db, today)
-            .unwrap_or(0);
-    let goal_mins = meditate_core::goal::daily_goal_mins_from_db(&db);
-    let g = meditate_core::goal::compute(today_secs, goal_mins);
+    let g = meditate_core::goal::today_from_db(&db, today);
 
     let mins_dur =
         |m: i64| std::time::Duration::from_secs((m.max(0) as u64) * 60);
@@ -1607,45 +1601,13 @@ fn refresh_stats(ui: &MainWindow) {
     // render each typed key to a card. Mirrors GTK's
     // `reload_insights` + `render_insight` at
     // `meditate-gtk/src/stats/imp.rs:275`.
-    let (ty, tm) = (today.year(), today.month());
-    let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
-    let fourteen_since = today - chrono::Duration::days(13);
-    let daily_totals: Vec<(String, i64)> =
-        meditate_core::db::get_daily_totals_since_from_db(&db, fourteen_since)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
-            .collect();
-    let input = meditate_core::insights::InsightInput {
-        current_streak: meditate_core::db::get_streak_from_db(&db, today)
-            .unwrap_or(0),
-        best_streak: meditate_core::db::get_best_streak_from_db(&db)
-            .unwrap_or(0),
-        this_month_secs: meditate_core::db::month_total_secs_from_db(
-            &db, ty, tm,
-        )
-        .unwrap_or(0),
-        last_month_secs: meditate_core::db::month_total_secs_from_db(
-            &db, ly, lm,
-        )
-        .unwrap_or(0),
-        daily_totals,
-        longest: meditate_core::db::get_longest_session_from_db(&db)
-            .unwrap_or(None)
-            .map(|(_rowid, s)| {
-                (s.duration_secs as i64, s.start_unix())
-            }),
-        typical_secs: meditate_core::db::get_median_duration_secs_from_db(&db)
-            .unwrap_or(None)
-            .unwrap_or(0) as i64,
-        avg_secs_7d: meditate_core::db::get_running_average_secs_from_db(
-            &db, today, 7,
-        )
-        .unwrap_or(0.0) as i64,
-        hour_buckets: meditate_core::db::hour_buckets_from_db(&db)
-            .unwrap_or((0, 0, 0)),
-        session_count: count,
-    };
+    let input = meditate_core::insights::input_from_db(&db, today);
+    // The Timer screen's streak line, like GTK's streak chip.
+    ui.set_streak_text(match meditate_core::format::streak_key(input.current_streak) {
+        meditate_core::format::StreakKey::Zero => ui.global::<Tr>().invoke_streak_zero(),
+        meditate_core::format::StreakKey::One => ui.global::<Tr>().invoke_streak_days(1),
+        meditate_core::format::StreakKey::Many(n) => ui.global::<Tr>().invoke_streak_days(n as i32),
+    });
     let keys = meditate_core::insights::compute(
         &input,
         meditate_core::time::unix_now(),
@@ -1707,7 +1669,7 @@ fn refresh_stats(ui: &MainWindow) {
             today,
             week_start_dow(),
             &totals,
-            goal_mins,
+            g.goal_mins,
         );
         let cols: Vec<ContribCol> = core_cells
             .chunks(7)
@@ -2367,7 +2329,7 @@ fn group_log_sessions(
         if let Some(last) = sections.last_mut() {
             if last.date_key == date_key {
                 last.count += 1;
-                last.total_secs += duration_secs_i64;
+                last.total_secs += meditate_core::format::log_card_total_secs(duration_secs_i64);
                 last.items.push(item);
                 continue;
             }
@@ -2376,7 +2338,7 @@ fn group_log_sessions(
             date_key,
             start_unix,
             count: 1,
-            total_secs: duration_secs_i64,
+            total_secs: meditate_core::format::log_card_total_secs(duration_secs_i64),
             items: vec![item],
         });
     }

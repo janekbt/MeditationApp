@@ -160,10 +160,11 @@ pub fn get_running_average_secs_from_db(db: &Database, today: chrono::NaiveDate,
     }
     let cutoff = today - chrono::Duration::days(i64::from(days - 1));
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    // Bounded at today: a session dated in the future isn't part of it.
     let total: i64 = db.conn.query_row(
         "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions
-         WHERE SUBSTR(start_iso, 1, 10) >= ?1",
-        [cutoff_str],
+         WHERE SUBSTR(start_iso, 1, 10) BETWEEN ?1 AND ?2",
+        [cutoff_str, today.format("%Y-%m-%d").to_string()],
         |row| row.get(0),
     )?;
     Ok(total as f64 / f64::from(days))
@@ -309,24 +310,6 @@ pub fn month_total_secs_from_db(db: &Database, year: i32, month: u32) -> Result<
          FROM sessions
          WHERE start_iso >= ?1 AND start_iso < ?2",
         params![start, end],
-        |row| row.get(0),
-    )?)
-}
-/// Sum of `duration_secs` for sessions whose `start_iso` is on or
-/// after the start of `since` (interpreted as the user's local
-/// midnight). Returns 0 if no sessions match.
-///
-/// Lexicographic comparison on ISO 8601 strings works because the
-/// format sorts chronologically as ASCII text. The cut-off is at
-/// the START of the date — a session at 00:00:00 on `since` is
-/// included.
-pub fn total_secs_since_from_db(db: &Database, since: chrono::NaiveDate) -> Result<i64> {
-    let prefix = since.format("%Y-%m-%d").to_string();
-    Ok(db.conn.query_row(
-        "SELECT COALESCE(SUM(duration_secs), 0)
-         FROM sessions
-         WHERE start_iso >= ?1",
-        params![prefix],
         |row| row.get(0),
     )?)
 }
@@ -750,7 +733,9 @@ impl Database {
 
 
     fn streak(&self, today: chrono::NaiveDate) -> Result<u32> {
-        let days = self.distinct_session_days_ascending()?;
+        // A session dated in the future must not break today's streak.
+        let mut days = self.distinct_session_days_ascending()?;
+        days.retain(|d| *d <= today);
         let Some(&most_recent) = days.last() else {
             return Ok(0);
         };
@@ -2109,86 +2094,6 @@ mod tests {
         assert_eq!(month_total_secs_from_db(&db, 2026, 12).unwrap(), 600);
     }
 
-    // ── total_secs_since: weekly goal ring etc. ──────────────────────────────
-
-    #[test]
-    fn total_secs_since_is_zero_for_empty_db() {
-        let db = Database::open_in_memory().unwrap();
-        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 0);
-    }
-
-    #[test]
-    fn total_secs_since_includes_sessions_on_or_after_date() {
-        // Cut-off is at the START of the local-naive `since` date — a
-        // session at 00:00:00 on `since` IS included.
-        let db = Database::open_in_memory().unwrap();
-        // On the cut-off date.
-        db.insert_session(&Session {
-            start_iso: "2026-04-27T00:00:00".to_string(),
-            duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // Later that day.
-        db.insert_session(&Session {
-            start_iso: "2026-04-27T18:00:00".to_string(),
-            duration_secs: 1200, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // Following day.
-        db.insert_session(&Session {
-            start_iso: "2026-04-28T10:00:00".to_string(),
-            duration_secs: 300, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 600 + 1200 + 300);
-    }
-
-    #[test]
-    fn total_secs_since_excludes_sessions_before_date() {
-        let db = Database::open_in_memory().unwrap();
-        // Day before the cut-off.
-        db.insert_session(&Session {
-            start_iso: "2026-04-26T23:59:59".to_string(),
-            duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // On / after cut-off — counted.
-        db.insert_session(&Session {
-            start_iso: "2026-04-27T00:00:00".to_string(),
-            duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 600);
-    }
-
-    #[test]
-    fn total_secs_since_far_future_date_returns_zero() {
-        // Asking for a date past every session's start returns 0.
-        let db = Database::open_in_memory().unwrap();
-        db.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00".to_string(),
-            duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        let since = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
-        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 0);
-    }
-
     // ── get_longest_session ──────────────────────────────────────────────────
 
     #[test]
@@ -3195,6 +3100,17 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }
+    }
+
+    #[test]
+    fn a_session_dated_in_the_future_counts_neither_streak_nor_average() {
+        // A session added for tomorrow zeroed the streak (#18).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-26")).unwrap();
+        db.insert_session(&session_on("2026-04-27")).unwrap();
+        db.insert_session(&session_on("2026-04-28")).unwrap();
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 2);
+        assert_f64_eq!(get_running_average_secs_from_db(&db, date(2026, 4, 27), 1).unwrap(), 600.0);
     }
 
     #[test]

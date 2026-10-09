@@ -153,16 +153,11 @@ impl StatsView {
     fn reload_goal_ring(&self) {
         // Total time logged since local midnight — the daily-goal
         // ring resets each day (was weekly until 2026-07-17).
-        let now = crate::time::now_local();
-        let since = now.format("%Y-%m-%d").unwrap().to_string();
-        let (today_secs, goal_mins) = self.get_app()
+        let g = self.get_app()
             .and_then(|app| app.with_db(|db| {
-                let s = db.get_total_secs_since(&since).unwrap_or(0);
-                let goal = meditate_core::goal::daily_goal_mins_from_db(db.core());
-                (s, goal)
+                meditate_core::goal::today_from_db(db.core(), meditate_core::time::today_local())
             }))
-            .unwrap_or((0, meditate_core::goal::DAILY_GOAL_DEFAULT));
-        let g = meditate_core::goal::compute(today_secs, goal_mins);
+            .unwrap_or_else(|| meditate_core::goal::compute(0, meditate_core::goal::DAILY_GOAL_DEFAULT));
         self.goal_pct.set(g.arc_pct);
         self.goal_ring.queue_draw();
         self.goal_pct_label.set_label(&format!("{}%", g.display_pct));
@@ -280,26 +275,8 @@ impl StatsView {
         }
 
         let Some(app) = self.get_app() else { return; };
-        let now = crate::time::now_local();
-
-        // Batch every insight-driving query into a single DB borrow.
         let data = app.with_db(|db| {
-            let (ty, tm) = (now.year(), now.month() as u32);
-            let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
-            let fourteen_since = now.add_days(-13).unwrap()
-                .format("%Y-%m-%d").unwrap().to_string();
-            meditate_core::insights::InsightInput {
-                current_streak:  db.get_streak().unwrap_or(0),
-                best_streak:     db.get_best_streak().unwrap_or(0),
-                this_month_secs: db.month_total_secs(ty, tm).unwrap_or(0),
-                last_month_secs: db.month_total_secs(ly, lm).unwrap_or(0),
-                daily_totals:    db.get_daily_totals(&fourteen_since).unwrap_or_default(),
-                longest:         db.get_longest_session().unwrap_or(None),
-                typical_secs:    db.get_median_duration_secs().unwrap_or(None).unwrap_or(0),
-                avg_secs_7d:     db.get_running_average_secs(7).unwrap_or(0.0) as i64,
-                hour_buckets:    db.hour_buckets().unwrap_or((0, 0, 0)),
-                session_count:   db.count_sessions().unwrap_or(0),
-            }
+            meditate_core::insights::input_from_db(db.core(), meditate_core::time::today_local())
         }).unwrap_or_default();
 
         let keys = meditate_core::insights::compute(

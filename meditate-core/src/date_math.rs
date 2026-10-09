@@ -183,7 +183,7 @@ impl ChartPeriod {
         match self {
             ChartPeriod::Week => 7,
             ChartPeriod::FourWeeks => 28,
-            ChartPeriod::ThreeMonths => 90,
+            ChartPeriod::ThreeMonths => 91,
             ChartPeriod::OneYear => 365,
         }
     }
@@ -404,7 +404,8 @@ mod tests {
     fn chart_period_days_per_variant() {
         assert_eq!(ChartPeriod::Week.days(), 7);
         assert_eq!(ChartPeriod::FourWeeks.days(), 28);
-        assert_eq!(ChartPeriod::ThreeMonths.days(), 90);
+        // Whole weeks, so the newest bar isn't a 6-day stub (#24).
+        assert_eq!(ChartPeriod::ThreeMonths.days(), 91);
         assert_eq!(ChartPeriod::OneYear.days(), 365);
     }
 

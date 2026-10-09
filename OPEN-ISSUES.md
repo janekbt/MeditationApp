@@ -19,7 +19,7 @@ Each batch touches one area and needs one test round. Mark a batch `[x]` when it
 | [x] | B. Log editing and labels | #4, #5, #6, #34 | data loss |
 | [x] | C. CSV | #7, #36 | data loss |
 | [x] | D. Locale | #29, #26, #25, #30 | visible every day in German |
-| [ ] | E. Stats | #18, #24, #35, #22 | wrong numbers |
+| [x] | E. Stats | #18, #24, #35, #22 | wrong numbers |
 | [ ] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
 | [ ] | G. Bell file cleanup | bell audio left on disk | wasted storage |
 | [ ] | H. Layout and wording | #23 rest, #11, #32, GTK sync toast | cosmetic |

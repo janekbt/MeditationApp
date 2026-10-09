@@ -44,6 +44,33 @@ pub struct InsightInput {
     pub session_count: i64,
 }
 
+/// Read every insight input from the log for `today`. A failed read
+/// counts as no data, so the cards degrade instead of vanishing.
+pub fn input_from_db(db: &crate::db::Database, today: chrono::NaiveDate) -> InsightInput {
+    use chrono::Datelike;
+    use crate::db as d;
+    let (ty, tm) = (today.year(), today.month());
+    let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
+    InsightInput {
+        current_streak: d::get_streak_from_db(db, today).unwrap_or(0),
+        best_streak: d::get_best_streak_from_db(db).unwrap_or(0),
+        this_month_secs: d::month_total_secs_from_db(db, ty, tm).unwrap_or(0),
+        last_month_secs: d::month_total_secs_from_db(db, ly, lm).unwrap_or(0),
+        daily_totals: d::get_daily_totals_since_from_db(db, today - chrono::Duration::days(13))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(day, secs)| (day.format("%Y-%m-%d").to_string(), secs))
+            .collect(),
+        longest: d::get_longest_session_from_db(db)
+            .unwrap_or(None)
+            .map(|(_, s)| (i64::from(s.duration_secs), s.start_unix())),
+        typical_secs: d::get_median_duration_secs_from_db(db).unwrap_or(None).map_or(0, i64::from),
+        avg_secs_7d: d::get_running_average_secs_from_db(db, today, 7).unwrap_or(0.0) as i64,
+        hour_buckets: d::hour_buckets_from_db(db).unwrap_or((0, 0, 0)),
+        session_count: d::count_sessions_from_db(db).unwrap_or(0),
+    }
+}
+
 /// Typed key the shell renders into a translated card. Variants
 /// carry the substitution values; the shell composes the gettext
 /// template + interpolates.
@@ -231,6 +258,34 @@ mod tests {
 
     fn baseline() -> InsightInput {
         InsightInput::default()
+    }
+
+    #[test]
+    fn input_from_db_reads_the_log() {
+        // Both apps built this by hand; core reads it once.
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        for (day, secs) in [("2026-04-26", 300), ("2026-04-27", 1200)] {
+            db.insert_session(&crate::db::Session {
+                start_iso: format!("{day}T10:00:00"),
+                duration_secs: secs,
+                label_id: None,
+                notes: None,
+                mode: crate::SessionMode::Timer,
+                uuid: crate::db::SessionUuid::new(""),
+                guided_file_uuid: None,
+            })
+            .unwrap();
+        }
+        let input = input_from_db(&db, today);
+        assert_eq!(input.current_streak, 2);
+        assert_eq!(input.best_streak, 2);
+        assert_eq!(input.session_count, 2);
+        assert_eq!(input.this_month_secs, 1500);
+        assert_eq!(input.typical_secs, 300);
+        assert_eq!(input.longest.map(|(secs, _)| secs), Some(1200));
+        assert_eq!(input.daily_totals.len(), 2);
+        assert_eq!(input.avg_secs_7d, 1500 / 7);
     }
 
     #[test]

@@ -990,3 +990,11 @@ msgstr "V"
 msgctxt "One-letter abbrev for Saturday"
 msgid "S"
 msgstr "S"
+
+msgid "Start your streak today"
+msgstr "Inizia oggi la tua serie"
+
+msgid "1 day streak"
+msgid_plural "{n} day streak"
+msgstr[0] "Serie di {n} giorno"
+msgstr[1] "Serie di {n} giorni"

@@ -969,3 +969,10 @@ msgstr "五"
 msgctxt "One-letter abbrev for Saturday"
 msgid "S"
 msgstr "六"
+
+msgid "Start your streak today"
+msgstr "今天开始连续打卡"
+
+msgid "1 day streak"
+msgid_plural "{n} day streak"
+msgstr[0] "连续 {n} 天"

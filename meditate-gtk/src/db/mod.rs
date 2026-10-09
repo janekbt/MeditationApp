@@ -867,15 +867,6 @@ impl Database {
         meditate_core::db::total_seconds_from_db(&self.inner).map_err(map_core_err)
     }
 
-    /// Average daily duration over the last `days` days. Days with no
-    /// sessions count as zero. Returns 0 for `days == 0`. The shell's
-    /// only responsibility here is resolving "today" in the user's
-    /// local timezone before handing the window to core.
-    pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
-        meditate_core::db::get_running_average_secs_from_db(&self.inner, today_local_naive_date(), days)
-            .map_err(map_core_err)
-    }
-
     /// `(local-date "YYYY-MM-DD", total_secs)` for each day on or after
     /// `since_date`. Core does the date filter in SQL; this wrapper
     /// owns only the `&str → NaiveDate → &str` parse / re-stringify
@@ -890,12 +881,6 @@ impl Database {
             .collect())
     }
 
-    pub fn get_total_secs_since(&self, since_date: &str) -> Result<i64> {
-        let since = chrono::NaiveDate::parse_from_str(since_date, "%Y-%m-%d")
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-        meditate_core::db::total_secs_since_from_db(&self.inner, since).map_err(map_core_err)
-    }
-
     pub fn active_months(&self) -> Result<Vec<(i32, u32)>> {
         meditate_core::db::active_months_from_db(&self.inner).map_err(map_core_err)
     }
@@ -908,35 +893,10 @@ impl Database {
         meditate_core::db::count_sessions_from_db(&self.inner).map_err(map_core_err)
     }
 
-    /// Longest single session as `(duration_secs, start_time_unix)`,
-    /// None on empty DB. The shape is a tuple for backward compat with
-    /// existing UI sites; core returns the full Session.
-    pub fn get_longest_session(&self) -> Result<Option<(i64, i64)>> {
-        let row = meditate_core::db::get_longest_session_from_db(&self.inner).map_err(map_core_err)?;
-        Ok(row.map(|(_id, c)| {
-            (i64::from(c.duration_secs), meditate_core::time::local_iso_to_unix(&c.start_iso))
-        }))
-    }
-
-    /// Median session duration, `None` on empty DB. Thin wrapper —
-    /// core's variant carries the same Option semantics now.
-    pub fn get_median_duration_secs(&self) -> Result<Option<i64>> {
-        Ok(meditate_core::db::get_median_duration_secs_from_db(&self.inner)
-            .map_err(map_core_err)?
-            .map(i64::from))
-    }
-
-    pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
-        meditate_core::db::hour_buckets_from_db(&self.inner).map_err(map_core_err)
-    }
-
     pub fn get_label_totals(&self) -> Result<Vec<(String, i64, i64)>> {
         meditate_core::db::label_totals_seconds_from_db(&self.inner).map_err(map_core_err)
     }
 
-    pub fn month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
-        meditate_core::db::month_total_secs_from_db(&self.inner, year, month).map_err(map_core_err)
-    }
 }
 
 /// In-memory DB for tests. Module-level so sibling files (e.g.

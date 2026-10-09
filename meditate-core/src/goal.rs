@@ -83,6 +83,17 @@ pub struct GoalProgress {
     pub status: GoalStatus,
 }
 
+/// Today's goal progress from the log: only today's sessions count,
+/// not one dated later.
+pub fn today_from_db(db: &Database, today: chrono::NaiveDate) -> GoalProgress {
+    let today_secs = crate::db::get_daily_totals_since_from_db(db, today)
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|(day, secs)| (day == today).then_some(secs))
+        .unwrap_or(0);
+    compute(today_secs, daily_goal_mins_from_db(db))
+}
+
 /// Compute the daily-goal snapshot from today's elapsed seconds
 /// and the user's persisted minute target. `goal_mins == 0` (or
 /// negative) collapses to "InProgress with arc_pct=0" — the
@@ -123,6 +134,28 @@ pub fn compute(today_secs: i64, goal_mins: i64) -> GoalProgress {
 mod tests {
     use super::*;
     use crate::test_macros::assert_f64_eq;
+
+    #[test]
+    fn today_from_db_counts_only_today() {
+        // A session dated tomorrow counted toward today's goal (#18).
+        let db = Database::open_in_memory().unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        for (day, secs) in [("2026-04-26", 300), ("2026-04-27", 600), ("2026-04-28", 900)] {
+            db.insert_session(&crate::db::Session {
+                start_iso: format!("{day}T10:00:00"),
+                duration_secs: secs,
+                label_id: None,
+                notes: None,
+                mode: crate::SessionMode::Timer,
+                uuid: crate::db::SessionUuid::new(""),
+                guided_file_uuid: None,
+            })
+            .unwrap();
+        }
+        let g = today_from_db(&db, today);
+        assert_eq!(g.today_mins, 10);
+        assert_eq!(g.goal_mins, DAILY_GOAL_DEFAULT);
+    }
 
     #[test]
     fn empty_day_is_in_progress_with_zero_pct() {

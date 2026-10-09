@@ -87,7 +87,6 @@ pub use sessions::{
     get_running_average_secs_from_db, get_streak_from_db,
     hour_buckets_from_db, label_totals_seconds_from_db, list_sessions_for_label_from_db,
     list_sessions_from_db, month_total_secs_from_db, query_sessions_from_db,
-    total_secs_since_from_db,
     total_seconds_from_db, Session, SessionFilter, SessionMode,
 };
 pub use uuids::{

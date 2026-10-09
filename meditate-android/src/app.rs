@@ -994,6 +994,32 @@ mod tests {
         }
     }
 
+    /// Stats inputs come from core (#18), the day caption sums the
+    /// cards (#35), and the Timer's streak line is filled (#22).
+    #[test]
+    fn stats_come_from_core_and_the_streak_line_is_set() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(lib.contains("meditate_core::insights::input_from_db(&db, today)"));
+        assert!(lib.contains("meditate_core::goal::today_from_db(&db, today)"));
+        assert!(!lib.contains("total_secs_since_from_db"));
+        assert!(lib.contains("last.total_secs += meditate_core::format::log_card_total_secs("));
+        assert!(lib.contains("ui.set_streak_text("));
+        // "3 Monate" pushed Material's padded segments past the card.
+        let period = slint.find("current-index <=> root.stat-chart-period;").unwrap();
+        assert!(slint[..period].trim_end().ends_with("ModeToggle {"), "the period toggle fits the card");
+        assert!(slint.contains("@tr(\"Start your streak today\")"));
+        assert!(slint.contains("@tr(\"1 day streak\" | \"{n} day streak\" % n)"));
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in ["msgid \"Start your streak today\"\nmsgstr \"", "msgid \"1 day streak\"\nmsgid_plural \"{n} day streak\"\nmsgstr[0] \""] {
+                let at = po.find(id).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(!po[at + id.len()..].starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).
