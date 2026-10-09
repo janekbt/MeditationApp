@@ -1052,6 +1052,16 @@ mod tests {
         assert!(probe[..probe.find("\n    }\n").unwrap()].contains("finally { ex.release() }"));
     }
 
+    /// Deleting a custom bell left its audio on disk.
+    #[test]
+    fn a_deleted_bell_takes_its_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = lib.find("ui.on_bell_delete_confirm(").unwrap();
+        let body = &lib[at..at + lib[at..].find("\n        });\n").unwrap()];
+        assert!(body.contains("meditate_core::audio_files::remove_sound_files("));
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).

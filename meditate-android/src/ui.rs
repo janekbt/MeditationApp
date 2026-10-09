@@ -6339,6 +6339,9 @@ fn build_ui() -> MainWindow {
                         return;
                     }
                 }
+                if let Some(dir) = meditate_dir() {
+                    meditate_core::audio_files::remove_sound_files(&dir.join("sounds"), &uuid);
+                }
                 close_modal(&ui, Modal::BellDelete);
                 repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
                 refresh_bell_rows(&ui);

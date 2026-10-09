@@ -984,7 +984,9 @@ fn present_delete_dialog(
     let uuid = uuid.to_string();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| db.delete_bell_sound(&uuid));
+        if let Some(Ok(())) = app.with_db_mut(|db| db.delete_bell_sound(&uuid)) {
+            meditate_core::audio_files::remove_sound_files(&crate::sync_runner::local_sounds_dir(), &uuid);
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }

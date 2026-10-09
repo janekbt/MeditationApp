@@ -21,8 +21,8 @@ Each batch touches one area and needs one test round. Mark a batch `[x]` when it
 | [x] | D. Locale | #29, #26, #25, #30 | visible every day in German |
 | [x] | E. Stats | #18, #24, #35, #22 | wrong numbers |
 | [x] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
-| [ ] | G. Bell file cleanup | bell audio left on disk | wasted storage |
-| [ ] | H. Layout and wording | #23 rest, #11, #32, GTK sync toast | cosmetic |
+| [x] | G. Bell file cleanup | bell audio left on disk | wasted storage |
+| [ ] | H. Layout and wording | #23 rest, #11, #32, GTK sync toast, picker leftovers | cosmetic |
 
 The deferred refactors come last, each together with the batch named there.
 
@@ -212,6 +212,11 @@ Slint layout and translation content. Check: phone in German and Russian, and th
 
 ### GTK: the sync Test toast is English
 - **Where:** GTK `preferences.rs`, `credentials.rs`: the toast shows core's English `Display`.
+
+### Android: picked audio copies are never removed
+- **Where:** `MeditateFilePickerActivity.kt` `copyAndProbe` writes `sounds/transient.<ext>` and `guided/transient.<ext>`; nothing deletes them after the import (or a cancel). One leftover per extension, overwritten on the next pick with the same extension.
+- **What happens:** up to a few MB stay in app storage (1.6 MB on the FP5, removed by hand on 2026-10-09).
+- **Fix idea:** Delete the transient file once the import or the cancel is handled on the Rust side.
 
 ## Deferred refactors
 

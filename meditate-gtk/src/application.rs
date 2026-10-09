@@ -727,6 +727,14 @@ mod tests {
         }
     }
 
+    /// Deleting a custom bell left its audio on disk.
+    #[test]
+    fn a_deleted_bell_takes_its_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let sounds = std::fs::read_to_string(root.join("src/sounds.rs")).unwrap();
+        assert!(sounds.contains("meditate_core::audio_files::remove_sound_files("));
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

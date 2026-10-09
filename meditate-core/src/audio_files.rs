@@ -53,9 +53,38 @@ pub fn guided_file_path(guided_dir: &Path, uuid: &str) -> PathBuf {
     guided_dir.join(format!("{uuid}.ogg"))
 }
 
+/// Remove a custom bell's audio, `<sounds_dir>/<uuid>.*`, after its
+/// row is gone. Matched by uuid: the stored `file_path` may be another
+/// device's. Best effort, a missing file or folder is fine.
+pub fn remove_sound_files(sounds_dir: &Path, uuid: &str) {
+    let Ok(entries) = std::fs::read_dir(sounds_dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.file_stem().and_then(|s| s.to_str()) == Some(uuid) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_sound_files_takes_only_that_uuids_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [format!("{CUSTOM_UUID}.wav"), format!("{CUSTOM_UUID}.ogg"), format!("{CUSTOM_UUID}x.wav"), "other.wav".into()] {
+            std::fs::write(dir.path().join(name), b"A").unwrap();
+        }
+        remove_sound_files(dir.path(), CUSTOM_UUID);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec![format!("{CUSTOM_UUID}x.wav"), "other.wav".to_string()]);
+        remove_sound_files(&dir.path().join("missing"), CUSTOM_UUID);
+    }
     use crate::db::{BellSoundCategory, Database, Event};
     use crate::seeds::{BUNDLED_BELL_UUID, BUNDLED_BOWL_UUID};
     use std::path::{Path, PathBuf};

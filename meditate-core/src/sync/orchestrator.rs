@@ -334,6 +334,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let count = new_events.len();
         if !new_events.is_empty() {
             self.db.replay_events(&new_events)?;
+            self.remove_files_of_pulled_deletes(&new_events)?;
         }
         // Record ingested batch_uuids only AFTER a successful replay,
         // so a partial replay doesn't leave us thinking we're done with
@@ -689,6 +690,28 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// them ourselves). NotFound on GET is treated as transient
     /// (peer probably pushed the event but their file PUT slipped
     /// past) and skipped; the next pull will retry.
+    /// A delete pulled from a peer takes this device's copy of the
+    /// audio too, once the row is really gone (a newer insert can win).
+    /// Only pulled events: a local guided delete keeps its file for Undo.
+    fn remove_files_of_pulled_deletes(&self, events: &[Event]) -> SyncResult<()> {
+        for e in events {
+            match e.kind.as_str() {
+                "bell_sound_delete"
+                    if !self.db.list_bell_sounds()?.iter().any(|b| b.uuid.as_str() == e.target_id) =>
+                {
+                    crate::audio_files::remove_sound_files(&self.sounds_dir, &e.target_id);
+                }
+                "guided_file_delete"
+                    if crate::db::find_guided_file_by_uuid_from_db(self.db, &e.target_id)?.is_none() =>
+                {
+                    let _ = std::fs::remove_file(self.guided_local_path(&e.target_id));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn pull_custom_sound_files(&self) -> SyncResult<usize> {
         let known = self.db.known_remote_sound_uuids()?;
         let bells = self.db.list_bell_sounds()?;
@@ -2142,6 +2165,38 @@ mod tests {
 
         // File NOT re-pulled — known set already covered it.
         assert!(!tmp_peer.path().join(format!("{uuid}.wav")).exists());
+    }
+
+    #[test]
+    fn a_pulled_delete_removes_the_audio_file() {
+        // Deleting a bell or guided file on one device left the
+        // audio on every other device.
+        let (db_a, fs) = setup();
+        let (a_sounds, a_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let bell = seed_custom_bell_sound(&db_a, a_sounds.path(), "Mine", b"AUDIO", "wav");
+        let guided = uuid::Uuid::new_v4().to_string();
+        db_a.insert_guided_file_with_uuid(&guided, "Guide", "/elsewhere/g.ogg", 60, false).unwrap();
+        std::fs::write(a_guided.path().join(format!("{guided}.ogg")), b"OGG").unwrap();
+        let sync_a = Sync::new(&db_a, &fs, "Meditate", a_sounds.path().to_path_buf(), a_guided.path().to_path_buf());
+        sync_a.sync().unwrap();
+
+        let db_b = Database::open_in_memory().unwrap();
+        let (b_sounds, b_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let sync_b = Sync::new(&db_b, &fs, "Meditate", b_sounds.path().to_path_buf(), b_guided.path().to_path_buf());
+        sync_b.sync().unwrap();
+        let b_bell = b_sounds.path().join(format!("{bell}.wav"));
+        let b_guide = b_guided.path().join(format!("{guided}.ogg"));
+        assert!(b_bell.exists() && b_guide.exists(), "precondition: B pulled both files");
+        std::fs::write(b_sounds.path().join("other.wav"), b"KEEP").unwrap();
+
+        db_a.delete_bell_sound(&bell).unwrap();
+        db_a.delete_guided_file(&guided).unwrap();
+        sync_a.sync().unwrap();
+        sync_b.sync().unwrap();
+
+        assert!(!b_bell.exists(), "the bell's audio goes with its row");
+        assert!(!b_guide.exists(), "the guided audio goes with its row");
+        assert!(b_sounds.path().join("other.wav").exists(), "other files stay");
     }
 
     #[test]
