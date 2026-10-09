@@ -28,6 +28,12 @@ impl LogView {
     /// timer-view session save; keeps the log view in sync without tearing
     /// down and re-querying 15 cards. Skips work if the view hasn't been
     /// populated yet (first log-tab entry will pull fresh from DB).
+    /// Delete the rows still waiting for Undo, for a window close: the
+    /// toast's own dismiss then finds no app and would drop them.
+    pub fn commit_all_pending(&self) {
+        self.imp().commit_all_pending();
+    }
+
     pub fn prepend_session(&self, session: crate::db::Session) {
         // If log is dirty, the next public refresh() will re-query the DB
         // and our prepend would be discarded. Skip it.

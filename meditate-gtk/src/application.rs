@@ -345,10 +345,12 @@ mod imp {
 
             // app.quit — HIG-standard Ctrl+Q action. Without this the
             // accel below mapped to a non-existent action (silent no-op).
+            // Closing the windows (not `quit()`) runs their close
+            // handler, which saves pending deletes and the session time.
             let quit_action = gio::SimpleAction::new("quit", None);
             quit_action.connect_activate(clone!(
                 #[weak] app,
-                move |_, _| app.quit()
+                move |_, _| app.windows().iter().for_each(|w| w.close())
             ));
             app.add_action(&quit_action);
         }
@@ -421,7 +423,6 @@ mod imp {
             // current window, Ctrl+Q quits the whole application.
             app.set_accels_for_action("app.quit", &["<Control>q"]);
             app.set_accels_for_action("win.close", &["<Control>w"]);
-            app.set_accels_for_action("win.timer-toggle", &["space"]);
         }
     }
 }

@@ -80,6 +80,10 @@ impl TimerView {
     }
 
     /// Toggle playback: Idle→start, Running→pause, Paused→resume, Done→noop.
+    pub fn save_snapshot_now(&self) {
+        self.imp().save_snapshot_now();
+    }
+
     pub fn toggle_playback(&self) {
         self.imp().toggle_playback();
     }
@@ -224,5 +228,72 @@ mod tests {
             );
             assert!(imp.contains(&format!("&*self.{bell}_volume_row)")), "{bell}: slider installed");
         }
+    }
+
+    fn read(rel: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap()
+    }
+
+    fn body_of<'a>(source: &'a str, signature: &str) -> &'a str {
+        let at = source.find(signature).unwrap_or_else(|| panic!("{signature} not found"));
+        let end = source[at + 1..].find("\n    fn ").map_or(source.len(), |e| at + 1 + e);
+        &source[at..end]
+    }
+
+    /// Going back to Setup before the write succeeded let the next
+    /// Start overwrite the only copy of a session whose save failed.
+    #[test]
+    fn only_a_successful_save_leaves_done() {
+        let imp = read("src/timer/imp.rs");
+        let body = body_of(&imp, "    fn on_save(&self) {");
+        let resets: Vec<usize> = body.match_indices("reset_mode(mode, false)").map(|(i, _)| i).collect();
+        assert_eq!(resets.len(), 1);
+        assert!(resets[0] > body.find("None => {").unwrap(), "reset only once the write succeeded");
+        assert!(body.contains("if self.saving.get() {"), "a second tap during the write is ignored");
+    }
+
+    /// The snapshot emits no event, so writing it must not start a
+    /// network sync (once a minute during every session).
+    #[test]
+    fn snapshot_writes_do_not_start_a_sync() {
+        let imp = read("src/timer/imp.rs");
+        for sig in ["    fn write_in_progress_snapshot(", "    fn clear_in_progress_snapshot("] {
+            let body = body_of(&imp, sig);
+            assert!(body.contains("app.with_db(") && !body.contains("with_db_mut"), "{sig}");
+        }
+    }
+
+    /// Alt+Left, the mouse Back button or a swipe returned to Setup,
+    /// where Start replaced the running session.
+    #[test]
+    fn the_running_page_cannot_be_popped_by_the_user() {
+        let win = read("src/window/imp.rs");
+        let page = &win[win.find(".tag(\"running\")").unwrap()..];
+        assert!(page[..page.find(".build()").unwrap()].contains(".can_pop(false)"));
+    }
+
+    /// An app-wide Space accelerator runs before the focused widget,
+    /// so typed spaces never reached text fields.
+    #[test]
+    fn space_toggles_the_timer_only_outside_text_fields_and_dialogs() {
+        let app = read("src/application.rs");
+        assert!(!app.contains("timer-toggle"));
+        let win = read("src/window/imp.rs");
+        for needle in ["PropagationPhase::Capture", "is::<gtk::Text>()", "is::<gtk::TextView>()", "visible_dialog()"] {
+            assert!(win.contains(needle), "{needle}");
+        }
+    }
+
+    /// Closing the window dropped Log deletes still waiting for Undo
+    /// and up to 59 s of a running session; Ctrl+Q skipped close.
+    #[test]
+    fn closing_keeps_pending_deletes_and_the_session_time() {
+        let win = read("src/window/imp.rs");
+        let close = body_of(&win, "    fn close_request(&self)");
+        assert!(close.contains("commit_all_pending()"));
+        assert!(close.contains("save_snapshot_now()"));
+        let app = read("src/application.rs");
+        let quit = &app[app.find("SimpleAction::new(\"quit\"").unwrap()..];
+        assert!(!quit[..quit.find("add_action").unwrap()].contains("app.quit()"), "Ctrl+Q goes through close");
     }
 }

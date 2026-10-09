@@ -124,7 +124,13 @@ impl ObjectImpl for MeditateWindow {
 }
 
 impl WidgetImpl for MeditateWindow {}
-impl WindowImpl for MeditateWindow {}
+impl WindowImpl for MeditateWindow {
+    fn close_request(&self) -> glib::Propagation {
+        self.log_view.commit_all_pending();
+        self.timer_view.save_snapshot_now();
+        self.parent_close_request()
+    }
+}
 impl ApplicationWindowImpl for MeditateWindow {}
 impl AdwApplicationWindowImpl for MeditateWindow {}
 
@@ -529,6 +535,9 @@ impl MeditateWindow {
 
         let page = adw::NavigationPage::builder()
             .tag("running").title(title)
+            // Back gestures and Alt+Left led to Setup, where Start
+            // replaced the running session; code can still pop it.
+            .can_pop(false)
             .child(&toolbar_view)
             .build();
 
@@ -851,14 +860,29 @@ impl MeditateWindow {
 
     fn setup_window_actions(&self) {
         let obj = self.obj();
-        let action = gtk::gio::SimpleAction::new("timer-toggle", None);
-        action.connect_activate(clone!(
-            #[weak] obj,
-            move |_, _| {
-                obj.imp().timer_view.toggle_playback();
-            }
+
+        // Space toggles the timer, but not while typing or in a dialog.
+        // Capture phase so a focused button doesn't take it first; an
+        // app accelerator would also beat the text field to the key.
+        let space = gtk::ShortcutController::new();
+        space.set_propagation_phase(gtk::PropagationPhase::Capture);
+        space.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("space"),
+            Some(gtk::CallbackAction::new(clone!(
+                #[weak] obj,
+                #[upgrade_or] glib::Propagation::Proceed,
+                move |_, _| {
+                    let typing = gtk::prelude::GtkWindowExt::focus(&obj)
+                        .is_some_and(|w| w.is::<gtk::Text>() || w.is::<gtk::TextView>());
+                    if typing || obj.visible_dialog().is_some() {
+                        return glib::Propagation::Proceed;
+                    }
+                    obj.imp().timer_view.toggle_playback();
+                    glib::Propagation::Stop
+                }
+            ))),
         ));
-        obj.add_action(&action);
+        obj.add_controller(space);
 
         // HIG-standard `win.close` shortcut (Ctrl+W). Different from
         // `app.quit` (Ctrl+Q) which exits the whole process — a

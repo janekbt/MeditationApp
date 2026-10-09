@@ -271,6 +271,8 @@ pub struct TimerView {
     /// to apply a different preset, so undoing the previous one no
     /// longer makes sense.
     current_apply_toast: RefCell<Option<adw::Toast>>,
+    /// A Save write is in flight; a second tap must not insert twice.
+    saving: Cell<bool>,
 
     // ── Guided meditation state ──────────────────────────────────────
     /// Transient "Open File" pick — set when the user picks a file via
@@ -2372,6 +2374,9 @@ impl TimerView {
     }
 
     fn on_save(&self) {
+        if self.saving.get() {
+            return;
+        }
         self.stop_active_signals();
         let mode = self.current_mode();
 
@@ -2448,10 +2453,13 @@ impl TimerView {
         // we can push the new session into the log feed incrementally
         // and mark stats stale for lazy refresh on tab re-entry.
         if let Some(app) = self.get_app() {
+            self.saving.set(true);
+            let obj = self.obj().clone();
             glib::MainContext::default().spawn_local(async move {
                 let result = app
                     .with_db_blocking_mut(move |db| db.save_ended_session(&data))
                     .await;
+                obj.imp().saving.set(false);
                 let session = match result {
                     Some(Ok(s)) => s,
                     Some(Err(e)) => {
@@ -2492,6 +2500,9 @@ impl TimerView {
                     }
                 };
 
+                // Only now: on a failed write Done stays up, because the
+                // next Start would overwrite the snapshot, the only copy.
+                obj.imp().reset_mode(mode, false);
                 app.invalidate(crate::application::InvalidateScope::STATS);
                 if let Some(win) = app.active_window()
                     .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
@@ -2502,10 +2513,6 @@ impl TimerView {
                 }
             });
         }
-
-        // The save above drops the snapshot in the same write; if it
-        // fails, the snapshot recovers the session on the next start.
-        self.reset_mode(mode, false);
     }
 
     fn on_discard(&self) {
@@ -2621,7 +2628,8 @@ impl TimerView {
             label_id,
             guided_file_uuid,
         };
-        app.with_db_mut(|db| {
+        // Local-only row, no event: nothing for a sync to push.
+        app.with_db(|db| {
             if let Err(e) = db.set_session_in_progress(&snapshot) {
                 meditate_core::log(
                     "session.recovery",
@@ -2638,7 +2646,7 @@ impl TimerView {
     /// (which the user can Undo), not a state corruption.
     fn clear_in_progress_snapshot(&self) {
         let Some(app) = self.get_app() else { return; };
-        app.with_db_mut(|db| {
+        app.with_db(|db| {
             if let Err(e) = db.clear_session_in_progress() {
                 meditate_core::log(
                     "session.recovery",
@@ -2658,6 +2666,15 @@ impl TimerView {
     /// Coexists with `start_tick` (which drives the 1 Hz running
     /// display) — separate source so an eMMC fsync stall on the
     /// snapshot write doesn't visibly hitch the running label.
+    /// Rewrite the snapshot with the current time, for a window close:
+    /// the 60 s heartbeat alone would lose up to 59 s.
+    pub(super) fn save_snapshot_now(&self) {
+        if self.core_session.borrow().is_some() {
+            let secs = self.elapsed_secs_for_mode().try_into().unwrap_or(u32::MAX);
+            self.write_in_progress_snapshot(secs);
+        }
+    }
+
     fn start_snapshot_tick(&self) {
         self.cancel_snapshot_tick();
         let obj = self.obj().clone();

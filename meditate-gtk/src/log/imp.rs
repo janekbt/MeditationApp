@@ -723,7 +723,7 @@ impl LogView {
     /// the corresponding cards. One STATS invalidate at the end rather
     /// than per-row. Called from the toast's dismissed handler when the
     /// timer naturally expires.
-    fn commit_all_pending(&self) {
+    pub(super) fn commit_all_pending(&self) {
         let pending = std::mem::take(&mut *self.pending_deletes.borrow_mut());
         *self.active_delete_toast.borrow_mut() = None;
         if pending.is_empty() { return; }
