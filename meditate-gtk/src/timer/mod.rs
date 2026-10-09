@@ -1,6 +1,7 @@
 mod imp;
 
 pub use imp::TimerMode;
+pub(crate) use imp::show_no_vibration_note;
 
 use gtk::glib;
 use gtk::glib::prelude::*;
@@ -167,15 +168,16 @@ mod tests {
         assert_eq!(code.matches("CoreSessionSettings::from_db(").count(), 1);
     }
 
-    /// Start dismisses the "'X' applied" toast: its Undo would
-    /// re-apply the old settings under the running session.
+    /// Start and a mode switch close every toast: an Undo left up
+    /// would change the running session, or put one mode's settings
+    /// into another.
     #[test]
-    fn starting_a_session_dismisses_the_preset_undo() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs");
-        let source = std::fs::read_to_string(path).unwrap();
-        let at = source.find("    fn on_start(&self) {").unwrap();
-        let head = &source[at..at + 700];
-        assert!(head.contains("if let Some(toast) = self.current_apply_toast.replace(None) {\n            toast.dismiss();"));
+    fn start_and_a_mode_switch_close_every_toast() {
+        let imp = read("src/timer/imp.rs");
+        for sig in ["    fn on_start(&self) {", "    fn on_mode_switched(&self) {"] {
+            assert!(body_of(&imp, sig).contains("window.dismiss_toasts();"), "{sig}");
+        }
+        assert!(read("src/window/mod.rs").contains("self.imp().toast_overlay.dismiss_all();"));
     }
 
     /// Everything `CoreSession::start` returns (the starting bell
@@ -232,6 +234,47 @@ mod tests {
 
     fn read(rel: &str) -> String {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap()
+    }
+
+    /// A top-level function, up to its closing brace.
+    fn top_level_fn<'a>(source: &'a str, signature: &str) -> &'a str {
+        let at = source.find(signature).unwrap_or_else(|| panic!("{signature} not found"));
+        &source[at..at + source[at..].find("\n}\n").unwrap()]
+    }
+
+    /// Loading the Cues toggle wrote "sound" on every launch of a
+    /// device without vibration, and the phone took that over.
+    #[test]
+    fn the_cues_toggle_writes_nothing_while_it_loads() {
+        let imp = read("src/timer/imp.rs");
+        assert!(body_of(&imp, "    fn setup_cues_signal_mode_toggle(&self) {").contains("bells_loading.get()"));
+    }
+
+    /// Without vibration every choice stays selectable, so a mistaken
+    /// tap on Sound can be taken back, and the row says what still
+    /// plays. The session plays the choice minus the vibration.
+    #[test]
+    fn every_signal_choice_stays_selectable_without_vibration() {
+        for file in ["src/timer/imp.rs", "src/bells.rs"] {
+            let source = read(file);
+            let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+            assert!(!code.contains("set_enabled(false)"), "{file}");
+            assert!(!code.contains("clamp_signal_mode_for_haptic"), "{file}");
+        }
+        let imp = read("src/timer/imp.rs");
+        for sig in [
+            "pub(crate) fn build_signal_mode_toggle_widget(",
+            "pub(crate) fn apply_signal_mode_state(",
+            "pub(crate) fn build_phase_signal_mode_toggle_widget(",
+            "pub(crate) fn apply_phase_signal_mode_state(",
+            "pub(crate) fn build_per_mode_signal_toggle_widget(",
+        ] {
+            assert!(top_level_fn(&imp, sig).contains("show_no_vibration_note("), "{sig}");
+        }
+        assert!(body_of(&imp, "    pub(crate) fn refresh_cues_signal_mode_state(").contains("show_no_vibration_note("));
+        assert_eq!(read("src/bells.rs").matches("show_no_vibration_note(").count(), 2, "when built and on change");
+        // The note's width squeezed the choices until they read "S…".
+        assert!(top_level_fn(&imp, "pub(crate) fn show_no_vibration_note(").contains("toggle_group.set_size_request("));
     }
 
     fn body_of<'a>(source: &'a str, signature: &str) -> &'a str {

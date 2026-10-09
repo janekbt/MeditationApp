@@ -209,17 +209,16 @@ impl Database {
         Ok(self.list_interval_bells()?.into_iter().find(|b| b.id == rowid))
     }
 
-    /// Every bell row in insert order. The B.3.3 list page renders this
-    /// directly. Order is `id ASC` (rowid) — deterministic and stable
-    /// across reads, matches the user's mental model of "first one I
-    /// added is at the top".
+    /// Every bell row in creation order: the first one added is at the
+    /// top, on every device (`created_iso` syncs; rowids follow arrival
+    /// order). The B.3.3 list page renders this directly.
     pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, kind, minutes, jitter_pct, sound_uuid,
                     vibration_pattern_uuid, signal_mode, enabled, created_iso,
                     volume_pct
              FROM interval_bells
-             ORDER BY id ASC",
+             ORDER BY created_iso ASC, uuid ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {

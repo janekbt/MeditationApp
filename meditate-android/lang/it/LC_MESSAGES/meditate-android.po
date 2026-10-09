@@ -826,9 +826,6 @@ msgstr "Impossibile salvare la sessione: errore di archiviazione"
 msgid "Couldn't save session: storage unavailable"
 msgstr "Impossibile salvare la sessione: archiviazione non disponibile"
 
-msgid "Wait for sync: some bell sounds are missing"
-msgstr "Attendi la sincronizzazione: mancano suoni"
-
 msgid "File is larger than 10 MB"
 msgstr "Il file supera i 10 MB"
 

@@ -353,7 +353,7 @@ pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<V
         sql.push_str(" WHERE ");
         sql.push_str(&clauses.join(" AND "));
     }
-    sql.push_str(" ORDER BY start_iso DESC LIMIT ? OFFSET ?");
+    sql.push_str(" ORDER BY start_iso DESC, uuid ASC LIMIT ? OFFSET ?");
 
     // Param order matches positional `?` placement: optional
     // label_id first (only when the clause is included), then

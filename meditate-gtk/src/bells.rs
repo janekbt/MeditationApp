@@ -520,19 +520,12 @@ fn push_edit_page(
         .name("both")
         .label(gettext("Both"))
         .build();
-    if !app.has_haptic() {
-        toggle_vibration.set_enabled(false);
-        toggle_both.set_enabled(false);
-    }
     signal_toggle.add(toggle_sound);
     signal_toggle.add(toggle_vibration);
     signal_toggle.add(toggle_both);
-    let initial_mode = meditate_core::bells::clamp_signal_mode_for_haptic(
-        bell.signal_mode,
-        app.has_haptic(),
-    );
-    signal_toggle.set_active_name(Some(initial_mode.as_db_str()));
+    signal_toggle.set_active_name(Some(bell.signal_mode.as_db_str()));
     signal_toggle_host.append(&signal_toggle);
+    crate::timer::show_no_vibration_note(&signal_toggle);
 
     // Sound row — taps push the bell-sound chooser. Subtitle shows the
     // currently-selected sound's name (looked up by uuid).
@@ -567,9 +560,9 @@ fn push_edit_page(
     form.add(&pattern_row);
 
     // Initial visibility based on the saved signal mode.
-    sound_row.set_visible(initial_mode.includes_sound());
-    volume_row.set_visible(initial_mode.includes_sound());
-    pattern_row.set_visible(initial_mode.includes_vibration());
+    sound_row.set_visible(bell.signal_mode.includes_sound());
+    volume_row.set_visible(bell.signal_mode.includes_sound());
+    pattern_row.set_visible(bell.signal_mode.includes_vibration());
 
     prefs_page.add(&form);
 
@@ -741,6 +734,7 @@ fn push_edit_page(
         let mode = tg.active_name()
             .and_then(|n| crate::db::SignalMode::from_db_str(n.as_str()))
             .unwrap_or(crate::db::SignalMode::Sound);
+        crate::timer::show_no_vibration_note(tg);
         snap_for_sig.borrow_mut().signal_mode = mode;
         sound_row_for_sig.set_visible(mode.includes_sound());
         volume_row_for_sig.set_visible(mode.includes_sound());

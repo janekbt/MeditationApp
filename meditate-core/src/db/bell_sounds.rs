@@ -196,9 +196,9 @@ impl Database {
         Ok(())
     }
 
-    /// Every bell sound in insert order. The B.4.3 chooser renders
-    /// this directly. id ASC keeps bundled rows (which get inserted
-    /// first via the seed) at the top of the list.
+    /// Every bell sound in creation order, which syncs, so every
+    /// device lists them alike (rowids follow arrival order). The
+    /// B.4.3 chooser renders this directly.
     pub fn list_bell_sounds(&self) -> Result<Vec<BellSound>> {
         // Custom imports first (is_bundled = 0), then the curated
         // bundled set. The chooser places "Choose your own…" at the
@@ -208,7 +208,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
              FROM bell_sounds
-             ORDER BY is_bundled ASC, id ASC",
+             ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -241,7 +241,7 @@ impl Database {
             "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
              FROM bell_sounds
              WHERE category = ?1
-             ORDER BY is_bundled ASC, id ASC",
+             ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
         )?;
         let rows = stmt
             .query_map(params![category.as_db_str()], |row| {

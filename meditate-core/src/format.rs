@@ -564,11 +564,26 @@ pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
         None
     };
 
-    let bells = if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
-        let n = cfg.interval_bells.bells.len();
-        Some(if n == 1 { BellsCountKey::One } else { BellsCountKey::Many(n) })
-    } else {
-        None
+    // Only bells that ring count; Box Breath rings no interval bells.
+    let n = match cfg.timing {
+        PresetTiming::Timer { stopwatch, .. } if cfg.interval_bells.enabled => {
+            let display = crate::bells::DisplayMode::from_stopwatch_flag(stopwatch);
+            cfg.interval_bells
+                .bells
+                .iter()
+                .filter(|b| {
+                    b.enabled
+                        && !crate::db::IntervalBellKind::from_db_str(&b.kind)
+                            .is_some_and(|k| crate::bells::is_bell_inert_in_stopwatch(k, display))
+                })
+                .count()
+        }
+        _ => 0,
+    };
+    let bells = match n {
+        0 => None,
+        1 => Some(BellsCountKey::One),
+        n => Some(BellsCountKey::Many(n)),
     };
 
     Some(PresetSubtitleParts {
@@ -1119,6 +1134,7 @@ mod tests {
             signal_mode: "sound".into(),
             vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
             volume: Default::default(),
+            uuid: Default::default(),
         };
 
         let mut cfg = timer_cfg(false, 600);
@@ -1150,6 +1166,23 @@ mod tests {
             preset_subtitle_parts(&json).unwrap().bells,
             Some(BellsCountKey::Many(3))
         );
+
+        // Only bells that ring count: not a switched-off one, not a
+        // "before end" one under the stopwatch, none in Box Breath.
+        let off = PresetIntervalBell { enabled: false, ..one_bell.clone() };
+        let before_end = PresetIntervalBell { kind: "fixed_from_end".into(), ..one_bell.clone() };
+        cfg.interval_bells = PresetIntervalBells {
+            enabled: true,
+            bells: vec![one_bell.clone(), one_bell.clone(), off, before_end],
+        };
+        let count = |cfg: &PresetConfig| preset_subtitle_parts(&cfg_to_json(cfg)).unwrap().bells;
+        assert_eq!(count(&cfg), Some(BellsCountKey::Many(3)));
+        cfg.timing = PresetTiming::Timer { stopwatch: true, duration_secs: 600 };
+        assert_eq!(count(&cfg), Some(BellsCountKey::Many(2)));
+        cfg.timing = PresetTiming::BoxBreath {
+            stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 600,
+        };
+        assert_eq!(count(&cfg), None);
     }
 
     #[test]

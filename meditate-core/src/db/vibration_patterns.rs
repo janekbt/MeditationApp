@@ -46,7 +46,7 @@ pub fn list_vibration_patterns_from_db(db: &Database) -> Result<Vec<VibrationPat
         "SELECT id, uuid, name, duration_ms, intensities_json,
                 chart_kind, is_bundled, created_iso, updated_iso
          FROM vibration_patterns
-         ORDER BY is_bundled ASC, id ASC",
+         ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {

@@ -1270,8 +1270,7 @@ fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
 /// is shell-side reactive state (duration / stopwatch / BB
 /// pattern), persisted here like GTK's `set_countdown_target` /
 /// `set_breathing_duration_secs`. Returns `false` on parse or
-/// `ApplyError` (SyncPending: a bell sound / pattern the preset uses
-/// hasn't synced yet) — and then the snackbar says so, like GTK.
+/// a failed write — and then the snackbar says so, like GTK.
 fn apply_preset_json(
     ui: &MainWindow,
     json: &str,
@@ -1280,7 +1279,7 @@ fn apply_preset_json(
 ) -> bool {
     let applied = apply_preset_config_json(ui, json, mode, timer_session_secs);
     if !applied {
-        show_notice(ui, ui.global::<Tr>().invoke_preset_sync_pending(), None, 4);
+        show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
     }
     applied
 }
@@ -4125,11 +4124,9 @@ fn build_ui() -> MainWindow {
                 {
                     // No preview plays into the session.
                     stop_all_previews(&ui);
-                    // An Undo of the applied preset would change the
-                    // running session's settings.
-                    if NOTICE.with_borrow_mut(app::Notice::session_started) {
-                        finish_notice(&ui);
-                    }
+                    // An Undo would change the running session's settings:
+                    // every snackbar goes, a pending one is committed.
+                    finish_notice(&ui);
                     let settings = match lock_db() {
                         Some(db) => meditate_core::session::SessionSettings::from_db(&db, shape),
                         None => meditate_core::session::SessionSettings { shape, ..Default::default() },
@@ -4906,6 +4903,9 @@ fn build_ui() -> MainWindow {
             current_mode.set(new_mode);
             if let Some(ui) = weak.upgrade() {
                 let core_mode: meditate_core::SessionMode = new_mode.into();
+                // An open Undo (a preset's, above all) belongs to the
+                // mode left.
+                finish_notice(&ui);
                 // Reflect the current Guided pick (if any) into
                 // the Setup row + Start gate.
                 {
@@ -5479,7 +5479,7 @@ fn build_ui() -> MainWindow {
                 show_notice(
                     &ui,
                     ui.global::<Tr>().invoke_applied(preset.name.clone().into()),
-                    snapshot.map(|j| app::PendingUndo::PresetApply(j, core_mode)),
+                    snapshot.map(app::PendingUndo::PresetApply),
                     5,
                 );
             }
@@ -8017,15 +8017,8 @@ fn build_ui() -> MainWindow {
                     write_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
-                U::PresetApply(json, mode) => {
-                    // The snapshot belongs to the mode it was taken in;
-                    // after a mode switch, re-applying it would push
-                    // that mode's values into the visible page.
-                    if mode == core_mode {
-                        apply_preset_json(&ui, &json, mode, &timer_session_secs);
-                    } else {
-                        meditate_core::log("preset.undo", "skipped: mode switched since apply");
-                    }
+                U::PresetApply(json) => {
+                    apply_preset_json(&ui, &json, core_mode, &timer_session_secs);
                 }
                 U::PresetDelete(u, name, mode, starred, json) => {
                     write_ok(&ui, "preset.undo", lock_db().map(|db| db.insert_preset_with_uuid(&u, &name, mode, starred, &json)));

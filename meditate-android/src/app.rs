@@ -721,8 +721,9 @@ pub enum PendingUndo {
     LogDeletes,
     /// A crash-recovered session's uuid.
     Recovery(String),
-    /// The pre-apply snapshot and the mode it belongs to.
-    PresetApply(String, meditate_core::SessionMode),
+    /// The pre-apply snapshot. A mode switch closes the snackbar, so
+    /// it always belongs to the mode shown.
+    PresetApply(String),
     /// A deleted preset: uuid, name, mode, starred, config JSON.
     PresetDelete(String, String, meditate_core::SessionMode, bool, String),
     /// An overridden preset: uuid, prior config JSON.
@@ -754,25 +755,14 @@ impl Notice {
     pub fn take(&mut self) -> Option<PendingUndo> {
         self.0.take()
     }
-
-    /// A session started: a preset-apply Undo would change the running
-    /// session's settings, so it goes. True if one was pending.
-    pub fn session_started(&mut self) -> bool {
-        let applied = matches!(self.0, Some(PendingUndo::PresetApply(..)));
-        if applied {
-            self.0 = None;
-        }
-        applied
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Notice, PendingUndo};
-    use meditate_core::SessionMode;
 
     fn apply() -> PendingUndo {
-        PendingUndo::PresetApply("{}".into(), SessionMode::Timer)
+        PendingUndo::PresetApply("{}".into())
     }
 
     #[test]
@@ -794,26 +784,18 @@ mod tests {
     }
 
     #[test]
-    fn a_session_start_drops_only_a_preset_apply_undo() {
-        let mut n = Notice::default();
-        n.show(Some(apply()));
-        assert!(n.session_started());
-        assert_eq!(n.take(), None);
-        n.show(Some(PendingUndo::LogDeletes));
-        assert!(!n.session_started());
-        assert_eq!(n.take(), Some(PendingUndo::LogDeletes));
-    }
-
-    #[test]
-    fn starting_a_session_hides_the_preset_undo() {
-        // Undo during a session re-applied the old settings under it.
-        // Every start (button, widget, starred preset) goes through
-        // the Start tap's start branch.
+    fn start_and_a_mode_switch_close_every_snackbar() {
+        // An Undo left up changed the running session's settings, or
+        // did nothing after a mode switch. Every start (button, widget,
+        // starred preset) goes through the Start tap's start branch.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("// Idle/Finished → start.").unwrap();
         let start = &lib[at..at + lib[at..].find("AppState::start_session(").unwrap()];
-        assert!(start.contains("if NOTICE.with_borrow_mut(app::Notice::session_started) {\n                        finish_notice(&ui);"));
+        assert!(start.contains("\n                    finish_notice(&ui);\n"), "unconditionally");
+        let at = lib.find("ui.on_mode_changed(move |idx| {").unwrap();
+        let switch = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(switch.contains("finish_notice(&ui);"));
     }
 
     #[test]
@@ -1932,10 +1914,9 @@ mod tests {
         assert!(slint.contains("@tr(\"Couldn't save session: storage unavailable\")"));
     }
 
-    /// A preset that can't be applied (its bell sound or pattern hasn't
-    /// synced yet) says so instead of doing nothing — chip, widget and
-    /// Undo alike, as they all go through apply_preset_json. GTK shows
-    /// the same message.
+    /// A preset that can't be applied (a failed write) says so instead
+    /// of doing nothing — chip, widget and Undo alike, as they all go
+    /// through apply_preset_json. GTK shows the same message.
     #[test]
     fn a_preset_that_cannot_apply_says_so() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1945,35 +1926,13 @@ mod tests {
         let outer = code.find("fn apply_preset_json(").unwrap();
         let outer = &code[outer..outer + code[outer..].find("\n}\n").unwrap()];
         assert!(outer.contains("apply_preset_config_json("), "one wrapper around the real apply");
-        assert!(outer.contains("show_notice(ui, ui.global::<Tr>().invoke_preset_sync_pending(), None, 4);"), "every failure says so");
+        assert!(outer.contains("show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);"), "every failure says so");
         assert_eq!(code.matches("apply_preset_config_json(").count(), 2, "only the wrapper calls it");
 
+        // Sync brings rows in order: a missing sound was deleted, and
+        // "Wait for sync" never ended.
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert!(slint.contains("@tr(\"Wait for sync: some bell sounds are missing\")"));
-    }
-
-    /// The sync-pending message is short in every language: GTK shows
-    /// it in a one-line toast. Checked in both apps' translations.
-    #[test]
-    fn the_sync_pending_message_is_short_everywhere() {
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
-            // Android's wording lost its long dash; GTK's hasn't yet.
-            for (po, msgid) in [
-                (repo.join(format!("meditate-gtk/po/{lang}.po")), "Wait for sync \u{2014} some bell sounds are missing"),
-                (
-                    repo.join(format!("meditate-android/lang/{lang}/LC_MESSAGES/meditate-android.po")),
-                    "Wait for sync: some bell sounds are missing",
-                ),
-            ] {
-                let text = std::fs::read_to_string(&po).unwrap();
-                let entry = format!("msgid \"{msgid}\"\nmsgstr \"");
-                let at = text.find(&entry).unwrap_or_else(|| panic!("{} lacks it", po.display())) + entry.len();
-                let translated = &text[at..at + text[at..].find("\"\n").unwrap()];
-                assert!(!translated.is_empty(), "{lang}: untranslated in {}", po.display());
-                assert!(translated.chars().count() <= 50, "{lang}: too long for a toast: {translated}");
-            }
-        }
+        assert!(!slint.contains("Wait for sync"));
     }
 
     /// The label toggle goes through core's set_active_for_mode, which

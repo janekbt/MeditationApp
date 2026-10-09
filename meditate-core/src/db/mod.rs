@@ -381,6 +381,54 @@ mod tests {
     use super::*;
     use crate::test_macros::assert_matches;
 
+    #[test]
+    fn every_list_has_the_same_order_on_every_device() {
+        // Rowids follow the order a device received its rows in, so a
+        // list sorted by them differs between devices. Each table gets
+        // row "b" first and row "a" second; "a" is created earlier, or
+        // at the same instant, so it must come first everywhere.
+        let db = Database::open_in_memory().unwrap();
+        let tables = ["bell_sounds", "vibration_patterns", "guided_files", "presets", "interval_bells"];
+        db.insert_bell_sound_with_uuid("b", "B", "/b.ogg", false, "audio/ogg", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound_with_uuid("a", "A", "/a.ogg", false, "audio/ogg", BellSoundCategory::General).unwrap();
+        db.insert_vibration_pattern_with_uuid("b", "B", 100, &[1.0], ChartKind::Line, false).unwrap();
+        db.insert_vibration_pattern_with_uuid("a", "A", 100, &[1.0], ChartKind::Line, false).unwrap();
+        db.insert_guided_file_with_uuid("b", "B", "/b.ogg", 60, false).unwrap();
+        db.insert_guided_file_with_uuid("a", "A", "/a.ogg", 60, false).unwrap();
+        db.insert_preset_with_uuid("b", "B", SessionMode::Timer, false, "{}").unwrap();
+        db.insert_preset_with_uuid("a", "A", SessionMode::Timer, false, "{}").unwrap();
+        for uuid in ["b", "a"] {
+            db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "", "", SignalMode::Sound).unwrap();
+            db.conn.execute("UPDATE interval_bells SET uuid = ?1 WHERE uuid NOT IN ('a', 'b')", [uuid]).unwrap();
+            db.insert_session(&Session {
+                start_iso: "2026-01-01T08:00:00".into(),
+                duration_secs: 60,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Timer,
+                uuid: SessionUuid::new(""),
+                guided_file_uuid: None,
+            })
+            .unwrap();
+            db.conn.execute("UPDATE sessions SET uuid = ?1 WHERE uuid NOT IN ('a', 'b')", [uuid]).unwrap();
+        }
+        let (older, newer) = ("2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00");
+        for b_created in [newer, older] {
+            for t in tables {
+                db.conn.execute(&format!("UPDATE {t} SET created_iso = ?1 WHERE uuid = 'b'"), [b_created]).unwrap();
+                db.conn.execute(&format!("UPDATE {t} SET created_iso = ?1 WHERE uuid = 'a'"), [older]).unwrap();
+            }
+            let ab = ["a", "b"];
+            assert_eq!(db.list_bell_sounds().unwrap().iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(), ab);
+            assert_eq!(list_vibration_patterns_from_db(&db).unwrap().iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(), ab);
+            assert_eq!(list_guided_files_from_db(&db).unwrap().iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(), ab);
+            assert_eq!(list_presets_from_db(&db).unwrap().iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(), ab);
+            assert_eq!(db.list_interval_bells().unwrap().iter().map(|r| r.uuid.as_str()).collect::<Vec<_>>(), ab);
+        }
+        let sessions = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
+        assert_eq!(sessions.iter().map(|(_, s)| s.uuid.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+    }
+
     // ── Cache schema version + walk-on-upgrade ────────────────────────
 
     #[test]

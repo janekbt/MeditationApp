@@ -356,13 +356,24 @@ pub fn phase_cue_names(
     ))
 }
 
-/// Clamp a persisted `SignalMode` down to `Sound` when the runtime
-/// has no haptic capability. Mirrors the gtk-side UI behaviour:
-/// the user can author Vibration/Both modes in setups they share
-/// across devices, but a sound-only device must not silently fire
-/// nothing for a "Vibration" row. Pure boolean fold.
-pub fn clamp_signal_mode_for_haptic(mode: SignalMode, haptic_available: bool) -> SignalMode {
-    if haptic_available { mode } else { SignalMode::Sound }
+/// The line a device without vibration shows under a Sound /
+/// Vibration / Both choice. The choice itself stays as set, so a
+/// session there plays what the phone would, minus the vibration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoVibrationNote {
+    /// Vibration only: nothing plays.
+    Silent,
+    /// Both: only the sound plays.
+    SoundOnly,
+}
+
+pub fn no_vibration_note(mode: SignalMode, haptic_available: bool) -> Option<NoVibrationNote> {
+    match mode {
+        _ if haptic_available => None,
+        SignalMode::Sound => None,
+        SignalMode::Vibration => Some(NoVibrationNote::Silent),
+        SignalMode::Both => Some(NoVibrationNote::SoundOnly),
+    }
 }
 
 /// Which actual playback channels fire for a given bell. Named
@@ -1027,25 +1038,14 @@ mod tests {
     }
 
     #[test]
-    fn clamp_signal_mode_for_haptic_collapses_to_sound_when_unavailable() {
-        assert_eq!(
-            clamp_signal_mode_for_haptic(SignalMode::Vibration, false),
-            SignalMode::Sound,
-        );
-        assert_eq!(
-            clamp_signal_mode_for_haptic(SignalMode::Both, false),
-            SignalMode::Sound,
-        );
-        assert_eq!(
-            clamp_signal_mode_for_haptic(SignalMode::Sound, false),
-            SignalMode::Sound,
-        );
-    }
-
-    #[test]
-    fn clamp_signal_mode_for_haptic_passes_through_when_available() {
+    fn a_device_that_cannot_vibrate_says_what_still_plays() {
+        // The choice stays as set, so it travels back to the phone
+        // intact; the line says what this device does with it.
+        assert_eq!(no_vibration_note(SignalMode::Vibration, false), Some(NoVibrationNote::Silent));
+        assert_eq!(no_vibration_note(SignalMode::Both, false), Some(NoVibrationNote::SoundOnly));
+        assert_eq!(no_vibration_note(SignalMode::Sound, false), None);
         for m in [SignalMode::Sound, SignalMode::Vibration, SignalMode::Both] {
-            assert_eq!(clamp_signal_mode_for_haptic(m, true), m);
+            assert_eq!(no_vibration_note(m, true), None);
         }
     }
 

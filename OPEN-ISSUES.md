@@ -17,7 +17,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 |:---:|---|---|---|
 | [x] | A. Sync data safety | #40, #66, #69, #43, #88, #68, #90, #94 | data loss across devices |
 | [x] | B. GTK session safety | #135, #129, #128, #67, #131, #134 | GTK loses or ends sessions |
-| [ ] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
+| [x] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
 | [ ] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
 | [ ] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
 | [ ] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
@@ -434,6 +434,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: renaming label "Yoga" to "Zen" leaves the widget subtitle at "Yoga". Renaming or deleting a sound leaves the Interval Bells list showing the old name.
 - Fix: `refresh_widget(&ui);` next to `refresh_preset_chips` at 4333 (then the separate calls after preset actions can go); `populate_interval_bells(&ui);` in both sound handlers.
 - GTK twin: renaming or deleting a sound leaves the bell edit page and the Interval Bells list with the old name, and a deleted sound never shows "Missing" (`bells.rs:216, 539-541, 696`; `sounds.rs:946-957, 985-993`). Refresh both on the NavigationPage `shown` signal.
+- Same for patterns, and for Setup's own rows: deleting a vibration pattern in the chooser and going back leaves Setup's bell pattern row with the deleted name (seen while testing batch C). Setup re-reads its bell rows only on a pick, a mode switch or a preset apply (`timer/imp.rs` `refresh_streak`). Re-read them when a chooser closes.
 
 ### #124 A deleted or renamed guided file stays selected; open choosers keep deleted items
 - Where: gtk `timer/imp.rs:610-622, 3289-3398`; android `ui.rs:2475-2493, 5273-5285, 6150-6185, 6374-6412`.

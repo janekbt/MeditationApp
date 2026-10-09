@@ -96,7 +96,7 @@ pub struct PresetIntervalBells {
 /// Snapshot of one row from the `interval_bells` library. `kind` is the
 /// db-string form ("interval", "fixed_from_start", "fixed_from_end")
 /// to keep this file decoupled from `meditate_core::db::IntervalBellKind`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PresetIntervalBell {
     pub kind: String,
     pub minutes: u32,
@@ -111,6 +111,33 @@ pub struct PresetIntervalBell {
     /// per-bell volumes carry none and load at the middle.
     #[serde(default)]
     pub volume: crate::bell_volume::BellVolume,
+    /// The library row this is. Presets saved before it carry none;
+    /// `apply` then finds the row by its settings.
+    #[serde(default)]
+    pub uuid: crate::db::IntervalBellUuid,
+}
+
+impl From<IntervalBell> for PresetIntervalBell {
+    fn from(b: IntervalBell) -> Self {
+        Self {
+            kind: b.kind.as_db_str().to_string(),
+            minutes: b.minutes,
+            jitter_pct: b.jitter_pct,
+            sound_uuid: b.sound_uuid,
+            enabled: b.enabled,
+            signal_mode: b.signal_mode.as_db_str().to_string(),
+            vibration_pattern_uuid: b.vibration_pattern_uuid,
+            volume: b.volume,
+            uuid: b.uuid,
+        }
+    }
+}
+
+impl PresetIntervalBell {
+    /// Same kind, timing, sound, pattern and volume, on or off.
+    fn same_settings(&self, other: &Self) -> bool {
+        Self { enabled: other.enabled, uuid: other.uuid.clone(), ..self.clone() } == *other
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -186,13 +213,12 @@ impl PresetConfig {
 // `snapshot` reads the current setup state out of `Database` (settings
 // rows, interval-bell library, box-breath phase rows) and combines it
 // with the live UI state (`mode`, `timing`) the shell already knows to
-// produce a `PresetConfig`. `apply` is the inverse: validates sound +
-// pattern UUIDs are locally present, then writes settings + library +
-// phase rows; returns the cfg's `timing` so the shell can reflect it
-// into widget state.
+// produce a `PresetConfig`. `apply` is the inverse: writes settings,
+// switches library bells and writes phase rows; returns the cfg's
+// `timing` so the shell can reflect it into widget state.
 //
 // Apply is NOT atomic — each underlying `db.set_setting` /
-// `db.insert_interval_bell` opens its own per-method transaction. A
+// `db.set_interval_bell_enabled` opens its own per-method transaction. A
 // future infrastructure pass on core::db (item: nestable transactions)
 // would let apply wrap everything in one outer transaction; until then
 // behaviour matches the GTK shell's prior non-transactional walker.
@@ -295,20 +321,6 @@ pub fn setup_visibility(mode: SessionMode) -> ModeSetupVisibility {
     }
 }
 
-#[derive(Debug)]
-pub enum ApplyError {
-    /// One or more referenced sound or vibration-pattern UUIDs are not
-    /// in the local DB yet — typically a preset synced from another
-    /// device whose audio / vibration rows haven't replicated in. The
-    /// shell can show a "still syncing" toast naming the missing rows.
-    SyncPending {
-        missing_sounds: Vec<String>,
-        missing_patterns: Vec<String>,
-    },
-    /// Underlying SQLite or DB-layer error during one of the writes.
-    DbError(String),
-}
-
 /// The starred presets of `mode` whose settings are exactly Setup's
 /// as stored: the ones Setup shows as active. Only what Setup shows
 /// for the mode counts (a Timer preset's saved Box Breath cues don't).
@@ -337,6 +349,14 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
         }
         if !vis.interval_bells {
             c.interval_bells = PresetIntervalBells::default();
+        } else {
+            // What rings decides, not the switched-off bells the
+            // library keeps, their order or their rows.
+            let ib = &mut c.interval_bells;
+            let master = ib.enabled;
+            ib.bells.retain(|b| master && b.enabled);
+            ib.bells.iter_mut().for_each(|b| b.uuid = Default::default());
+            ib.bells.sort();
         }
         if !vis.boxbreath_phase {
             c.box_breath_cues = PresetBoxBreathCues::default();
@@ -401,16 +421,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         .list_interval_bells()
         .unwrap_or_default()
         .into_iter()
-        .map(|b| PresetIntervalBell {
-            kind: b.kind.as_db_str().to_string(),
-            minutes: b.minutes,
-            jitter_pct: b.jitter_pct,
-            sound_uuid: b.sound_uuid,
-            enabled: b.enabled,
-            signal_mode: b.signal_mode.as_db_str().to_string(),
-            vibration_pattern_uuid: b.vibration_pattern_uuid,
-            volume: b.volume,
-        })
+        .map(PresetIntervalBell::from)
         .collect();
     let interval_bells = PresetIntervalBells {
         enabled: intervals_enabled,
@@ -454,12 +465,15 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
     }
 }
 
-/// Apply a `PresetConfig` to the DB. Validates referenced sound +
-/// pattern UUIDs are present (rejects with `SyncPending` if not),
-/// writes per-mode + bell-related settings, replays the
-/// interval-bell library, and writes box-breath phase rows when
-/// `cfg.timing` is `BoxBreath` (skips them when `Timer` so a Timer
-/// preset's apply doesn't wipe the user's box-breath authoring).
+/// Apply a `PresetConfig` to the DB: writes the per-mode and bell
+/// settings, switches the interval-bell library to the preset's bells,
+/// and writes box-breath phase rows. The Timer-only parts (starting
+/// bell, preparation, interval bells) are written for a Timer preset
+/// only, the phase rows for a Box Breath preset only.
+///
+/// Sound and pattern references are written as they are. Sync brings
+/// rows in order, so one that is missing was deleted, and waiting for
+/// it would never end; Setup shows that bell as Missing.
 ///
 /// `mode` is the *active session mode* the shell is currently
 /// showing — used to pick the per-mode setting keys. `cfg.timing` is
@@ -472,112 +486,37 @@ pub fn apply(
     db: &Database,
     cfg: &PresetConfig,
     mode: SessionMode,
-) -> Result<PresetTiming, ApplyError> {
-    // 1. Validate referenced UUIDs are locally present.
-    let known_sounds: std::collections::HashSet<String> = db
-        .list_bell_sounds()
-        .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
-        .into_iter()
-        .map(|s| s.uuid.0)
-        .collect();
-    let mut needs_sound: Vec<&str> = Vec::new();
-    if cfg.starting_bell.enabled {
-        needs_sound.push(cfg.starting_bell.sound_uuid.as_str());
-    }
-    if cfg.end_bell.enabled {
-        needs_sound.push(cfg.end_bell.sound_uuid.as_str());
-    }
-    for b in &cfg.interval_bells.bells {
-        needs_sound.push(b.sound_uuid.as_str());
-    }
-    let mut missing_sounds: Vec<String> = Vec::new();
-    for u in &needs_sound {
-        if !known_sounds.contains(*u) && !missing_sounds.iter().any(|m| m == *u) {
-            missing_sounds.push(u.to_string());
-        }
-    }
-
-    let known_patterns: std::collections::HashSet<String> =
-        crate::db::list_vibration_patterns_from_db(db)
-            .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
-            .into_iter()
-            .map(|p| p.uuid.0)
-            .collect();
-    let mut needs_pattern: Vec<&str> = Vec::new();
-    if !cfg.starting_bell.vibration_pattern_uuid.is_empty() {
-        needs_pattern.push(cfg.starting_bell.vibration_pattern_uuid.as_str());
-    }
-    if !cfg.end_bell.vibration_pattern_uuid.is_empty() {
-        needs_pattern.push(cfg.end_bell.vibration_pattern_uuid.as_str());
-    }
-    for b in &cfg.interval_bells.bells {
-        if !b.vibration_pattern_uuid.is_empty() {
-            needs_pattern.push(b.vibration_pattern_uuid.as_str());
-        }
-    }
-    for p in &cfg.box_breath_cues.phases {
-        if !p.pattern_uuid.is_empty() {
-            needs_pattern.push(p.pattern_uuid.as_str());
-        }
-    }
-    let mut missing_patterns: Vec<String> = Vec::new();
-    for u in &needs_pattern {
-        if !known_patterns.contains(*u) && !missing_patterns.iter().any(|m| m == *u) {
-            missing_patterns.push(u.to_string());
-        }
-    }
-
-    if !missing_sounds.is_empty() || !missing_patterns.is_empty() {
-        return Err(ApplyError::SyncPending {
-            missing_sounds,
-            missing_patterns,
-        });
-    }
-
-    // 2. Per-mode + bell-related settings.
-    let stopwatch_active = match cfg.timing {
-        PresetTiming::Timer { stopwatch, .. } => stopwatch,
-        PresetTiming::BoxBreath { stopwatch, .. } => stopwatch,
+) -> crate::db::Result<PresetTiming> {
+    // 1. Per-mode + bell-related settings.
+    let (stopwatch_active, is_timer) = match cfg.timing {
+        PresetTiming::Timer { stopwatch, .. } => (stopwatch, true),
+        PresetTiming::BoxBreath { stopwatch, .. } => (stopwatch, false),
     };
-
-    let set = |k: &str, v: &str| -> Result<(), ApplyError> {
-        db.set_setting(k, v)
-            .map_err(|e| ApplyError::DbError(format!("{e:?}")))
-    };
+    let set = |k: &str, v: &str| db.set_setting(k, v);
     let bool_str = crate::settings_keys::format_bool;
 
     set(label_active_key_for_mode(mode), bool_str(cfg.label.enabled))?;
     if let Some(luuid) = cfg.label.uuid.as_ref() {
         set(label_uuid_key_for_mode(mode), luuid.as_str())?;
     }
-    set("starting_bell_active", bool_str(cfg.starting_bell.enabled))?;
-    if !cfg.starting_bell.sound_uuid.is_empty() {
-        set("starting_bell_sound", cfg.starting_bell.sound_uuid.as_str())?;
+    if is_timer {
+        set("starting_bell_active", bool_str(cfg.starting_bell.enabled))?;
+        if !cfg.starting_bell.sound_uuid.is_empty() {
+            set("starting_bell_sound", cfg.starting_bell.sound_uuid.as_str())?;
+        }
+        set("preparation_time_active", bool_str(cfg.starting_bell.prep_time_enabled))?;
+        set("preparation_time_secs", &cfg.starting_bell.prep_time_secs.to_string())?;
+        set("starting_bell_signal_mode", &cfg.starting_bell.signal_mode)?;
+        set("starting_bell_pattern", cfg.starting_bell.vibration_pattern_uuid.as_str())?;
+        set(STARTING_BELL_VOLUME_KEY, &cfg.starting_bell.volume.percent().to_string())?;
+        set("interval_bells_active", bool_str(cfg.interval_bells.enabled))?;
     }
-    set(
-        "preparation_time_active",
-        bool_str(cfg.starting_bell.prep_time_enabled),
-    )?;
-    set(
-        "preparation_time_secs",
-        &cfg.starting_bell.prep_time_secs.to_string(),
-    )?;
-    set(
-        "interval_bells_active",
-        bool_str(cfg.interval_bells.enabled),
-    )?;
     set(end_bell_active_key_for_mode(mode), bool_str(cfg.end_bell.enabled))?;
     if !cfg.end_bell.sound_uuid.is_empty() {
         set(end_bell_sound_key_for_mode(mode), cfg.end_bell.sound_uuid.as_str())?;
     }
     set(stopwatch_key_for_mode(mode), bool_str(stopwatch_active))?;
-    set("starting_bell_signal_mode", &cfg.starting_bell.signal_mode)?;
-    set(
-        "starting_bell_pattern",
-        cfg.starting_bell.vibration_pattern_uuid.as_str(),
-    )?;
     set(end_bell_signal_mode_key_for_mode(mode), &cfg.end_bell.signal_mode)?;
-    set(STARTING_BELL_VOLUME_KEY, &cfg.starting_bell.volume.percent().to_string())?;
     set(end_bell_volume_key_for_mode(mode), &cfg.end_bell.volume.percent().to_string())?;
     set(end_bell_pattern_key_for_mode(mode), cfg.end_bell.vibration_pattern_uuid.as_str())?;
     set(signal_mode_key_for_mode(mode), &cfg.cues_signal_mode)?;
@@ -586,11 +525,10 @@ pub fn apply(
         bool_str(cfg.keep_screen_awake),
     )?;
 
-    // 3. Box-breath phase rows — only when cfg is BoxBreath. Timer
+    // 2. Box-breath phase rows — only when cfg is BoxBreath. Timer
     // presets carry the seed values; stamping them on apply would
     // wipe the user's box-breath authoring.
-    let preset_is_box_breath = matches!(cfg.timing, PresetTiming::BoxBreath { .. });
-    if preset_is_box_breath {
+    if !is_timer {
         set(
             "boxbreath_cues_active",
             bool_str(cfg.box_breath_cues.master_enabled),
@@ -609,49 +547,54 @@ pub fn apply(
                 p.sound_uuid.as_str(),
                 p.pattern_uuid.as_str(),
                 p.volume,
-            )
-            .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
+            )?;
         }
+        return Ok(cfg.timing.clone());
     }
 
-    // 4. Replay interval-bell library: delete-all + re-insert from cfg.
-    let existing = db
-        .list_interval_bells()
-        .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
-    for b in &existing {
-        db.delete_interval_bell(b.uuid.as_str())
-            .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
-    }
+    // 3. Interval bells: switch each library bell on or off and never
+    // delete one, so bells set up for other presets stay. A preset bell
+    // is its library row, or else (presets saved before bells carried
+    // their row, or rows another app version re-made) a row with the
+    // same settings. A bell the preset rings that the library lacks is
+    // added back.
+    let library: Vec<PresetIntervalBell> =
+        db.list_interval_bells()?.into_iter().map(PresetIntervalBell::from).collect();
+    let mut on: Vec<Option<bool>> = vec![None; library.len()];
     for s in &cfg.interval_bells.bells {
-        let kind = match s.kind.as_str() {
-            "interval" => IntervalBellKind::Interval,
-            "fixed_from_start" => IntervalBellKind::FixedFromStart,
-            "fixed_from_end" => IntervalBellKind::FixedFromEnd,
-            _ => continue,
-        };
-        let Some(signal_mode) = SignalMode::from_db_str(&s.signal_mode) else {
+        let row = library
+            .iter()
+            .position(|b| !s.uuid.is_empty() && b.uuid == s.uuid)
+            .or_else(|| (0..library.len()).find(|&i| on[i].is_none() && library[i].same_settings(s)));
+        if let Some(i) = row {
+            on[i] = Some(s.enabled);
+            continue;
+        }
+        let (true, Some(kind), Some(signal_mode)) = (
+            s.enabled,
+            IntervalBellKind::from_db_str(&s.kind),
+            SignalMode::from_db_str(&s.signal_mode),
+        ) else {
             continue;
         };
-        let rowid = db
-            .insert_interval_bell(
-                kind,
-                s.minutes,
-                s.jitter_pct,
-                s.sound_uuid.as_str(),
-                s.vibration_pattern_uuid.as_str(),
-                signal_mode,
-            )
-            .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
-        // A fresh row is enabled and at the default volume; restore
-        // the preset's values when they differ.
-        if !s.enabled || s.volume != crate::bell_volume::BellVolume::default() {
-            if let Some(b) = db
-                .find_interval_bell_by_id(rowid)
-                .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
-            {
-                db.update_interval_bell(&IntervalBell { enabled: s.enabled, volume: s.volume, ..b })
-                    .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
+        let rowid = db.insert_interval_bell(
+            kind,
+            s.minutes,
+            s.jitter_pct,
+            s.sound_uuid.as_str(),
+            s.vibration_pattern_uuid.as_str(),
+            signal_mode,
+        )?;
+        // A fresh row is enabled and at the default volume.
+        if s.volume != crate::bell_volume::BellVolume::default() {
+            if let Some(b) = db.find_interval_bell_by_id(rowid)? {
+                db.update_interval_bell(&IntervalBell { volume: s.volume, ..b })?;
             }
+        }
+    }
+    for (b, on) in library.iter().zip(on) {
+        if b.enabled != on.unwrap_or(false) {
+            db.set_interval_bell_enabled(b.uuid.as_str(), !b.enabled)?;
         }
     }
 
@@ -661,7 +604,6 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_macros::assert_matches;
 
     fn timer_config() -> PresetConfig {
         PresetConfig {
@@ -791,6 +733,7 @@ mod tests {
                         signal_mode: "vibration".to_string(),
                         vibration_pattern_uuid: "wave-uuid".into(),
                         volume: Default::default(),
+                        uuid: "row-1".into(),
                     },
                     PresetIntervalBell {
                         kind: "fixed_from_start".to_string(),
@@ -801,6 +744,7 @@ mod tests {
                         signal_mode: "sound".to_string(),
                         vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
                         volume: Default::default(),
+                        uuid: Default::default(),
                     },
                 ],
             },
@@ -875,6 +819,7 @@ mod tests {
                     signal_mode: "sound".to_string(),
                     vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
                     volume: Default::default(),
+                    uuid: Default::default(),
                 }],
             },
             end_bell: PresetEndBell {
@@ -933,46 +878,38 @@ mod tests {
     }
 
     #[test]
-    fn apply_rejects_sync_pending_sound() {
-        let (db, _sound, pattern) = fresh_db();
-        let mut cfg = cfg_with_known_uuids(
+    fn a_preset_whose_sound_or_pattern_is_gone_still_applies() {
+        // Sync brings rows in order, so a missing one was deleted and
+        // waiting for it never ends; Setup shows that bell as Missing.
+        let (db, _sound, _pattern) = fresh_db();
+        let cfg = cfg_with_known_uuids(
             PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
-            "missing-sound-uuid",
-            &pattern,
+            "deleted-sound",
+            "deleted-pattern",
         );
-        // Belt + braces: also point the interval bell at the missing
-        // sound so the test exercises the fan-in over multiple slots.
-        cfg.interval_bells.bells[0].sound_uuid = "missing-sound-uuid".into();
-
-        let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
-        assert_matches!(
-            err,
-            ApplyError::SyncPending { missing_sounds, missing_patterns } => {
-                assert_eq!(missing_sounds, vec!["missing-sound-uuid".to_string()]);
-                assert!(missing_patterns.is_empty());
-            }
-        );
+        apply(&db, &cfg, SessionMode::Timer).expect("apply succeeds");
+        assert_eq!(db.get_setting(end_bell_sound_key_for_mode(SessionMode::Timer), "").unwrap(), "deleted-sound");
+        assert_eq!(db.get_setting("starting_bell_pattern", "").unwrap(), "deleted-pattern");
     }
 
     #[test]
-    fn apply_rejects_sync_pending_pattern() {
-        let (db, sound, _pattern) = fresh_db();
-        let mut cfg = cfg_with_known_uuids(
+    fn a_box_breath_preset_leaves_the_timer_bells_alone() {
+        // Starting bell, preparation and interval bells are Timer-only
+        // settings; the bundled Box Breath preset switched them off.
+        let (db, sound, pattern) = fresh_db();
+        let timer = cfg_with_known_uuids(
             PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
             &sound,
-            "missing-pattern-uuid",
+            &pattern,
         );
-        cfg.starting_bell.vibration_pattern_uuid = "missing-pattern-uuid".into();
-        cfg.end_bell.vibration_pattern_uuid = "missing-pattern-uuid".into();
-
-        let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
-        assert_matches!(
-            err,
-            ApplyError::SyncPending { missing_sounds, missing_patterns } => {
-                assert!(missing_sounds.is_empty());
-                assert_eq!(missing_patterns, vec!["missing-pattern-uuid".to_string()]);
-            }
-        );
+        apply(&db, &timer, SessionMode::Timer).unwrap();
+        let before = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        let [.., (_, _, mode, box_breath)] = crate::seeds::default_presets();
+        assert_eq!(mode, SessionMode::BoxBreath);
+        apply(&db, &box_breath, SessionMode::BoxBreath).unwrap();
+        let after = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        assert_eq!(after.starting_bell, before.starting_bell);
+        assert_eq!(after.interval_bells, before.interval_bells);
     }
 
     #[test]
@@ -1047,29 +984,93 @@ mod tests {
         );
     }
 
+    fn bell(minutes: u32, enabled: bool) -> PresetIntervalBell {
+        PresetIntervalBell {
+            kind: "interval".to_string(),
+            minutes,
+            jitter_pct: 0,
+            sound_uuid: "s".into(),
+            enabled,
+            signal_mode: "sound".to_string(),
+            vibration_pattern_uuid: "p".into(),
+            volume: Default::default(),
+            uuid: Default::default(),
+        }
+    }
+
+    fn with_bells(bells: Vec<PresetIntervalBell>) -> PresetConfig {
+        PresetConfig {
+            interval_bells: PresetIntervalBells { enabled: true, bells },
+            ..Default::default()
+        }
+    }
+
+    fn bell_rows(db: &Database) -> Vec<(u32, bool)> {
+        db.list_interval_bells().unwrap().iter().map(|b| (b.minutes, b.enabled)).collect()
+    }
+
     #[test]
-    fn apply_replays_interval_bell_library_replacing_existing_rows() {
-        let (db, sound, pattern) = fresh_db();
-        // Pre-existing bell that should be wiped out by apply.
-        db.insert_interval_bell(
-            IntervalBellKind::Interval,
-            10, 0, &sound, "", SignalMode::Sound,
-        ).unwrap();
-        assert_eq!(db.list_interval_bells().unwrap().len(), 1);
+    fn a_preset_switches_the_library_bells_and_never_deletes_one() {
+        // Deleting the other bells lost the ones set up for other
+        // presets, and two devices applying offline doubled them.
+        let db = Database::open_in_memory().unwrap();
+        apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
+        apply(&db, &with_bells(vec![bell(10, true)]), SessionMode::Timer).unwrap();
+        assert_eq!(bell_rows(&db), [(5, false), (10, true)], "the other preset's bell stays, switched off");
+        apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
+        assert_eq!(bell_rows(&db), [(5, true), (10, false)], "and is found again, not added twice");
+    }
 
-        let cfg = cfg_with_known_uuids(
-            PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
-            &sound,
-            &pattern,
-        );
-        // cfg has one interval bell at minutes=5, jitter=10 (set up
-        // by cfg_with_known_uuids).
-        apply(&db, &cfg, SessionMode::Timer).expect("apply succeeds");
+    #[test]
+    fn a_preset_finds_its_own_bell_after_the_bell_was_edited() {
+        let db = Database::open_in_memory().unwrap();
+        apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let row = db.list_interval_bells().unwrap().remove(0);
+        db.update_interval_bell(&IntervalBell { minutes: 7, enabled: false, ..row }).unwrap();
+        apply(&db, &saved, SessionMode::Timer).unwrap();
+        assert_eq!(bell_rows(&db), [(7, true)]);
+    }
 
-        let bells = db.list_interval_bells().unwrap();
-        assert_eq!(bells.len(), 1, "old bell should be deleted, only cfg's bell remains");
-        assert_eq!(bells[0].minutes, 5);
-        assert_eq!(bells[0].jitter_pct, 10);
+    #[test]
+    fn a_deleted_bell_comes_back_when_a_preset_rings_it() {
+        let db = Database::open_in_memory().unwrap();
+        let preset = with_bells(vec![bell(5, true), bell(10, false)]);
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        assert_eq!(bell_rows(&db), [(5, true)], "a bell the preset keeps off is not added");
+        let row = db.list_interval_bells().unwrap().remove(0);
+        db.delete_interval_bell(row.uuid.as_str()).unwrap();
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        assert_eq!(bell_rows(&db), [(5, true)]);
+    }
+
+    #[test]
+    fn applying_the_same_preset_again_writes_no_bell_events() {
+        let db = Database::open_in_memory().unwrap();
+        let bell_events = |db: &Database| {
+            db.all_events().unwrap().iter().filter(|e| e.kind.starts_with("interval_bell")).count()
+        };
+        let preset = with_bells(vec![bell(5, true), bell(10, true)]);
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        let after_first = bell_events(&db);
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        assert_eq!(bell_events(&db), after_first);
+    }
+
+    #[test]
+    fn switched_off_bells_and_their_order_do_not_change_the_active_preset() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_session_secs", "600").unwrap();
+        apply(&db, &with_bells(vec![bell(5, true), bell(10, true)]), SessionMode::Timer).unwrap();
+        let mut saved = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        saved.interval_bells.bells.reverse();
+        db.insert_preset("Two bells", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "saved in another order");
+        db.insert_interval_bell(IntervalBellKind::Interval, 3, 0, "s", "p", SignalMode::Sound).unwrap();
+        let extra = db.list_interval_bells().unwrap().into_iter().find(|b| b.minutes == 3).unwrap();
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 0, "a third bell rings");
+        db.set_interval_bell_enabled(extra.uuid.as_str(), false).unwrap();
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "switched off, it doesn't count");
     }
 
     #[test]
@@ -1155,17 +1156,16 @@ mod tests {
             original.timing.clone(),
         );
 
-        // Settings + label should round-trip. Interval bells get fresh
-        // row UUIDs on insert (delete-all + re-insert), so we compare
-        // by structural fields rather than serializing.
+        // Settings + label should round-trip. Added interval bells get
+        // fresh row UUIDs, so we compare by structural fields rather
+        // than serializing.
         assert_eq!(round_tripped.label, original.label);
         assert_eq!(round_tripped.starting_bell, original.starting_bell);
         assert_eq!(round_tripped.end_bell, original.end_bell);
         assert_eq!(round_tripped.cues_signal_mode, original.cues_signal_mode);
         assert_eq!(round_tripped.keep_screen_awake, original.keep_screen_awake);
         assert_eq!(round_tripped.timing, original.timing);
-        // interval-bell content (minus uuids that we don't capture
-        // in PresetIntervalBell anyway).
+        // interval-bell content (minus the row uuids).
         assert_eq!(
             round_tripped.interval_bells.enabled,
             original.interval_bells.enabled
@@ -1216,6 +1216,7 @@ mod tests {
             signal_mode: "sound".to_string(),
             vibration_pattern_uuid: pattern.into(),
             volume: pct(volume),
+            uuid: Default::default(),
         };
         timer.interval_bells = PresetIntervalBells {
             enabled: true,
@@ -1278,9 +1279,10 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_interval_bell_keeps_its_volume_through_a_preset() {
+    fn a_switched_off_bell_keeps_its_volume_through_a_preset() {
         let (db, sound, pattern) = fresh_db();
         let (mut timer, _) = presets_with_volumes(&sound, &pattern);
+        apply(&db, &timer, SessionMode::Timer).unwrap();
         timer.interval_bells.bells[1].enabled = false;
         apply(&db, &timer, SessionMode::Timer).unwrap();
         let rows = db.list_interval_bells().unwrap();
@@ -1331,6 +1333,17 @@ mod tests {
         assert_eq!(cfg.end_bell.volume, middle);
         assert_eq!(cfg.interval_bells.bells[0].volume, middle);
         assert_eq!(cfg.box_breath_cues.phases[0].volume, middle);
+        assert!(cfg.interval_bells.bells[0].uuid.is_empty(), "no library row yet: matched by settings");
+    }
+
+    #[test]
+    fn a_bell_field_this_version_does_not_know_is_ignored() {
+        // How 26.10.1 and older read a bell's "uuid": same derives, no
+        // deny_unknown_fields, so presets saved here still load there.
+        let mut json: serde_json::Value = serde_json::from_str(&with_bells(vec![bell(5, true)]).to_json()).unwrap();
+        json["interval_bells"]["bells"][0]["from_the_future"] = "x".into();
+        let cfg = PresetConfig::from_json(&json.to_string()).expect("unknown keys are skipped");
+        assert_eq!(cfg.interval_bells.bells[0].minutes, 5);
     }
 
     #[test]

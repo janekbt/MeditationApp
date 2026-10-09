@@ -36,7 +36,7 @@ pub fn list_guided_files_from_db(db: &Database) -> Result<Vec<GuidedFile>> {
     let mut stmt = db.conn.prepare(
         "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
          FROM guided_files
-         ORDER BY created_iso ASC, id ASC",
+         ORDER BY created_iso ASC, uuid ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {

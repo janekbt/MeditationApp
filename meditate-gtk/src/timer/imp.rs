@@ -1074,7 +1074,8 @@ impl TimerView {
             clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
-                move || obj.imp().get_app()
+                // Loading the stored value writes nothing back.
+                move || (!obj.imp().bells_loading.get()).then(|| obj.imp().get_app()).flatten()
             ),
             clone!(
                 #[weak] obj,
@@ -1093,14 +1094,6 @@ impl TimerView {
         let Some(toggle_group) =
             first_toggle_group_in(&self.cues_signal_toggle_host)
         else { return; };
-        if !app.has_haptic() {
-            if let Some(t) = toggle_group.toggle_by_name("vibration") {
-                t.set_enabled(false);
-            }
-            if let Some(t) = toggle_group.toggle_by_name("both") {
-                t.set_enabled(false);
-            }
-        }
         let saved = app
             .with_db(|db| {
                 meditate_core::bells::signal_mode_override_from_db(
@@ -1109,14 +1102,12 @@ impl TimerView {
                 )
             })
             .unwrap_or(crate::db::SignalMode::Both);
-        let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
-            saved, app.has_haptic(),
-        ).as_db_str();
         // Set populating flag so the active-name notify handler
         // doesn't write the just-loaded value back to the DB.
         self.bells_loading.set(true);
-        toggle_group.set_active_name(Some(initial));
+        toggle_group.set_active_name(Some(saved.as_db_str()));
         self.bells_loading.set(false);
+        show_no_vibration_note(&toggle_group);
     }
 
     /// Sync the Keep-Screen-Awake switch row with the current mode's
@@ -1517,8 +1508,7 @@ impl TimerView {
         phase_row.set_enable_expansion(p.enabled);
         phase_row.set_expanded(p.enabled);
         apply_phase_signal_mode_state(
-            toggle_host, sound_revealer, pattern_revealer,
-            app, p.signal_mode,
+            toggle_host, sound_revealer, pattern_revealer, p.signal_mode,
         );
     }
 
@@ -1589,6 +1579,7 @@ pub(crate) fn build_signal_mode_toggle_widget(
         let Some(name) = tg.active_name() else { return; };
         let mode = crate::db::SignalMode::from_db_str(name.as_str())
             .unwrap_or(crate::db::SignalMode::Sound);
+        show_no_vibration_note(tg);
         if let Some(app) = get_app() {
             app.with_db_mut(|db| db.set_setting(key_for_write(), mode.as_db_str()));
         }
@@ -1598,10 +1589,8 @@ pub(crate) fn build_signal_mode_toggle_widget(
 }
 
 /// Apply the saved signal_mode setting to a previously-built toggle
-/// group, plus capability gating: when `app.has_haptic()` is false,
-/// the Vibration / Both segments go insensitive and the active state
-/// is forced to 'sound' (without touching the persisted setting, so
-/// syncing to a phone restores intent).
+/// group. A device without vibration keeps every choice selectable
+/// and says under the row what still plays.
 pub(crate) fn apply_signal_mode_state(
     host: &gtk::Box,
     sound_revealer: &gtk::Revealer,
@@ -1610,30 +1599,15 @@ pub(crate) fn apply_signal_mode_state(
     setting_key: &'static str,
 ) {
     let Some(toggle_group) = first_toggle_group_in(host) else { return; };
-
-    if !app.has_haptic() {
-        if let Some(t) = toggle_group.toggle_by_name("vibration") {
-            t.set_enabled(false);
-        }
-        if let Some(t) = toggle_group.toggle_by_name("both") {
-            t.set_enabled(false);
-        }
-    }
-
-    // Force-display 'sound' on no-haptic devices regardless of saved
-    // value; the persisted setting stays untouched so syncing to a
-    // phone restores the user's intent.
     let saved = app
         .with_db(|db| db.get_setting(setting_key, "sound"))
         .and_then(std::result::Result::ok)
         .and_then(|s| crate::db::SignalMode::from_db_str(&s))
         .unwrap_or(crate::db::SignalMode::Sound);
-    let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
-        saved, app.has_haptic(),
-    );
-    toggle_group.set_active_name(Some(initial.as_db_str()));
-    sound_revealer.set_reveal_child(initial.includes_sound());
-    pattern_revealer.set_reveal_child(initial.includes_vibration());
+    toggle_group.set_active_name(Some(saved.as_db_str()));
+    sound_revealer.set_reveal_child(saved.includes_sound());
+    pattern_revealer.set_reveal_child(saved.includes_vibration());
+    show_no_vibration_note(&toggle_group);
 }
 
 /// Phase-config variant of `build_signal_mode_toggle_widget`. The
@@ -1670,6 +1644,7 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
         let Some(name) = tg.active_name() else { return; };
         let mode = crate::db::SignalMode::from_db_str(name.as_str())
             .unwrap_or(crate::db::SignalMode::Sound);
+        show_no_vibration_note(tg);
         if let Some(app) = get_app() {
             if let Some(p) = app
                 .with_db(|db| db.get_box_breath_phase(phase))
@@ -1687,25 +1662,18 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
     });
 }
 
-/// Apply the saved phase-row signal_mode + capability gating. Called
-/// from refresh-on-visit. Force-displays Sound when has_haptic is
-/// false, leaving the saved column value untouched.
+/// Apply the saved phase-row signal_mode. Called from refresh-on-visit.
 pub(crate) fn apply_phase_signal_mode_state(
     host: &gtk::Box,
     sound_revealer: &gtk::Revealer,
     pattern_revealer: &gtk::Revealer,
-    app: &crate::application::MeditateApplication,
     saved: crate::db::SignalMode,
 ) {
     let Some(toggle_group) = first_toggle_group_in(host) else { return; };
-    if !app.has_haptic() {
-        if let Some(t) = toggle_group.toggle_by_name("vibration") { t.set_enabled(false); }
-        if let Some(t) = toggle_group.toggle_by_name("both")      { t.set_enabled(false); }
-    }
-    let initial = meditate_core::bells::clamp_signal_mode_for_haptic(saved, app.has_haptic());
-    toggle_group.set_active_name(Some(initial.as_db_str()));
-    sound_revealer.set_reveal_child(initial.includes_sound());
-    pattern_revealer.set_reveal_child(initial.includes_vibration());
+    toggle_group.set_active_name(Some(saved.as_db_str()));
+    sound_revealer.set_reveal_child(saved.includes_sound());
+    pattern_revealer.set_reveal_child(saved.includes_vibration());
+    show_no_vibration_note(&toggle_group);
 }
 
 /// Per-mode "what plays" Cues toggle. The persistence handler
@@ -1737,10 +1705,37 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
         let Some(name) = tg.active_name() else { return; };
         let mode = crate::db::SignalMode::from_db_str(name.as_str())
             .unwrap_or(crate::db::SignalMode::Both);
+        show_no_vibration_note(tg);
         let Some(app) = get_app() else { return; };
         let setting_key = meditate_core::settings_keys::signal_mode_key_for_mode(get_mode().into());
         app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
     });
+}
+
+/// On a device that can't vibrate, say under the choice's row what a
+/// Vibration or Both choice still plays.
+pub(crate) fn show_no_vibration_note(toggle_group: &adw::ToggleGroup) {
+    use meditate_core::bells::{no_vibration_note, NoVibrationNote};
+    let Some(row) = toggle_group.ancestor(adw::ActionRow::static_type()).and_downcast::<adw::ActionRow>() else {
+        return;
+    };
+    let haptic = gtk::gio::Application::default()
+        .and_downcast::<crate::application::MeditateApplication>()
+        .map_or(true, |app| app.has_haptic());
+    let mode = toggle_group
+        .active_name()
+        .and_then(|n| crate::db::SignalMode::from_db_str(&n))
+        .unwrap_or(crate::db::SignalMode::Sound);
+    let note = no_vibration_note(mode, haptic);
+    row.set_subtitle(&match note {
+        None => String::new(),
+        Some(NoVibrationNote::Silent) => gettext("This device can't vibrate, so nothing plays"),
+        Some(NoVibrationNote::SoundOnly) => gettext("This device can't vibrate, so only the sound plays"),
+    });
+    // The note would take width from the choices until they read "S…";
+    // at 360 px the row still fits with every choice whole.
+    let whole = note.map_or(-1, |_| toggle_group.measure(gtk::Orientation::Horizontal, -1).1);
+    toggle_group.set_size_request(whole, -1);
 }
 
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
@@ -1807,6 +1802,10 @@ impl TimerView {
     /// Called when any of the three mode toggles gains active state.
     fn on_mode_switched(&self) {
         let mode = self.current_mode();
+        // An open Undo (a preset's, above all) belongs to the mode left.
+        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
+            window.dismiss_toasts();
+        }
 
         // Input panels: only the active mode's inputs are visible.
         // Toggle visibility on the OUTER clamp wrappers (where they
@@ -2052,11 +2051,9 @@ impl TimerView {
         let mode = self.current_mode();
         // A Volume-row preview doesn't ring into the session.
         crate::sound::stop_preview();
-        // Nor can the preset Undo change its settings. Taken out of
-        // the cell first: `dismiss` fires `connect_dismissed`, which
-        // borrows it.
-        if let Some(toast) = self.current_apply_toast.replace(None) {
-            toast.dismiss();
+        // Nor can an Undo change its settings: every toast goes.
+        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
+            window.dismiss_toasts();
         }
 
         // Each mode builds only its shape; the settings come from core
@@ -3481,10 +3478,8 @@ impl TimerView {
     /// widgets, and finishes with `refresh_streak` so dependent rows
     /// converge.
     ///
-    /// Returns true iff the apply happened. Returns false on
-    /// `ApplyError::SyncPending` (referenced bell sound or vibration
-    /// pattern hasn't arrived locally yet) or any underlying DB error;
-    /// callers can decide how to surface that to the user.
+    /// Returns true iff the apply happened. Returns false on a DB error
+    /// (or no DB); callers can decide how to surface that to the user.
     fn apply_config(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
         use meditate_core::preset_config::{apply, PresetTiming};
         let Some(app) = self.get_app() else { return false; };
@@ -3493,7 +3488,7 @@ impl TimerView {
         let outcome = app.with_db_mut(|db| apply(db.core(), cfg, mode.into()));
         let timing = match outcome {
             Some(Ok(t)) => t,
-            // SyncPending, DbError, or app/db unavailable.
+            // DbError, or app/db unavailable.
             _ => return false,
         };
 
@@ -3559,9 +3554,7 @@ impl TimerView {
 
         let snapshot = self.snapshot_current_setup();
         if !self.apply_config(&cfg) {
-            self.toast(&gettext(
-                "Wait for sync — some bell sounds are missing",
-            ));
+            self.toast(&gettext("Save failed"));
             return;
         }
 

@@ -41,7 +41,7 @@ pub fn list_presets_from_db(db: &Database) -> Result<Vec<Preset>> {
     let mut stmt = db.conn.prepare(
         "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
          FROM presets
-         ORDER BY mode, created_iso ASC",
+         ORDER BY mode, created_iso ASC, uuid ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {
@@ -71,7 +71,7 @@ pub fn list_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result
         "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
          FROM presets
          WHERE mode = ?1
-         ORDER BY created_iso ASC",
+         ORDER BY created_iso ASC, uuid ASC",
     )?;
     let rows = stmt
         .query_map(params![mode.as_db_str()], |row| {
@@ -100,7 +100,7 @@ pub fn list_starred_presets_for_mode_from_db(db: &Database, mode: SessionMode) -
         "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
          FROM presets
          WHERE mode = ?1 AND is_starred = 1
-         ORDER BY created_iso ASC",
+         ORDER BY created_iso ASC, uuid ASC",
     )?;
     let rows = stmt
         .query_map(params![mode.as_db_str()], |row| {

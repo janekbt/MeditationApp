@@ -22,6 +22,11 @@ impl MeditateWindow {
         self.imp().add_toast(toast);
     }
 
+    pub fn dismiss_toasts(&self) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().toast_overlay.dismiss_all();
+    }
+
     /// Push the interval-bell library page onto the navigation view.
     /// Triggered by the "Interval Bells" row in the timer setup; this
     /// wrapper keeps the timer module from having to know about the
