@@ -309,7 +309,17 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     // while preserving the network-error specifics
                     // for post-hoc troubleshooting.
                     let (toast, detail) = match result {
-                        Ok(r) => (r.to_string(), r.detail()),
+                        Ok(r) => {
+                            use crate::sync_runner::TestConnectionResult as T;
+                            let toast = match &r {
+                                T::Ok => gettext("Connection OK"),
+                                T::Unauthorized => gettext("Authentication failed"),
+                                T::NotWebDavRoot => gettext("Not a WebDAV folder"),
+                                T::Network(_) => gettext("Network error"),
+                                T::Other(_) => gettext("Server error"),
+                            };
+                            (toast, r.detail())
+                        }
                         Err(_) => {
                             let m = gettext("Test failed");
                             (m.clone(), "worker thread panicked".to_string())

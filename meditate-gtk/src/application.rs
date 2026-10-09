@@ -735,6 +735,33 @@ mod tests {
         assert!(sounds.contains("meditate_core::audio_files::remove_sound_files("));
     }
 
+    /// The sync Test toast showed core's English text; Russian Discard
+    /// read as Cancel (#11); German mixed "Label" and "Kategorie" (#32).
+    #[test]
+    fn test_toast_and_wording_are_translated() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let prefs = std::fs::read_to_string(root.join("src/preferences.rs")).unwrap();
+        assert!(!prefs.contains("Ok(r) => (r.to_string(), r.detail())"));
+        let ids = ["Connection OK", "Authentication failed", "Not a WebDAV folder", "Network error", "Server error"];
+        for id in ids {
+            assert!(prefs.contains(&format!("gettext(\"{id}\")")), "{id}");
+        }
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("po/{lang}.po"))).unwrap();
+            for id in ids {
+                let id = format!("msgid \"{id}\"\nmsgstr \"");
+                let at = po.find(&id).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(!po[at + id.len()..].starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+        let ru = std::fs::read_to_string(root.join("po/ru.po")).unwrap();
+        assert!(ru.contains("msgid \"Discard\"\nmsgstr \"Удалить\""));
+        assert!(ru.contains("msgid \"Discard Session?\"\nmsgstr \"Удалить сессию?\""));
+        let de = std::fs::read_to_string(root.join("po/de.po")).unwrap();
+        let live = de.split("\n#~").next().unwrap();
+        assert_eq!(live.matches("Kategorie").count(), 1, "only the sound category keeps the word");
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

@@ -5971,10 +5971,22 @@ export component MainWindow inherits Window {
             // child inside a BoxedList doesn't reactively
             // re-render, so `if` can't be used here.
             BoxedList {
-                CuesRow {
-                    title: @tr("Kind");
-                    labels: [@tr("Every N min"), @tr("From start"), @tr("Before end")];
-                    current-index <=> root.ie-kind;
+                // A dropdown like GTK's ComboRow: as a toggle the
+                // longer translations clipped the third option.
+                VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    DropDownMenu {
+                        label: @tr("Kind");
+                        items: [
+                            { text: @tr("Every N min"), enabled: true },
+                            { text: @tr("From start"), enabled: true },
+                            { text: @tr("Before end"), enabled: true },
+                        ];
+                        current-index <=> root.ie-kind;
+                    }
                 }
 
                 Rectangle {
@@ -7911,26 +7923,36 @@ export component MainWindow inherits Window {
                     wrap: word-wrap;
                 }
 
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
+                // Stacked, right-aligned: side by side they ran off the
+                // card ("Meine Daten hochladen").
+                VerticalLayout {
+                    spacing: 4px;
 
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
+                    HorizontalLayout {
+                        alignment: end;
+                        TextButton {
+                            text: @tr("Push My Data");
+                            clicked => { root.recovery-push-tap(); }
                         }
                     }
-                    TextButton {
-                        text: @tr("Wipe Local");
-                        clicked => {
-                            root.modal = Modal.none;
-                            root.modal = Modal.recovery-wipe-confirm;
+                    HorizontalLayout {
+                        alignment: end;
+                        TextButton {
+                            text: @tr("Wipe Local");
+                            clicked => {
+                                root.modal = Modal.none;
+                                root.modal = Modal.recovery-wipe-confirm;
+                            }
                         }
                     }
-                    TextButton {
-                        text: @tr("Push My Data");
-                        clicked => { root.recovery-push-tap(); }
+                    HorizontalLayout {
+                        alignment: end;
+                        TextButton {
+                            text: @tr("Cancel");
+                            clicked => {
+                                root.modal = Modal.none;
+                            }
+                        }
                     }
                 }
             }

@@ -2388,3 +2388,18 @@ msgstr "Première version."
 
 #~ msgid "Running average period"
 #~ msgstr "Période de la moyenne glissante"
+
+msgid "Connection OK"
+msgstr "Connexion réussie"
+
+msgid "Authentication failed"
+msgstr "Échec de l'authentification"
+
+msgid "Not a WebDAV folder"
+msgstr "Pas un dossier WebDAV"
+
+msgid "Network error"
+msgstr "Erreur réseau"
+
+msgid "Server error"
+msgstr "Erreur du serveur"

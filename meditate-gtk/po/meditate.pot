@@ -2103,3 +2103,18 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:228
 msgid "Initial release."
 msgstr ""
+
+msgid "Connection OK"
+msgstr ""
+
+msgid "Authentication failed"
+msgstr ""
+
+msgid "Not a WebDAV folder"
+msgstr ""
+
+msgid "Network error"
+msgstr ""
+
+msgid "Server error"
+msgstr ""

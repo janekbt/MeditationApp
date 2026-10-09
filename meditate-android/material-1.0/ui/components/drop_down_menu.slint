@@ -127,4 +127,9 @@ export component DropDownMenu {
     changed items => {
         root.update_text(root.current_index);
     }
+
+    // An index that never changes (it starts at 0) still shows.
+    init => {
+        root.update_text(root.current_index);
+    }
 }

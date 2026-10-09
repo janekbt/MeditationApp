@@ -2386,3 +2386,18 @@ msgstr "Prima versione."
 
 #~ msgid "Running average period"
 #~ msgstr "Periodo della media mobile"
+
+msgid "Connection OK"
+msgstr "Connessione riuscita"
+
+msgid "Authentication failed"
+msgstr "Autenticazione non riuscita"
+
+msgid "Not a WebDAV folder"
+msgstr "Non è una cartella WebDAV"
+
+msgid "Network error"
+msgstr "Errore di rete"
+
+msgid "Server error"
+msgstr "Errore del server"

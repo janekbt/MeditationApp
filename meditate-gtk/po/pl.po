@@ -2394,3 +2394,18 @@ msgstr "Pierwsze wydanie."
 
 #~ msgid "Running average period"
 #~ msgstr "Okres średniej kroczącej"
+
+msgid "Connection OK"
+msgstr "Połączenie działa"
+
+msgid "Authentication failed"
+msgstr "Uwierzytelnianie nie powiodło się"
+
+msgid "Not a WebDAV folder"
+msgstr "To nie jest folder WebDAV"
+
+msgid "Network error"
+msgstr "Błąd sieci"
+
+msgid "Server error"
+msgstr "Błąd serwera"

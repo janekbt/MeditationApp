@@ -1204,7 +1204,7 @@ msgstr "Не удалось сохранить сессию — хранилищ
 
 #: src/timer/imp.rs:2602
 msgid "Discard Session?"
-msgstr "Отменить сессию?"
+msgstr "Удалить сессию?"
 
 #: src/timer/imp.rs:2603
 msgid "Your note will be lost."
@@ -1212,7 +1212,7 @@ msgstr "Заметка будет потеряна."
 
 #: src/timer/imp.rs:2612 data/ui/timer_view.blp:879
 msgid "Discard"
-msgstr "Отменить"
+msgstr "Удалить"
 
 #: src/timer/imp.rs:2901
 msgid "Finish"
@@ -2394,3 +2394,18 @@ msgstr "Первый выпуск."
 
 #~ msgid "Running average period"
 #~ msgstr "Период скользящего среднего"
+
+msgid "Connection OK"
+msgstr "Соединение установлено"
+
+msgid "Authentication failed"
+msgstr "Ошибка аутентификации"
+
+msgid "Not a WebDAV folder"
+msgstr "Это не папка WebDAV"
+
+msgid "Network error"
+msgstr "Ошибка сети"
+
+msgid "Server error"
+msgstr "Ошибка сервера"

@@ -2376,3 +2376,18 @@ msgstr "Eerste uitgave."
 
 #~ msgid "Running average period"
 #~ msgstr "Periode voor lopend gemiddelde"
+
+msgid "Connection OK"
+msgstr "Verbinding in orde"
+
+msgid "Authentication failed"
+msgstr "Aanmelden mislukt"
+
+msgid "Not a WebDAV folder"
+msgstr "Geen WebDAV-map"
+
+msgid "Network error"
+msgstr "Netwerkfout"
+
+msgid "Server error"
+msgstr "Serverfout"

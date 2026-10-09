@@ -164,7 +164,7 @@ msgid "Delete All"
 msgstr "Alle löschen"
 
 msgid "Delete Label?"
-msgstr "Kategorie löschen?"
+msgstr "Label löschen?"
 
 msgid "Delete Preset?"
 msgstr "Voreinstellung löschen?"
@@ -308,10 +308,10 @@ msgid "LAST 13 WEEKS"
 msgstr "LETZTE 13 WOCHEN"
 
 msgid "Label"
-msgstr "Kategorie"
+msgstr "Label"
 
 msgid "Label name"
-msgstr "Kategoriename"
+msgstr "Label-Name"
 
 msgid "Last sync failed, tap to retry\n{}"
 msgstr "Letzte Synchronisation fehlgeschlagen – zum Wiederholen tippen\n{}"
@@ -768,12 +768,12 @@ msgstr[0] "{n} Min vor Ende"
 msgstr[1] "{n} Min vor Ende"
 
 msgid "This label is not used by any sessions."
-msgstr "Diese Kategorie wird von keiner Sitzung verwendet."
+msgstr "Dieses Label wird von keiner Sitzung verwendet."
 
 msgid "{n} session tagged with this label will be un-labelled."
 msgid_plural "{n} sessions tagged with this label will be un-labelled."
-msgstr[0] "{n} Sitzung mit dieser Kategorie verliert ihre Zuordnung."
-msgstr[1] "{n} Sitzungen mit dieser Kategorie verlieren ihre Zuordnung."
+msgstr[0] "{n} Sitzung mit diesem Label verliert ihre Zuordnung."
+msgstr[1] "{n} Sitzungen mit diesem Label verlieren ihre Zuordnung."
 
 msgid "New Pattern"
 msgstr "Neues Muster"
@@ -793,7 +793,7 @@ msgstr[0] "Sitzung gelöscht"
 msgstr[1] "{n} Sitzungen gelöscht"
 
 msgid "Duplicate label"
-msgstr "Doppelte Kategorie"
+msgstr "Doppeltes Label"
 
 msgid "'{}' has the same name as '{}'. It was created independently on another device."
 msgstr "'{}' hat denselben Namen wie '{}' – sie wurde unabhängig auf einem anderen Gerät erstellt."

@@ -1062,6 +1062,26 @@ mod tests {
         assert!(body.contains("meditate_core::audio_files::remove_sound_files("));
     }
 
+    /// The recovery buttons ran off their card and the interval Kind
+    /// toggle clipped its third option (#23); Russian Discard read as
+    /// Cancel (#11); German mixed "Label" and "Kategorie" (#32).
+    #[test]
+    fn layouts_fit_and_wording_is_consistent() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let push = slint.find("text: @tr(\"Push My Data\");").unwrap();
+        assert!(slint[push - 300..push].contains("VerticalLayout {"), "recovery buttons stack");
+        let wipe = slint.find("text: @tr(\"Wipe Local\");").unwrap();
+        assert!(push < wipe, "the primary action comes first");
+        let kind = slint.find("current-index <=> root.ie-kind;").unwrap();
+        assert!(slint[kind - 500..kind].contains("DropDownMenu {\n                        label: @tr(\"Kind\");"), "Kind is a dropdown, like GTK");
+        let po = |l: &str| std::fs::read_to_string(root.join(format!("lang/{l}/LC_MESSAGES/meditate-android.po"))).unwrap();
+        let ru = po("ru");
+        assert!(ru.contains("msgid \"Discard\"\nmsgstr \"Удалить\""));
+        assert!(ru.contains("msgid \"Discard Session?\"\nmsgstr \"Удалить сессию?\""));
+        assert!(!po("de").contains("Kategorie"), "one German term");
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).
