@@ -1056,8 +1056,8 @@ msgstr "Minder oefening"
 
 #: src/stats/imp.rs:360
 #, rust-format
-msgid "{pct}% vs last month ({this} vs {last})"
-msgstr "{pct} % t.o.v. vorige maand ({this} t.o.v. {last})"
+msgid "{pct}% vs the 30 days before ({this} vs {last})"
+msgstr "{pct} % t.o.v. de 30 dagen ervoor ({this} t.o.v. {last})"
 
 #: src/stats/imp.rs:368
 #, rust-format

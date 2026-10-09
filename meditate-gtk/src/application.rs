@@ -717,6 +717,14 @@ mod tests {
         assert!(stats.contains("meditate_core::insights::input_from_db(db.core(), "));
         assert!(stats.contains("meditate_core::goal::today_from_db(db.core(), "));
         assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 4);
+        // The trend compares rolling 30-day windows, and says so.
+        assert!(stats.contains("gettext(\"{pct}% vs the 30 days before ({this} vs {last})\")"));
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("po/{lang}.po"))).unwrap();
+            let id = "msgid \"{pct}% vs the 30 days before ({this} vs {last})\"\nmsgstr \"";
+            let at = po.find(id).unwrap_or_else(|| panic!("{lang}: trend"));
+            assert!(!po[at + id.len()..].starts_with('"'), "{lang}: trend translated");
+        }
     }
 
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)

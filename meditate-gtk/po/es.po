@@ -1058,8 +1058,8 @@ msgstr "Menos práctica"
 
 #: src/stats/imp.rs:360
 #, rust-format
-msgid "{pct}% vs last month ({this} vs {last})"
-msgstr "{pct} % frente al mes pasado ({this} frente a {last})"
+msgid "{pct}% vs the 30 days before ({this} vs {last})"
+msgstr "{pct} % frente a los 30 días anteriores ({this} frente a {last})"
 
 #: src/stats/imp.rs:368
 #, rust-format

@@ -673,8 +673,8 @@ msgstr "{}% 的会话在上午"
 msgid "{}% up vs last week ({} vs {})"
 msgstr "比上周增加 {}%（{} 对 {}）"
 
-msgid "{}% vs last month ({} vs {})"
-msgstr "与上月相比 {}%（{} 对 {}）"
+msgid "{}% vs the 30 days before ({} vs {})"
+msgstr "与前 30 天相比 {}%（{} 对 {}）"
 
 msgid "Imported {n} session"
 msgid_plural "Imported {n} sessions"

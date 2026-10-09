@@ -1881,7 +1881,7 @@ fn insight_icon_id(key: &meditate_core::insights::InsightKey) -> i32 {
     match key {
         InsightKey::CurrentStreak { .. } => 0,
         InsightKey::WeekOverWeek { pct, .. }
-        | InsightKey::MonthTrend { pct, .. } => {
+        | InsightKey::ThirtyDayTrend { pct, .. } => {
             if *pct >= 0 { 1 } else { 2 }
         }
         InsightKey::PreferredTime { .. } => 3,
@@ -1940,15 +1940,15 @@ fn render_insight(
             };
             (tr.invoke_ins_week_title().to_string(), body.to_string())
         }
-        InsightKey::MonthTrend { pct, this_secs, last_secs } => {
+        InsightKey::ThirtyDayTrend { pct, this_secs, last_secs } => {
             let title = if *pct >= 0 {
-                tr.invoke_ins_month_more()
+                tr.invoke_ins_trend_more()
             } else {
-                tr.invoke_ins_month_less()
+                tr.invoke_ins_trend_less()
             };
             (
                 title.to_string(),
-                tr.invoke_ins_month_body(
+                tr.invoke_ins_trend_body(
                     format!("{pct:+}").into(),
                     hm(*this_secs).into(),
                     hm(*last_secs).into(),

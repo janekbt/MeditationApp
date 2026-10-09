@@ -1006,6 +1006,15 @@ mod tests {
         assert!(!lib.contains("total_secs_since_from_db"));
         assert!(lib.contains("last.total_secs += meditate_core::format::log_card_total_secs("));
         assert!(lib.contains("ui.set_streak_text("));
+        // The trend compares rolling 30-day windows, and says so.
+        assert!(slint.contains("@tr(\"{}% vs the 30 days before ({} vs {})\""));
+        assert!(!slint.contains("vs last month"));
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            let id = "msgid \"{}% vs the 30 days before ({} vs {})\"\nmsgstr \"";
+            let at = po.find(id).unwrap_or_else(|| panic!("{lang}: trend"));
+            assert!(!po[at + id.len()..].starts_with('"'), "{lang}: trend translated");
+        }
         // "3 Monate" pushed Material's padded segments past the card.
         let period = slint.find("current-index <=> root.stat-chart-period;").unwrap();
         assert!(slint[..period].trim_end().ends_with("ModeToggle {"), "the period toggle fits the card");

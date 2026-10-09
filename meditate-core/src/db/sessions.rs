@@ -296,23 +296,6 @@ pub fn active_days_in_month_from_db(db: &Database, year: i32, month: u32) -> Res
     let rows = stmt.query_map(params![start, end], |row| row.get::<_, u32>(0))?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
-/// Sum of `duration_secs` for sessions inside a calendar month
-/// (`year`, `month` 1-12). Boundaries are at local midnight on the
-/// first and last day of the month. December rolls cleanly into
-/// January of the next year.
-pub fn month_total_secs_from_db(db: &Database, year: i32, month: u32) -> Result<i64> {
-    let start = format!("{year:04}-{month:02}-01");
-    let (next_year, next_month) =
-        if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-    let end = format!("{next_year:04}-{next_month:02}-01");
-    Ok(db.conn.query_row(
-        "SELECT COALESCE(SUM(duration_secs), 0)
-         FROM sessions
-         WHERE start_iso >= ?1 AND start_iso < ?2",
-        params![start, end],
-        |row| row.get(0),
-    )?)
-}
 /// Total of `duration_secs` across every session (no filter). Returns
 /// 0 on an empty DB. Use this when you want the underlying precision
 /// (e.g. weekly-goal ring, longest-session display); use
@@ -2017,81 +2000,6 @@ mod tests {
         }).unwrap();
         let got = active_days_in_month_from_db(&db, 2026, 12).unwrap();
         assert_eq!(got, vec![31u32]);
-    }
-
-    // ── month_total_secs ─────────────────────────────────────────────────────
-
-    #[test]
-    fn month_total_secs_is_zero_for_empty_month() {
-        let db = Database::open_in_memory().unwrap();
-        // Far past — guaranteed empty.
-        assert_eq!(month_total_secs_from_db(&db, 1999, 1).unwrap(), 0);
-        // Mid-future — also empty.
-        assert_eq!(month_total_secs_from_db(&db, 2099, 12).unwrap(), 0);
-    }
-
-    #[test]
-    fn month_total_secs_sums_only_target_month() {
-        // Adjacent-month boundary edges: last second of March and first
-        // second of May must NOT count toward April.
-        let db = Database::open_in_memory().unwrap();
-        // March 31, very late.
-        db.insert_session(&Session {
-            start_iso: "2026-03-31T23:59:59".to_string(),
-            duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // April 1, midnight — INCLUDED in April.
-        db.insert_session(&Session {
-            start_iso: "2026-04-01T00:00:00".to_string(),
-            duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // April 30, late evening — INCLUDED.
-        db.insert_session(&Session {
-            start_iso: "2026-04-30T23:59:59".to_string(),
-            duration_secs: 1200, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // May 1, midnight — EXCLUDED.
-        db.insert_session(&Session {
-            start_iso: "2026-05-01T00:00:00".to_string(),
-            duration_secs: 8888, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-
-        assert_eq!(month_total_secs_from_db(&db, 2026, 4).unwrap(), 600 + 1200);
-    }
-
-    #[test]
-    fn month_total_secs_handles_december_year_rollover() {
-        // The "next month" boundary is built in code; December must
-        // roll to next-year-January cleanly.
-        let db = Database::open_in_memory().unwrap();
-        db.insert_session(&Session {
-            start_iso: "2026-12-15T10:00:00".to_string(),
-            duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        // Jan 1, 2027 — must NOT count toward Dec 2026.
-        db.insert_session(&Session {
-            start_iso: "2027-01-01T00:00:00".to_string(),
-            duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        assert_eq!(month_total_secs_from_db(&db, 2026, 12).unwrap(), 600);
     }
 
     // ── get_longest_session ──────────────────────────────────────────────────

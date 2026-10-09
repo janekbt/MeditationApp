@@ -1034,7 +1034,7 @@ msgstr ""
 
 #: src/stats/imp.rs:360
 #, rust-format
-msgid "{pct}% vs last month ({this} vs {last})"
+msgid "{pct}% vs the 30 days before ({this} vs {last})"
 msgstr ""
 
 #: src/stats/imp.rs:368

@@ -1054,8 +1054,8 @@ msgstr "Weniger Praxis"
 
 #: src/stats/imp.rs:360
 #, rust-format
-msgid "{pct}% vs last month ({this} vs {last})"
-msgstr "{pct} % gegen letzten Monat ({this} gegen {last})"
+msgid "{pct}% vs the 30 days before ({this} vs {last})"
+msgstr "{pct} % gegen die 30 Tage davor ({this} gegen {last})"
 
 #: src/stats/imp.rs:368
 #, rust-format

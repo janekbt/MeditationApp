@@ -105,9 +105,9 @@ export global Tr {
     public pure function ins-week-title() -> string { return @tr("This week's practice"); }
     public pure function ins-week-up(pct: int, this-hm: string, last-hm: string) -> string { return @tr("{}% up vs last week ({} vs {})", pct, this-hm, last-hm); }
     public pure function ins-week-down(pct: int, this-hm: string, last-hm: string) -> string { return @tr("{}% down vs last week ({} vs {})", pct, this-hm, last-hm); }
-    public pure function ins-month-more() -> string { return @tr("Practising more"); }
-    public pure function ins-month-less() -> string { return @tr("Practising less"); }
-    public pure function ins-month-body(pct: string, this-hm: string, last-hm: string) -> string { return @tr("{}% vs last month ({} vs {})", pct, this-hm, last-hm); }
+    public pure function ins-trend-more() -> string { return @tr("Practising more"); }
+    public pure function ins-trend-less() -> string { return @tr("Practising less"); }
+    public pure function ins-trend-body(pct: string, this-hm: string, last-hm: string) -> string { return @tr("{}% vs the 30 days before ({} vs {})", pct, this-hm, last-hm); }
     public pure function ins-preferred-title() -> string { return @tr("Preferred time"); }
     public pure function ins-preferred-morning(pct: int) -> string { return @tr("{}% of sessions are in the morning", pct); }
     public pure function ins-preferred-afternoon(pct: int) -> string { return @tr("{}% of sessions are in the afternoon", pct); }

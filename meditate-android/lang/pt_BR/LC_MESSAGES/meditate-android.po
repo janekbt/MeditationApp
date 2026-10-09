@@ -673,8 +673,8 @@ msgstr "{}% das sessões são de manhã"
 msgid "{}% up vs last week ({} vs {})"
 msgstr "{}% a mais que na semana passada ({} vs {})"
 
-msgid "{}% vs last month ({} vs {})"
-msgstr "{}% vs o mês passado ({} vs {})"
+msgid "{}% vs the 30 days before ({} vs {})"
+msgstr "{}% vs os 30 dias anteriores ({} vs {})"
 
 msgid "Imported {n} session"
 msgid_plural "Imported {n} sessions"

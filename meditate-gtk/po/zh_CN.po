@@ -1026,8 +1026,8 @@ msgstr "练习减少"
 
 #: src/stats/imp.rs:360
 #, rust-format
-msgid "{pct}% vs last month ({this} vs {last})"
-msgstr "较上月变化 {pct}%（{this} vs {last}）"
+msgid "{pct}% vs the 30 days before ({this} vs {last})"
+msgstr "较前 30 天变化 {pct}%（{this} vs {last}）"
 
 #: src/stats/imp.rs:368
 #, rust-format

@@ -328,13 +328,13 @@ impl StatsView {
                     .replace("{last}", &format_hm_secs(*last_secs));
                 (gettext("This week's practice"), body)
             }
-            InsightKey::MonthTrend { pct, this_secs, last_secs } => {
+            InsightKey::ThirtyDayTrend { pct, this_secs, last_secs } => {
                 let title = if *pct >= 0 {
                     gettext("Practising more")
                 } else {
                     gettext("Practising less")
                 };
-                let body = gettext("{pct}% vs last month ({this} vs {last})")
+                let body = gettext("{pct}% vs the 30 days before ({this} vs {last})")
                     .replace("{pct}", &format!("{pct:+}"))
                     .replace("{this}", &format_hm_secs(*this_secs))
                     .replace("{last}", &format_hm_secs(*last_secs));

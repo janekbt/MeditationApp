@@ -25,8 +25,10 @@ pub enum HourBucket {
 pub struct InsightInput {
     pub current_streak: u32,
     pub best_streak: u32,
-    pub this_month_secs: i64,
-    pub last_month_secs: i64,
+    /// Today and the 29 days before it.
+    pub last_30_secs: i64,
+    /// The 30 days before those.
+    pub prev_30_secs: i64,
     /// 14 days of `(YYYY-MM-DD, secs)` rows, oldest first. Used by
     /// the week-over-week comparison.
     pub daily_totals: Vec<(String, i64)>,
@@ -47,19 +49,26 @@ pub struct InsightInput {
 /// Read every insight input from the log for `today`. A failed read
 /// counts as no data, so the cards degrade instead of vanishing.
 pub fn input_from_db(db: &crate::db::Database, today: chrono::NaiveDate) -> InsightInput {
-    use chrono::Datelike;
     use crate::db as d;
-    let (ty, tm) = (today.year(), today.month());
-    let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
+    let days_ago = |n| today - chrono::Duration::days(n);
+    // 60 days up to today; a session dated later isn't in any window.
+    let totals: Vec<_> = d::get_daily_totals_since_from_db(db, days_ago(59))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(day, _)| *day <= today)
+        .collect();
+    let sum_since = |from, to| -> i64 {
+        totals.iter().filter(|(day, _)| *day >= from && *day < to).map(|(_, secs)| secs).sum()
+    };
     InsightInput {
         current_streak: d::get_streak_from_db(db, today).unwrap_or(0),
         best_streak: d::get_best_streak_from_db(db).unwrap_or(0),
-        this_month_secs: d::month_total_secs_from_db(db, ty, tm).unwrap_or(0),
-        last_month_secs: d::month_total_secs_from_db(db, ly, lm).unwrap_or(0),
-        daily_totals: d::get_daily_totals_since_from_db(db, today - chrono::Duration::days(13))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(day, secs)| (day.format("%Y-%m-%d").to_string(), secs))
+        last_30_secs: sum_since(days_ago(29), today + chrono::Duration::days(1)),
+        prev_30_secs: sum_since(days_ago(59), days_ago(29)),
+        daily_totals: totals
+            .iter()
+            .filter(|(day, _)| *day >= days_ago(13))
+            .map(|(day, secs)| (day.format("%Y-%m-%d").to_string(), *secs))
             .collect(),
         longest: d::get_longest_session_from_db(db)
             .unwrap_or(None)
@@ -91,9 +100,9 @@ pub enum InsightKey {
         this_secs: i64,
         last_secs: i64,
     },
-    /// Same shape for month-over-month — distinct variant so the
-    /// shell can use a longer-horizon title.
-    MonthTrend {
+    /// Same shape for the last 30 days against the 30 before —
+    /// distinct variant so the shell can use a longer-horizon title.
+    ThirtyDayTrend {
         pct: i32,
         this_secs: i64,
         last_secs: i64,
@@ -128,7 +137,7 @@ impl InsightKey {
     pub fn glyph(&self) -> &'static str {
         match self {
             InsightKey::CurrentStreak { .. } => "●",
-            InsightKey::WeekOverWeek { pct, .. } | InsightKey::MonthTrend { pct, .. } => {
+            InsightKey::WeekOverWeek { pct, .. } | InsightKey::ThirtyDayTrend { pct, .. } => {
                 if *pct >= 0 { "↗" } else { "↘" }
             }
             InsightKey::PreferredTime { .. } => "◔",
@@ -186,14 +195,14 @@ pub fn compute(input: &InsightInput, now_unix: i64, week_start_dow: i32) -> Vec<
         });
     }
 
-    // 3. Month trend (only when last month has data).
-    if input.last_month_secs > 0 {
-        let delta = input.this_month_secs - input.last_month_secs;
-        let pct = (delta as f64 / input.last_month_secs as f64 * 100.0).round() as i32;
-        out.push(InsightKey::MonthTrend {
+    // 3. 30-day trend (only when the 30 days before have data).
+    if input.prev_30_secs > 0 {
+        let delta = input.last_30_secs - input.prev_30_secs;
+        let pct = (delta as f64 / input.prev_30_secs as f64 * 100.0).round() as i32;
+        out.push(InsightKey::ThirtyDayTrend {
             pct,
-            this_secs: input.this_month_secs,
-            last_secs: input.last_month_secs,
+            this_secs: input.last_30_secs,
+            last_secs: input.prev_30_secs,
         });
     }
 
@@ -281,11 +290,35 @@ mod tests {
         assert_eq!(input.current_streak, 2);
         assert_eq!(input.best_streak, 2);
         assert_eq!(input.session_count, 2);
-        assert_eq!(input.this_month_secs, 1500);
+        assert_eq!(input.last_30_secs, 1500);
         assert_eq!(input.typical_secs, 300);
         assert_eq!(input.longest.map(|(secs, _)| secs), Some(1200));
         assert_eq!(input.daily_totals.len(), 2);
         assert_eq!(input.avg_secs_7d, 1500 / 7);
+    }
+
+    #[test]
+    fn the_trend_compares_the_last_30_days_with_the_30_before() {
+        // A month-to-date total against a whole last month read
+        // "Practising less" for most of every month.
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        for (ago, secs) in [(-1, 7000), (0, 600), (29, 300), (30, 1200), (59, 60), (60, 5000)] {
+            let day = today - chrono::Duration::days(ago);
+            db.insert_session(&crate::db::Session {
+                start_iso: format!("{}T10:00:00", day.format("%Y-%m-%d")),
+                duration_secs: secs,
+                label_id: None,
+                notes: None,
+                mode: crate::SessionMode::Timer,
+                uuid: crate::db::SessionUuid::new(""),
+                guided_file_uuid: None,
+            })
+            .unwrap();
+        }
+        let input = input_from_db(&db, today);
+        assert_eq!(input.last_30_secs, 600 + 300, "today back to 29 days ago, not tomorrow");
+        assert_eq!(input.prev_30_secs, 1200 + 60, "30 to 59 days ago");
     }
 
     #[test]
@@ -417,12 +450,12 @@ mod tests {
     }
 
     #[test]
-    fn order_is_streak_first_then_week_then_month_etc() {
+    fn order_is_streak_first_then_week_then_trend_etc() {
         let mut input = baseline();
         input.current_streak = 3;
         input.best_streak = 5;
-        input.this_month_secs = 4 * 3600;
-        input.last_month_secs = 3 * 3600;
+        input.last_30_secs = 4 * 3600;
+        input.prev_30_secs = 3 * 3600;
         input.session_count = 12;
         input.typical_secs = 600;
         input.longest = Some((1800, 1_700_000_000));
@@ -464,7 +497,7 @@ mod tests {
             "↘"
         );
         assert_eq!(
-            InsightKey::MonthTrend { pct: 0, this_secs: 0, last_secs: 0 }.glyph(),
+            InsightKey::ThirtyDayTrend { pct: 0, this_secs: 0, last_secs: 0 }.glyph(),
             "↗"
         );
         assert_eq!(InsightKey::PreferredTime { bucket: HourBucket::Morning, pct: 50 }.glyph(), "◔");
