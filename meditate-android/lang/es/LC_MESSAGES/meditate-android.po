@@ -1015,3 +1015,21 @@ msgstr[1] "Tampoco se pueden leer {n} líneas más."
 
 msgid "Nothing in this file can be imported."
 msgstr "No se puede importar nada de este archivo."
+
+msgid "Over 100 MB, too large to sync"
+msgstr "Más de 100 MB: no se puede sincronizar"
+
+msgid "Some files weren't uploaded, tap to retry\n{}"
+msgstr "Algunos archivos no se subieron, toca para reintentar\n{}"
+
+msgid "{}: too large to sync"
+msgstr "{}: demasiado grande para sincronizar"
+
+msgid "{}: too large for the server"
+msgstr "{}: demasiado grande para el servidor"
+
+msgid "{}: the server is full"
+msgstr "{}: el servidor está lleno"
+
+msgid "{0}: refused by the server ({1})"
+msgstr "{0}: rechazado por el servidor ({1})"

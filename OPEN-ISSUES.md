@@ -19,7 +19,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | B. GTK session safety | #135, #129, #128, #67, #131, #134 | GTK loses or ends sessions |
 | [x] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
 | [x] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
-| [ ] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
+| [x] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
 | [ ] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
 | [ ] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #65, #122, #158 | names that differ per device, saves that fail |
 | [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
@@ -34,6 +34,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
 | [ ] | S. Cleanup | #58, #61, #85, #87, #157 | dead code, wrong comments |
+| [ ] | T. Text that doesn't fit | #159 | information the user can't see |
 
 ---
 
@@ -692,6 +693,15 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - gtk `db/mod.rs:113-117` says new bundled sounds reach existing installs, but the seed is one-shot (`seeds.rs:27-29`); the block also sits on the wrong item.
 - android `ui.rs`: doc comments on the wrong item at 488-492, 803-822, 1128-1132, 2348-2350 (shows a start time with a UTC offset, which never exists), 2904-2909 and 9477-9481; false claims at 1406, 1444, 3874, 4028, 5878 and 5909.
 - `sync/fake.rs:1-4` claims the fake behaves like Nextcloud (see #91).
+
+## T. Text that doesn't fit
+
+### #159 Text cut off or shortened with "…", found one screenshot at a time
+- Rule (Janek, 2026-10-10): every text shows in full at phone width (360 px) in all nine languages. Cut off is not acceptable, and neither is "…": both hide information.
+- Seen so far: Android's guided-import dialog title ("Geführte Meditation importi", `main.slint` guided-import card, a 22 px Text with no wrap); GTK's import toast (fixed in batch E with a shorter text); Android's import-question buttons (stacked in batch D); GTK's Type rows squeezing their choices (pinned in batch C).
+- Android: Slint clips a Text that neither wraps nor elides, silently. 142 Text elements, 31 wrap, 10 elide. Check 1, a test: every Text showing translated words wraps (`wrap: word-wrap`) and has room to grow; `overflow: elide` is not allowed for them either. An explicit short list is exempt (numbers, the big timer, single symbols).
+- Both apps, check 2, a test: slots that can't wrap (buttons, toasts, toggle and tab labels, dialog buttons, header titles, GTK row titles that ellipsize) have every translation measured with the real font at its real size against the slot's width at 360 px, and the test lists each one that doesn't fit. The work is the list of fixed slots and their widths; measuring needs nothing new (Pango in the GTK tests, the same font files for Android).
+- Fix what the first run lists: wrap, stack buttons, give the slot room, or shorten the translation; never "…".
 
 ---
 

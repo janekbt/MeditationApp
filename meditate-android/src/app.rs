@@ -714,6 +714,20 @@ pub fn parse_csv_pick(raw: &str) -> Option<Result<(String, String), String>> {
     Some(Ok((first.to_string(), kind)))
 }
 
+/// Remove the import worker's per-run files (cancel flag, progress,
+/// result) from `dir`. At startup no run is waiting for them: an
+/// import that was interrupted left them behind.
+pub fn remove_stale_import_files(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for path in entries.flatten().map(|e| e.path()) {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let per_run = ["guided_import_cancel.", "guided_import_result.", "guided_import_progress."];
+        if per_run.iter().any(|p| name.starts_with(p)) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// What the snackbar's Undo reverts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PendingUndo {
@@ -759,7 +773,7 @@ impl Notice {
 
 #[cfg(test)]
 mod tests {
-    use super::{Notice, PendingUndo};
+    use super::{remove_stale_import_files, Notice, PendingUndo};
 
     fn apply() -> PendingUndo {
         PendingUndo::PresetApply("{}".into())
@@ -1244,6 +1258,57 @@ mod tests {
         let at = slint.find("if root.modal == Modal.import-unreadable : ConfirmDialog {").unwrap();
         assert!(slint[at..at + 400].contains("stacked: true;"));
         assert!(slint.contains("if root.stacked : VerticalLayout {"));
+    }
+
+    #[test]
+    fn a_guided_import_shrinks_or_refuses_what_sync_cannot_carry() {
+        // A WAV guide was kept as-is: past ~10 minutes it imported,
+        // synced its row and never its audio, and nothing said why.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateGuidedImport.kt")).unwrap();
+        assert!(kt.contains("val guided = File(dest).parentFile?.name == \"guided\""));
+        assert!(kt.contains("if (ext == \"ogg\" || (ext == \"wav\" && (!guided || !canConvert))) {"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("meditate_core::sound::keep_if_syncable(std::path::Path::new(&dest))"));
+        assert!(lib.contains("AudioFileError::TooLargeToSync => ui.global::<Tr>().invoke_too_large_to_sync()"));
+    }
+
+    #[test]
+    fn startup_clears_what_interrupted_imports_left() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = lib.find("fn open_database(").unwrap();
+        let open = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(open.contains("meditate_core::audio_files::remove_orphan_files(&db, &dir.join(\"sounds\"), &dir.join(\"guided\"))"));
+        assert!(open.contains("crate::app::remove_stale_import_files(&dir);"));
+
+        // No tempfile crate here: a scratch folder of our own.
+        let dir = std::env::temp_dir().join(format!("meditate-stale-imports-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["guided_import_cancel.u1", "guided_import_result.u2", "guided_import_progress.u3", "meditate.db", "guided"] {
+            std::fs::write(dir.join(name), b"1").unwrap();
+        }
+        remove_stale_import_files(&dir);
+        let mut left: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(left, ["guided", "meditate.db"]);
+    }
+
+    #[test]
+    fn refused_uploads_show_by_name_and_retry_sends_them_again() {
+        // Like GTK: automatic syncs skip a refused file, the status
+        // names it, a tap on the status tries it again.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("SyncIndicatorState::NotUploaded(files) => {"));
+        assert!(lib.contains(
+            "SyncIndicatorAction::RetrySync => {\n                        \
+             if let Some(db) = lock_db() {\n                            \
+             let _ = meditate_core::sync::settings::clear_refused_uploads(&db);\n                        }\n                        \
+             trigger_sync(\"indicator tap (retry)\");"
+        ));
     }
 
     #[test]

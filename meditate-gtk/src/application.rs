@@ -161,6 +161,16 @@ mod imp {
                             );
                         }
                     }
+                    // What an interrupted import or download left behind.
+                    match meditate_core::audio_files::remove_orphan_files(
+                        db.core(),
+                        &crate::sync_runner::local_sounds_dir(),
+                        &crate::sync_runner::local_guided_dir(),
+                    ) {
+                        Ok(0) => {}
+                        Ok(n) => meditate_core::log("files.orphans", &format!("removed {n}")),
+                        Err(e) => meditate_core::log("files.orphans", &format!("FAILED: {e:?}")),
+                    }
                     *self.db.lock().unwrap() = Some(db);
                     meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
                 }
@@ -668,6 +678,18 @@ impl InvalidateScope {
 
 #[cfg(test)]
 mod tests {
+    /// Startup, before activate's first sync, removes what an
+    /// interrupted import or download left behind.
+    #[test]
+    fn startup_clears_orphaned_audio_before_the_first_sync() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let src = std::fs::read_to_string(root.join("src/application.rs")).unwrap();
+        let startup = &src[src.find("        fn startup(&self) {").unwrap()..];
+        let startup = &startup[..startup.find("\n        }\n").unwrap()];
+        assert!(startup.contains("meditate_core::audio_files::remove_orphan_files("));
+        assert!(!startup.contains("trigger_sync"));
+    }
+
     #[test]
     fn log_cards_name_the_guided_file() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

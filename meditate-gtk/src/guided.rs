@@ -143,6 +143,7 @@ pub fn pick_file_for_open(
                 &parent_for_toast,
                 &gettext("This file has no audio track"),
             ),
+            Err(AudioFileError::TooLargeToSync) => add_toast_to_window(&parent_for_toast, &too_large_to_sync()),
             Err(AudioFileError::Other(e)) => add_toast_to_window(
                 &parent_for_toast,
                 &format!("{}: {e}", gettext("Couldn't read audio file")),
@@ -304,7 +305,7 @@ pub fn import_picked_file(
             let source = pick.source_path.clone();
             let cancel_for_worker = cancel_flag.clone();
             let import_result = gtk::gio::spawn_blocking(move || {
-                do_import_io(&source, &cancel_for_worker)
+                do_import_io(&source, &crate::sync_runner::local_guided_dir(), &cancel_for_worker)
             })
             .await;
 
@@ -349,6 +350,7 @@ pub fn import_picked_file(
                     &parent,
                     &gettext("This file has no audio track"),
                 ),
+                Ok(Err(AudioFileError::TooLargeToSync)) => add_toast_to_window(&parent, &too_large_to_sync()),
                 Ok(Err(AudioFileError::Other(e))) => add_toast_to_window(
                     &parent,
                     &format!("{}: {e}", gettext("Import failed")),
@@ -368,8 +370,9 @@ pub fn import_picked_file(
 }
 
 /// Worker-thread half of the import: copies (OGG passthrough) or
-/// transcodes the source into `$XDG_DATA_HOME/meditate/guided/
-/// <uuid>.ogg` and returns the generated UUID + destination path.
+/// transcodes the source into `<dest_dir>/<uuid>.ogg` and returns
+/// the generated UUID + destination path. A result too large to sync
+/// is removed and refused.
 /// Mirrors `sounds::do_import_io` but always lands as OGG and
 /// preserves source channel layout (no `-ac 1` step). `cancel` is
 /// checked at every coarse boundary (around the file copy + inside
@@ -378,6 +381,7 @@ pub fn import_picked_file(
 /// the result without leaking on-disk state.
 fn do_import_io(
     source: &Path,
+    dest_dir: &Path,
     cancel: &AtomicBool,
 ) -> std::result::Result<(String, PathBuf), AudioFileError> {
     let source_ext = source
@@ -387,11 +391,10 @@ fn do_import_io(
         .unwrap_or_default();
 
     let new_uuid = crate::db::mint_uuid();
-    let dest_dir = gtk::glib::user_data_dir().join("meditate").join("guided");
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
     let dest_path = dest_dir.join(format!("{new_uuid}.ogg"));
 
-    if meditate_core::sound::is_passthrough_ext(&source_ext) {
+    if meditate_core::sound::is_guided_passthrough_ext(&source_ext) {
         // OGG passthrough: a plain copy. Don't use std::fs::copy —
         // it follows symlinks at the destination, which would let a
         // pre-planted link at dest_path silently overwrite an
@@ -412,7 +415,14 @@ fn do_import_io(
         let _ = std::fs::remove_file(&dest_path);
         return Err(AudioFileError::Other(CANCELLED.into()));
     }
+    meditate_core::sound::keep_if_syncable(&dest_path)?;
     Ok((new_uuid, dest_path))
+}
+
+/// Why an imported file was refused: even compressed it's bigger than
+/// sync carries.
+pub(crate) fn too_large_to_sync() -> String {
+    gettext("Over 100 MB, too large to sync")
 }
 
 /// Sentinel error string used by the cancel path. The caller branches
@@ -1258,7 +1268,7 @@ impl GuidedPlayback {
         let abs = path
             .canonicalize()
             .map_err(|e| format!("canonicalize {}: {e}", path.display()))?;
-        let uri = format!("file://{}", abs.to_string_lossy());
+        let uri = gtk::glib::filename_to_uri(&abs, None).map_err(|e| e.to_string())?;
 
         // playbin handles full audio decode + render through the
         // platform's autoaudiosink. Same element used in the duration
@@ -1369,7 +1379,7 @@ pub fn probe_duration_secs(path: &Path) -> Result<u32, AudioFileError> {
     let abs = path
         .canonicalize()
         .map_err(|e| other(format!("canonicalize {}: {e}", path.display())))?;
-    let uri = format!("file://{}", abs.to_string_lossy());
+    let uri = gtk::glib::filename_to_uri(&abs, None).map_err(|e| other(e.to_string()))?;
 
     let pipeline = gst::ElementFactory::make("playbin")
         .property("uri", &uri)
@@ -1416,9 +1426,42 @@ pub fn probe_duration_secs(path: &Path) -> Result<u32, AudioFileError> {
     }
 
     let nanos = duration
+        .or_else(|| duration_by_parsing(&abs))
         .ok_or_else(|| other(format!("duration unknown for {}", path.display())))?
         .nseconds();
     Ok((nanos.div_ceil(1_000_000_000)) as u32)
+}
+
+/// The length of a file whose header gives none (an MP3 without a
+/// Xing header, raw AAC): parse it through to the end, without
+/// decoding, and read where it got (0.13 s for 30 minutes).
+fn duration_by_parsing(abs: &Path) -> Option<gstreamer::ClockTime> {
+    use gst::prelude::*;
+    use gstreamer as gst;
+
+    let pipeline = gst::Pipeline::new();
+    let src = gst::ElementFactory::make("filesrc")
+        .property("location", abs.to_string_lossy().as_ref())
+        .build()
+        .ok()?;
+    let parse = gst::ElementFactory::make("parsebin").build().ok()?;
+    let sink = gst::ElementFactory::make("fakesink").property("sync", false).build().ok()?;
+    pipeline.add_many([&src, &parse, &sink]).ok()?;
+    src.link(&parse).ok()?;
+    let sink_pad = sink.static_pad("sink")?;
+    parse.connect_pad_added(move |_, pad| {
+        if !sink_pad.is_linked() {
+            let _ = pad.link(&sink_pad);
+        }
+    });
+    pipeline.set_state(gst::State::Playing).ok()?;
+    let ended = pipeline
+        .bus()?
+        .timed_pop_filtered(gst::ClockTime::from_seconds(30), &[gst::MessageType::Eos, gst::MessageType::Error])
+        .is_some_and(|msg| matches!(msg.view(), gst::MessageView::Eos(_)));
+    let position = ended.then(|| pipeline.query_position::<gst::ClockTime>()).flatten();
+    let _ = pipeline.set_state(gst::State::Null);
+    position
 }
 
 #[cfg(test)]
@@ -1474,6 +1517,33 @@ mod tests {
     }
 
     #[test]
+    fn probe_reads_an_mp3_without_a_duration_header() {
+        // A paused playbin has no duration for these (CBR or VBR MP3
+        // without a Xing header, raw AAC), so Open File refused them.
+        let secs = probe_duration_secs(&fixture("no_duration_header.mp3"));
+        assert!(matches!(secs, Ok(1..=2)), "{secs:?}");
+    }
+
+    #[test]
+    fn probe_reads_raw_aac() {
+        let secs = probe_duration_secs(&fixture("raw_adts.aac"));
+        assert!(matches!(secs, Ok(1..=2)), "{secs:?}");
+    }
+
+    #[test]
+    fn a_name_with_hash_or_percent_opens() {
+        // "file://" + the path made `#` start a fragment and `%25` an
+        // escape, so "Talk #3.ogg" couldn't be opened.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("Talk #3, 100%25 calm.m4a");
+        std::fs::copy(fixture("audio_only.m4a"), &p).unwrap();
+        assert_eq!(probe_duration_secs(&p), Ok(1));
+        let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/guided.rs")).unwrap();
+        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("format!(\"file://"), "every file URI is escaped");
+    }
+
+    #[test]
     fn probe_of_non_media_is_other_error_not_no_audio() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("notes.mp3");
@@ -1490,6 +1560,19 @@ mod tests {
             &AtomicBool::new(false),
         )?;
         probe_duration_secs(&dest)
+    }
+
+    #[test]
+    fn a_guided_wav_is_stored_converted() {
+        // Kept as-is, a 15-minute WAV was over the 100 MB sync cap.
+        let dir = tempfile::tempdir().unwrap();
+        let (_, dest) = do_import_io(&fixture("tone.wav"), dir.path(), &AtomicBool::new(false)).unwrap();
+        assert_eq!(&std::fs::read(&dest).unwrap()[..4], b"OggS");
+        assert_eq!(probe_duration_secs(&dest), Ok(1));
+        // A file still over the cap is refused, with its own message.
+        let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/guided.rs")).unwrap();
+        assert!(src.contains("meditate_core::sound::keep_if_syncable(&dest_path)?;"));
+        assert!(src.contains("Ok(Err(AudioFileError::TooLargeToSync)) => add_toast_to_window("));
     }
 
     #[test]

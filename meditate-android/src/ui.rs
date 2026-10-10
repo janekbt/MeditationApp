@@ -1010,6 +1010,7 @@ fn audio_file_error_text(
         meditate_core::sound::AudioFileError::NoAudioTrack => {
             ui.global::<Tr>().invoke_no_audio_track()
         }
+        meditate_core::sound::AudioFileError::TooLargeToSync => ui.global::<Tr>().invoke_too_large_to_sync(),
         meditate_core::sound::AudioFileError::Other(_) => {
             ui.global::<Tr>().invoke_import_failed()
         }
@@ -1427,6 +1428,10 @@ fn refresh_sync_indicator(ui: &MainWindow) {
         SyncIndicatorState::Error { detail, .. } => {
             (2, tr.invoke_sync_failed_tap(detail.into()).to_string())
         }
+        SyncIndicatorState::NotUploaded(files) => {
+            let lines: Vec<String> = files.iter().map(|f| not_uploaded_line(ui, f)).collect();
+            (2, tr.invoke_not_uploaded_tap(lines.join("\n").into()).to_string())
+        }
         SyncIndicatorState::OkWithTs(ts) => {
             (3, sync_ago_text(ui, ts))
         }
@@ -1436,6 +1441,20 @@ fn refresh_sync_indicator(ui: &MainWindow) {
     };
     ui.set_sync_indicator_state(state);
     ui.set_sync_indicator_tooltip(tooltip.into());
+}
+
+/// One refused upload, as the status lists it. Like GTK's.
+fn not_uploaded_line(ui: &MainWindow, file: &meditate_core::sync::indicator::NotUploaded) -> String {
+    use meditate_core::sync::settings::UploadRefusal;
+    let tr = ui.global::<Tr>();
+    let name = slint::SharedString::from(file.name.as_str());
+    match file.reason {
+        UploadRefusal::TooLargeToSync => tr.invoke_upload_too_large_to_sync(name),
+        UploadRefusal::TooLargeForServer => tr.invoke_upload_too_large_for_server(name),
+        UploadRefusal::ServerFull => tr.invoke_upload_server_full(name),
+        UploadRefusal::Refused(status) => tr.invoke_upload_refused(name, i32::from(status)),
+    }
+    .to_string()
 }
 
 /// "Synced N ago" tooltip. Bucket decision lives in core
@@ -4477,6 +4496,13 @@ fn build_ui() -> MainWindow {
                             }
                         }
                         if let Some(res) = result {
+                            // A guided file sync couldn't carry is
+                            // refused, and removed, like GTK's.
+                            let res = if guided_import_kind_tick.get() == 1 {
+                                res
+                            } else {
+                                res.and_then(|()| meditate_core::sound::keep_if_syncable(std::path::Path::new(&dest)))
+                            };
                             let failure_text = res
                                 .as_ref()
                                 .err()
@@ -9076,6 +9102,9 @@ fn build_ui() -> MainWindow {
                 };
                 match action_for(&state) {
                     SyncIndicatorAction::RetrySync => {
+                        if let Some(db) = lock_db() {
+                            let _ = meditate_core::sync::settings::clear_refused_uploads(&db);
+                        }
                         trigger_sync("indicator tap (retry)");
                     }
                     SyncIndicatorAction::OpenRecovery => {
@@ -9744,6 +9773,14 @@ fn open_database(android_app: &slint::android::AndroidApp) {
                     &format!("finalize FAILED at startup err={e:?}"),
                 ),
             }
+            // What an interrupted import or download left behind,
+            // before the first sync. Like GTK's startup.
+            match meditate_core::audio_files::remove_orphan_files(&db, &dir.join("sounds"), &dir.join("guided")) {
+                Ok(0) => {}
+                Ok(n) => meditate_core::log("files.orphans", &format!("removed {n}")),
+                Err(e) => meditate_core::log("files.orphans", &format!("FAILED: {e:?}")),
+            }
+            crate::app::remove_stale_import_files(&dir);
             meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
             Some(db)
         }

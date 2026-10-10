@@ -1038,3 +1038,21 @@ msgstr[2] "Ещё {n} строк тоже не удаётся прочитать
 
 msgid "Nothing in this file can be imported."
 msgstr "Из этого файла ничего нельзя импортировать."
+
+msgid "Over 100 MB, too large to sync"
+msgstr "Больше 100 МБ: нельзя синхронизировать"
+
+msgid "Some files weren't uploaded, tap to retry\n{}"
+msgstr "Некоторые файлы не загружены, нажмите, чтобы повторить\n{}"
+
+msgid "{}: too large to sync"
+msgstr "{}: слишком большой для синхронизации"
+
+msgid "{}: too large for the server"
+msgstr "{}: слишком большой для сервера"
+
+msgid "{}: the server is full"
+msgstr "{}: на сервере нет места"
+
+msgid "{0}: refused by the server ({1})"
+msgstr "{0}: сервер отклонил файл ({1})"

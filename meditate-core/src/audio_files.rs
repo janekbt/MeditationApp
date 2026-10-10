@@ -66,9 +66,71 @@ pub fn remove_sound_files(sounds_dir: &Path, uuid: &str) {
     }
 }
 
+/// Delete what an interrupted import or download left behind: a file
+/// in the sounds or guided folder named by an id no row has, and any
+/// half-downloaded `*.part`. Files not named by an id (the guided
+/// player's `transient.<ext>`) stay. Run at startup, before the first
+/// sync. A failed row read deletes nothing. Returns how many went.
+pub fn remove_orphan_files(
+    db: &crate::db::Database,
+    sounds_dir: &Path,
+    guided_dir: &Path,
+) -> crate::db::Result<usize> {
+    let sounds: std::collections::HashSet<String> =
+        db.list_bell_sounds()?.into_iter().map(|s| s.uuid.0).collect();
+    let guided: std::collections::HashSet<String> =
+        crate::db::list_guided_files_from_db(db)?.into_iter().map(|g| g.uuid.0).collect();
+    Ok(remove_unowned(sounds_dir, &sounds) + remove_unowned(guided_dir, &guided))
+}
+
+fn remove_unowned(dir: &Path, owners: &std::collections::HashSet<String>) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
+    for path in entries.flatten().map(|e| e.path()) {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let id = name.split('.').next().unwrap_or_default();
+        let orphan = name.ends_with(".part") || (uuid::Uuid::parse_str(id).is_ok() && !owners.contains(id));
+        if orphan && path.is_file() && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leftovers_of_interrupted_imports_and_downloads_go_at_startup() {
+        // A kill mid-transcode, quitting mid-copy, or a Cancel just
+        // after the worker finished left a <uuid> file no row uses,
+        // for good.
+        use crate::db::{BellSoundCategory, Database};
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound_with_uuid(CUSTOM_UUID, "Gong", "/x/gong.wav", false, "audio/wav", BellSoundCategory::General)
+            .unwrap();
+        let guide = "4b3a2c1d-0e9f-4a8b-9c7d-6e5f4a3b2c1d";
+        db.insert_guided_file_with_uuid(guide, "Body scan", "/x/b.ogg", 600, false).unwrap();
+        let orphan = "9e1d2c3b-4a5f-4e6d-8c7b-6a5f4e3d2c1b";
+        let (sounds, guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let put = |dir: &Path, name: &str| std::fs::write(dir.join(name), b"A").unwrap();
+        for name in [format!("{CUSTOM_UUID}.wav"), format!("{orphan}.ogg"), format!("{CUSTOM_UUID}.wav.part"), "notes.txt".into()] {
+            put(sounds.path(), &name);
+        }
+        for name in [format!("{guide}.ogg"), format!("{orphan}.ogg"), "transient.mp3".into()] {
+            put(guided.path(), &name);
+        }
+        assert_eq!(remove_orphan_files(&db, sounds.path(), guided.path()).unwrap(), 3);
+        let left = |dir: &Path| {
+            let mut names: Vec<String> =
+                std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(left(sounds.path()), [format!("{CUSTOM_UUID}.wav"), "notes.txt".into()]);
+        assert_eq!(left(guided.path()), [format!("{guide}.ogg"), "transient.mp3".into()]);
+    }
 
     #[test]
     fn remove_sound_files_takes_only_that_uuids_files() {

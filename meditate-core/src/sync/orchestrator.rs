@@ -15,6 +15,7 @@
 
 use crate::db::{Database, DbError, Event};
 use super::backoff::BackoffState;
+use super::settings;
 use super::webdav::{WebDav, WebDavError};
 use std::error::Error;
 use std::fmt;
@@ -26,12 +27,10 @@ use std::fmt;
 /// hanging the sync forever.
 const MAX_429_RETRIES: u32 = 8;
 
-/// Inbound size cap for custom bell-sound files. Mirrors the
-/// import side's outbound cap so a peer pushing a >10MB file (e.g.
-/// uploaded directly via WebDAV outside the app) doesn't bypass the
-/// limit. Refused files are silently skipped on pull and not marked
-/// known, so they retry next round if shrunk / replaced.
-const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
+// The import caps, checked on pull too, so a file put on the server
+// outside the app (over WebDAV) can't bypass them. Refused files are
+// skipped on pull and not marked known, so they retry if replaced.
+use crate::sound::MAX_CUSTOM_BELL_BYTES;
 
 /// Per-GET in-memory cap for event-bundle pulls. A bundle is JSON
 /// of `Vec<Event>`; a bulk batch (~2700 events) measured around
@@ -67,17 +66,11 @@ struct CompactionManifest {
 /// "the server tried to OOM us" security cap.
 const MAX_SOUND_GET_BYTES: u64 = 11 * 1024 * 1024;
 
-/// User-facing cap on imported guided-file size. Sessions are
-/// typically 5–30 min of speech, which encodes to a few MB at the
-/// OGG/Vorbis quality the importer uses. 100 MB gives generous
-/// headroom (an hour-long high-bitrate recording stays well below)
-/// without letting a runaway file fill the user's data dir or hit
-/// Nextcloud's per-file caps.
-const MAX_CUSTOM_GUIDED_BYTES: u64 = 100 * 1024 * 1024;
+use crate::sound::MAX_CUSTOM_GUIDED_BYTES;
 
 /// Per-GET in-memory cap for guided-file pulls. Same +1 MB
 /// headroom-over-user-cap pattern as `MAX_SOUND_GET_BYTES`.
-const MAX_GUIDED_GET_BYTES: u64 = 101 * 1024 * 1024;
+const MAX_GUIDED_GET_BYTES: u64 = MAX_CUSTOM_GUIDED_BYTES + 1024 * 1024;
 
 #[derive(Debug)]
 pub enum SyncError {
@@ -421,8 +414,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         if pending.is_empty() {
             // No events, but custom audio binaries may still need to
             // ride up — try the file pushes and return zero events.
-            self.push_custom_sound_files()?;
-            self.push_custom_guided_files()?;
+            self.push_files()?;
             return Ok(PushStats::default());
         }
 
@@ -459,12 +451,9 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let pushed = events.len();
         progress(pushed, pushed);
 
-        // Custom audio binaries ride up alongside the events batch.
-        // Failures here surface as a sync error so the user sees a
-        // retry prompt; on success each file is recorded immediately
-        // in the matching known_remote_* table.
-        let sounds_pushed = self.push_custom_sound_files()?;
-        let guided_pushed = self.push_custom_guided_files()?;
+        // Custom audio binaries ride up alongside the events batch;
+        // each upload is recorded in its known_remote_* table at once.
+        let (sounds_pushed, guided_pushed) = self.push_files()?;
 
         if pushed > 0 || sounds_pushed > 0 || guided_pushed > 0 {
             crate::diag::log(
@@ -775,6 +764,52 @@ impl<'a, W: WebDav> Sync<'a, W> {
         Ok(pulled)
     }
 
+    /// Push the audio files, sounds then guided. A file the server
+    /// refuses (or one over the size cap) is recorded as refused and
+    /// the sync goes on; automatic syncs skip it until the user's Retry
+    /// clears the list. Network and credential errors stay fatal.
+    fn push_files(&self) -> SyncResult<(usize, usize)> {
+        let mut refused = settings::refused_uploads(self.db)?;
+        let sounds = self.push_custom_sound_files(&mut refused);
+        let guided = sounds.is_ok().then(|| self.push_custom_guided_files(&mut refused));
+        settings::set_refused_uploads(self.db, &refused)?;
+        Ok((sounds?, guided.unwrap_or(Ok(0))?))
+    }
+
+    /// Upload one audio file unless it is refused already, too big, or
+    /// not on this device yet. True when it went up.
+    fn push_file(
+        &self,
+        uuid: &str,
+        local: &std::path::Path,
+        remote: &str,
+        cap: u64,
+        refused: &mut Vec<settings::RefusedUpload>,
+    ) -> SyncResult<bool> {
+        if refused.iter().any(|r| r.uuid == uuid) {
+            return Ok(false);
+        }
+        // No file yet: the row came by sync and the puller will fetch it.
+        let Ok(meta) = std::fs::metadata(local) else { return Ok(false) };
+        if meta.len() > cap {
+            refused.push(settings::RefusedUpload { uuid: uuid.into(), reason: settings::UploadRefusal::TooLargeToSync });
+            return Ok(false);
+        }
+        let Ok(bytes) = std::fs::read(local) else { return Ok(false) };
+        // Atomic upload: PUT to .tmp + MOVE, so a half-uploaded audio
+        // file can't show up at the canonical name and crash pull-side
+        // gstreamer decoders.
+        match put_atomic_with_rate_limit_retry(self.webdav, remote, &bytes) {
+            Ok(()) => Ok(true),
+            Err(WebDavError::Server { status, body }) => {
+                crate::diag::log("sync.push.refused", &format!("uuid={uuid} status={status} body={body}"));
+                refused.push(settings::RefusedUpload { uuid: uuid.into(), reason: settings::UploadRefusal::from_status(status) });
+                Ok(false)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Push every local custom bell-sound audio file that isn't yet
     /// in `known_remote_sounds`. Reads the file from `sounds_dir`,
     /// PUTs to `<base>/sounds/<uuid>.<ext>`, marks the uuid as
@@ -784,7 +819,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// Per-file commit: each successful PUT is recorded immediately
     /// so a mid-batch interrupt leaves a coherent state — already-
     /// uploaded files are marked, the rest get retried next sync.
-    fn push_custom_sound_files(&self) -> SyncResult<usize> {
+    fn push_custom_sound_files(&self, refused: &mut Vec<settings::RefusedUpload>) -> SyncResult<usize> {
         let known = self.db.known_remote_sound_uuids()?;
         let bells = self.db.list_bell_sounds()?;
         let pending: Vec<crate::db::BellSound> = bells
@@ -798,32 +833,14 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let mut pushed = 0;
         for bell in pending {
             let ext = bell.extension();
-            let local = self.sound_local_path(bell.uuid.as_str(), ext);
-            let bytes = match std::fs::read(&local) {
-                Ok(b) => b,
-                Err(_) => {
-                    // The DB row exists but the file doesn't on this
-                    // device — typical case is the row arrived via
-                    // event sync but the file hasn't been pulled yet.
-                    // Skip silently; the puller will fetch it.
-                    continue;
-                }
-            };
-            // Symmetric cap with the pull side (orchestrator.rs:422):
-            // pull silently drops files larger than 10 MB. Pushing one
-            // would burn the user's upload bandwidth on a file every
-            // peer would then refuse — skip and don't mark it known,
-            // so a future shrink/replace can retry.
-            if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
-                continue;
+            let uuid = bell.uuid.as_str();
+            let local = self.sound_local_path(uuid, ext);
+            let remote = self.sound_remote_path(uuid, ext);
+            // Same cap as the pull side, which drops bigger files.
+            if self.push_file(uuid, &local, &remote, MAX_CUSTOM_BELL_BYTES, refused)? {
+                self.db.record_known_remote_sound(uuid)?;
+                pushed += 1;
             }
-            let remote = self.sound_remote_path(bell.uuid.as_str(), ext);
-            // Atomic upload: PUT to .tmp + MOVE, so a half-uploaded
-            // audio file can't show up at the canonical name and
-            // crash pull-side gstreamer decoders.
-            put_atomic_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
-            self.db.record_known_remote_sound(bell.uuid.as_str())?;
-            pushed += 1;
         }
         Ok(pushed)
     }
@@ -902,7 +919,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// `known_remote_guided_files`. Reads from `<guided_dir>/<uuid>.ogg`,
     /// PUTs to `<base>/guided/<uuid>.ogg` atomically, marks the uuid
     /// as known.
-    fn push_custom_guided_files(&self) -> SyncResult<usize> {
+    fn push_custom_guided_files(&self, refused: &mut Vec<settings::RefusedUpload>) -> SyncResult<usize> {
         let known = self.db.known_remote_guided_file_uuids()?;
         let files = crate::db::list_guided_files_from_db(self.db)?;
         let pending: Vec<crate::db::GuidedFile> = files
@@ -915,26 +932,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
         self.ensure_guided_dir_exists()?;
         let mut pushed = 0;
         for file in pending {
-            let local = self.guided_local_path(file.uuid.as_str());
-            let bytes = match std::fs::read(&local) {
-                Ok(b) => b,
-                Err(_) => {
-                    // DB row exists but the file doesn't on this
-                    // device — typical when the row arrived via
-                    // event sync but the .ogg hasn't been pulled
-                    // yet. Skip silently; the puller will fetch it.
-                    continue;
-                }
-            };
-            if bytes.len() as u64 > MAX_CUSTOM_GUIDED_BYTES {
-                // Symmetric cap with pull. Skip and leave unmarked
-                // so a future shrink/replace can retry.
-                continue;
+            let uuid = file.uuid.as_str();
+            let local = self.guided_local_path(uuid);
+            let remote = self.guided_remote_path(uuid);
+            if self.push_file(uuid, &local, &remote, MAX_CUSTOM_GUIDED_BYTES, refused)? {
+                self.db.record_known_remote_guided_file(uuid)?;
+                pushed += 1;
             }
-            let remote = self.guided_remote_path(file.uuid.as_str());
-            put_atomic_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
-            self.db.record_known_remote_guided_file(file.uuid.as_str())?;
-            pushed += 1;
         }
         Ok(pushed)
     }
@@ -1787,6 +1791,84 @@ mod tests {
         // the post-PUT mark step). Pending stays full so the next sync
         // retries the whole batch.
         assert_eq!(db.pending_events().unwrap().len(), 5);
+    }
+
+    /// A server that refuses every guided-file upload with `status`
+    /// and counts the attempts.
+    struct RefusesGuided {
+        inner: FakeWebDav,
+        status: u16,
+        attempts: std::sync::atomic::AtomicUsize,
+    }
+    impl WebDav for RefusesGuided {
+        fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> { self.inner.list_collection(p) }
+        fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.inner.get(p, max_bytes) }
+        fn put(&self, p: &str, body: &[u8]) -> WebDavResult<()> {
+            if p.contains("/guided/") {
+                self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Err(WebDavError::Server { status: self.status, body: String::new() });
+            }
+            self.inner.put(p, body)
+        }
+        fn mkcol(&self, p: &str) -> WebDavResult<()> { self.inner.mkcol(p) }
+        fn delete(&self, p: &str) -> WebDavResult<()> { self.inner.delete(p) }
+        fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.inner.move_to(from, to) }
+    }
+
+    const GUIDE: &str = "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a";
+    const BELL: &str = "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d";
+
+    #[test]
+    fn a_file_the_server_refuses_waits_for_retry_and_the_rest_syncs() {
+        // One 413 or 507 failed every sync: later files never went up,
+        // the status stayed red, and each sync sent the body again.
+        use crate::sync::settings::{self, RefusedUpload, UploadRefusal};
+        let (db, _) = setup();
+        let (sounds, guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        db.insert_guided_file_with_uuid(GUIDE, "Body scan", "/x/b.ogg", 600, false).unwrap();
+        std::fs::write(guided.path().join(format!("{GUIDE}.ogg")), b"OggS").unwrap();
+        db.insert_bell_sound_with_uuid(BELL, "Gong", "/x/gong.wav", false, "audio/wav", crate::db::BellSoundCategory::General)
+            .unwrap();
+        std::fs::write(sounds.path().join(format!("{BELL}.wav")), b"RIFF").unwrap();
+        let server = RefusesGuided { inner: FakeWebDav::new(), status: 413, attempts: Default::default() };
+        let sync = Sync::new(&db, &server, "Meditate", sounds.path().into(), guided.path().into());
+        sync.sync().expect("the rest of the sync completes");
+        assert!(server.inner.paths().iter().any(|p| p.contains(BELL)), "the bell still went up");
+        assert_eq!(
+            settings::refused_uploads(&db).unwrap(),
+            [RefusedUpload { uuid: GUIDE.into(), reason: UploadRefusal::TooLargeForServer }],
+        );
+        let attempts = server.attempts.load(std::sync::atomic::Ordering::SeqCst);
+        sync.sync().unwrap();
+        assert_eq!(server.attempts.load(std::sync::atomic::Ordering::SeqCst), attempts, "not sent again");
+        settings::clear_refused_uploads(&db).unwrap(); // the user's Retry
+        sync.sync().unwrap();
+        assert!(server.attempts.load(std::sync::atomic::Ordering::SeqCst) > attempts, "Retry sends it");
+    }
+
+    #[test]
+    fn a_full_server_and_a_file_over_the_cap_are_named_too() {
+        use crate::sync::settings::{self, UploadRefusal};
+        let (db, _) = setup();
+        let (sounds, guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        db.insert_guided_file_with_uuid(GUIDE, "Body scan", "/x/b.ogg", 600, false).unwrap();
+        std::fs::write(guided.path().join(format!("{GUIDE}.ogg")), b"OggS").unwrap();
+        let big = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+        db.insert_guided_file_with_uuid(big, "Retreat talk", "/x/r.ogg", 9000, false).unwrap();
+        std::fs::File::create(guided.path().join(format!("{big}.ogg")))
+            .unwrap()
+            .set_len(crate::sound::MAX_CUSTOM_GUIDED_BYTES + 1)
+            .unwrap();
+        let server = RefusesGuided { inner: FakeWebDav::new(), status: 507, attempts: Default::default() };
+        Sync::new(&db, &server, "Meditate", sounds.path().into(), guided.path().into()).sync().unwrap();
+        let mut reasons: Vec<(String, UploadRefusal)> =
+            settings::refused_uploads(&db).unwrap().into_iter().map(|r| (r.uuid, r.reason)).collect();
+        reasons.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            reasons,
+            [(big.to_string(), UploadRefusal::TooLargeToSync), (GUIDE.to_string(), UploadRefusal::ServerFull)],
+        );
+        assert_eq!(server.attempts.load(std::sync::atomic::Ordering::SeqCst), 1, "the big one was never read or sent");
     }
 
     #[test]

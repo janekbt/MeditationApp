@@ -19,6 +19,10 @@ pub use crate::preview::{PreviewAction, PreviewToggle};
 /// data directory from growing without bound.
 pub const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Cap on an imported guided file, and on what sync carries. A few
+/// hours of compressed speech; bigger files are refused at import.
+pub const MAX_CUSTOM_GUIDED_BYTES: u64 = 100 * 1024 * 1024;
+
 /// Audio extensions the importer accepts at the file-picker filter
 /// level. Pinned across shells so the gtk file dialog and an
 /// eventual Android SAF MIME filter agree on the same allow-list,
@@ -65,6 +69,9 @@ pub enum AudioFileError {
     /// video-only mp4). Each shell maps this to its own translated
     /// message.
     NoAudioTrack,
+    /// An imported guided file over `MAX_CUSTOM_GUIDED_BYTES`, even
+    /// compressed: sync couldn't carry it to the other devices.
+    TooLargeToSync,
     /// Anything else; the message is for Diagnostics, not the user.
     Other(String),
 }
@@ -133,6 +140,24 @@ pub fn parse_pick(raw: &str) -> Option<Result<PickedFile, AudioFileError>> {
 pub fn is_passthrough_ext(ext: &str) -> bool {
     let lower = ext.to_ascii_lowercase();
     matches!(lower.as_str(), "wav" | "ogg")
+}
+
+/// Refuse an imported guided file sync couldn't carry, removing it.
+pub fn keep_if_syncable(path: &std::path::Path) -> Result<(), AudioFileError> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() > MAX_CUSTOM_GUIDED_BYTES => {
+            let _ = std::fs::remove_file(path);
+            Err(AudioFileError::TooLargeToSync)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// True when a guided import keeps its source as-is: only ogg. A WAV
+/// is uncompressed (a 15-minute one passes the sync cap), so it is
+/// converted like every other format.
+pub fn is_guided_passthrough_ext(ext: &str) -> bool {
+    ext.eq_ignore_ascii_case("ogg")
 }
 
 /// True iff the given byte count fits under the custom-sound cap.
@@ -228,13 +253,22 @@ pub fn safe_copy_no_follow(
         .open(dest)?;
     let mut buf = [0u8; 64 * 1024];
     let mut total: u64 = 0;
-    loop {
-        let n = src.read(&mut buf)?;
-        if n == 0 { break; }
-        dst.write_all(&buf[..n])?;
+    let copied = loop {
+        let n = match src.read(&mut buf) {
+            Ok(0) => break Ok(total),
+            Ok(n) => n,
+            Err(e) => break Err(e),
+        };
+        if let Err(e) = dst.write_all(&buf[..n]) {
+            break Err(e);
+        }
         total += n as u64;
+    };
+    // A half-written file (a full disk) would belong to no row.
+    if copied.is_err() {
+        let _ = std::fs::remove_file(dest);
     }
-    Ok(total)
+    copied
 }
 
 #[cfg(test)]
@@ -352,6 +386,45 @@ mod tests {
             display_name_from_path(std::path::Path::new("")),
             "Custom sound"
         );
+    }
+
+    #[test]
+    fn an_imported_guided_file_too_large_to_sync_is_refused_and_removed() {
+        // It imported fine, its row synced, its audio never did, and
+        // nothing said why.
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.ogg");
+        std::fs::File::create(&big).unwrap().set_len(MAX_CUSTOM_GUIDED_BYTES + 1).unwrap();
+        assert_eq!(keep_if_syncable(&big), Err(AudioFileError::TooLargeToSync));
+        assert!(!big.exists());
+        let fine = dir.path().join("fine.ogg");
+        std::fs::File::create(&fine).unwrap().set_len(MAX_CUSTOM_GUIDED_BYTES).unwrap();
+        assert_eq!(keep_if_syncable(&fine), Ok(()));
+        assert!(fine.exists());
+    }
+
+    #[test]
+    fn a_guided_wav_is_converted_and_only_ogg_kept_as_is() {
+        // A WAV kept as-is passes the 100 MB sync cap at ~10 minutes:
+        // it imported, its row synced, its audio never did.
+        assert!(is_guided_passthrough_ext("ogg"));
+        assert!(is_guided_passthrough_ext("OGG"));
+        for ext in ["wav", "WAV", "mp3", "flac", "m4a", ""] {
+            assert!(!is_guided_passthrough_ext(ext), "{ext}");
+        }
+        assert_eq!(MAX_CUSTOM_GUIDED_BYTES, 100 * 1024 * 1024);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_fails_partway_leaves_no_file() {
+        // A full disk left a half-written <uuid>.ogg that no row used.
+        // A directory opens but can't be read: the read fails after
+        // the destination exists.
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.ogg");
+        assert!(safe_copy_no_follow(dir.path(), &dest).is_err());
+        assert!(!dest.exists());
     }
 
     #[cfg(unix)]

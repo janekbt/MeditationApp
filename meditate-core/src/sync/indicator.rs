@@ -38,6 +38,16 @@ pub enum SyncIndicatorState {
     /// neutral foreground to avoid a blank period between
     /// "save credentials" and "first sync".
     OkNoTs,
+    /// Sync works, but these audio files weren't uploaded; automatic
+    /// syncs skip them until the user taps Retry.
+    NotUploaded(Vec<NotUploaded>),
+}
+
+/// An audio file that wasn't uploaded, by its current name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotUploaded {
+    pub name: String,
+    pub reason: crate::sync::settings::UploadRefusal,
 }
 
 /// What a tap on the sync-status button should trigger given the
@@ -110,7 +120,31 @@ pub fn state_from_db(
     let last_ts = settings::get_last_sync_unix_ts(db).unwrap_or(None);
     let last_error = settings::get_last_sync_error(db).unwrap_or(None);
     let is_data_lost = settings::is_last_sync_remote_data_lost(db).unwrap_or(false);
-    derive(has_account, is_syncing, last_ts, last_error, is_data_lost)
+    let state = derive(has_account, is_syncing, last_ts, last_error, is_data_lost);
+    if matches!(state, SyncIndicatorState::OkWithTs(_) | SyncIndicatorState::OkNoTs) {
+        let not_uploaded = not_uploaded(db);
+        if !not_uploaded.is_empty() {
+            return SyncIndicatorState::NotUploaded(not_uploaded);
+        }
+    }
+    state
+}
+
+/// The refused uploads whose file is still here, by their name now.
+fn not_uploaded(db: &crate::db::Database) -> Vec<NotUploaded> {
+    let refused = crate::sync::settings::refused_uploads(db).unwrap_or_default();
+    if refused.is_empty() {
+        return Vec::new();
+    }
+    let mut names: std::collections::HashMap<String, String> =
+        db.list_bell_sounds().unwrap_or_default().into_iter().map(|s| (s.uuid.0, s.name)).collect();
+    names.extend(
+        crate::db::list_guided_files_from_db(db).unwrap_or_default().into_iter().map(|g| (g.uuid.0, g.name)),
+    );
+    refused
+        .into_iter()
+        .filter_map(|r| Some(NotUploaded { name: names.get(&r.uuid)?.clone(), reason: r.reason }))
+        .collect()
 }
 
 /// Click-action dispatch. Errors with the data-lost flag route to
@@ -118,7 +152,7 @@ pub fn state_from_db(
 pub fn action_for(state: &SyncIndicatorState) -> SyncIndicatorAction {
     match state {
         SyncIndicatorState::Error { data_lost: true, .. } => SyncIndicatorAction::OpenRecovery,
-        SyncIndicatorState::Error { .. } => SyncIndicatorAction::RetrySync,
+        SyncIndicatorState::Error { .. } | SyncIndicatorState::NotUploaded(_) => SyncIndicatorAction::RetrySync,
         _ => SyncIndicatorAction::OpenPrefsData,
     }
 }
@@ -126,6 +160,34 @@ pub fn action_for(state: &SyncIndicatorState) -> SyncIndicatorAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refused_uploads_show_by_name_until_retried() {
+        // Skipping a refused file kept the status green while the file
+        // was missing on every other device.
+        use crate::sync::settings::{self, RefusedUpload, UploadRefusal};
+        let db = crate::db::Database::open_in_memory().unwrap();
+        settings::set_nextcloud_account(&db, "https://cloud.example", "me").unwrap();
+        let guide = "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a";
+        db.insert_guided_file_with_uuid(guide, "Body scan", "/x/b.ogg", 600, false).unwrap();
+        settings::set_refused_uploads(
+            &db,
+            &[
+                RefusedUpload { uuid: guide.into(), reason: UploadRefusal::ServerFull },
+                // Its row was deleted since: it drops off.
+                RefusedUpload { uuid: "gone".into(), reason: UploadRefusal::Refused(500) },
+            ],
+        )
+        .unwrap();
+        let state = state_from_db(&db, false);
+        assert_eq!(
+            state,
+            SyncIndicatorState::NotUploaded(vec![NotUploaded { name: "Body scan".into(), reason: UploadRefusal::ServerFull }]),
+        );
+        assert_eq!(action_for(&state), SyncIndicatorAction::RetrySync);
+        settings::clear_refused_uploads(&db).unwrap();
+        assert_eq!(state_from_db(&db, false), SyncIndicatorState::OkNoTs);
+    }
 
     #[test]
     fn derive_hides_when_no_account() {

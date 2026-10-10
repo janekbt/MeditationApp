@@ -1015,3 +1015,21 @@ msgstr[1] "Nog {n} regels zijn ook niet leesbaar."
 
 msgid "Nothing in this file can be imported."
 msgstr "Niets uit dit bestand kan worden geïmporteerd."
+
+msgid "Over 100 MB, too large to sync"
+msgstr "Boven 100 MB: niet te synchroniseren"
+
+msgid "Some files weren't uploaded, tap to retry\n{}"
+msgstr "Sommige bestanden zijn niet geüpload, tik om opnieuw te proberen\n{}"
+
+msgid "{}: too large to sync"
+msgstr "{}: te groot om te synchroniseren"
+
+msgid "{}: too large for the server"
+msgstr "{}: te groot voor de server"
+
+msgid "{}: the server is full"
+msgstr "{}: de server is vol"
+
+msgid "{0}: refused by the server ({1})"
+msgstr "{0}: geweigerd door de server ({1})"

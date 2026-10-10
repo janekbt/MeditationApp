@@ -1,9 +1,8 @@
 // Guided-file import worker (Phase 6.5 GM-F2). Mirrors the GTK
 // shell's `guided.rs::do_import_io`: copies the source to
 // `<filesDir>/meditate/guided/<uuid>.ogg` as-is when it is already
-// a passthrough container (wav / ogg — same set as
-// meditate_core::sound::is_passthrough_ext), otherwise transcodes
-// it to Opus-in-Ogg. GTK lands Ogg/Vorbis; Android's MediaCodec
+// Ogg (a bell keeps wav too; see doImport), otherwise transcodes it
+// to Opus-in-Ogg. GTK lands Ogg/Vorbis; Android's MediaCodec
 // can't encode Vorbis, so we use Opus — still Ogg, still playable
 // by the GTK/gstreamer side, so a synced file round-trips. The
 // reason we transcode at all (rather than copy the mp3) is the
@@ -109,9 +108,14 @@ object MeditateGuidedImport {
     ) {
         File(dest).parentFile?.mkdirs()
         val ext = src.substringAfterLast('.', "").lowercase()
-        // Passthrough set matches meditate_core::sound::is_passthrough_ext
-        // (wav | ogg). Everything else is transcoded.
-        if (ext == "wav" || ext == "ogg") {
+        // Passthrough matches meditate_core::sound: a bell keeps wav
+        // and ogg (is_passthrough_ext), a guided file only ogg
+        // (is_guided_passthrough_ext), since an uncompressed WAV soon
+        // outgrows what sync carries. Before Android 10 nothing can be
+        // converted: there a WAV is kept and the size check decides.
+        val guided = File(dest).parentFile?.name == "guided"
+        val canConvert = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+        if (ext == "ogg" || (ext == "wav" && (!guided || !canConvert))) {
             if (isCancelled()) return
             File(src).copyTo(File(dest), overwrite = true)
             return

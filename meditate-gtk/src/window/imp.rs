@@ -595,7 +595,10 @@ impl MeditateWindow {
                 let state = sync_indicator_state_now(&app);
                 match action_for(&state) {
                     SyncIndicatorAction::OpenRecovery => crate::recovery_dialog::show(&app),
-                    SyncIndicatorAction::RetrySync => app.trigger_sync(),
+                    SyncIndicatorAction::RetrySync => {
+                        app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
+                        app.trigger_sync();
+                    }
                     SyncIndicatorAction::OpenPrefsData => {
                         crate::preferences::show_preferences_on_page(&app, Some("data"));
                     }
@@ -686,6 +689,19 @@ impl MeditateWindow {
                         gettext("Last sync failed — click to retry"),
                         detail)));
             }
+            SyncIndicatorState::NotUploaded(files) => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("dialog-warning-symbolic"));
+                btn.add_css_class("warning");
+                let lines: Vec<String> = files.iter().map(not_uploaded_line).collect();
+                btn.set_tooltip_text(Some(&format!(
+                    "{}\n{}",
+                    gettext("Some files weren't uploaded, click to retry"),
+                    lines.join("\n"),
+                )));
+            }
             SyncIndicatorState::OkWithTs(ts) => {
                 btn.set_visible(true);
                 spinner.set_spinning(false);
@@ -724,6 +740,20 @@ fn sync_indicator_state_now(
 /// localise the count words; gettext takes care of that via the
 /// surrounding translatable templates. The bucket decision lives in
 /// `meditate_core::format::synced_ago_key`.
+/// One refused upload, as the status lists it.
+fn not_uploaded_line(file: &meditate_core::sync::indicator::NotUploaded) -> String {
+    use meditate_core::sync::settings::UploadRefusal;
+    match file.reason {
+        UploadRefusal::TooLargeToSync => gettext("{name}: too large to sync"),
+        UploadRefusal::TooLargeForServer => gettext("{name}: too large for the server"),
+        UploadRefusal::ServerFull => gettext("{name}: the server is full"),
+        UploadRefusal::Refused(status) => {
+            gettext("{name}: refused by the server ({status})").replace("{status}", &status.to_string())
+        }
+    }
+    .replace("{name}", &file.name)
+}
+
 fn format_synced_ago(unix_ts: i64) -> String {
     use crate::i18n::{gettext, ngettext};
     use meditate_core::format::SyncedAgoKey;

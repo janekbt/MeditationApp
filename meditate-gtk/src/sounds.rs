@@ -643,6 +643,7 @@ fn present_import_confirm_dialog(
                 Ok(Err(AudioFileError::NoAudioTrack)) => {
                     present_toast(&anchor, &gettext("This file has no audio track"));
                 }
+                Ok(Err(AudioFileError::TooLargeToSync)) => present_toast(&anchor, &crate::guided::too_large_to_sync()),
                 Ok(Err(AudioFileError::Other(e))) => present_import_error_toast(&anchor, &e),
                 Err(_) => present_import_error_toast(
                     &anchor,

@@ -285,6 +285,22 @@ mod tests {
         { Err(meditate_core::WebDavError::Network("offline".into())) }
     }
 
+    /// A file the server refused shows by name in the status, and
+    /// Retry sends it again: automatic syncs skip it.
+    #[test]
+    fn refused_uploads_show_by_name_and_retry_sends_them_again() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/window/imp.rs"),
+        )
+        .unwrap();
+        assert!(src.contains("SyncIndicatorState::NotUploaded(files) => {"));
+        assert!(src.contains(
+            "SyncIndicatorAction::RetrySync => {\n                        \
+             app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));\n                        \
+             app.trigger_sync();"
+        ));
+    }
+
     #[test]
     fn run_with_webdav_pushes_local_event_to_remote() {
         // The integration: runner → Sync::sync → push.

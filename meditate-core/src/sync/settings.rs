@@ -157,6 +157,62 @@ pub fn clear_sync_error(db: &Database) -> Result<()> {
     Ok(())
 }
 
+/// Audio files that weren't uploaded, as JSON `[RefusedUpload]`:
+/// automatic syncs skip them (a refused 100 MB file would otherwise go
+/// up again after every save) until the user taps Retry.
+pub const KEY_REFUSED_UPLOADS: &str = "refused_uploads";
+
+/// Why an audio file wasn't uploaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum UploadRefusal {
+    /// Over the size sync carries (a guided file imported before the
+    /// import refused such files).
+    TooLargeToSync,
+    /// 413: the server (or a proxy before it) takes no file this big.
+    TooLargeForServer,
+    /// 507: the account's storage is full.
+    ServerFull,
+    /// Any other status the server answered the upload with.
+    Refused(u16),
+}
+
+impl UploadRefusal {
+    pub fn from_status(status: u16) -> Self {
+        match status {
+            413 => Self::TooLargeForServer,
+            507 => Self::ServerFull,
+            other => Self::Refused(other),
+        }
+    }
+}
+
+/// A file (bell sound or guided file, by its row's uuid) that wasn't
+/// uploaded, and why.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RefusedUpload {
+    pub uuid: String,
+    pub reason: UploadRefusal,
+}
+
+pub fn refused_uploads(db: &Database) -> Result<Vec<RefusedUpload>> {
+    let raw = db.get_sync_state(KEY_REFUSED_UPLOADS, "")?;
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
+}
+
+pub fn set_refused_uploads(db: &Database, refused: &[RefusedUpload]) -> Result<()> {
+    let json = if refused.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(refused).expect("RefusedUpload serializes to JSON")
+    };
+    db.set_sync_state(KEY_REFUSED_UPLOADS, &json)
+}
+
+/// The user's Retry: the next sync tries every refused file again.
+pub fn clear_refused_uploads(db: &Database) -> Result<()> {
+    db.set_sync_state(KEY_REFUSED_UPLOADS, "")
+}
+
 /// Prepare the local DB for a "push local up" recovery: wipe the
 /// dedup tracker, flag every event un-synced (so the next push
 /// bundles them into a fresh batch), and clear any stale sync-error

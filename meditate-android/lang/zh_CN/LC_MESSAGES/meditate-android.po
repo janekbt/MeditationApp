@@ -992,3 +992,21 @@ msgstr[0] "另有 {n} 行也无法读取。"
 
 msgid "Nothing in this file can be imported."
 msgstr "此文件中没有可导入的内容。"
+
+msgid "Over 100 MB, too large to sync"
+msgstr "超过 100 MB，无法同步"
+
+msgid "Some files weren't uploaded, tap to retry\n{}"
+msgstr "部分文件未上传，点按重试\n{}"
+
+msgid "{}: too large to sync"
+msgstr "{}：太大，无法同步"
+
+msgid "{}: too large for the server"
+msgstr "{}：对服务器来说太大"
+
+msgid "{}: the server is full"
+msgstr "{}：服务器空间已满"
+
+msgid "{0}: refused by the server ({1})"
+msgstr "{0}：被服务器拒绝（{1}）"

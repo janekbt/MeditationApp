@@ -70,6 +70,7 @@ export global Tr {
     public pure function import-line-duration(line: int) -> string { return @tr("Line {}: the duration can't be read.", line); }
     public pure function import-more(n: int) -> string { return @tr("{n} more line can't be read either." | "{n} more lines can't be read either." % n); }
     public pure function import-nothing() -> string { return @tr("Nothing in this file can be imported."); }
+    public pure function too-large-to-sync() -> string { return @tr("Over 100 MB, too large to sync"); }
     public pure function playback-failed() -> string { return @tr("Couldn't start playback"); }
     public pure function save-failed-storage() -> string { return @tr("Couldn't save session: storage error"); }
     public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session: storage unavailable"); }
@@ -86,6 +87,11 @@ export global Tr {
     // Sync indicator tooltips
     public pure function syncing() -> string { return @tr("Syncing with Nextcloud…"); }
     public pure function sync-failed-tap(detail: string) -> string { return @tr("Last sync failed, tap to retry\n{}", detail); }
+    public pure function not-uploaded-tap(files: string) -> string { return @tr("Some files weren't uploaded, tap to retry\n{}", files); }
+    public pure function upload-too-large-to-sync(name: string) -> string { return @tr("{}: too large to sync", name); }
+    public pure function upload-too-large-for-server(name: string) -> string { return @tr("{}: too large for the server", name); }
+    public pure function upload-server-full(name: string) -> string { return @tr("{}: the server is full", name); }
+    public pure function upload-refused(name: string, status: int) -> string { return @tr("{0}: refused by the server ({1})", name, status); }
     public pure function sync-waiting-first() -> string { return @tr("Sync configured (waiting for first run)"); }
     public pure function synced-just-now() -> string { return @tr("Synced just now"); }
     public pure function synced-min(n: int) -> string { return @tr("Synced {n} minute ago" | "Synced {n} minutes ago" % n); }

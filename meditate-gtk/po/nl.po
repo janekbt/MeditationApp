@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-10 10:09+0200\n"
+"POT-Creation-Date: 2026-10-10 11:12+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -44,15 +44,15 @@ msgstr "'{name}' overschreven"
 msgid "Updated"
 msgstr "Bijgewerkt"
 
-#: src/announcement.rs:39 src/guided.rs:1106
+#: src/announcement.rs:39 src/guided.rs:1116
 msgid "Deleted"
 msgstr "Verwijderd"
 
-#: src/application.rs:234
+#: src/application.rs:244
 msgid "Database is newer than this app"
 msgstr "Database is nieuwer dan deze app"
 
-#: src/application.rs:236
+#: src/application.rs:246
 #, rust-format
 msgid ""
 "The local database (version {db}) was written by a newer build than this one "
@@ -63,11 +63,11 @@ msgstr ""
 "deze (versie {build}). Installeer een passende versie, of verplaats het "
 "bestand om opnieuw te beginnen."
 
-#: src/application.rs:245
+#: src/application.rs:255
 msgid "Couldn't open database"
 msgstr "Kan database niet openen"
 
-#: src/application.rs:247
+#: src/application.rs:257
 msgid ""
 "An unexpected error prevented opening the local database. Check the "
 "diagnostics log in About → Troubleshooting for details."
@@ -75,21 +75,21 @@ msgstr ""
 "Door een onverwachte fout kon de lokale database niet worden geopend. Bekijk "
 "het diagnoselogboek onder Info → Probleemoplossing voor details."
 
-#: src/application.rs:267
+#: src/application.rs:277
 msgid "Open Data Folder"
 msgstr "Gegevensmap openen"
 
-#: src/application.rs:275 data/ui/shortcuts.ui:42
+#: src/application.rs:285 data/ui/shortcuts.ui:42
 msgid "Quit"
 msgstr "Afsluiten"
 
-#: src/application.rs:287 data/ui/window.blp:20 data/ui/window.blp:32
+#: src/application.rs:297 data/ui/window.blp:20 data/ui/window.blp:32
 #: data/io.github.janekbt.Meditate.desktop.in:2
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:7
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:398 src/guided.rs:1172 src/log/imp.rs:677
+#: src/application.rs:408 src/guided.rs:1182 src/log/imp.rs:677
 #: src/presets.rs:704 src/timer/imp.rs:3582 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
@@ -119,19 +119,19 @@ msgstr "Deze bel klinkt niet meer tijdens sessies."
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:317 src/bells.rs:759 src/guided.rs:215 src/guided.rs:933
-#: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
+#: src/bells.rs:317 src/bells.rs:759 src/guided.rs:216 src/guided.rs:943
+#: src/guided.rs:1055 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
 #: src/preferences.rs:589 src/preferences.rs:663 src/presets.rs:445
 #: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:913 src/sounds.rs:979 src/timer/imp.rs:2531
+#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2531
 #: src/timer/imp.rs:3711 src/vibration_editor.rs:129 src/vibrations.rs:557
 #: src/vibrations.rs:647
 msgid "Cancel"
 msgstr "Annuleren"
 
-#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1046 src/labels.rs:396
-#: src/presets.rs:575 src/sounds.rs:980 src/vibrations.rs:648
+#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1056 src/labels.rs:396
+#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:648
 msgid "Delete"
 msgstr "Verwijderen"
 
@@ -139,7 +139,7 @@ msgstr "Verwijderen"
 msgid "No interval bells configured"
 msgstr "Geen intervalbellen ingesteld"
 
-#: src/bells.rs:344 src/guided.rs:892
+#: src/bells.rs:344 src/guided.rs:902
 msgid "Tap the row above to add one"
 msgstr "Tik op de rij hierboven om er een toe te voegen"
 
@@ -300,104 +300,110 @@ msgstr "Fout bij bestandskiezer"
 msgid "Picked file has no local path"
 msgstr "Gekozen bestand heeft geen lokaal pad"
 
-#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:420 src/sounds.rs:644
+#: src/guided.rs:144 src/guided.rs:351 src/sounds.rs:420 src/sounds.rs:644
 msgid "This file has no audio track"
 msgstr "Dit bestand heeft geen audiospoor"
 
-#: src/guided.rs:148
+#: src/guided.rs:149
 msgid "Couldn't read audio file"
 msgstr "Kan audiobestand niet lezen"
 
-#: src/guided.rs:173
+#: src/guided.rs:174
 msgid "Track name"
 msgstr "Tracknaam"
 
-#: src/guided.rs:177 src/guided.rs:915
+#: src/guided.rs:178 src/guided.rs:925
 msgid "A guided file with this name already exists."
 msgstr "Er bestaat al een begeleid bestand met deze naam."
 
-#: src/guided.rs:184 src/preferences.rs:134 src/sounds.rs:498
+#: src/guided.rs:185 src/preferences.rs:134 src/sounds.rs:498
 msgid "Import"
 msgstr "Importeren"
 
-#: src/guided.rs:204
+#: src/guided.rs:205
 msgid "Import Guided File"
 msgstr "Begeleid bestand importeren"
 
-#: src/guided.rs:207 src/sounds.rs:525
+#: src/guided.rs:208 src/sounds.rs:525
 msgid "Importing:"
 msgstr "Importeren:"
 
-#: src/guided.rs:286 src/sounds.rs:595
+#: src/guided.rs:287 src/sounds.rs:595
 msgid "Converting…"
 msgstr "Converteren…"
 
-#: src/guided.rs:338 src/guided.rs:354
+#: src/guided.rs:339 src/guided.rs:356
 msgid "Import failed"
 msgstr "Importeren mislukt"
 
-#: src/guided.rs:358
+#: src/guided.rs:360
 msgid "Import worker died"
 msgstr "Importproces is onverwacht gestopt"
 
-#: src/guided.rs:558 data/ui/timer_view.blp:289
+#. / Why an imported file was refused: even compressed it's bigger than
+#. / sync carries.
+#: src/guided.rs:425
+msgid "Over 100 MB, too large to sync"
+msgstr "Boven 100 MB: niet te synchroniseren"
+
+#: src/guided.rs:568 data/ui/timer_view.blp:289
 msgid "Manage Files"
 msgstr "Bestanden beheren"
 
-#: src/guided.rs:666
+#: src/guided.rs:676
 msgid "Create new guided file…"
 msgstr "Nieuw begeleid bestand aanmaken…"
 
-#: src/guided.rs:733
+#: src/guided.rs:743
 msgid "Unstar — remove from home list"
 msgstr "Uit favorieten — van startlijst verwijderen"
 
-#: src/guided.rs:735
+#: src/guided.rs:745
 msgid "Star — show in home list"
 msgstr "Favoriet — tonen in startlijst"
 
-#: src/guided.rs:760 src/guided.rs:934 src/labels.rs:195 src/labels.rs:315
-#: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:914
+#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:315
+#: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:915
 #: src/vibrations.rs:417 src/vibrations.rs:558
 msgid "Rename"
 msgstr "Hernoemen"
 
-#: src/guided.rs:790
+#: src/guided.rs:800
 msgid "Delete file"
 msgstr "Bestand verwijderen"
 
-#: src/guided.rs:836 src/guided.rs:853 src/guided.rs:878
+#: src/guided.rs:846 src/guided.rs:863 src/guided.rs:888
 #: src/vibration_editor.rs:245 src/vibration_editor.rs:561
 #: src/vibration_editor.rs:599
 msgid "Preview"
 msgstr "Voorbeeld"
 
-#: src/guided.rs:862 src/sounds.rs:305 src/vibration_editor.rs:587
+#: src/guided.rs:872 src/sounds.rs:305 src/vibration_editor.rs:587
 #: src/vibrations.rs:324 src/volume_row.rs:60
 msgid "Stop preview"
 msgstr "Voorbeeld stoppen"
 
-#: src/guided.rs:891
+#: src/guided.rs:901
 msgid "No guided files imported"
 msgstr "Geen begeleide bestanden geïmporteerd"
 
-#: src/guided.rs:928
+#: src/guided.rs:938
 msgid "Rename Guided File"
 msgstr "Begeleid bestand hernoemen"
 
-#: src/guided.rs:999
+#: src/guided.rs:1009
 msgid "File renamed"
 msgstr "Bestand hernoemd"
 
-#: src/guided.rs:1035
+#: src/guided.rs:1045
 msgid "Delete Guided File?"
 msgstr "Begeleid bestand verwijderen?"
 
-#: src/guided.rs:1038
+#: src/guided.rs:1048
 msgid "This will permanently remove"
 msgstr "Dit verwijdert permanent"
 
-#: src/guided.rs:1040
+#: src/guided.rs:1050
 msgid "Past sessions logged with this file stay in the log."
 msgstr "Eerdere sessies met dit bestand blijven in het logboek staan."
 
@@ -1016,23 +1022,23 @@ msgstr "Deze naam is al in gebruik"
 msgid "Import Sound"
 msgstr "Geluid importeren"
 
-#: src/sounds.rs:649
+#: src/sounds.rs:650
 msgid "import worker died"
 msgstr "importproces is onverwacht gestopt"
 
-#: src/sounds.rs:669
+#: src/sounds.rs:670
 msgid "Import failed:"
 msgstr "Importeren mislukt:"
 
-#: src/sounds.rs:908
+#: src/sounds.rs:909
 msgid "Rename Sound"
 msgstr "Geluid hernoemen"
 
-#: src/sounds.rs:974
+#: src/sounds.rs:975
 msgid "Delete Sound?"
 msgstr "Geluid verwijderen?"
 
-#: src/sounds.rs:975
+#: src/sounds.rs:976
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Bellen die dit geluid gebruiken, verliezen hun audio."
 
@@ -1484,37 +1490,61 @@ msgstr "Vasthouden"
 msgid "Breathe out"
 msgstr "Adem uit"
 
-#: src/window/imp.rs:676
+#: src/window/imp.rs:679
 msgid "Syncing with Nextcloud…"
 msgstr "Synchroniseren met Nextcloud…"
 
-#: src/window/imp.rs:686
+#: src/window/imp.rs:689
 msgid "Last sync failed — click to retry"
 msgstr "Laatste synchronisatie mislukt — klik om opnieuw te proberen"
 
-#: src/window/imp.rs:702
+#: src/window/imp.rs:701
+msgid "Some files weren't uploaded, click to retry"
+msgstr "Sommige bestanden zijn niet geüpload, klik om opnieuw te proberen"
+
+#: src/window/imp.rs:718
 msgid "Sync configured (waiting for first run)"
 msgstr "Synchronisatie ingesteld (wacht op eerste run)"
 
-#: src/window/imp.rs:732
+#: src/window/imp.rs:747
+#, rust-format
+msgid "{name}: too large to sync"
+msgstr "{name}: te groot om te synchroniseren"
+
+#: src/window/imp.rs:748
+#, rust-format
+msgid "{name}: too large for the server"
+msgstr "{name}: te groot voor de server"
+
+#: src/window/imp.rs:749
+#, rust-format
+msgid "{name}: the server is full"
+msgstr "{name}: de server is vol"
+
+#: src/window/imp.rs:751
+#, rust-format
+msgid "{name}: refused by the server ({status})"
+msgstr "{name}: geweigerd door de server ({status})"
+
+#: src/window/imp.rs:762
 msgid "Synced just now"
 msgstr "Zojuist gesynchroniseerd"
 
-#: src/window/imp.rs:734
+#: src/window/imp.rs:764
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "1 minuut geleden gesynchroniseerd"
 msgstr[1] "{n} minuten geleden gesynchroniseerd"
 
-#: src/window/imp.rs:737
+#: src/window/imp.rs:767
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "1 uur geleden gesynchroniseerd"
 msgstr[1] "{n} uur geleden gesynchroniseerd"
 
-#: src/window/imp.rs:740
+#: src/window/imp.rs:770
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
