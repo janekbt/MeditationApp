@@ -94,18 +94,8 @@ pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnect
 // ── Save/Test prep ──────────────────────────────────────────────────
 
 /// Failure modes the Save and Test-Connection validation chains
-/// surface. Shell maps each variant to its gettext toast.
-///
-/// Five variants spanning two producers:
-/// - `prepare_save` emits `EmptyUrl`, `EmptyUsername`, `InsecureUrl`.
-/// - `prepare_test` emits `EmptyUrl`, `EmptyUsername`, `NoPassword`,
-///   `KeyringFailed`.
-///
-/// The unified enum lets each shell flow do a single exhaustive
-/// `match` over the same type (one i18n audit, one renderer). The
-/// over-typing — `prepare_save` cannot in practice return
-/// `NoPassword`/`KeyringFailed` and `prepare_test` cannot return
-/// `InsecureUrl` — is a documented narrowing, not a type-level one.
+/// surface. Shell maps each variant to its gettext toast. Save runs
+/// Test's checks, so both can return every variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncSettingsError {
     EmptyUrl,
@@ -115,16 +105,14 @@ pub enum SyncSettingsError {
     /// request — the auth header is just `base64(user:pw)` over the
     /// wire — so the sync layer refuses to attempt it. Shell maps
     /// this to a user-facing "URL must start with https://" toast.
-    /// Emitted by `prepare_save` only.
+    /// Test refuses it too: it would send the password in the clear.
     InsecureUrl,
     /// User left the password row empty AND no keychain entry
-    /// exists — they need to type one in. Emitted by `prepare_test`
-    /// only.
+    /// exists for this URL and username — they need to type one in.
     NoPassword,
     /// Keychain access failed (D-Bus error, locked keyring, etc.).
-    /// Shell logs the underlying error to diag before invoking
-    /// `prepare_test`; the toast just signals the user to try again.
-    /// Emitted by `prepare_test` only.
+    /// Shell logs the underlying error to diag before returning it;
+    /// the toast just signals the user to try again.
     KeyringFailed,
 }
 
@@ -132,9 +120,8 @@ pub enum SyncSettingsError {
 /// the user taps Save.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordAction {
-    /// User left the password row empty — keep the existing
-    /// keychain entry untouched. Avoids clobbering on a "fix the
-    /// URL typo, leave password alone" edit.
+    /// User left the password row empty and the keychain already
+    /// holds one for this URL and username: leave it untouched.
     Keep,
     /// User typed a non-empty password — write it to the keychain.
     Store(String),
@@ -150,39 +137,25 @@ pub struct SaveSyncPlan {
     pub password: PasswordAction,
 }
 
-/// Validate the user's Save-button input. Trims url + username,
-/// rejects empty, decides whether the typed password should be
-/// stored or skipped. The actual keychain write + DB update +
-/// `trigger_sync` ordering stays in the shell (it owns the
-/// keychain transport + the threading model).
-pub fn prepare_save(
+/// Validate the user's Save-button input: Test's checks, then whether
+/// the typed password should be stored or the stored one kept. An
+/// empty field with nothing stored for this URL and username is
+/// `NoPassword`, so a changed URL can't leave sync without one. The
+/// keychain write + DB update + `trigger_sync` ordering stays in the
+/// shell (it owns the keychain transport + the threading model).
+pub fn prepare_save<E>(
     url: &str,
     username: &str,
     typed_password: &str,
+    stored_password: impl FnOnce() -> std::result::Result<Option<String>, E>,
 ) -> std::result::Result<SaveSyncPlan, SyncSettingsError> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(SyncSettingsError::EmptyUrl);
-    }
-    // URL schemes are case-insensitive per RFC 3986; lowercase
-    // before comparing so "HTTPS://…" and "Https://…" pass.
-    if !url.to_ascii_lowercase().starts_with("https://") {
-        return Err(SyncSettingsError::InsecureUrl);
-    }
-    let username = username.trim();
-    if username.is_empty() {
-        return Err(SyncSettingsError::EmptyUsername);
-    }
+    let creds = prepare_test(url, username, typed_password, stored_password)?;
     let password = if typed_password.is_empty() {
         PasswordAction::Keep
     } else {
-        PasswordAction::Store(typed_password.to_string())
+        PasswordAction::Store(creds.password)
     };
-    Ok(SaveSyncPlan {
-        url: url.to_string(),
-        username: username.to_string(),
-        password,
-    })
+    Ok(SaveSyncPlan { url: creds.url, username: creds.username, password })
 }
 
 /// Validated credentials ready for the `test_connection` call.
@@ -194,8 +167,8 @@ pub struct Credentials {
 }
 
 /// Validate the user's Test-Connection input. Trims url + username,
-/// rejects empty, falls back to the keychain when typed password is
-/// empty.
+/// rejects empty and non-https, falls back to the keychain when typed
+/// password is empty.
 ///
 /// `stored_password` is the shell's keychain read, deferred behind a
 /// closure so it only fires when actually needed (typed password
@@ -212,6 +185,11 @@ pub fn prepare_test<E>(
     let url = url.trim();
     if url.is_empty() {
         return Err(SyncSettingsError::EmptyUrl);
+    }
+    // URL schemes are case-insensitive per RFC 3986; lowercase
+    // before comparing so "HTTPS://…" and "Https://…" pass.
+    if !url.to_ascii_lowercase().starts_with("https://") {
+        return Err(SyncSettingsError::InsecureUrl);
     }
     let username = username.trim();
     if username.is_empty() {
@@ -330,18 +308,18 @@ mod tests {
 
     #[test]
     fn prepare_save_rejects_empty_url() {
-        assert_eq!(prepare_save("", "user", "pw"), Err(SyncSettingsError::EmptyUrl));
-        assert_eq!(prepare_save("   ", "user", "pw"), Err(SyncSettingsError::EmptyUrl));
+        assert_eq!(prepare_save("", "user", "pw", ok_none), Err(SyncSettingsError::EmptyUrl));
+        assert_eq!(prepare_save("   ", "user", "pw", ok_none), Err(SyncSettingsError::EmptyUrl));
     }
 
     #[test]
     fn prepare_save_rejects_empty_username() {
         assert_eq!(
-            prepare_save("https://nx.example", "", "pw"),
+            prepare_save("https://nx.example", "", "pw", ok_none),
             Err(SyncSettingsError::EmptyUsername),
         );
         assert_eq!(
-            prepare_save("https://nx.example", "  ", "pw"),
+            prepare_save("https://nx.example", "  ", "pw", ok_none),
             Err(SyncSettingsError::EmptyUsername),
         );
     }
@@ -351,7 +329,7 @@ mod tests {
         // Basic-auth over HTTP sends `base64(user:pw)` in cleartext
         // on every request — the sync layer refuses to attempt it.
         assert_eq!(
-            prepare_save("http://nx.example", "user", "pw"),
+            prepare_save("http://nx.example", "user", "pw", ok_none),
             Err(SyncSettingsError::InsecureUrl),
         );
     }
@@ -361,7 +339,7 @@ mod tests {
         // A typo without scheme would otherwise fall through to ureq
         // which infers http — also cleartext.
         assert_eq!(
-            prepare_save("nx.example", "user", "pw"),
+            prepare_save("nx.example", "user", "pw", ok_none),
             Err(SyncSettingsError::InsecureUrl),
         );
     }
@@ -371,7 +349,7 @@ mod tests {
         // Belt-and-braces: only https is accepted. ftp, file,
         // gemini, anything else gets the same insecure-url toast.
         assert_eq!(
-            prepare_save("ftp://nx.example", "user", "pw"),
+            prepare_save("ftp://nx.example", "user", "pw", ok_none),
             Err(SyncSettingsError::InsecureUrl),
         );
     }
@@ -381,7 +359,7 @@ mod tests {
         // RFC 3986: URL schemes are case-insensitive.
         for scheme in ["https://", "HTTPS://", "Https://", "HttPs://"] {
             let url = format!("{scheme}nx.example");
-            let plan = prepare_save(&url, "user", "pw")
+            let plan = prepare_save(&url, "user", "pw", ok_none)
                 .unwrap_or_else(|e| panic!("{url} should be accepted, got {e:?}"));
             assert_eq!(plan.username, "user");
         }
@@ -389,7 +367,10 @@ mod tests {
 
     #[test]
     fn prepare_save_keep_when_password_empty() {
-        let plan = prepare_save("https://nx.example", "user", "").unwrap();
+        let plan = prepare_save("https://nx.example", "user", "", || -> Result<Option<String>, FakeKeyringErr> {
+            Ok(Some("stored".into()))
+        })
+        .unwrap();
         assert_eq!(plan.password, PasswordAction::Keep);
         assert_eq!(plan.url, "https://nx.example");
         assert_eq!(plan.username, "user");
@@ -397,18 +378,47 @@ mod tests {
 
     #[test]
     fn prepare_save_store_when_password_present() {
-        let plan = prepare_save("https://nx.example", "user", "secret").unwrap();
+        let plan = prepare_save("https://nx.example", "user", "secret", ok_none).unwrap();
         assert_eq!(plan.password, PasswordAction::Store("secret".into()));
     }
 
     #[test]
     fn prepare_save_trims_url_and_username() {
-        let plan = prepare_save("  https://nx.example  ", "  user  ", "x").unwrap();
+        let plan = prepare_save("  https://nx.example  ", "  user  ", "x", ok_none).unwrap();
         assert_eq!(plan.url, "https://nx.example");
         assert_eq!(plan.username, "user");
     }
 
+    /// After fixing a URL typo with the password field left empty, Save
+    /// said "saved" and every sync then failed for want of a password.
+    #[test]
+    fn prepare_save_needs_a_password_when_none_is_stored_for_the_account() {
+        assert_eq!(
+            prepare_save("https://nx.example", "user", "", ok_none),
+            Err(SyncSettingsError::NoPassword),
+        );
+        assert_eq!(
+            prepare_save("https://nx.example", "user", "", err_keyring),
+            Err(SyncSettingsError::KeyringFailed),
+        );
+    }
+
     // ── prepare_test ────────────────────────────────────────────────
+
+    /// Test sent the app password over plain http before Save refused it.
+    #[test]
+    fn prepare_test_refuses_http_before_reading_the_keyring() {
+        assert_eq!(
+            prepare_test("http://nx", "user", "pw", ok_none),
+            Err(SyncSettingsError::InsecureUrl),
+        );
+        assert_eq!(
+            prepare_test("http://nx", "user", "", || -> Result<Option<String>, FakeKeyringErr> {
+                panic!("an http URL must not reach the keyring")
+            }),
+            Err(SyncSettingsError::InsecureUrl),
+        );
+    }
 
     /// Test-only stand-in for whatever keychain-error type a shell
     /// passes through. The closure-generic `E` is exercised here so

@@ -93,6 +93,7 @@ export global Tr {
     public pure function upload-server-full(name: string) -> string { return @tr("{}: the server is full", name); }
     public pure function upload-refused(name: string, status: int) -> string { return @tr("{0}: refused by the server ({1})", name, status); }
     public pure function sync-waiting-first() -> string { return @tr("Sync configured (waiting for first run)"); }
+    public pure function sync-needs-password() -> string { return @tr("No password saved, tap to enter it"); }
     public pure function synced-just-now() -> string { return @tr("Synced just now"); }
     public pure function synced-min(n: int) -> string { return @tr("Synced {n} minute ago" | "Synced {n} minutes ago" % n); }
     public pure function synced-hours(n: int) -> string { return @tr("Synced {n} hour ago" | "Synced {n} hours ago" % n); }
@@ -3075,6 +3076,13 @@ export component MainWindow inherits Window {
     property <bool> text-focused: TextInputInterface.text-input-focused;
     changed text-focused => {
         if !self.text-focused {
+            root-focus.focus();
+        }
+    }
+    // A closed page keeps its focused field, and with it the cursor
+    // handle and the copy bar (Slint drops them on focus loss only).
+    changed preferences-page => {
+        if !self.preferences-page {
             root-focus.focus();
         }
     }
@@ -7351,16 +7359,19 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
 
+                // A button tap doesn't take the field's focus: let go
+                // first, so the keyboard drops (the message shows) and
+                // a word still being composed lands in the field.
                 FilledButton {
                     text: @tr("Save");
-                    clicked => { root.prefs-save-tap(); }
+                    clicked => { root-focus.focus(); root.prefs-save-tap(); }
                 }
                 OutlineButton {
                     text: root.prefs-test-busy
                         ? @tr("Testing…")
                         : @tr("Test connection");
                     enabled: !root.prefs-test-busy;
-                    clicked => { root.prefs-test-tap(); }
+                    clicked => { root-focus.focus(); root.prefs-test-tap(); }
                 }
             }
 

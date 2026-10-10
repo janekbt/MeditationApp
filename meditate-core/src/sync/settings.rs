@@ -23,7 +23,7 @@ pub const KEY_LAST_SYNC_ERROR: &str = "nextcloud_last_sync_error";
 /// Tag attached to the last-sync-error so the status-indicator click
 /// handler can route differently for the special "remote data lost"
 /// recovery flow vs generic errors. Stored values: `""` (no error or
-/// generic), `"remote_data_lost"`. Kept as a separate key (not
+/// generic), `"remote_data_lost"`, `"password_missing"`. Kept as a separate key (not
 /// inferred from the error message) so a copy edit doesn't silently
 /// break the routing.
 pub const KEY_LAST_SYNC_ERROR_KIND: &str = "nextcloud_last_sync_error_kind";
@@ -51,27 +51,37 @@ pub fn nextcloud_account_from_db(db: &Database) -> Result<Option<NextcloudAccoun
 /// in a single logical "save" — leaving one stale would create a
 /// half-configured state that `nextcloud_account_from_db` would still
 /// report as `None`, but cleaner to just keep the pair consistent.
-///
-/// On a real change to either URL or username the dedup tracker
-/// `known_remote_files` is wiped — its entries belonged to a
-/// different store and would falsely trigger the remote-data-lost
-/// detection on the next pull against the new account. A no-op save
-/// (same URL+username re-saved) leaves it intact so previously-
-/// pulled batches don't get re-GET'd.
+/// The next pass resets what belonged to the old account (`adopt_account`).
 pub fn set_nextcloud_account(db: &Database, url: &str, username: &str) -> Result<()> {
-    let prev_url = db.get_sync_state(KEY_URL, "")?;
-    let prev_username = db.get_sync_state(KEY_USERNAME, "")?;
-    if prev_url != url || prev_username != username {
-        db.wipe_known_remote_files()?;
-        // Bell-sound + guided-file audio files belong to the previous
-        // account's storage — clear those trackers too so the new
-        // account doesn't think the audio files are already up there.
-        db.wipe_known_remote_sounds()?;
-        db.wipe_known_remote_guided_files()?;
-    }
     db.set_sync_state(KEY_URL, url)?;
     db.set_sync_state(KEY_USERNAME, username)?;
     Ok(())
+}
+
+/// The account (URL and username) the upload trackers belong to.
+pub const KEY_TRACKED_ACCOUNT: &str = "tracked_account";
+
+/// Called by each pass before it talks to the server. When the account
+/// changed since the trackers were written, they describe another
+/// server: forget them, queue the whole history for upload, and drop
+/// the refusals the old server gave. Running on the sync thread, a
+/// pass still going for the old account can't mix into the new one.
+/// A missing marker (installs from before it) adopts the account as
+/// is. The marker is written last, so a reset cut short reruns.
+pub fn adopt_account(db: &Database, url: &str, username: &str) -> Result<()> {
+    let account = format!("{url}\n{username}");
+    let tracked = db.get_sync_state(KEY_TRACKED_ACCOUNT, "")?;
+    if tracked == account {
+        return Ok(());
+    }
+    if !tracked.is_empty() {
+        db.wipe_known_remote_files()?;
+        db.wipe_known_remote_sounds()?;
+        db.wipe_known_remote_guided_files()?;
+        db.flag_all_events_unsynced()?;
+        clear_refused_uploads(db)?;
+    }
+    db.set_sync_state(KEY_TRACKED_ACCOUNT, &account)
 }
 
 /// Wipe the stored account. After this `nextcloud_account_from_db` returns
@@ -145,6 +155,20 @@ pub fn record_remote_data_lost(db: &Database, message: &str) -> Result<()> {
 pub fn is_last_sync_remote_data_lost(db: &Database) -> Result<bool> {
     let kind = db.get_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
     Ok(kind == "remote_data_lost")
+}
+
+/// Record that a pass couldn't start: no password is stored for the
+/// account. Its own kind, because retrying can't help; the status
+/// sends the user to the sync settings instead.
+pub fn record_password_missing(db: &Database) -> Result<()> {
+    db.set_sync_state(KEY_LAST_SYNC_ERROR, "no password saved")?;
+    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "password_missing")?;
+    Ok(())
+}
+
+/// Whether the latest recorded failure was a missing password.
+pub fn is_last_sync_password_missing(db: &Database) -> Result<bool> {
+    Ok(db.get_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")? == "password_missing")
 }
 
 /// Clear any pending sync error (and its kind tag) without touching
@@ -279,57 +303,68 @@ mod tests {
         assert_eq!(got.username, "new-user");
     }
 
+    /// Saving a new account wiped the trackers but left every event
+    /// marked synced, so the new server never got the old history; and
+    /// a pass still running for the old server kept writing trackers.
+    /// Now each pass resets them itself when the account changed.
     #[test]
-    fn set_account_wipes_known_remote_files_when_url_changes() {
-        // Account swap (URL change): the previously-known remote
-        // batch_uuids belong to a different store entirely. Leaving
-        // them in the table would falsely trigger the remote-data-
-        // lost detection on the next pull against the new account.
+    fn a_pass_for_a_new_account_uploads_everything_again() {
         let db = fresh();
-        set_nextcloud_account(&db, "https://old.example/", "u").unwrap();
+        db.insert_label("focus").unwrap();
+        adopt_account(&db, "https://old.example/", "u").unwrap();
+        let events: Vec<i64> = db.pending_events().unwrap().iter().map(|(id, _)| *id).collect();
+        db.mark_events_synced(&events).unwrap();
         db.record_known_remote_file("from-old-server").unwrap();
+        set_refused_uploads(&db, &[RefusedUpload { uuid: "x".into(), reason: UploadRefusal::ServerFull }]).unwrap();
+
+        // Saving only writes the account: the pass does the reset.
+        set_nextcloud_account(&db, "https://new.example/", "u").unwrap();
         assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
 
-        set_nextcloud_account(&db, "https://new.example/", "u").unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
-            "URL change must wipe known_remote_files");
-    }
-
-    #[test]
-    fn set_account_wipes_known_remote_files_when_username_changes() {
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
-        db.record_known_remote_file("from-alice").unwrap();
-
-        set_nextcloud_account(&db, "https://nc.example/", "bob").unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
-            "username change must wipe known_remote_files");
-    }
-
-    #[test]
-    fn set_account_does_not_wipe_known_remote_files_when_pair_is_unchanged() {
-        // Re-saving the exact same URL+username (e.g. user edited and
-        // saved without actually changing anything) MUST preserve the
-        // dedup tracker — wiping it would cause every previously-pulled
-        // remote file to be re-GET'd on the next sync.
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
-        db.record_known_remote_file("a").unwrap();
-        db.record_known_remote_file("b").unwrap();
-
-        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 2,
-            "unchanged account must preserve known_remote_files");
-    }
-
-    #[test]
-    fn first_time_set_account_does_not_error_on_empty_known_remote_files() {
-        // The wipe path runs unconditionally on any change including
-        // first-time set (where the previous-pair is empty and the
-        // table is already empty). Must not crash.
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        adopt_account(&db, "https://new.example/", "u").unwrap();
         assert!(db.known_remote_file_uuids().unwrap().is_empty());
+        assert_eq!(db.pending_events().unwrap().len(), events.len());
+        assert!(refused_uploads(&db).unwrap().is_empty());
+
+        // The next pass for the same account leaves its work alone.
+        db.record_known_remote_file("on-new-server").unwrap();
+        adopt_account(&db, "https://new.example/", "u").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_username_change_is_a_new_account() {
+        let db = fresh();
+        adopt_account(&db, "https://nc.example/", "alice").unwrap();
+        db.record_known_remote_file("from-alice").unwrap();
+        adopt_account(&db, "https://nc.example/", "bob").unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    /// Installs from before the marker: the trackers belong to the
+    /// current account, so nothing goes up again.
+    #[test]
+    fn the_first_pass_adopts_the_current_account_as_it_is() {
+        let db = fresh();
+        db.insert_label("focus").unwrap();
+        let events: Vec<i64> = db.pending_events().unwrap().iter().map(|(id, _)| *id).collect();
+        db.mark_events_synced(&events).unwrap();
+        db.record_known_remote_file("a").unwrap();
+        adopt_account(&db, "https://nc.example/", "alice").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_missing_password_is_recorded_as_its_own_kind() {
+        let db = fresh();
+        record_successful_sync(&db, 1_700_000_000).unwrap();
+        record_password_missing(&db).unwrap();
+        assert!(is_last_sync_password_missing(&db).unwrap());
+        assert!(get_last_sync_error(&db).unwrap().is_some());
+        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
+        record_sync_error(&db, "network down").unwrap();
+        assert!(!is_last_sync_password_missing(&db).unwrap());
     }
 
     // ── prepare_push_local_recovery ──────────────────────────────────────

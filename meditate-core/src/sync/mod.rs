@@ -17,6 +17,7 @@ pub mod coordinator;
 pub mod credentials;
 pub mod indicator;
 pub mod settings;
+pub mod runner;
 
 /// Remote folder name the orchestrator uses as the base path for
 /// every WebDAV operation. Pinned across all shells so multiple

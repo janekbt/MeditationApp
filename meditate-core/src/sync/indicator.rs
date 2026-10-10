@@ -41,6 +41,8 @@ pub enum SyncIndicatorState {
     /// Sync works, but these audio files weren't uploaded; automatic
     /// syncs skip them until the user taps Retry.
     NotUploaded(Vec<NotUploaded>),
+    /// No password is stored for the account, so no sync can start.
+    NeedsPassword,
 }
 
 /// An audio file that wasn't uploaded, by its current name.
@@ -121,6 +123,11 @@ pub fn state_from_db(
     let last_error = settings::get_last_sync_error(db).unwrap_or(None);
     let is_data_lost = settings::is_last_sync_remote_data_lost(db).unwrap_or(false);
     let state = derive(has_account, is_syncing, last_ts, last_error, is_data_lost);
+    if matches!(state, SyncIndicatorState::Error { .. })
+        && settings::is_last_sync_password_missing(db).unwrap_or(false)
+    {
+        return SyncIndicatorState::NeedsPassword;
+    }
     if matches!(state, SyncIndicatorState::OkWithTs(_) | SyncIndicatorState::OkNoTs) {
         let not_uploaded = not_uploaded(db);
         if !not_uploaded.is_empty() {
@@ -187,6 +194,20 @@ mod tests {
         assert_eq!(action_for(&state), SyncIndicatorAction::RetrySync);
         settings::clear_refused_uploads(&db).unwrap();
         assert_eq!(state_from_db(&db, false), SyncIndicatorState::OkNoTs);
+    }
+
+    /// A sync that never started for want of a password showed as
+    /// healthy; and "retry" can't help there, so a tap opens the settings.
+    #[test]
+    fn a_missing_password_shows_and_opens_the_sync_settings() {
+        use crate::sync::settings;
+        let db = crate::db::Database::open_in_memory().unwrap();
+        settings::set_nextcloud_account(&db, "https://cloud.example", "me").unwrap();
+        settings::record_password_missing(&db).unwrap();
+        let state = state_from_db(&db, false);
+        assert_eq!(state, SyncIndicatorState::NeedsPassword);
+        assert_eq!(action_for(&state), SyncIndicatorAction::OpenPrefsData);
+        assert_eq!(state_from_db(&db, true), SyncIndicatorState::Syncing);
     }
 
     #[test]

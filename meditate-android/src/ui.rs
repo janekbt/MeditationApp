@@ -165,16 +165,10 @@ fn trigger_sync(reason: &str) {
     SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
     std::thread::spawn(|| {
         SYNC_COORDINATOR.drain(|| {
-            let attempt = || -> Result<
-                meditate_core::sync::SyncStats,
-                sync_runner::SyncRunnerError,
-            > {
-                let app = android_app().ok_or(
-                    sync_runner::SyncRunnerError::Unconfigured,
-                )?;
-                let root = app.internal_data_path().ok_or(
-                    sync_runner::SyncRunnerError::Unconfigured,
-                )?;
+            use meditate_core::sync::runner::RunError;
+            let attempt = || -> Result<meditate_core::sync::SyncStats, RunError> {
+                let app = android_app().ok_or(RunError::Unconfigured)?;
+                let root = app.internal_data_path().ok_or(RunError::Unconfigured)?;
                 let dir = root.join("meditate");
                 sync_runner::run_sync_attempt(
                     app,
@@ -207,7 +201,7 @@ fn trigger_sync(reason: &str) {
             for backoff_secs in [5u64, 10] {
                 let retryable = matches!(
                     &outcome,
-                    Err(sync_runner::SyncRunnerError::Sync(
+                    Err(RunError::Sync(
                         meditate_core::SyncError::WebDav(
                             meditate_core::WebDavError::Network(_),
                         ),
@@ -1431,6 +1425,9 @@ fn refresh_sync_indicator(ui: &MainWindow) {
         SyncIndicatorState::NotUploaded(files) => {
             let lines: Vec<String> = files.iter().map(|f| not_uploaded_line(ui, f)).collect();
             (2, tr.invoke_not_uploaded_tap(lines.join("\n").into()).to_string())
+        }
+        SyncIndicatorState::NeedsPassword => {
+            (2, tr.invoke_sync_needs_password().to_string())
         }
         SyncIndicatorState::OkWithTs(ts) => {
             (3, sync_ago_text(ui, ts))
@@ -8519,9 +8516,15 @@ fn build_ui() -> MainWindow {
                 // toast copy (GTK's data_toast strings), so the
                 // snackbar raise below happens exactly once.
                 let toast: String = 'save: {
-                    let plan =
-                        match prepare_save(&url, &username, &password)
-                    {
+                    // An empty field keeps the stored password, so
+                    // there must be one for this account.
+                    let plan = prepare_save(&url, &username, &password, || {
+                        let Some(app) = android_app() else {
+                            return Err(());
+                        };
+                        Ok(keychain::read_password(app, url.trim(), username.trim()))
+                    });
+                    let plan = match plan {
                         Ok(p) => p,
                         Err(SyncSettingsError::EmptyUrl)
                         | Err(SyncSettingsError::EmptyUsername) => {
@@ -8536,12 +8539,17 @@ fn build_ui() -> MainWindow {
                                     .invoke_url_must_be_https()
                                     .to_string();
                         }
-                        // prepare_save never consults the keychain.
-                        Err(SyncSettingsError::NoPassword)
-                        | Err(SyncSettingsError::KeyringFailed) => {
-                            unreachable!(
-                                "prepare_save does not consult the keychain"
-                            )
+                        Err(SyncSettingsError::NoPassword) => {
+                            break 'save
+                                ui.global::<Tr>()
+                                    .invoke_enter_a_password()
+                                    .to_string();
+                        }
+                        Err(SyncSettingsError::KeyringFailed) => {
+                            break 'save
+                                ui.global::<Tr>()
+                                    .invoke_keystore_read_failed()
+                                    .to_string();
                         }
                     };
                     // Password FIRST (see ordering note above).
@@ -9040,13 +9048,11 @@ fn build_ui() -> MainWindow {
                                         .invoke_keystore_read_failed()
                                 }
                             }
-                            // prepare_test lets http:// through so
-                            // the user can probe it; only Save
-                            // enforces https (GTK parity).
+                            // Before sending anything: http would
+                            // carry the password in the clear.
                             SyncSettingsError::InsecureUrl => {
-                                unreachable!(
-                                    "prepare_test does not validate URL scheme"
-                                )
+                                ui.global::<Tr>()
+                                    .invoke_url_must_be_https()
                             }
                         };
                         show_notice(&ui, copy, None, 4);

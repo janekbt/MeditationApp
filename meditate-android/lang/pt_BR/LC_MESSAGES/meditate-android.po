@@ -1033,3 +1033,6 @@ msgstr "{}: o servidor está cheio"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: recusado pelo servidor ({1})"
+
+msgid "No password saved, tap to enter it"
+msgstr "Nenhuma senha salva, toque para digitá-la"

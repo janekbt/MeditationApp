@@ -332,10 +332,14 @@ impl WebDav for HttpWebDav {
         // verb refuse to clobber an existing target — we omit it
         // because the caller (atomic-PUT helper) treats overwriting
         // as the success case.
+        // The header takes the parsed, percent-encoded form: ureq
+        // refuses non-ASCII header bytes ("Übungen" in the folder).
+        let destination = self.agent.request("MOVE", &self.url(to)).request_url()
+            .map_err(|e| WebDavError::Network(sanitize_transport_msg(&e.to_string())))?;
         match self.agent
             .request("MOVE", &self.url(from))
             .set("Authorization", &self.auth_header)
-            .set("Destination", &self.url(to))
+            .set("Destination", destination.as_url().as_str())
             .call()
         {
             Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
@@ -589,6 +593,21 @@ mod tests {
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let body = client.get("/file.json", u64::MAX).unwrap();
         assert_eq!(body, b"hello world");
+        mock.assert();
+    }
+
+    /// ureq refuses header bytes outside ASCII, so with "Übungen" in the
+    /// folder every MOVE failed as a network error and nothing uploaded.
+    #[test]
+    fn move_sends_a_non_ascii_destination_encoded() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("MOVE", "/files/me/%C3%9Cbungen/a.tmp")
+            .match_header("Destination", format!("{}/files/me/%C3%9Cbungen/a.json", server.url()).as_str())
+            .with_status(201)
+            .create();
+
+        let client = HttpWebDav::new(&format!("{}/files/me/Übungen/", server.url()), "u", "p");
+        client.move_to("a.tmp", "a.json").unwrap();
         mock.assert();
     }
 

@@ -107,7 +107,7 @@ pub fn store_password(url: &str, username: &str, password: &str) -> Result<()> {
         let label = format!("Meditate sync — {username} on {url}");
         let attrs = attributes(url, username);
         let bytes = password.as_bytes();
-        let backend = open_chosen_backend().await?;
+        let backend = open_chosen_backend(true).await?;
         match backend.create_item(&label, &attrs, bytes, true).await {
             Ok(()) => { mark_backend_ok(&backend); Ok(()) }
             Err(e) if oo7_error_is_weak_key(&e) => {
@@ -124,7 +124,7 @@ pub fn store_password(url: &str, username: &str, password: &str) -> Result<()> {
 pub fn read_password(url: &str, username: &str) -> Result<Option<String>> {
     rt().block_on(async {
         let attrs = attributes(url, username);
-        let backend = open_chosen_backend().await?;
+        let backend = open_chosen_backend(false).await?;
         let result = read_one_secret(&backend, &attrs).await;
         match result {
             Ok(opt) => { mark_backend_ok(&backend); Ok(opt) }
@@ -141,7 +141,7 @@ pub fn read_password(url: &str, username: &str) -> Result<Option<String>> {
 pub fn delete_password(url: &str, username: &str) -> Result<()> {
     rt().block_on(async {
         let attrs = attributes(url, username);
-        let backend = open_chosen_backend().await?;
+        let backend = open_chosen_backend(false).await?;
         match backend.delete(&attrs).await {
             Ok(()) => { mark_backend_ok(&backend); Ok(()) }
             Err(e) if oo7_error_is_weak_key(&e) => {
@@ -205,7 +205,13 @@ static BACKEND_CHOICE: AtomicU8 = AtomicU8::new(BACKEND_UNDECIDED);
 /// this, `read_password` returns `Ok(None)` (item not found in portal
 /// store), the runner sees PasswordMissing, and sync dies until the
 /// user re-enters credentials.
-async fn open_chosen_backend() -> Result<Backend> {
+///
+/// `may_fall_back`: only a store may move to the self-keyed file when
+/// the portal/D-Bus won't open. A read that did (one cancelled unlock
+/// prompt is enough) created the master file, and every later launch
+/// then read that empty store instead of the keyring holding the
+/// password.
+async fn open_chosen_backend(may_fall_back: bool) -> Result<Backend> {
     let cached = BACKEND_CHOICE.load(Ordering::Acquire);
     if cached == BACKEND_SELF_KEYED {
         return open_self_keyed_backend().await;
@@ -217,6 +223,7 @@ async fn open_chosen_backend() -> Result<Backend> {
     }
     match open_portal().await {
         Ok(kr) => Ok(kr),
+        Err(e) if !may_fall_back => Err(e),
         Err(e) => {
             // Even opening the portal/D-Bus failed (e.g. neither
             // is available). Fall back unconditionally and remember.
@@ -398,6 +405,22 @@ mod tests {
 
     use super::*;
     use oo7::file::{Error as FileError, WeakKeyError};
+
+    /// One failed keyring open on a read (a cancelled unlock prompt is
+    /// enough) created the app's own key file, and from then on every
+    /// launch read that empty file instead of the keyring.
+    #[test]
+    fn only_a_store_may_fall_back_to_the_own_key_file() {
+        let src = include_str!("keychain.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        let body = |name: &str| {
+            let start = code.find(&format!("pub fn {name}(")).unwrap();
+            &code[start..start + code[start..].find("\n}\n").unwrap()]
+        };
+        assert!(body("store_password").contains("open_chosen_backend(true)"));
+        assert!(body("read_password").contains("open_chosen_backend(false)"));
+        assert!(body("delete_password").contains("open_chosen_backend(false)"));
+    }
 
     // ── Schema / attributes ─────────────────────────────────────────────────
 

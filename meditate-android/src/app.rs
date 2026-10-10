@@ -1311,6 +1311,50 @@ mod tests {
         ));
     }
 
+    /// A sync that never started for want of a password only reached
+    /// the log. Core's runner records it; the status says what to do,
+    /// and a tap opens Preferences (core's action).
+    #[test]
+    fn a_missing_password_shows_in_the_status() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let runner = std::fs::read_to_string(root.join("src/sync_runner.rs")).unwrap();
+        assert!(lib.contains("SyncIndicatorState::NeedsPassword => {"));
+        assert!(lib.contains("tr.invoke_sync_needs_password()"));
+        assert!(slint.contains("@tr(\"No password saved, tap to enter it\")"));
+        assert!(runner.contains("meditate_core::sync::runner::run_attempt("));
+    }
+
+    /// Save kept an empty password field with nothing stored for a
+    /// changed URL, and Test sent the password over http. Both run the
+    /// same checks now, so every error has its message.
+    #[test]
+    fn save_and_test_check_the_password_and_https_alike() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(!lib.contains("does not consult the keychain"));
+        assert!(!lib.contains("does not validate URL scheme"));
+        assert_eq!(lib.matches(".invoke_url_must_be_https()").count(), 2);
+        assert_eq!(lib.matches(".invoke_enter_a_password()").count(), 2);
+        assert_eq!(lib.matches(".invoke_keystore_read_failed()").count(), 2);
+    }
+
+    /// Save and Test left the keyboard up over their messages, and the
+    /// cursor handle and copy bar stayed after Preferences closed: Slint
+    /// drops them only when the field loses focus. Losing it first also
+    /// commits a word the keyboard is still composing, before Save reads.
+    #[test]
+    fn preferences_let_go_of_the_text_fields() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("clicked => { root-focus.focus(); root.prefs-save-tap(); }"));
+        assert!(slint.contains("clicked => { root-focus.focus(); root.prefs-test-tap(); }"));
+        assert!(slint.contains(
+            "changed preferences-page => {\n        if !self.preferences-page {\n            root-focus.focus();"
+        ));
+    }
+
     #[test]
     fn a_failed_merge_says_so() {
         // It closed the dialog and did nothing, with no word.

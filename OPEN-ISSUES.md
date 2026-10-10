@@ -20,14 +20,14 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
 | [x] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
 | [x] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
-| [ ] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
+| [x] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
 | [ ] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #65, #122, #158 | names that differ per device, saves that fail |
 | [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141 | failures that look like success, stale screens |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149 | other apps, phone transfer, audio focus, battery saver |
-| [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148 | hidden controls, lost edits |
+| [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
@@ -537,6 +537,15 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: the vendored year list is hard-coded, so an imported 2022 session can't be moved by year.
 - Fix: build the list from the current year backwards.
 
+### #160 Android: Slint's text fields misplace the cursor handle and ignore the space-bar slide
+- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.16.1 (`java/SlintAndroidJavaHelper.java`, `javahelper.rs`), not our code. Seen on the FP5 in Preferences (batch F test); batch F made Preferences let go of its fields, which removed the stuck keyboard, handle and copy bar there.
+- Problem:
+  - A cursor at the very start of a field (an empty field) gets its handle at the screen's left edge: `set_imm_data` sends x = -1 when the cursor fails its clip check, and the one-handle path shows the handle there instead of hiding it.
+  - The cut/copy/paste bar covers the field's text instead of sitting above it (cause not found yet; the content rect comes from the same cursor coordinates).
+  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection, and Slint's editable only reports text replacements, never a selection-only change.
+  - Other pages with a Material `TextField` (rename and name dialogs, Log edit) may keep the handle after closing too; check each close path like Preferences.
+- Fix: patch the Java helper (hide the handle at x = -1, report `setSelection` back through `updateText`, then the content rect), which means vendoring the backend like `third_party/i-slint-compiler`: build environment, so ask first, then run the repro probe. Report it upstream either way.
+
 ## N. Stats numbers
 
 ### #55 Goal ring and heatmap round down, the Log rounds to nearest
@@ -709,7 +718,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 Only together with other work in the same area; none has a bug behind it.
 
-- **R12, sync runner into core**: core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Re-evaluate when batch F starts: most of F (#42, #70, #89, #96, #137) lives in the runners.
+- **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected
 

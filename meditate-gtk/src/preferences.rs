@@ -275,12 +275,12 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     data_toast(&dialog, &gettext("Keyring read failed"));
                     return;
                 }
-                // prepare_test never emits InsecureUrl — the test
-                // path lets http:// through so the user can probe
-                // it; the save path is where that gets refused.
-                Err(SyncSettingsError::InsecureUrl) => unreachable!(
-                    "prepare_test does not validate URL scheme"
-                ),
+                // Before sending anything: http would carry the
+                // password in the clear.
+                Err(SyncSettingsError::InsecureUrl) => {
+                    data_toast(&dialog, &gettext("URL must start with https://"));
+                    return;
+                }
             };
             let url = creds.url;
             let username = creds.username;
@@ -364,8 +364,14 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
             // Trim leading/trailing whitespace on URL and username only.
             // Password is taken verbatim — Nextcloud app-passwords are
-            // hex blobs that don't need trimming.
-            let plan = match prepare_save(&url, &username, &password) {
+            // hex blobs that don't need trimming. An empty field keeps
+            // the stored password, so there must be one for this account.
+            let plan = prepare_save(&url, &username, &password, || {
+                crate::keychain::read_password(url.trim(), username.trim()).map_err(|e| {
+                    meditate_core::log("keychain", &format!("read failed: {e:?}"));
+                })
+            });
+            let plan = match plan {
                 Ok(p) => p,
                 Err(SyncSettingsError::EmptyUrl)
                 | Err(SyncSettingsError::EmptyUsername) => {
@@ -376,13 +382,14 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     data_toast(&dialog, &gettext("URL must start with https://"));
                     return;
                 }
-                // prepare_save never emits NoPassword/KeyringFailed —
-                // it doesn't touch the keychain. The shell stores the
-                // typed password AFTER this validates.
-                Err(SyncSettingsError::NoPassword)
-                | Err(SyncSettingsError::KeyringFailed) => unreachable!(
-                    "prepare_save does not consult the keychain"
-                ),
+                Err(SyncSettingsError::NoPassword) => {
+                    data_toast(&dialog, &gettext("Enter a password"));
+                    return;
+                }
+                Err(SyncSettingsError::KeyringFailed) => {
+                    data_toast(&dialog, &gettext("Keyring read failed"));
+                    return;
+                }
             };
             let url_trimmed: &str = &plan.url;
             let username_trimmed: &str = &plan.username;

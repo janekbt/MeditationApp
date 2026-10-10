@@ -303,7 +303,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
             };
             if known_files.contains(&batch_uuid) { continue; }
             let path = format!("{events_dir}/{name}");
-            let body = self.webdav.get(&path, MAX_EVENT_BUNDLE_BYTES)?;
+            let body = match self.webdav.get(&path, MAX_EVENT_BUNDLE_BYTES) {
+                Ok(body) => body,
+                // A peer compacted it since the listing: its events are
+                // in the consolidated batch, which a later pull finds.
+                Err(WebDavError::NotFound) => continue,
+                Err(e) => return Err(e.into()),
+            };
             let events: Vec<Event> = serde_json::from_slice(&body)
                 .map_err(|e| SyncError::InvalidEvent(format!("{name}: {e}")))?;
             for event in events {
@@ -969,7 +975,10 @@ fn put_with_rate_limit_retry<W: WebDav>(
             }
             Err(WebDavError::RateLimited { retry_after }) => {
                 attempts = attempts.saturating_add(1);
-                if attempts >= MAX_429_RETRIES {
+                // A longer wait would hold the sync slot (and the
+                // spinner) for it: fail now, the status shows it.
+                let too_long = retry_after.is_some_and(|s| s > super::backoff::MAX_BACKOFF_SECS);
+                if too_long || attempts >= MAX_429_RETRIES {
                     crate::diag::log(
                         "sync.rate_limit",
                         &format!(
@@ -1008,7 +1017,12 @@ fn put_atomic_with_rate_limit_retry<W: WebDav>(
     body: &[u8],
 ) -> Result<(), WebDavError> {
     let tmp_path = format!("{path}.tmp");
-    put_with_rate_limit_retry(webdav, &tmp_path, body)?;
+    if let Err(e) = put_with_rate_limit_retry(webdav, &tmp_path, body) {
+        // It may have landed even so (a timeout after the last byte),
+        // and the next push picks a new name: don't leave it behind.
+        let _ = webdav.delete(&tmp_path);
+        return Err(e);
+    }
     match webdav.move_to(&tmp_path, path) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -1942,6 +1956,84 @@ mod tests {
         assert!(matches!(err,
             SyncError::WebDav(WebDavError::RateLimited { .. })),
             "after MAX_429_RETRIES the error must surface as RateLimited, got {err:?}");
+    }
+
+    /// `Retry-After: 3600` slept the worker an hour per retry, up to
+    /// eight times, while every other sync was skipped as running.
+    #[test]
+    fn a_long_retry_after_fails_at_once() {
+        struct WaitAnHour(FakeWebDav, std::sync::atomic::AtomicUsize);
+        impl WebDav for WaitAnHour {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> { self.0.list_collection(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
+            fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(WebDavError::RateLimited { retry_after: Some(3600) })
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.0.move_to(from, to) }
+        }
+        let (db, _) = setup();
+        insert_session(&db, "x", 100);
+        let server = WaitAnHour(FakeWebDav::new(), Default::default());
+        let err = Sync::new(&db, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap_err();
+        assert_matches!(err, SyncError::WebDav(WebDavError::RateLimited { retry_after: Some(3600) }));
+        assert_eq!(server.1.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A PUT that landed on the server but timed out here left a full
+    /// `.tmp` behind for good: each push mints a new batch name.
+    #[test]
+    fn a_failed_upload_removes_its_tmp_file() {
+        struct LandsThenTimesOut(FakeWebDav);
+        impl WebDav for LandsThenTimesOut {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> { self.0.list_collection(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
+            fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> {
+                self.0.put(p, b)?;
+                Err(WebDavError::Network("timed out".into()))
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.0.move_to(from, to) }
+        }
+        let (db, fs) = setup();
+        insert_session(&db, "x", 100);
+        let server = LandsThenTimesOut(fs.clone());
+        Sync::new(&db, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap_err();
+        assert!(!fs.paths().iter().any(|p| p.ends_with(".tmp")), "left behind: {:?}", fs.paths());
+        assert_eq!(db.pending_events().unwrap().len(), 1);
+    }
+
+    /// A peer compacting a batch between our listing and our GET failed
+    /// the whole sync, upload included.
+    #[test]
+    fn a_batch_compacted_away_mid_pull_is_skipped() {
+        struct ListsAGhost(FakeWebDav);
+        impl WebDav for ListsAGhost {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+                let mut names = self.0.list_collection(p)?;
+                names.push("00000000000001__ghost.json".into());
+                Ok(names)
+            }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
+            fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> { self.0.put(p, b) }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.0.move_to(from, to) }
+        }
+        let (db_a, fs) = setup();
+        insert_session(&db_a, "from-a", 100);
+        Sync::new(&db_a, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
+
+        let (db_b, _) = setup();
+        insert_session(&db_b, "from-b", 100);
+        let server = ListsAGhost(fs.clone());
+        Sync::new(&db_b, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        assert_eq!(crate::db::list_sessions_from_db(&db_b).unwrap().len(), 2);
+        assert!(db_b.pending_events().unwrap().is_empty());
+        assert!(!db_b.known_remote_file_uuids().unwrap().contains("ghost"));
     }
 
     // ── B.6.2: Push side for custom bell-sound audio files ──────────────

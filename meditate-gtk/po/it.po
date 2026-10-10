@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-10 11:12+0200\n"
+"POT-Creation-Date: 2026-10-10 11:51+0200\n"
 "PO-Revision-Date: 2026-04-20 18:22+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Italian\n"
@@ -122,7 +122,7 @@ msgstr "Questa campana non suonerà più durante le sessioni."
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:759 src/guided.rs:216 src/guided.rs:943
 #: src/guided.rs:1055 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
-#: src/preferences.rs:589 src/preferences.rs:663 src/presets.rs:445
+#: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
 #: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
 #: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2531
@@ -258,7 +258,7 @@ msgstr "Errore di lettura"
 msgid "Database error"
 msgstr "Errore del database"
 
-#: src/data_io.rs:33 src/preferences.rs:433
+#: src/data_io.rs:33 src/preferences.rs:440
 msgid "Database unavailable"
 msgstr "Database non disponibile"
 
@@ -346,7 +346,6 @@ msgstr "Il processo di importazione si è interrotto"
 #: src/guided.rs:425
 msgid "Over 100 MB, too large to sync"
 msgstr "Oltre 100 MB, non sincronizzabile"
-"Questa registrazione supera i 100 MB, troppo grande per la sincronizzazione"
 
 #: src/guided.rs:568 data/ui/timer_view.blp:289
 msgid "Manage Files"
@@ -619,7 +618,7 @@ msgstr "Migra"
 msgid "Import sessions from another meditation app."
 msgstr "Importa sessioni da un’altra app di meditazione."
 
-#: src/preferences.rs:149 src/preferences.rs:574
+#: src/preferences.rs:149 src/preferences.rs:581
 msgid "Import from Insight Timer"
 msgstr "Importa da Insight Timer"
 
@@ -667,17 +666,21 @@ msgstr "Verifica che URL e credenziali raggiungano il tuo Nextcloud."
 msgid "_Test"
 msgstr "_Prova"
 
-#: src/preferences.rs:267 src/preferences.rs:372
+#: src/preferences.rs:267 src/preferences.rs:378
 msgid "Enter URL and username"
 msgstr "Inserisci URL e nome utente"
 
-#: src/preferences.rs:271
+#: src/preferences.rs:271 src/preferences.rs:386
 msgid "Enter a password"
 msgstr "Inserisci una password"
 
-#: src/preferences.rs:275
+#: src/preferences.rs:275 src/preferences.rs:390
 msgid "Keyring read failed"
 msgstr "Lettura dal portachiavi non riuscita"
+
+#: src/preferences.rs:281 src/preferences.rs:382
+msgid "URL must start with https://"
+msgstr "L'URL deve iniziare con https://"
 
 #: src/preferences.rs:315
 msgid "Connection OK"
@@ -713,71 +716,67 @@ msgstr ""
 "URL e nome utente vengono salvati localmente; la password va nel tuo "
 "portachiavi."
 
-#: src/preferences.rs:376
-msgid "URL must start with https://"
-msgstr "L'URL deve iniziare con https://"
-
-#: src/preferences.rs:410
+#: src/preferences.rs:417
 msgid "Keyring write failed"
 msgstr "Scrittura nel portachiavi non riuscita"
 
-#: src/preferences.rs:429 src/timer/imp.rs:3557
+#: src/preferences.rs:436 src/timer/imp.rs:3557
 msgid "Save failed"
 msgstr "Salvataggio non riuscito"
 
-#: src/preferences.rs:438
+#: src/preferences.rs:445
 msgid "Sync settings saved"
 msgstr "Impostazioni di sincronizzazione salvate"
 
-#: src/preferences.rs:447
+#: src/preferences.rs:454
 msgid "Danger Zone"
 msgstr "Zona pericolosa"
 
-#: src/preferences.rs:448
+#: src/preferences.rs:455
 msgid "These actions cannot be undone."
 msgstr "Queste azioni non possono essere annullate."
 
-#: src/preferences.rs:452
+#: src/preferences.rs:459
 msgid "Delete all sessions"
 msgstr "Elimina tutte le sessioni"
 
-#: src/preferences.rs:453
+#: src/preferences.rs:460
 msgid "Permanently remove every logged session"
 msgstr "Rimuove definitivamente ogni sessione registrata"
 
-#: src/preferences.rs:457
+#: src/preferences.rs:464
 msgid "_Delete All"
 msgstr "_Elimina tutto"
 
-#: src/preferences.rs:527
+#: src/preferences.rs:534
 msgid "Export Session Log"
 msgstr "Esporta registro sessioni"
 
-#: src/preferences.rs:531
+#: src/preferences.rs:538
 msgid "CSV files"
 msgstr "File CSV"
 
-#: src/preferences.rs:547
+#: src/preferences.rs:554
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "1 sessione esportata"
 msgstr[1] "{n} sessioni esportate"
 
-#: src/preferences.rs:551
+#: src/preferences.rs:558
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Esportazione non riuscita: {error}"
 
-#: src/preferences.rs:565
+#: src/preferences.rs:572
 msgid "Import Session Log"
 msgstr "Importa registro sessioni"
 
-#: src/preferences.rs:584
+#: src/preferences.rs:591
 msgid "Delete Every Session?"
 msgstr "Eliminare tutte le sessioni?"
 
-#: src/preferences.rs:585
+#: src/preferences.rs:592
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -785,57 +784,57 @@ msgstr ""
 "Rimuove definitivamente tutte le sessioni dal registro. Esporta prima un "
 "backup se vuoi mantenere la cronologia."
 
-#: src/preferences.rs:590
+#: src/preferences.rs:597
 msgid "Delete All"
 msgstr "Elimina tutto"
 
-#: src/preferences.rs:601
+#: src/preferences.rs:608
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "1 sessione eliminata"
 msgstr[1] "{n} sessioni eliminate"
 
-#: src/preferences.rs:608
+#: src/preferences.rs:615
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Eliminazione non riuscita: {error}"
 
-#: src/preferences.rs:648 src/preferences.rs:710
+#: src/preferences.rs:655 src/preferences.rs:717
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Importazione non riuscita: {error}"
 
-#: src/preferences.rs:658
+#: src/preferences.rs:665
 msgid "Some Lines Can't Be Read"
 msgstr "Alcune righe non sono leggibili"
 
-#: src/preferences.rs:664
+#: src/preferences.rs:671
 msgid "Import the Rest"
 msgstr "Importa il resto"
 
-#: src/preferences.rs:677
+#: src/preferences.rs:684
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Riga {line}: l’ora di inizio non è leggibile."
 
-#: src/preferences.rs:678
+#: src/preferences.rs:685
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Riga {line}: la durata non è leggibile."
 
-#: src/preferences.rs:685
+#: src/preferences.rs:692
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "Anche {n} altra riga non è leggibile."
 msgstr[1] "Anche altre {n} righe non sono leggibili."
 
-#: src/preferences.rs:694
+#: src/preferences.rs:701
 msgid "Nothing in this file can be imported."
 msgstr "Non è possibile importare nulla da questo file."
 
-#: src/preferences.rs:703
+#: src/preferences.rs:710
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1503,49 +1502,53 @@ msgstr "Ultima sincronizzazione non riuscita — fai clic per riprovare"
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Alcuni file non sono stati caricati, fai clic per riprovare"
 
-#: src/window/imp.rs:718
+#: src/window/imp.rs:711
+msgid "No password saved, click to enter it"
+msgstr "Nessuna password salvata, fai clic per inserirla"
+
+#: src/window/imp.rs:726
 msgid "Sync configured (waiting for first run)"
 msgstr "Sincronizzazione configurata (in attesa della prima esecuzione)"
 
-#: src/window/imp.rs:747
+#: src/window/imp.rs:755
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: troppo grande per la sincronizzazione"
 
-#: src/window/imp.rs:748
+#: src/window/imp.rs:756
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: troppo grande per il server"
 
-#: src/window/imp.rs:749
+#: src/window/imp.rs:757
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: il server è pieno"
 
-#: src/window/imp.rs:751
+#: src/window/imp.rs:759
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: rifiutato dal server ({status})"
 
-#: src/window/imp.rs:762
+#: src/window/imp.rs:770
 msgid "Synced just now"
 msgstr "Sincronizzato adesso"
 
-#: src/window/imp.rs:764
+#: src/window/imp.rs:772
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "Sincronizzato 1 minuto fa"
 msgstr[1] "Sincronizzato {n} minuti fa"
 
-#: src/window/imp.rs:767
+#: src/window/imp.rs:775
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "Sincronizzato 1 ora fa"
 msgstr[1] "Sincronizzato {n} ore fa"
 
-#: src/window/imp.rs:770
+#: src/window/imp.rs:778
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"

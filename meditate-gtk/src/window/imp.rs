@@ -702,6 +702,14 @@ impl MeditateWindow {
                     lines.join("\n"),
                 )));
             }
+            SyncIndicatorState::NeedsPassword => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("dialog-warning-symbolic"));
+                btn.add_css_class("warning");
+                btn.set_tooltip_text(Some(&gettext("No password saved, click to enter it")));
+            }
             SyncIndicatorState::OkWithTs(ts) => {
                 btn.set_visible(true);
                 spinner.set_spinning(false);

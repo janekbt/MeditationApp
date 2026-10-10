@@ -1,192 +1,18 @@
-//! One sync attempt: read configured account + password, build a
-//! `HttpWebDav`, run `Sync::sync`, write the outcome to `sync_state`
-//! so the status indicator can pick it up. Synchronous — meant to be
+//! One sync attempt: core's runner (`meditate_core::sync::runner`)
+//! with this app's keyring and folders. Synchronous — meant to be
 //! called from a worker thread (see `application::trigger_sync`).
-//!
-//! The pure-logic core is `run_with_webdav`, which takes any `WebDav`
-//! impl: tests pass a `FakeWebDav`, the production path passes an
-//! `HttpWebDav`. That separation keeps the unit tests fast and
-//! offline.
 
-use meditate_core::Database as CoreDb;
-use meditate_core::sync::{Sync, SyncStats, WebDav};
-use std::error::Error;
-use std::fmt;
 use std::path::Path;
 
-use crate::keychain::{self, KeychainError};
-use meditate_core::sync::settings::{KEY_URL, KEY_USERNAME};
+use meditate_core::sync::runner::{run_attempt, RunError};
+use meditate_core::sync::SyncStats;
 
-/// Path under the WebDAV root where this app's data lives.
-/// Re-export of the core constant so existing call sites stay
-/// terse; core owns the canonical value.
-pub use meditate_core::sync::REMOTE_BASE_PATH;
-
-#[derive(Debug)]
-pub enum SyncRunnerError {
-    /// Couldn't open the database. Should never happen at runtime
-    /// (app startup already opened it via the same path), but the
-    /// runner has its own connection so we surface this distinctly.
-    OpenDb(meditate_core::db::DbError),
-
-    /// Either URL or username is empty in `sync_state`. Caller should
-    /// surface "set up sync first" rather than try to sync.
-    Unconfigured,
-
-    /// Account is configured but the keychain has no matching item —
-    /// user wiped the keyring, or saved URL/username without a
-    /// password yet. Distinct from Unconfigured because the action
-    /// is different ("re-enter your password" vs "set up sync").
-    PasswordMissing,
-
-    /// Keychain backend error (D-Bus down, locked, …).
-    Keychain(KeychainError),
-
-    /// Database error while reading config or writing status.
-    Db(meditate_core::db::DbError),
-
-    /// The sync proper failed — pull/push couldn't complete.
-    Sync(meditate_core::SyncError),
-
-    /// The remote folder was wiped between sync attempts: every batch
-    /// this device previously synced is gone. Surfaced distinctly from
-    /// `Sync(_)` so the shell can present a recovery dialog (push
-    /// local up / wipe local / cancel) instead of the generic error
-    /// toast. The previous-success timestamp is intentionally NOT
-    /// updated when this fires — the user gets to keep "last synced
-    /// N minutes ago" while they decide.
-    RemoteDataLost,
-}
-
-impl fmt::Display for SyncRunnerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::OpenDb(e) => write!(f, "couldn't open database: {e:?}"),
-            Self::Unconfigured =>
-                write!(f, "sync isn't set up yet — open Preferences → Data"),
-            Self::PasswordMissing =>
-                write!(f, "no password in keyring — re-enter it in Preferences"),
-            Self::Keychain(e) => write!(f, "{e}"),
-            Self::Db(e) => write!(f, "database error: {e:?}"),
-            Self::Sync(e) => write!(f, "{e}"),
-            Self::RemoteDataLost => write!(
-                f, "remote data appears wiped — previously synced batches \
-                    are missing from the Nextcloud folder",
-            ),
-        }
-    }
-}
-
-impl Error for SyncRunnerError {}
-
-impl From<meditate_core::db::DbError> for SyncRunnerError {
-    fn from(e: meditate_core::db::DbError) -> Self { Self::Db(e) }
-}
-
-impl From<KeychainError> for SyncRunnerError {
-    fn from(e: KeychainError) -> Self { Self::Keychain(e) }
-}
-
-impl From<meditate_core::SyncError> for SyncRunnerError {
-    fn from(e: meditate_core::SyncError) -> Self {
-        match e {
-            // Promote the typed wipe-detection variant out of the
-            // generic Sync bucket so the shell can pattern-match it
-            // for the recovery-dialog routing.
-            meditate_core::SyncError::RemoteDataLost => Self::RemoteDataLost,
-            other => Self::Sync(other),
-        }
-    }
-}
-
-/// Run one sync attempt against the database at `db_path`. Reads the
-/// configured account from `sync_state`, the password from libsecret,
-/// constructs an `HttpWebDav`, runs `Sync::sync`. Writes a successful
-/// timestamp on success, or the error message to `last_sync_error` on
-/// failure — both via the same database connection so the next opener
-/// (the GTK shell) sees them on its next read.
-pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
-    let db = CoreDb::open(db_path).map_err(SyncRunnerError::OpenDb)?;
-    // Off the UI thread: wait out an app write rather than fail.
-    db.set_busy_timeout(meditate_core::db::SYNC_BUSY_TIMEOUT)?;
-
-    // Account configuration is read here (not by callers) so a single
-    // function handles the full attempt — no half-runs.
-    let url = db.get_sync_state(KEY_URL, "")?;
-    let username = db.get_sync_state(KEY_USERNAME, "")?;
-    if url.is_empty() || username.is_empty() {
-        return Err(SyncRunnerError::Unconfigured);
-    }
-
-    let password = match keychain::read_password(&url, &username)? {
-        Some(p) => p,
-        None => return Err(SyncRunnerError::PasswordMissing),
-    };
-
-    let webdav = meditate_core::sync::HttpWebDav::new(&url, &username, &password);
-
-    let started = std::time::Instant::now();
-    let pending_at_start = db.pending_events().map_or(0, |v| v.len());
-    meditate_core::log(
-        "sync.attempt",
-        &format!("starting pending={pending_at_start}"),
-    );
-
-    // Progress callback. With the bulk-file format the push phase
-    // does ONE PUT regardless of event count, so the callback fires
-    // at most once at the end. We log it directly there — no
-    // per-N-event throttle needed any more.
-    let progress = |pushed: usize, total: usize| {
-        let secs = started.elapsed().as_secs_f64().max(0.001);
-        meditate_core::log(
-            "sync.push",
-            &format!(
-                "progress {pushed}/{total} in {secs:.1}s ({:.1}/s)",
-                pushed as f64 / secs,
-            ),
-        );
-    };
-
-    let result = meditate_core::sync::Sync::new(
-        &db,
-        &webdav,
-        REMOTE_BASE_PATH,
-        local_sounds_dir(),
-        local_guided_dir(),
-    ).sync_with_progress(progress);
-    let elapsed = started.elapsed();
-
-    if let Ok(stats) = &result {
-        let total = stats.pulled + stats.pushed;
-        if total > 0 {
-            let secs = elapsed.as_secs_f64().max(0.001);
-            meditate_core::log(
-                "sync.done",
-                &format!(
-                    "pulled={} pushed={} in {:.2}s ({:.1}/s)",
-                    stats.pulled, stats.pushed, secs, total as f64 / secs,
-                ),
-            );
-        }
-    }
-
-    record_outcome(&db, &result)?;
-    result.map_err(SyncRunnerError::from)
-}
-
-/// The transport-agnostic core of the runner. Tests pass a FakeWebDav;
-/// production goes through `run_sync_attempt` which adds progress
-/// logging and the keychain lookup. Either way: run Sync::sync, record
-/// the outcome in sync_state, propagate the result.
-pub fn run_with_webdav<W: WebDav>(
-    db: &CoreDb,
-    webdav: &W,
-) -> Result<SyncStats, SyncRunnerError> {
-    let result = Sync::new(
-        db, webdav, REMOTE_BASE_PATH, local_sounds_dir(), local_guided_dir(),
-    ).sync();
-    record_outcome(db, &result)?;
-    result.map_err(SyncRunnerError::from)
+/// Run one sync attempt against the database at `db_path`; the
+/// outcome lands in `sync_state` for the status indicator.
+pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, RunError> {
+    run_attempt(db_path, local_sounds_dir(), local_guided_dir(), |url, username| {
+        crate::keychain::read_password(url, username).map_err(|e| e.to_string())
+    })
 }
 
 /// Canonical local directory for custom-imported bell-sound audio
@@ -203,30 +29,6 @@ pub fn local_guided_dir() -> std::path::PathBuf {
     gtk::glib::user_data_dir().join("meditate").join("guided")
 }
 
-/// Persist the sync outcome so the status indicator (Phase E.5) can
-/// surface it. Success clears any previous error; failure leaves the
-/// previous successful timestamp intact (the user wants "last
-/// successful sync was 3 minutes ago" to keep being accurate even
-/// when the most recent attempt failed).
-fn record_outcome(
-    db: &CoreDb,
-    result: &Result<SyncStats, meditate_core::SyncError>,
-) -> Result<(), SyncRunnerError> {
-    use meditate_core::sync::settings::{
-        record_remote_data_lost, record_successful_sync, record_sync_error,
-    };
-    use meditate_core::SyncError;
-    match result {
-        Ok(_) => record_successful_sync(db, meditate_core::time::unix_now())?,
-        // Tag remote-data-lost distinctly so the status-indicator click
-        // handler can route to the recovery dialog rather than the
-        // generic retry path.
-        Err(e @ SyncError::RemoteDataLost) => record_remote_data_lost(db, &e.to_string())?,
-        Err(e) => record_sync_error(db, &e.to_string())?,
-    }
-    Ok(())
-}
-
 // Connection test (TestConnectionResult + test_connection +
 // test_connection_with) lives in `meditate_core::sync::credentials`.
 pub use meditate_core::sync::credentials::{
@@ -235,64 +37,18 @@ pub use meditate_core::sync::credentials::{
 
 #[cfg(test)]
 mod tests {
-    //! Tests use core's `Database::open_in_memory` plus a `FakeWebDav`
-    //! to exercise `run_with_webdav` end-to-end without touching the
-    //! filesystem, the network, or the keychain. The keychain path
-    //! is exercised by hand on the laptop / Librem 5 (E.7).
-
     use super::*;
-    use meditate_core::db::{Session, SessionMode};
-    use meditate_core::sync::FakeWebDav;
-    use meditate_core::sync::settings::{KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS};
+    use meditate_core::sync::{FakeWebDav, WebDav};
 
-    fn fresh_db_with_session() -> CoreDb {
-        let db = CoreDb::open_in_memory().unwrap();
-        db.insert_session(&Session {
-            start_iso: "2026-04-30T10:00:00".into(),
-            duration_secs: 600,
-            label_id: None,
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: meditate_core::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        db
-    }
-
-    /// Test impl whose every verb fails with `Network("offline")` —
-    /// used by tests that exercise the failure-recording side of the
-    /// runner. Hoisted to module scope so the lint about items
-    /// declared after statements stays happy.
-    struct AlwaysFail;
-    impl WebDav for AlwaysFail {
-        fn list_collection(&self, _: &str)
-            -> meditate_core::WebDavResult<Vec<String>>
-        { Err(meditate_core::WebDavError::Network("offline".into())) }
-        fn get(&self, _: &str, _: u64)
-            -> meditate_core::WebDavResult<Vec<u8>>
-        { unreachable!() }
-        fn put(&self, _: &str, _: &[u8])
-            -> meditate_core::WebDavResult<()>
-        { Err(meditate_core::WebDavError::Network("offline".into())) }
-        fn mkcol(&self, _: &str)
-            -> meditate_core::WebDavResult<()>
-        { Err(meditate_core::WebDavError::Network("offline".into())) }
-        fn delete(&self, _: &str)
-            -> meditate_core::WebDavResult<()>
-        { unreachable!() }
-        fn move_to(&self, _: &str, _: &str)
-            -> meditate_core::WebDavResult<()>
-        { Err(meditate_core::WebDavError::Network("offline".into())) }
+    fn read(path: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
     }
 
     /// A file the server refused shows by name in the status, and
     /// Retry sends it again: automatic syncs skip it.
     #[test]
     fn refused_uploads_show_by_name_and_retry_sends_them_again() {
-        let src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/window/imp.rs"),
-        )
-        .unwrap();
+        let src = read("src/window/imp.rs");
         assert!(src.contains("SyncIndicatorState::NotUploaded(files) => {"));
         assert!(src.contains(
             "SyncIndicatorAction::RetrySync => {\n                        \
@@ -301,209 +57,25 @@ mod tests {
         ));
     }
 
+    /// A sync that never started for want of a password showed as
+    /// healthy. Core sends the tap to the sync settings; it says so.
     #[test]
-    fn run_with_webdav_pushes_local_event_to_remote() {
-        // The integration: runner → Sync::sync → push.
-        let db = fresh_db_with_session();
-        let fake = FakeWebDav::new();
-        let stats = run_with_webdav(&db, &fake).unwrap();
-        assert_eq!(stats.pushed, 1, "the local session_insert event must be pushed");
-        assert_eq!(stats.pulled, 0);
-        assert_eq!(fake.file_count(), 1, "remote must have one event file");
+    fn a_missing_password_shows_in_the_status() {
+        let src = read("src/window/imp.rs");
+        assert!(src.contains("SyncIndicatorState::NeedsPassword => {"));
+        assert!(src.contains("gettext(\"No password saved, click to enter it\")"));
     }
 
+    /// Save kept an empty password field even with nothing stored for a
+    /// changed URL, and Test sent the password over http. Both now run
+    /// the same checks, so every error has its toast.
     #[test]
-    fn run_with_webdav_writes_last_sync_unix_ts_on_success() {
-        // Status indicator depends on this. Don't assert the exact
-        // value (now() varies), just that a non-zero one was written.
-        let db = fresh_db_with_session();
-        let fake = FakeWebDav::new();
-        run_with_webdav(&db, &fake).unwrap();
-        let raw = db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap();
-        assert!(!raw.is_empty(), "timestamp must be written on success");
-        let ts: i64 = raw.parse().expect("timestamp must be a parseable i64");
-        assert!(ts > 1_700_000_000,
-            "ts must be a recent unix timestamp, got {ts}");
-    }
-
-    #[test]
-    fn run_with_webdav_clears_prior_last_sync_error_on_success() {
-        // A previous failure left an error message; success must wipe
-        // it so the status indicator stops showing the old failure.
-        let db = fresh_db_with_session();
-        db.set_sync_state(KEY_LAST_SYNC_ERROR, "401 Unauthorized").unwrap();
-        let fake = FakeWebDav::new();
-        run_with_webdav(&db, &fake).unwrap();
-        assert_eq!(
-            db.get_sync_state(KEY_LAST_SYNC_ERROR, "fallback").unwrap(),
-            "",
-            "success must clear the prior error",
-        );
-    }
-
-    #[test]
-    fn run_with_webdav_records_error_on_failure() {
-        // Failing transport: a WebDav impl that always returns a
-        // server error. The runner must capture the error message.
-        struct BrokenWebDav;
-        impl WebDav for BrokenWebDav {
-            fn list_collection(&self, _: &str)
-                -> meditate_core::WebDavResult<Vec<String>>
-            { Err(meditate_core::WebDavError::Server {
-                status: 500, body: "boom".into() }) }
-            fn get(&self, _: &str, _: u64)
-                -> meditate_core::WebDavResult<Vec<u8>>
-            { unreachable!() }
-            fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Server {
-                status: 500, body: "boom".into() }) }
-            fn mkcol(&self, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Server {
-                status: 500, body: "boom".into() }) }
-            fn delete(&self, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { unreachable!() }
-            fn move_to(&self, _: &str, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Server {
-                status: 500, body: "boom".into() }) }
-        }
-        let db = fresh_db_with_session();
-        let result = run_with_webdav(&db, &BrokenWebDav);
-        assert!(result.is_err());
-
-        let err_msg = db.get_sync_state(KEY_LAST_SYNC_ERROR, "").unwrap();
-        assert!(!err_msg.is_empty(), "error message must be recorded");
-        assert!(err_msg.contains("500"),
-            "error must include the HTTP status, got: {err_msg}");
-    }
-
-    #[test]
-    fn run_with_webdav_failure_does_not_overwrite_a_prior_success_ts() {
-        // The user wants to see "last successful sync was N minutes
-        // ago" stay accurate even after a failure. Recording an error
-        // must not touch the success timestamp.
-        let db = fresh_db_with_session();
-        // Seed a known successful-sync timestamp.
-        db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, "1700000000").unwrap();
-
-        let _ = run_with_webdav(&db, &AlwaysFail);
-        assert_eq!(
-            db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(),
-            "1700000000",
-            "failure must not clobber the prior success timestamp",
-        );
-    }
-
-    #[test]
-    fn two_devices_running_runner_against_same_fake_converge() {
-        // End-to-end: A runs the runner; B runs the runner. Both
-        // converge on the union of their events. Mirrors what
-        // `Sync::sync` already tests, but pinned at this layer too
-        // since this is the boundary the GTK shell calls into.
-        let db_a = fresh_db_with_session();
-        let db_b = CoreDb::open_in_memory().unwrap();
-        db_b.insert_session(&Session {
-            start_iso: "B's session".into(),
-            duration_secs: 1200,
-            label_id: None,
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: meditate_core::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        }).unwrap();
-        let shared = FakeWebDav::new();
-
-        run_with_webdav(&db_a, &shared).unwrap();
-        run_with_webdav(&db_b, &shared).unwrap();
-        // A doesn't have B's session yet — needs another sync round.
-        run_with_webdav(&db_a, &shared).unwrap();
-
-        let a_starts: std::collections::HashSet<String> =
-            meditate_core::db::list_sessions_from_db(&db_a).unwrap()
-                .iter().map(|(_, s)| s.start_iso.clone()).collect();
-        let b_starts: std::collections::HashSet<String> =
-            meditate_core::db::list_sessions_from_db(&db_b).unwrap()
-                .iter().map(|(_, s)| s.start_iso.clone()).collect();
-        assert_eq!(a_starts, b_starts, "both devices converge on the same set");
-        assert_eq!(a_starts.len(), 2);
-    }
-
-    #[test]
-    fn sync_runner_error_display_is_user_actionable() {
-        // The string here flows into the status indicator's tooltip
-        // and the diagnostics log. Make sure the user-actionable
-        // variants ("you haven't set this up", "re-enter your
-        // password") read sensibly.
-        assert_eq!(
-            SyncRunnerError::Unconfigured.to_string(),
-            "sync isn't set up yet — open Preferences → Data",
-        );
-        assert_eq!(
-            SyncRunnerError::PasswordMissing.to_string(),
-            "no password in keyring — re-enter it in Preferences",
-        );
-    }
-
-    #[test]
-    fn run_with_webdav_surfaces_remote_data_lost_as_a_distinct_runner_variant() {
-        // The shell needs to discriminate "remote was wiped" from
-        // generic sync failures so it can show the recovery dialog
-        // (push local up / wipe local / cancel) rather than the
-        // generic error toast. SyncError::RemoteDataLost must reach
-        // the runner as SyncRunnerError::RemoteDataLost, not be
-        // collapsed into the generic Sync(_) bucket.
-        let db = fresh_db_with_session();
-        let fake = FakeWebDav::new();
-        // First sync succeeds and records a batch_uuid in
-        // known_remote_files.
-        run_with_webdav(&db, &fake).unwrap();
-        assert!(!db.known_remote_file_uuids().unwrap().is_empty());
-        // Wipe the remote.
-        for name in fake.list_collection("/Meditate/events/").unwrap() {
-            use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
-        }
-        let err = run_with_webdav(&db, &fake).unwrap_err();
-        assert!(matches!(err, SyncRunnerError::RemoteDataLost),
-            "wiped remote must surface as RemoteDataLost runner variant, \
-             got {err:?}");
-    }
-
-    #[test]
-    fn sync_runner_error_remote_data_lost_displays_an_actionable_message() {
-        // Display flows into the diagnostics log + the (forthcoming)
-        // dialog body. Pin the wording so the user sees a clear cause
-        // and isn't left guessing whether their data is safe.
-        let s = SyncRunnerError::RemoteDataLost.to_string();
-        assert!(s.contains("remote") || s.contains("Nextcloud"),
-            "must mention what was lost, got: {s}");
-        assert!(s.contains("missing") || s.contains("wiped") || s.contains("data lost"),
-            "must indicate the loss, got: {s}");
-    }
-
-    #[test]
-    fn run_with_webdav_remote_data_lost_does_not_clobber_last_sync_unix_ts() {
-        // When the fail-safe fires, the previous successful timestamp
-        // must remain intact — the user sees "last sync was 5 min ago"
-        // and decides what to do; we don't want to obscure that.
-        let db = fresh_db_with_session();
-        let fake = FakeWebDav::new();
-        run_with_webdav(&db, &fake).unwrap();
-        let ts_before = db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap();
-        assert!(!ts_before.is_empty());
-        for name in fake.list_collection("/Meditate/events/").unwrap() {
-            use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
-        }
-        let _ = run_with_webdav(&db, &fake).unwrap_err();
-        assert_eq!(
-            db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(),
-            ts_before,
-            "RemoteDataLost must not overwrite the success timestamp",
-        );
+    fn save_and_test_check_the_password_and_https_alike() {
+        let src = read("src/preferences.rs");
+        assert!(!src.contains("unreachable!("));
+        assert_eq!(src.matches("gettext(\"URL must start with https://\")").count(), 2);
+        assert_eq!(src.matches("gettext(\"Enter a password\")").count(), 2);
+        assert_eq!(src.matches("gettext(\"Keyring read failed\")").count(), 2);
     }
 
     // ── test_connection_with ─────────────────────────────────────────────────
