@@ -105,6 +105,12 @@ impl Database {
     /// receive a tombstone for a label they never knew existed.
     pub fn delete_label(&self, id: i64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        self.delete_label_in(&tx, id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn delete_label_in(&self, tx: &rusqlite::Transaction<'_>, id: i64) -> Result<()> {
         let row_uuid: Option<String> = self.conn.query_row(
             "SELECT uuid FROM labels WHERE id = ?1",
             params![id],
@@ -113,9 +119,7 @@ impl Database {
         let Some(uuid) = row_uuid else { return Ok(()); };
         self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(&tx, EventKind::LabelDelete, &uuid, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.emit_event(tx, EventKind::LabelDelete, &uuid, payload)
     }
 
     /// Rename the label with `id` to `name`. Unknown ids are silently
@@ -169,6 +173,12 @@ impl Database {
         if let Some(existing) = self.existing_rowid_by_uuid("labels", uuid_str)? {
             return Ok(existing);
         }
+        let rowid = self.insert_label_in(&tx, uuid_str, name)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    fn insert_label_in(&self, tx: &rusqlite::Transaction<'_>, uuid_str: &str, name: &str) -> Result<i64> {
         self.conn
             .execute(
                 "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
@@ -180,9 +190,28 @@ impl Database {
             "uuid": uuid_str,
             "name": name,
         }).to_string();
-        self.emit_event(&tx, EventKind::LabelInsert, uuid_str, payload)?;
-        tx.commit()?;
+        self.emit_event(tx, EventKind::LabelInsert, uuid_str, payload)?;
         Ok(rowid)
+    }
+
+    /// The label an imported session gets: the file's label if its id
+    /// is here, else one with the same name, else a new one keeping the
+    /// file's id, so a restored backup's labels are the synced ones
+    /// rather than "(conflict)" copies of them.
+    pub(super) fn label_for_import(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        name: &str,
+        uuid: Option<&super::LabelUuid>,
+    ) -> Result<i64> {
+        if let Some(id) = uuid.map(|u| self.existing_rowid_by_uuid("labels", u.as_str())).transpose()?.flatten() {
+            return Ok(id);
+        }
+        if let Some(id) = find_label_by_name_from_db(self, name)? {
+            return Ok(id);
+        }
+        let uuid = uuid.map_or_else(|| uuid::Uuid::new_v4().to_string(), ToString::to_string);
+        self.insert_label_in(tx, &uuid, name)
     }
 
     /// Return a label id by name, creating the label if missing. Lookup
@@ -236,15 +265,19 @@ impl Database {
     /// rides the event log, so peers converge to the same merged
     /// state on their next sync. Returns the re-tagged count.
     pub fn merge_labels(&self, from_id: i64, into_id: i64) -> Result<usize> {
+        // One transaction: the merge lands whole or, on an error,
+        // leaves both labels as they were.
+        let tx = self.conn.unchecked_transaction()?;
         let sessions = crate::db::sessions::list_sessions_for_label_from_db(
             self, from_id,
         )?;
         let n = sessions.len();
         for (id, mut session) in sessions {
             session.label_id = Some(into_id);
-            self.update_session(id, &session)?;
+            self.update_session_in(&tx, id, &session)?;
         }
-        self.delete_label(from_id)?;
+        self.delete_label_in(&tx, from_id)?;
+        tx.commit()?;
         crate::diag::log(
             "label.merge",
             &format!("from={from_id} into={into_id} retagged={n}"),
@@ -361,6 +394,26 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event, Session, SessionMode};
+
+    #[test]
+    fn a_merge_lands_whole_or_not_at_all() {
+        // One write per session: a failure partway left the sessions
+        // split between the two labels, and nothing said so.
+        let db = Database::open_in_memory().unwrap();
+        let from = db.insert_label("Walking").unwrap();
+        let into = db.insert_label("Walk").unwrap();
+        for i in 0..3 {
+            db.insert_session(&Session::from_unix(1_700_000_000 + i * 3600, 600, Some(from), None, SessionMode::Timer, None))
+                .unwrap();
+        }
+        db.conn
+            .execute_batch("CREATE TRIGGER boom BEFORE DELETE ON labels BEGIN SELECT RAISE(ABORT, 'boom'); END;")
+            .unwrap();
+        assert!(db.merge_labels(from, into).is_err());
+        let labels: Vec<Option<i64>> =
+            crate::db::list_sessions_from_db(&db).unwrap().iter().map(|(_, s)| s.label_id).collect();
+        assert_eq!(labels, [Some(from); 3]);
+    }
 
     #[test]
     fn inserting_label_increases_count() {

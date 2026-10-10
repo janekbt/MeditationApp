@@ -66,6 +66,10 @@ export global Tr {
     public pure function export-failed() -> string { return @tr("Export failed"); }
     public pure function imported-n(n: int) -> string { return @tr("Imported {n} session" | "Imported {n} sessions" % n); }
     public pure function import-failed() -> string { return @tr("Import failed, see Diagnostics"); }
+    public pure function import-line-start(line: int) -> string { return @tr("Line {}: the start time can't be read.", line); }
+    public pure function import-line-duration(line: int) -> string { return @tr("Line {}: the duration can't be read.", line); }
+    public pure function import-more(n: int) -> string { return @tr("{n} more line can't be read either." | "{n} more lines can't be read either." % n); }
+    public pure function import-nothing() -> string { return @tr("Nothing in this file can be imported."); }
     public pure function playback-failed() -> string { return @tr("Couldn't start playback"); }
     public pure function save-failed-storage() -> string { return @tr("Couldn't save session: storage error"); }
     public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session: storage unavailable"); }
@@ -1207,6 +1211,9 @@ component ConfirmDialog inherits Rectangle {
     in property <string> body;
     in property <string> confirm-text;
     in property <bool> confirm-enabled: true;
+    // One button per line, for a confirm text too long to sit beside
+    // Cancel (Material's stacked dialog buttons).
+    in property <bool> stacked;
     callback cancel();
     callback confirm();
 
@@ -1246,7 +1253,7 @@ component ConfirmDialog inherits Rectangle {
                 wrap: word-wrap;
             }
 
-            HorizontalLayout {
+            if !root.stacked : HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
 
@@ -1258,6 +1265,25 @@ component ConfirmDialog inherits Rectangle {
                     text: root.confirm-text;
                     enabled: root.confirm-enabled;
                     clicked => { root.confirm(); }
+                }
+            }
+            if root.stacked : VerticalLayout {
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: end;
+                    TextButton {
+                        text: root.confirm-text;
+                        enabled: root.confirm-enabled;
+                        clicked => { root.confirm(); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => { root.cancel(); }
+                    }
                 }
             }
         }
@@ -1862,6 +1888,7 @@ export enum Modal {
     pattern-delete,
     prep,
     recovery-wipe-confirm,
+    import-unreadable,
 }
 
 export component MainWindow inherits Window {
@@ -2413,6 +2440,11 @@ export component MainWindow inherits Window {
     // Trash on a pattern you made → "Delete Pattern?" (Modal).
     callback pattern-delete-tap(string);
     callback pattern-delete-confirm();
+
+    // A file with unreadable lines: which, and may the rest import.
+    in-out property <string> import-question;
+    in-out property <bool> import-can-write;
+    callback import-unreadable-confirm();
 
     // Bell-sound chooser overlay (B-5a). Same slide-in shape as
     // the labels chooser; `bell-chooser-items` is Rust-filled
@@ -7765,6 +7797,16 @@ export component MainWindow inherits Window {
             color: MaterialPalette.on-surface;
             wrap: word-wrap;
         }
+    }
+
+    if root.modal == Modal.import-unreadable : ConfirmDialog {
+        title: @tr("Some Lines Can't Be Read");
+        body: root.import-question;
+        confirm-text: @tr("Import the Rest");
+        confirm-enabled: root.import-can-write;
+        stacked: true;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.import-unreadable-confirm(); }
     }
 
     if root.modal == Modal.pattern-delete : ConfirmDialog {

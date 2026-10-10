@@ -71,12 +71,19 @@ pub fn seed_now() -> u64 {
 /// downstream (hour-of-day, day-of-week, etc. all assume the 19-char
 /// canonical shape).
 pub fn unix_to_local_iso(unix_secs: i64) -> String {
+    unix_to_local_iso_checked(unix_secs).unwrap_or_else(|| "1970-01-01T00:00:00".to_string())
+}
+
+/// `unix_to_local_iso`, or `None` where it would write the epoch: a
+/// file's millisecond timestamp, read as seconds, is year 55,000.
+pub fn unix_to_local_iso_checked(unix_secs: i64) -> Option<String> {
     use chrono::{Datelike, TimeZone};
     chrono::Local
         .timestamp_opt(unix_secs, 0)
         .single()
         .map(|dt| dt.naive_local())
-        .filter(|naive| (0..=9999).contains(&naive.year())).map_or_else(|| "1970-01-01T00:00:00".to_string(), |naive| naive.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .filter(|naive| (0..=9999).contains(&naive.year()))
+        .map(|naive| naive.format("%Y-%m-%dT%H:%M:%S").to_string())
 }
 
 /// Inverse of `unix_to_local_iso`: parse a local-naive ISO 8601 string

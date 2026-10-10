@@ -995,3 +995,23 @@ msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Reeks van {n} dag"
 msgstr[1] "Reeks van {n} dagen"
+
+msgid "Some Lines Can't Be Read"
+msgstr "Sommige regels zijn niet leesbaar"
+
+msgid "Import the Rest"
+msgstr "De rest importeren"
+
+msgid "Line {}: the start time can't be read."
+msgstr "Regel {}: de begintijd is niet leesbaar."
+
+msgid "Line {}: the duration can't be read."
+msgstr "Regel {}: de duur is niet leesbaar."
+
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "Nog {n} regel is ook niet leesbaar."
+msgstr[1] "Nog {n} regels zijn ook niet leesbaar."
+
+msgid "Nothing in this file can be imported."
+msgstr "Niets uit dit bestand kan worden geïmporteerd."

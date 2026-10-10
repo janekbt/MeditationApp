@@ -562,9 +562,7 @@ fn wire_data_actions(
         #[weak] app,
         #[weak] dialog,
         move |_| {
-            open_import_dialog(&app, &dialog, &gettext("Import Session Log"), |app, path| {
-                data_io::import_csv(app, path)
-            });
+            open_import_dialog(&app, &dialog, &gettext("Import Session Log"), data_io::parse_csv);
         }
     ));
 
@@ -573,9 +571,7 @@ fn wire_data_actions(
         #[weak] app,
         #[weak] dialog,
         move |_| {
-            open_import_dialog(&app, &dialog, &gettext("Import from Insight Timer"), |app, path| {
-                data_io::import_insighttimer(app, path)
-            });
+            open_import_dialog(&app, &dialog, &gettext("Import from Insight Timer"), data_io::parse_insighttimer);
         }
     ));
 
@@ -624,9 +620,9 @@ fn open_import_dialog<F>(
     app: &MeditateApplication,
     dialog: &adw::PreferencesDialog,
     title: &str,
-    importer: F,
+    parse: F,
 )
-where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::data_io::DataIoError>
+where F: FnOnce(&std::path::Path) -> Result<meditate_core::data_io::ParsedImport, crate::data_io::DataIoError>
     + 'static,
 {
     let file_dialog = gtk::FileDialog::builder()
@@ -646,21 +642,74 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
         move |result| {
             let Ok(file) = result else { return; };
             let Some(path) = file.path() else { return; };
-            match importer(&app, &path) {
-                Ok(n) => {
-                    data_toast(&dialog, &ngettext(
-                        "Imported 1 session",
-                        "Imported {n} sessions",
-                        n as u32,
-                    ).replace("{n}", &n.to_string()));
-                    app.invalidate(crate::application::InvalidateScope::ALL);
-                    refresh_main_window(&app);
+            let parsed = match parse(&path) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    data_toast(&dialog, &gettext("Import failed: {error}").replace("{error}", &e.to_string()));
+                    return;
                 }
-                Err(e) => data_toast(&dialog, &gettext("Import failed: {error}")
-                    .replace("{error}", &e.to_string())),
-            }
+            };
+            // Part of a file is imported only when the user says so.
+            let Some(question) = parsed.question() else {
+                write_import(&app, &dialog, &parsed);
+                return;
+            };
+            let alert = adw::AlertDialog::builder()
+                .heading(gettext("Some Lines Can't Be Read"))
+                .body(import_question_text(&question))
+                .default_response("cancel")
+                .close_response("cancel")
+                .build();
+            alert.add_response("cancel", &gettext("Cancel"));
+            alert.add_response("import", &gettext("Import the Rest"));
+            alert.set_response_appearance("import", adw::ResponseAppearance::Suggested);
+            alert.set_response_enabled("import", question.can_import);
+            let parent = dialog.clone();
+            alert.connect_response(Some("import"), move |_, _| write_import(&app, &dialog, &parsed));
+            alert.present(Some(&parent));
         },
     );
+}
+
+fn import_question_text(question: &meditate_core::data_io::ImportQuestion) -> String {
+    use meditate_core::data_io::Unreadable;
+    let mut text = match question.what {
+        Unreadable::StartTime => gettext("Line {line}: the start time can't be read."),
+        Unreadable::Duration => gettext("Line {line}: the duration can't be read."),
+    }
+    .replace("{line}", &question.line.to_string());
+    if question.more > 0 {
+        text.push(' ');
+        text.push_str(
+            &ngettext(
+                "{n} more line can't be read either.",
+                "{n} more lines can't be read either.",
+                question.more as u32,
+            )
+            .replace("{n}", &question.more.to_string()),
+        );
+    }
+    if !question.can_import {
+        text.push(' ');
+        text.push_str(&gettext("Nothing in this file can be imported."));
+    }
+    text
+}
+
+fn write_import(app: &MeditateApplication, dialog: &adw::PreferencesDialog, parsed: &meditate_core::data_io::ParsedImport) {
+    match crate::data_io::import_parsed(app, parsed) {
+        Ok(n) => {
+            data_toast(dialog, &ngettext(
+                "Imported 1 session",
+                "Imported {n} sessions",
+                n as u32,
+            ).replace("{n}", &n.to_string()));
+            app.invalidate(crate::application::InvalidateScope::ALL);
+            refresh_main_window(app);
+        }
+        Err(e) => data_toast(dialog, &gettext("Import failed: {error}")
+            .replace("{error}", &e.to_string())),
+    }
 }
 
 fn data_toast(dialog: &adw::PreferencesDialog, title: &str) {

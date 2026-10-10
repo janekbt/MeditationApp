@@ -995,3 +995,23 @@ msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "{n} Tag in Folge"
 msgstr[1] "{n} Tage in Folge"
+
+msgid "Some Lines Can't Be Read"
+msgstr "Einige Zeilen sind nicht lesbar"
+
+msgid "Import the Rest"
+msgstr "Den Rest importieren"
+
+msgid "Line {}: the start time can't be read."
+msgstr "Zeile {}: Die Startzeit ist nicht lesbar."
+
+msgid "Line {}: the duration can't be read."
+msgstr "Zeile {}: Die Dauer ist nicht lesbar."
+
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "{n} weitere Zeile ist ebenfalls nicht lesbar."
+msgstr[1] "{n} weitere Zeilen sind ebenfalls nicht lesbar."
+
+msgid "Nothing in this file can be imported."
+msgstr "Aus dieser Datei lässt sich nichts importieren."

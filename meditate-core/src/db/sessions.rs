@@ -18,7 +18,8 @@ pub struct Session {
     pub mode: SessionMode,
     /// Stable cross-device identity, assigned by the DB at insert time.
     /// Callers may set this to `SessionUuid::new("")` before insert —
-    /// the value is overwritten with a freshly generated v4 UUID.
+    /// the value is overwritten with a freshly generated v4 UUID; only
+    /// the bulk (import) insert keeps a given one, a backup's.
     /// Always populated on read paths.
     pub uuid: super::SessionUuid,
     /// Set on guided meditation rows that played a library-stored file
@@ -470,8 +471,7 @@ impl Database {
     /// emits its own `session_insert` event — peers replay them
     /// independently, there is no "bulk" event kind.
     /// Every `(start_iso, duration_secs)` pair currently in the
-    /// log — the CSV-import dedupe key (see
-    /// `data_io::insert_sessions_with_labels`).
+    /// log — the CSV-import dedupe key (see `insert_imported`).
     pub fn session_start_duration_pairs(
         &self,
     ) -> Result<std::collections::HashSet<(String, u32)>> {
@@ -488,6 +488,58 @@ impl Database {
 
     pub fn bulk_insert_sessions(&self, sessions: &[Session]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
+        let n = self.insert_sessions_in(&tx, sessions)?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Write an import in one transaction, so it lands whole or not at
+    /// all. A row whose session is already here (same id, or same start
+    /// and duration) or came earlier in `rows` is skipped; a row keeps
+    /// its id, so a restored backup and the synced log are one log.
+    /// Only the labels of written rows are made (see
+    /// `label_for_import`). Returns the rows written.
+    pub fn insert_imported(
+        &self,
+        labels: &[(String, Option<super::LabelUuid>)],
+        rows: &[(Session, Option<usize>)],
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids: std::collections::HashSet<String> = self
+            .conn
+            .prepare("SELECT uuid FROM sessions")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut seen = self.session_start_duration_pairs()?;
+        let mut label_ids: std::collections::HashMap<usize, i64> = std::collections::HashMap::new();
+        let mut write = Vec::new();
+        for (s, label) in rows {
+            let new_id = s.uuid.is_empty() || ids.insert(s.uuid.to_string());
+            if !(new_id && seen.insert((s.start_iso.clone(), s.duration_secs))) {
+                continue;
+            }
+            let label_id = match *label {
+                Some(i) => Some(match label_ids.get(&i) {
+                    Some(&id) => id,
+                    None => {
+                        let (name, uuid) = &labels[i];
+                        let id = self.label_for_import(&tx, name, uuid.as_ref())?;
+                        label_ids.insert(i, id);
+                        id
+                    }
+                }),
+                None => None,
+            };
+            write.push(Session { label_id, ..s.clone() });
+        }
+        let n = self.insert_sessions_in(&tx, &write)?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Insert `sessions` inside `tx`, each with its own id or, when
+    /// blank, a new one.
+    fn insert_sessions_in(&self, tx: &rusqlite::Transaction<'_>, sessions: &[Session]) -> Result<usize> {
         let mut session_uuids: Vec<String> = Vec::with_capacity(sessions.len());
         {
             let mut stmt = tx.prepare(
@@ -495,7 +547,11 @@ impl Database {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for s in sessions {
-                let uuid = uuid::Uuid::new_v4().to_string();
+                let uuid = if s.uuid.is_empty() {
+                    uuid::Uuid::new_v4().to_string()
+                } else {
+                    s.uuid.to_string()
+                };
                 stmt.execute(params![
                     s.start_iso,
                     s.duration_secs,
@@ -522,9 +578,8 @@ impl Database {
                 "mode": s.mode.as_db_str(),
                 "guided_file_uuid": s.guided_file_uuid,
             }).to_string();
-            self.emit_event(&tx, EventKind::SessionInsert, &session_uuid, payload)?;
+            self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
         }
-        tx.commit()?;
         Ok(sessions.len())
     }
 
@@ -598,6 +653,12 @@ impl Database {
     /// referencing a uuid we don't have.
     pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        self.update_session_in(&tx, id, session)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn update_session_in(&self, tx: &rusqlite::Transaction<'_>, id: i64, session: &Session) -> Result<()> {
         let row_uuid: Option<String> = self.conn.query_row(
             "SELECT uuid FROM sessions WHERE id = ?1",
             params![id],
@@ -634,9 +695,7 @@ impl Database {
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
         }).to_string();
-        self.emit_event(&tx, EventKind::SessionUpdate, &session_uuid, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.emit_event(tx, EventKind::SessionUpdate, &session_uuid, payload)
     }
 
 
@@ -859,6 +918,53 @@ mod tests {
     use super::*;
     use crate::db::test_helpers::*;
     use crate::test_macros::assert_f64_eq;
+
+    // ── Imports ─────────────────────────────────────────────────────────────
+
+    fn sit(start_unix: i64, duration_secs: i64) -> Session {
+        Session::from_unix(start_unix, duration_secs, None, None, SessionMode::Timer, None)
+    }
+
+    #[test]
+    fn an_import_lands_whole_or_not_at_all() {
+        // A failure partway left the labels written before it, and the
+        // user had no way to tell what had landed.
+        let db = Database::open_in_memory().unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TRIGGER boom BEFORE INSERT ON sessions WHEN NEW.duration_secs = 13
+                 BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+            )
+            .unwrap();
+        let events = db.all_events().unwrap().len();
+        let labels = [("Work".to_string(), None)];
+        let rows = [(sit(1_700_000_000, 600), Some(0)), (sit(1_700_003_600, 13), None)];
+        assert!(db.insert_imported(&labels, &rows).is_err());
+        assert!(crate::db::list_labels_from_db(&db).unwrap().iter().all(|l| l.name != "Work"));
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 0);
+        assert_eq!(db.all_events().unwrap().len(), events);
+    }
+
+    #[test]
+    fn a_restored_label_keeps_its_id_and_a_same_named_one_is_reused() {
+        // A new id for a restored label made it a "(conflict)" copy of
+        // the synced one.
+        let db = Database::open_in_memory().unwrap();
+        let calm = db.insert_label("Calm").unwrap();
+        let work_id = "3f0e9a2b-5c1d-4e8f-a7b6-9d2c1e0f4a3b";
+        let labels = [
+            ("Work".to_string(), Some(crate::db::LabelUuid::new(work_id))),
+            ("calm".to_string(), Some(crate::db::LabelUuid::new("8a7b6c5d-4e3f-4a1b-9c8d-7e6f5a4b3c2d"))),
+        ];
+        let rows = [(sit(1_700_000_000, 600), Some(0)), (sit(1_700_003_600, 600), Some(1))];
+        assert_eq!(db.insert_imported(&labels, &rows).unwrap(), 2);
+        let all = crate::db::list_labels_from_db(&db).unwrap();
+        assert_eq!(all.len(), 2);
+        let work = all.iter().find(|l| l.name == "Work").unwrap();
+        assert_eq!(work.uuid, work_id);
+        let got: Vec<Option<i64>> = crate::db::list_sessions_from_db(&db).unwrap().iter().map(|(_, s)| s.label_id).collect();
+        assert_eq!(got, [Some(work.id), Some(calm)]);
+    }
 
     // ── Session::from_unix / start_unix — shell-facing translation ──────────
 

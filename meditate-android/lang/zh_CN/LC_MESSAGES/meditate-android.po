@@ -973,3 +973,22 @@ msgstr "今天开始连续打卡"
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "连续 {n} 天"
+
+msgid "Some Lines Can't Be Read"
+msgstr "部分行无法读取"
+
+msgid "Import the Rest"
+msgstr "导入其余部分"
+
+msgid "Line {}: the start time can't be read."
+msgstr "第 {} 行：无法读取开始时间。"
+
+msgid "Line {}: the duration can't be read."
+msgstr "第 {} 行：无法读取时长。"
+
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "另有 {n} 行也无法读取。"
+
+msgid "Nothing in this file can be imported."
+msgstr "此文件中没有可导入的内容。"

@@ -1,18 +1,15 @@
-//! GTK-shell wrappers around `meditate_core::data_io`.
-//!
-//! The pure CSV parse / write logic plus the `(label_idx, …) -> Session`
-//! second pass live in core. This file is the `MeditateApplication`
-//! glue (DB access via `app.with_db*`) plus the Insight Timer importer
-//! (still here because it needs `gtk::glib::DateTime` for the
-//! local-time → unix conversion — chrono can do the same, but the move
-//! is on its own future migration).
+//! GTK-shell wrappers around `meditate_core::data_io`: the
+//! `MeditateApplication` glue (DB access via `app.with_db*`), the
+//! shell's localized error type, and logging. Parsing and writing,
+//! Insight Timer's included, live in core.
 //!
 //! Native CSV format documented in `meditate_core::data_io`.
 
 use std::path::Path;
 
+use meditate_core::data_io::ParsedImport;
+
 use crate::application::MeditateApplication;
-use crate::db::Database;
 
 /// Everything that can go wrong during import or export, collapsed into a
 /// single user-facing error type so the caller can just show a toast.
@@ -95,53 +92,49 @@ pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
     result
 }
 
-// ── Native-format import ──────────────────────────────────────────────────────
+// ── Import ────────────────────────────────────────────────────────────────────
 
-pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
+/// Read a backup (native format) without writing anything.
+pub fn parse_csv(path: &Path) -> Result<ParsedImport, DataIoError> {
+    logged("import.csv", path, meditate_core::data_io::parse_csv(path))
+}
+
+/// Read an Insight Timer export without writing anything. Its
+/// local-time conversion is core's, DST-safe.
+pub fn parse_insighttimer(path: &Path) -> Result<ParsedImport, DataIoError> {
+    logged(
+        "import.insighttimer",
+        path,
+        meditate_core::data_io::parse_insighttimer_csv(path, meditate_core::data_io::insighttimer_started_at),
+    )
+}
+
+fn logged(
+    tag: &str,
+    path: &Path,
+    result: Result<ParsedImport, meditate_core::data_io::DataIoError>,
+) -> Result<ParsedImport, DataIoError> {
+    match &result {
+        Ok(p) => meditate_core::log(
+            tag,
+            &format!("read rows={} unreadable={} path={}", p.rows.len(), p.unreadable.len(), path.display()),
+        ),
+        Err(e) => meditate_core::log(tag, &format!("FAILED path={} err={e}", path.display())),
+    }
+    Ok(result?)
+}
+
+/// Write a read file: all of it, or on an error nothing.
+pub fn import_parsed(app: &MeditateApplication, parsed: &ParsedImport) -> Result<usize, DataIoError> {
     let result: Result<usize, DataIoError> = app
-        .with_db_mut(|db| meditate_core::data_io::import_csv(db.core(), path))
+        .with_db_mut(|db| meditate_core::data_io::import_parsed(db.core(), parsed))
         .ok_or(DataIoError::NoDatabase)?
         .map_err(DataIoError::from);
     match &result {
-        Ok(n) => meditate_core::log(
-            "import.csv",
-            &format!("read sessions={n} path={}", path.display()),
-        ),
-        Err(e) => meditate_core::log(
-            "import.csv",
-            &format!("FAILED path={} err={e}", path.display()),
-        ),
+        Ok(n) => meditate_core::log("import.write", &format!("wrote sessions={n}")),
+        Err(e) => meditate_core::log("import.write", &format!("FAILED err={e}")),
     }
     result
-}
-
-// ── Insight Timer import ──────────────────────────────────────────────────────
-
-pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    let result = app.with_db_mut(|db| import_insighttimer_to_db(db, path))
-        .ok_or(DataIoError::NoDatabase)?;
-    match &result {
-        Ok(n) => meditate_core::log(
-            "import.insighttimer",
-            &format!("read sessions={n} path={}", path.display()),
-        ),
-        Err(e) => meditate_core::log(
-            "import.insighttimer",
-            &format!("FAILED path={} err={e}", path.display()),
-        ),
-    }
-    result
-}
-
-pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    // CSV parsing, label dedup, duration validation and the
-    // DST-safe local-time conversion all live in core.
-    let (label_names, rows) = meditate_core::data_io::parse_insighttimer_csv(
-        path,
-        meditate_core::data_io::insighttimer_started_at,
-    )?;
-    meditate_core::data_io::insert_sessions_with_labels(db.core(), &label_names, &rows)
-        .map_err(DataIoError::from)
 }
 
 // ── Delete all ────────────────────────────────────────────────────────────────
@@ -158,6 +151,23 @@ mod tests {
     /// built on `time::local_naive_to_unix`), which imports a row in a
     /// DST gap instead of rounding or failing; the shell must not keep
     /// its own conversion.
+    /// A file is read before anything is written. One with unreadable
+    /// lines is imported in part only when the user says so: the
+    /// question names the first such line, and Cancel writes nothing.
+    #[test]
+    fn a_partly_unreadable_file_asks_before_importing() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/preferences.rs"),
+        )
+        .unwrap();
+        let at = src.find("fn open_import_dialog<F>(").unwrap();
+        let body = &src[at..at + src[at..].find("\n}\n").unwrap()];
+        assert!(body.contains("let Some(question) = parsed.question() else {\n                write_import(&app, &dialog, &parsed);"));
+        assert!(body.contains("alert.set_response_enabled(\"import\", question.can_import);"));
+        assert!(body.contains("alert.connect_response(Some(\"import\")"));
+        assert_eq!(src.matches("data_io::import_parsed(").count(), 1, "one write");
+    }
+
     #[test]
     fn insight_timer_import_uses_the_core_time_conversion() {
         let src = std::fs::read_to_string(

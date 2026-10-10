@@ -1017,3 +1017,24 @@ msgid_plural "{n} day streak"
 msgstr[0] "Серия: {n} день"
 msgstr[1] "Серия: {n} дня"
 msgstr[2] "Серия: {n} дней"
+
+msgid "Some Lines Can't Be Read"
+msgstr "Некоторые строки не удаётся прочитать"
+
+msgid "Import the Rest"
+msgstr "Импортировать остальное"
+
+msgid "Line {}: the start time can't be read."
+msgstr "Строка {}: не удаётся прочитать время начала."
+
+msgid "Line {}: the duration can't be read."
+msgstr "Строка {}: не удаётся прочитать длительность."
+
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "Ещё {n} строку тоже не удаётся прочитать."
+msgstr[1] "Ещё {n} строки тоже не удаётся прочитать."
+msgstr[2] "Ещё {n} строк тоже не удаётся прочитать."
+
+msgid "Nothing in this file can be imported."
+msgstr "Из этого файла ничего нельзя импортировать."

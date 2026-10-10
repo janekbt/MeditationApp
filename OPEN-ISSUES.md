@@ -18,10 +18,10 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | A. Sync data safety | #40, #66, #69, #43, #88, #68, #90, #94 | data loss across devices |
 | [x] | B. GTK session safety | #135, #129, #128, #67, #131, #134 | GTK loses or ends sessions |
 | [x] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
-| [ ] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
+| [x] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
 | [ ] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
 | [ ] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
-| [ ] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #65, #122 | names that differ per device, saves that fail |
+| [ ] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #65, #122, #158 | names that differ per device, saves that fail |
 | [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
@@ -306,6 +306,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-gtk/src/labels.rs:277, 344, 402`; `guided.rs:976-985, 1001-1007`.
 - Problem: only a sync marks Log and Stats dirty. Without Nextcloud, deleting "Yoga" leaves its chips, its filter entry and its Stats row, and editing such a card fails with "storage error". Renaming a label or a guided file leaves the old name.
 - Fix: `app.invalidate(InvalidateScope::ALL)` in those label handlers and in the guided rename and its Undo (create only needs LOG).
+
+### #158 GTK: no way to merge a "(conflict)" label
+- Where: `meditate-gtk/src` has no caller of core's `list_label_conflicts` / `merge_labels`; Android has the dialog (`ui.rs` `check_label_conflicts`, `on_conflict_merge_tap`).
+- Problem: two devices that create the same label name before syncing end with "Work" and "Work (conflict-…)". The phone asks to merge them; the laptop shows both labels for good, and its sessions stay split between them. (Found while planning batch D; a restored backup no longer causes this.)
+- Fix: the GTK twin of Android's conflict dialog, on the same core calls.
 
 ## H. Timer engine
 
@@ -710,7 +715,6 @@ So these aren't proposed again:
 - R15(d), merging `VerticalSpinBox` and `StepperRow`: about -40 lines in the focus and keyboard code the cursor bugs came from.
 - R2b, all database writes off the UI thread: about 175 call sites, and no lock wait noticed in practice.
 - Closing the file picker before its copy ends (#37): the read grant on the picked file can end with that screen, so every pick path would need the file opened first; a local copy takes about a second.
-- A `guided_file_uuid` CSV column (#7): after a restore the uuid points at no file, and synced devices get their sessions by sync anyway.
 - Typed `BellSlot` through Slint: large, with no host safety net.
 - Moving the whole sync account Save/Test into core: the keychains are per app.
 - Moving the Log edit build into core: low value; reconsider when fixing #5/#6.

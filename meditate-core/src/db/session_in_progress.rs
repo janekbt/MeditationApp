@@ -178,13 +178,20 @@ impl Database {
     /// Returns `Some(FinalizedSession)` carrying the new session
     /// uuid + duration so the shell can render the toast and wire
     /// its Undo button. `None` on the happy path (no in-flight
-    /// session — the typical clean shutdown).
+    /// session — the typical clean shutdown), and for a 0 s one,
+    /// which it drops.
     pub fn finalize_session_in_progress(&self) -> Result<Option<FinalizedSession>> {
         let tx = self.conn.unchecked_transaction()?;
         let snapshot = self.get_session_in_progress()?;
         let Some(snapshot) = snapshot else {
             return Ok(None);
         };
+        // Killed in its first minute: no time to recover.
+        if snapshot.accumulated_secs == 0 {
+            self.conn.execute("DELETE FROM session_in_progress WHERE id = 1", [])?;
+            tx.commit()?;
+            return Ok(None);
+        }
         let session = Session {
             start_iso: snapshot.start_iso,
             duration_secs: snapshot.accumulated_secs,
@@ -350,6 +357,19 @@ mod tests {
         assert_eq!(result, None);
         assert!(db.pending_events().unwrap().is_empty(),
             "finalize-on-empty must not emit anything");
+    }
+
+    #[test]
+    fn a_zero_second_snapshot_is_dropped_not_saved() {
+        // Killed in its first minute, a session left a 0 s snapshot:
+        // "Recovered 0 min", synced and exported, and one such row
+        // made the whole backup unimportable.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&sample(0)).unwrap();
+        assert_eq!(db.finalize_session_in_progress().unwrap(), None);
+        assert_eq!(db.get_session_in_progress().unwrap(), None, "the snapshot is gone");
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 0);
+        assert!(db.pending_events().unwrap().is_empty());
     }
 
     #[test]

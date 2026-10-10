@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 22:45+0200\n"
+"POT-Creation-Date: 2026-10-10 10:09+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -87,7 +87,7 @@ msgid "Meditate"
 msgstr ""
 
 #: src/application.rs:398 src/guided.rs:1172 src/log/imp.rs:677
-#: src/presets.rs:704 src/timer/imp.rs:3577 src/vibrations.rs:476
+#: src/presets.rs:704 src/timer/imp.rs:3582 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr ""
@@ -118,11 +118,12 @@ msgstr ""
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:759 src/guided.rs:215 src/guided.rs:933
 #: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
-#: src/preferences.rs:593 src/presets.rs:445 src/presets.rs:507
-#: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
-#: src/recovery_dialog.rs:103 src/sounds.rs:530 src/sounds.rs:913
-#: src/sounds.rs:979 src/timer/imp.rs:2526 src/timer/imp.rs:3706
-#: src/vibration_editor.rs:129 src/vibrations.rs:557 src/vibrations.rs:647
+#: src/preferences.rs:589 src/preferences.rs:663 src/presets.rs:445
+#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
+#: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
+#: src/sounds.rs:913 src/sounds.rs:979 src/timer/imp.rs:2531
+#: src/timer/imp.rs:3711 src/vibration_editor.rs:129 src/vibrations.rs:557
+#: src/vibrations.rs:647
 msgid "Cancel"
 msgstr ""
 
@@ -187,7 +188,7 @@ msgstr ""
 msgid "Kind"
 msgstr ""
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3680
+#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3685
 msgid "Minutes"
 msgstr ""
 
@@ -237,23 +238,23 @@ msgstr ""
 msgid "Edit Bell"
 msgstr ""
 
-#: src/data_io.rs:32
+#: src/data_io.rs:29
 msgid "File error"
 msgstr ""
 
-#: src/data_io.rs:33
+#: src/data_io.rs:30
 msgid "CSV error"
 msgstr ""
 
-#: src/data_io.rs:34
+#: src/data_io.rs:31
 msgid "Parse error"
 msgstr ""
 
-#: src/data_io.rs:35
+#: src/data_io.rs:32
 msgid "Database error"
 msgstr ""
 
-#: src/data_io.rs:36 src/preferences.rs:433
+#: src/data_io.rs:33 src/preferences.rs:433
 msgid "Database unavailable"
 msgstr ""
 
@@ -472,7 +473,7 @@ msgid_plural "{n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3673
+#: src/log/imp.rs:814 src/timer/imp.rs:3678
 msgid "Hours"
 msgstr ""
 
@@ -539,11 +540,11 @@ msgstr ""
 msgid "Add Session"
 msgstr ""
 
-#: src/log/imp.rs:1189 src/timer/imp.rs:2470
+#: src/log/imp.rs:1189 src/timer/imp.rs:2475
 msgid "Couldn't save session — storage error"
 msgstr ""
 
-#: src/log/imp.rs:1194 src/timer/imp.rs:2488
+#: src/log/imp.rs:1194 src/timer/imp.rs:2493
 msgid "Couldn't save session — storage unavailable"
 msgstr ""
 
@@ -607,7 +608,7 @@ msgstr ""
 msgid "Import sessions from another meditation app."
 msgstr ""
 
-#: src/preferences.rs:149 src/preferences.rs:576
+#: src/preferences.rs:149 src/preferences.rs:574
 msgid "Import from Insight Timer"
 msgstr ""
 
@@ -705,7 +706,7 @@ msgstr ""
 msgid "Keyring write failed"
 msgstr ""
 
-#: src/preferences.rs:429 src/timer/imp.rs:3552
+#: src/preferences.rs:429 src/timer/imp.rs:3557
 msgid "Save failed"
 msgstr ""
 
@@ -757,43 +758,72 @@ msgstr ""
 msgid "Import Session Log"
 msgstr ""
 
-#: src/preferences.rs:588
+#: src/preferences.rs:584
 msgid "Delete Every Session?"
 msgstr ""
 
-#: src/preferences.rs:589
+#: src/preferences.rs:585
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr ""
 
-#: src/preferences.rs:594
+#: src/preferences.rs:590
 msgid "Delete All"
 msgstr ""
 
-#: src/preferences.rs:605
+#: src/preferences.rs:601
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:612
+#: src/preferences.rs:608
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:652
+#: src/preferences.rs:648 src/preferences.rs:710
+#, rust-format
+msgid "Import failed: {error}"
+msgstr ""
+
+#: src/preferences.rs:658
+msgid "Some Lines Can't Be Read"
+msgstr ""
+
+#: src/preferences.rs:664
+msgid "Import the Rest"
+msgstr ""
+
+#: src/preferences.rs:677
+#, rust-format
+msgid "Line {line}: the start time can't be read."
+msgstr ""
+
+#: src/preferences.rs:678
+#, rust-format
+msgid "Line {line}: the duration can't be read."
+msgstr ""
+
+#: src/preferences.rs:685
+#, rust-format
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/preferences.rs:694
+msgid "Nothing in this file can be imported."
+msgstr ""
+
+#: src/preferences.rs:703
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
-
-#: src/preferences.rs:659
-#, rust-format
-msgid "Import failed: {error}"
-msgstr ""
 
 #: src/preset_subtitle.rs:28
 #, rust-format
@@ -1156,123 +1186,123 @@ msgstr ""
 msgid "Meditation session running"
 msgstr ""
 
-#: src/timer/imp.rs:1731
+#: src/timer/imp.rs:1732
 msgid "This device can't vibrate, so nothing plays"
 msgstr ""
 
-#: src/timer/imp.rs:1732
+#: src/timer/imp.rs:1733
 msgid "This device can't vibrate, so only the sound plays"
 msgstr ""
 
-#: src/timer/imp.rs:1944
+#: src/timer/imp.rs:1949
 msgid "Paused"
 msgstr ""
 
-#: src/timer/imp.rs:1971 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1976 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr ""
 
-#: src/timer/imp.rs:2139
+#: src/timer/imp.rs:2144
 msgid "Couldn't start playback"
 msgstr ""
 
-#: src/timer/imp.rs:2230 src/window/imp.rs:397
+#: src/timer/imp.rs:2235 src/window/imp.rs:397
 msgid "Pause"
 msgstr ""
 
-#: src/timer/imp.rs:2231 src/window/imp.rs:399
+#: src/timer/imp.rs:2236 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr ""
 
-#: src/timer/imp.rs:2273 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2278 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr ""
 
-#: src/timer/imp.rs:2274
+#: src/timer/imp.rs:2279
 msgid "Resume Timer"
 msgstr ""
 
-#: src/timer/imp.rs:2517
+#: src/timer/imp.rs:2522
 msgid "Discard Session?"
 msgstr ""
 
-#: src/timer/imp.rs:2518
+#: src/timer/imp.rs:2523
 msgid "Your note will be lost."
 msgstr ""
 
-#: src/timer/imp.rs:2527 data/ui/timer_view.blp:879
+#: src/timer/imp.rs:2532 data/ui/timer_view.blp:879
 msgid "Discard"
 msgstr ""
 
-#: src/timer/imp.rs:2826
+#: src/timer/imp.rs:2831
 msgid "Finish"
 msgstr ""
 
-#: src/timer/imp.rs:2828
+#: src/timer/imp.rs:2833
 msgid "End at the planned duration"
 msgstr ""
 
-#: src/timer/imp.rs:3183
+#: src/timer/imp.rs:3188
 msgid "Start your streak today"
 msgstr ""
 
-#: src/timer/imp.rs:3184 src/timer/imp.rs:3186
+#: src/timer/imp.rs:3189 src/timer/imp.rs:3191
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/timer/imp.rs:3242
+#: src/timer/imp.rs:3247
 msgid "Tap Save Settings to create your first preset"
 msgstr ""
 
-#: src/timer/imp.rs:3319
+#: src/timer/imp.rs:3324
 msgid "No starred files"
 msgstr ""
 
-#: src/timer/imp.rs:3321
+#: src/timer/imp.rs:3326
 msgid "Tap Open File then Import File, or star a file in Manage Files"
 msgstr ""
 
-#: src/timer/imp.rs:3388 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3393 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr ""
 
-#: src/timer/imp.rs:3390 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3395 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr ""
 
-#: src/timer/imp.rs:3398
+#: src/timer/imp.rs:3403
 msgid "Open New File"
 msgstr ""
 
-#: src/timer/imp.rs:3400 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3405 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr ""
 
-#: src/timer/imp.rs:3575
+#: src/timer/imp.rs:3580
 #, rust-format
 msgid "'{name}' applied"
 msgstr ""
 
-#: src/timer/imp.rs:3700
+#: src/timer/imp.rs:3705
 msgid "Custom Time"
 msgstr ""
 
-#: src/timer/imp.rs:3701
+#: src/timer/imp.rs:3706
 msgid "Hours : Minutes"
 msgstr ""
 
-#: src/timer/imp.rs:3707
+#: src/timer/imp.rs:3712
 msgid "Set"
 msgstr ""
 
-#: src/timer/imp.rs:3762 src/timer/imp.rs:3789
+#: src/timer/imp.rs:3767 src/timer/imp.rs:3794
 msgid "(none — pick one)"
 msgstr ""
 
-#: src/timer/imp.rs:3764 src/timer/imp.rs:3791
+#: src/timer/imp.rs:3769 src/timer/imp.rs:3796
 msgid "Off"
 msgstr ""
 
@@ -1291,43 +1321,43 @@ msgstr ""
 
 #. / word order via this gettext template.
 
-#: src/timer/imp.rs:4053
+#: src/timer/imp.rs:4058
 #, rust-format
 msgid "Add {time} ?"
 msgstr ""
 
-#: src/timer/imp.rs:4063
+#: src/timer/imp.rs:4068
 msgid "None enabled"
 msgstr ""
 
-#: src/timer/imp.rs:4064 src/timer/imp.rs:4065
+#: src/timer/imp.rs:4069 src/timer/imp.rs:4070
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/timer/imp.rs:4089 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4094 data/ui/timer_view.blp:605
 msgid "Inhale"
 msgstr ""
 
-#: src/timer/imp.rs:4090
+#: src/timer/imp.rs:4095
 msgid "Hold (full)"
 msgstr ""
 
-#: src/timer/imp.rs:4091 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4096 data/ui/timer_view.blp:701
 msgid "Exhale"
 msgstr ""
 
-#: src/timer/imp.rs:4092
+#: src/timer/imp.rs:4097
 msgid "Hold (empty)"
 msgstr ""
 
-#: src/timer/imp.rs:4154
+#: src/timer/imp.rs:4159
 msgid "Decrease"
 msgstr ""
 
-#: src/timer/imp.rs:4165
+#: src/timer/imp.rs:4170
 msgid "Increase"
 msgstr ""
 

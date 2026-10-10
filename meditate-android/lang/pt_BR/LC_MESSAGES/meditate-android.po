@@ -995,3 +995,23 @@ msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Sequência de {n} dia"
 msgstr[1] "Sequência de {n} dias"
+
+msgid "Some Lines Can't Be Read"
+msgstr "Algumas linhas não podem ser lidas"
+
+msgid "Import the Rest"
+msgstr "Importar o restante"
+
+msgid "Line {}: the start time can't be read."
+msgstr "Linha {}: não é possível ler o horário de início."
+
+msgid "Line {}: the duration can't be read."
+msgstr "Linha {}: não é possível ler a duração."
+
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "Mais {n} linha também não pode ser lida."
+msgstr[1] "Mais {n} linhas também não podem ser lidas."
+
+msgid "Nothing in this file can be imported."
+msgstr "Nada neste arquivo pode ser importado."

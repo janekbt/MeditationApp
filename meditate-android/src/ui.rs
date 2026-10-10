@@ -4405,72 +4405,46 @@ fn build_ui() -> MainWindow {
                     };
                     show_notice(&ui, text.into(), None, 4);
                 }
-                // CSV import landed (DP): parse + insert via core,
-                // toast the count, refresh the session surfaces.
-                // Synchronous on the tick like GTK's main-loop
-                // import — thousands of rows bulk-insert in well
-                // under a second.
+                // CSV import landed (DP): read it whole, ask when
+                // lines can't be read, then write it in one go. On
+                // the tick like GTK's main-loop import: thousands of
+                // rows take well under a second.
                 if let Some(pick) =
                     android_app().and_then(guided::take_csv_pick)
                 {
-                    let (outcome, kind): (Result<usize, String>, String) = match pick {
+                    let read = match pick {
                         // The copy into app storage failed: there is
                         // no file, but the user still hears about it.
-                        Err(e) => (Err(format!("copy FAILED: {e}")), "?".into()),
+                        Err(e) => Err(format!("copy FAILED: {e}")),
                         Ok((path, kind)) => {
                             let p = std::path::PathBuf::from(&path);
-                            let outcome = {
-                                let Some(db) = lock_db() else {
-                                    return;
-                                };
-                                if kind == "insight" {
-                                    meditate_core::data_io::parse_insighttimer_csv(
-                                        &p,
-                                        meditate_core::data_io::insighttimer_started_at,
-                                    )
-                                    .and_then(|(labels, rows)| {
-                                        meditate_core::data_io::insert_sessions_with_labels(
-                                            &db, &labels, &rows,
-                                        )
-                                    })
-                                    .map_err(|e| format!("{e:?}"))
-                                } else {
-                                    meditate_core::data_io::import_csv(&db, &p)
-                                        .map_err(|e| format!("{e:?}"))
-                                }
+                            let parsed = if kind == "insight" {
+                                meditate_core::data_io::parse_insighttimer_csv(
+                                    &p,
+                                    meditate_core::data_io::insighttimer_started_at,
+                                )
+                            } else {
+                                meditate_core::data_io::parse_csv(&p)
                             };
                             let _ = std::fs::remove_file(&p);
-                            (outcome, kind)
+                            parsed.map_err(|e| format!("kind={kind} {e:?}"))
                         }
                     };
-                    let text = match outcome {
-                        Ok(n) => {
-                            meditate_core::log(
-                                "data.import",
-                                &format!("kind={kind} imported {n}"),
-                            );
-                            reset_log_feed(
-                                &ui,
-                                &loaded_log_sessions_tick,
-                                &pending_deletes_tick,
-                            );
-                            refresh_stats(&ui);
-                            refresh_widget(&ui);
-                            ui.global::<Tr>()
-                                .invoke_imported_n(n as i32)
-                                .to_string()
-                        }
+                    match read {
                         Err(e) => {
-                            meditate_core::log(
-                                "data.import",
-                                &format!("kind={kind} FAILED: {e}"),
-                            );
-                            ui.global::<Tr>()
-                                .invoke_import_failed()
-                                .to_string()
+                            meditate_core::log("data.import", &format!("FAILED: {e}"));
+                            show_notice(&ui, ui.global::<Tr>().invoke_import_failed(), None, 4);
                         }
-                    };
-                    show_notice(&ui, text.into(), None, 4);
+                        Ok(parsed) => match parsed.question() {
+                            None => write_import(&ui, &parsed),
+                            Some(question) => {
+                                ui.set_import_question(import_question_text(&ui, &question).into());
+                                ui.set_import_can_write(question.can_import);
+                                PENDING_IMPORT.set(Some(parsed));
+                                ui.set_modal(Modal::ImportUnreadable);
+                            }
+                        },
+                    }
                 }
                 // Guided import transcode finished (GM-F2): the
                 // Kotlin worker dropped a result file. On success
@@ -5482,6 +5456,18 @@ fn build_ui() -> MainWindow {
                     snapshot.map(app::PendingUndo::PresetApply),
                     5,
                 );
+            }
+        });
+    }
+
+    // The user chose to import the readable lines of a file.
+    {
+        let weak = ui.as_weak();
+        ui.on_import_unreadable_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            close_modal(&ui, Modal::ImportUnreadable);
+            if let Some(parsed) = PENDING_IMPORT.take() {
+                write_import(&ui, &parsed);
             }
         });
     }
@@ -7790,13 +7776,7 @@ fn build_ui() -> MainWindow {
                 return;
             };
             {
-                let Some(db) = lock_db() else { return; };
-                if let Err(e) = db.merge_labels(suffixed_id, base_id)
-                {
-                    meditate_core::log(
-                        "label.merge",
-                        &format!("FAILED: {e:?}"),
-                    );
+                if !write_ok(&ui, "label.merge", lock_db().map(|db| db.merge_labels(suffixed_id, base_id))) {
                     return;
                 }
             }
@@ -9449,6 +9429,50 @@ thread_local! {
     /// Log rows deleted but still in their Undo window (hidden from
     /// the feed, still in the database). Mirrors GTK's `pending_deletes`.
     static LOG_PENDING_DELETES: LogRows = Rc::default();
+}
+
+thread_local! {
+    /// A read file waiting for the user's word on its unreadable lines.
+    static PENDING_IMPORT: RefCell<Option<meditate_core::data_io::ParsedImport>> = const { RefCell::new(None) };
+}
+
+/// Write a read file: all of it, or on an error nothing, then say
+/// which and show the new sessions.
+fn write_import(ui: &MainWindow, parsed: &meditate_core::data_io::ParsedImport) {
+    let text = match lock_db().map(|db| meditate_core::data_io::import_parsed(&db, parsed)) {
+        Some(Ok(n)) => {
+            meditate_core::log("data.import", &format!("imported {n}"));
+            reset_log_feed(ui, &LOG_LOADED.with(Rc::clone), &LOG_PENDING_DELETES.with(Rc::clone));
+            refresh_stats(ui);
+            refresh_widget(ui);
+            ui.global::<Tr>().invoke_imported_n(n as i32)
+        }
+        failed => {
+            meditate_core::log("data.import", &format!("FAILED: {:?}", failed.map(|r| r.err())));
+            ui.global::<Tr>().invoke_import_failed()
+        }
+    };
+    show_notice(ui, text, None, 4);
+}
+
+fn import_question_text(ui: &MainWindow, question: &meditate_core::data_io::ImportQuestion) -> String {
+    use meditate_core::data_io::Unreadable;
+    let tr = ui.global::<Tr>();
+    let line = question.line as i32;
+    let mut text = match question.what {
+        Unreadable::StartTime => tr.invoke_import_line_start(line),
+        Unreadable::Duration => tr.invoke_import_line_duration(line),
+    }
+    .to_string();
+    if question.more > 0 {
+        text.push(' ');
+        text.push_str(&tr.invoke_import_more(question.more as i32));
+    }
+    if !question.can_import {
+        text.push(' ');
+        text.push_str(&tr.invoke_import_nothing());
+    }
+    text
 }
 
 /// Make an Undo that can no longer be taken final.

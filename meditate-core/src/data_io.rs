@@ -1,28 +1,28 @@
 //! CSV import / export for session data.
 //!
-//! Native format (the one `export_csv` writes + `import_csv` reads):
+//! Native format (the one `export_csv` writes + `parse_csv` reads):
 //! ```csv
-//! start_time_unix,duration_secs,mode,label,note
-//! 1712345678,600,timer,Morning,First sit of the day
+//! start_time_unix,duration_secs,mode,label,note,uuid,start_local,label_uuid,guided_file_uuid
+//! 1712345678,600,timer,Morning,First sit of the day,<uuid>,2024-04-05T21:34:38,<uuid>,
 //! ```
-//! - `start_time_unix`: UTC seconds since epoch — bridges core's
-//!   ISO-string `Session::start_iso` and shells' i64-unix domain via
-//!   `crate::time::{unix_to_local_iso, local_iso_to_unix}`.
+//! - `start_time_unix`: UTC seconds since epoch, read when a file has
+//!   no `start_local`.
 //! - `duration_secs`: integer seconds.
 //! - `mode`: "timer" (countdowns + open-ended runs) or "box_breath".
-//! - `label`: plain text — empty means no label. Labels are looked up or
-//!   created by name on import, so ids are not persisted.
+//! - `label`: plain text — empty means no label. Matched by name on
+//!   import when no label with `label_uuid` is here.
 //! - `note`: optional free text (csv-quoted as needed).
+//! - `uuid`, `start_local`, `label_uuid`, `guided_file_uuid`: the
+//!   session as stored, so a restored backup is the same data sync
+//!   brings, not a copy of it, in any time zone. Last, so older
+//!   versions still find the first five where they read them.
 //!
-//! Insight Timer import lives in the GTK shell because it needs a
-//! local-time → unix-timestamp conversion that uses a host datetime
-//! API (`glib::DateTime`); the parser primitives
-//! (`parse_insighttimer_datetime`, `parse_hms_duration`) live in
-//! `crate::format`, and `insert_sessions_with_labels` is exposed
-//! `pub` so the shell-side importer shares the second pass.
+//! An import reads the whole file first (`parse_csv`,
+//! `parse_insighttimer_csv`), so the shell can ask before importing
+//! only part of a file, and then writes it in one go (`import_parsed`).
 
-use crate::db::{Database, Session, SessionMode};
-use crate::time::{local_iso_to_unix, unix_to_local_iso};
+use crate::db::{Database, LabelUuid, Session, SessionMode};
+use crate::time::local_iso_to_unix;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -123,22 +123,25 @@ fn csv_unguard(s: &str) -> &str {
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    let labels: std::collections::HashMap<i64, String> =
+    let labels: std::collections::HashMap<i64, (String, String)> =
         crate::db::list_labels_from_db(db)?
             .into_iter()
-            .map(|l| (l.id, l.name))
+            .map(|l| (l.id, (l.name, l.uuid.to_string())))
             .collect();
 
     let file = File::create(path)?;
     let mut wtr = csv::Writer::from_writer(file);
-    wtr.write_record(["start_time_unix", "duration_secs", "mode", "label", "note"])?;
+    wtr.write_record([
+        "start_time_unix", "duration_secs", "mode", "label", "note",
+        "uuid", "start_local", "label_uuid", "guided_file_uuid",
+    ])?;
 
     // Start-time ascending, as a backup is read in chronological order.
     let mut sessions = crate::db::list_sessions_from_db(db)?;
     sessions.sort_by_key(|(_, s)| local_iso_to_unix(&s.start_iso));
     let mut n = 0usize;
     for (_id, s) in &sessions {
-        let label = s
+        let (label, label_uuid) = s
             .label_id
             .and_then(|id| labels.get(&id).cloned())
             .unwrap_or_default();
@@ -150,6 +153,10 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
             s.mode.as_db_str().to_string(),
             csv_inject_guard(&label),
             csv_inject_guard(&note),
+            s.uuid.to_string(),
+            s.start_iso.clone(),
+            label_uuid,
+            s.guided_file_uuid.as_ref().map(ToString::to_string).unwrap_or_default(),
         ])?;
         n += 1;
     }
@@ -166,67 +173,140 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
 
 // ── Import ──────────────────────────────────────────────────────────────
 
-/// One CSV import row decoded into the second-pass shape: unix-secs
-/// start, duration, mode, optional note, and the index into the
-/// caller's parallel `label_names` vec (`usize::MAX` for "no label").
-/// The two-pass design lets `insert_sessions_with_labels` resolve
-/// every label name to a rowid in one batch before the per-session
-/// insert loop runs.
-pub type ImportedRow = (i64, u32, SessionMode, Option<String>, usize);
+/// What could not be read in a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unreadable {
+    StartTime,
+    Duration,
+}
 
-pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    let file = File::open(path)?;
-    let mut rdr = csv::Reader::from_reader(BufReader::new(file));
+/// A file read for import, before anything is written.
+#[derive(Debug, Default)]
+pub struct ParsedImport {
+    /// Label names (case-insensitive, first spelling wins), with the
+    /// label's id when the file is a backup.
+    pub labels: Vec<(String, Option<LabelUuid>)>,
+    /// Each readable line: its session and the index of its label.
+    pub rows: Vec<(Session, Option<usize>)>,
+    /// The lines that could not be read, by their line in the file.
+    pub unreadable: Vec<(usize, Unreadable)>,
+}
 
-    // Pull every row into memory first so the whole import happens inside
-    // a single DB transaction.
-    let mut label_names: Vec<String> = Vec::new();
-    let mut rows: Vec<ImportedRow> = Vec::new();
+/// What to ask before importing a file with unreadable lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportQuestion {
+    /// The first unreadable line, and what in it.
+    pub line: usize,
+    pub what: Unreadable,
+    /// How many more lines can't be read.
+    pub more: usize,
+    /// Whether any line can be imported at all.
+    pub can_import: bool,
+}
 
-    for (i, record) in rdr.records().enumerate() {
+impl ParsedImport {
+    /// `None` when every line was read: import without asking.
+    pub fn question(&self) -> Option<ImportQuestion> {
+        let &(line, what) = self.unreadable.first()?;
+        Some(ImportQuestion {
+            line,
+            what,
+            more: self.unreadable.len() - 1,
+            can_import: !self.rows.is_empty(),
+        })
+    }
+
+    /// The index of label `name`, added on first sight. Matched
+    /// case-insensitively so the file can't split one label in two.
+    fn label(&mut self, name: &str, uuid: Option<LabelUuid>) -> Option<usize> {
+        if name.is_empty() {
+            return None;
+        }
+        let lower = name.to_lowercase();
+        let at = self.labels.iter().position(|(n, _)| n.to_lowercase() == lower);
+        Some(at.unwrap_or_else(|| {
+            self.labels.push((name.to_string(), uuid));
+            self.labels.len() - 1
+        }))
+    }
+}
+
+/// The record's line in the file: a quoted note can span lines.
+fn line_of(rec: &csv::StringRecord, index: usize) -> usize {
+    rec.position().map_or(index + 2, |p| p.line() as usize)
+}
+
+/// A field that is a valid id, as written.
+fn an_id(s: &str) -> Option<String> {
+    uuid::Uuid::parse_str(s).is_ok().then(|| s.to_string())
+}
+
+/// A stored start time (`YYYY-MM-DDTHH:MM:SS`), as the DB keeps it.
+fn a_local_iso(s: &str) -> Option<String> {
+    use chrono::Datelike;
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .filter(|n| (0..=9999).contains(&n.year()))
+        .map(|n| n.format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
+fn reader(path: &Path) -> Result<csv::Reader<BufReader<File>>, DataIoError> {
+    // Flexible: a short line is an unreadable line, not a failed file.
+    Ok(csv::ReaderBuilder::new().flexible(true).from_reader(BufReader::new(File::open(path)?)))
+}
+
+/// Read a file in the native format (a backup) without writing.
+pub fn parse_csv(path: &Path) -> Result<ParsedImport, DataIoError> {
+    let mut out = ParsedImport::default();
+    for (i, record) in reader(path)?.records().enumerate() {
         let rec = record?;
-        let line = i + 2;
-        let start_unix: i64 = rec
-            .get(0)
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| DataIoError::Parse(format!("line {line}: bad start_time_unix")))?;
-        let duration_secs: u32 = rec
-            .get(1)
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| DataIoError::Parse(format!("line {line}: bad duration_secs")))?;
+        let line = line_of(&rec, i);
+        let field = |n: usize| rec.get(n).map_or("", str::trim);
+        // A backup's stored start time is used as written; older files
+        // only have the unix one.
+        let start_iso = match field(6) {
+            "" => field(0).parse().ok().and_then(crate::time::unix_to_local_iso_checked),
+            local => a_local_iso(local),
+        };
+        let Some(start_iso) = start_iso else {
+            out.unreadable.push((line, Unreadable::StartTime));
+            continue;
+        };
+        let Ok(duration_secs) = field(1).parse::<u32>() else {
+            out.unreadable.push((line, Unreadable::Duration));
+            continue;
+        };
+        // A crash in a session's first minute left 0 s: no session.
         if duration_secs == 0 {
-            return Err(DataIoError::Parse(format!(
-                "line {line}: duration_secs must be positive"
-            )));
+            continue;
         }
         // Unknown / typo'd mode values default to Timer — that
         // preserves the row rather than discarding it on import.
-        let mode = SessionMode::from_db_str(rec.get(2).map_or("", str::trim))
-            .unwrap_or(SessionMode::Timer);
-        let label_txt = rec.get(3).map(|s| csv_unguard(s).trim().to_string()).unwrap_or_default();
+        let mode = SessionMode::from_db_str(field(2)).unwrap_or(SessionMode::Timer);
+        let label_name = rec.get(3).map(|s| csv_unguard(s).trim().to_string()).unwrap_or_default();
+        let label = out.label(&label_name, an_id(field(7)).map(LabelUuid::new));
         // Notes keep their whitespace; a blank one is stored as none.
-        let note_txt = rec.get(4).map(|s| csv_unguard(s).to_string()).unwrap_or_default();
-        let note = if note_txt.trim().is_empty() { None } else { Some(note_txt) };
-
-        // Resolve labels to ids in a second pass once we know the full set.
-        // Match case-insensitively so the CSV can't split one logical label
-        // into two DB rows.
-        let label_idx = if label_txt.is_empty() {
-            usize::MAX
-        } else {
-            let lower = label_txt.to_lowercase();
-            label_names
-                .iter()
-                .position(|n| n.to_lowercase() == lower)
-                .unwrap_or_else(|| {
-                    label_names.push(label_txt.clone());
-                    label_names.len() - 1
-                })
+        let note = rec.get(4).map(|s| csv_unguard(s).to_string()).unwrap_or_default();
+        let session = Session {
+            start_iso,
+            duration_secs,
+            label_id: None,
+            notes: (!note.trim().is_empty()).then_some(note),
+            mode,
+            uuid: crate::db::SessionUuid::new(an_id(field(5)).unwrap_or_default()),
+            guided_file_uuid: an_id(field(8)).map(crate::db::GuidedFileUuid::new),
         };
-        rows.push((start_unix, duration_secs, mode, note, label_idx));
+        out.rows.push((session, label));
     }
+    Ok(out)
+}
 
-    insert_sessions_with_labels(db, &label_names, &rows)
+/// Write a read file in one go: all of it, or on an error nothing.
+/// A line whose session is already in the log (by id, or by start and
+/// duration) is skipped, so a backup imported twice, or restored next
+/// to the synced log, never doubles it. Returns the sessions written.
+pub fn import_parsed(db: &Database, parsed: &ParsedImport) -> Result<usize, DataIoError> {
+    Ok(db.insert_imported(&parsed.labels, &parsed.rows)?)
 }
 
 // ── Insight Timer import ────────────────────────────────────────────────
@@ -250,126 +330,54 @@ fn insighttimer_started_at_with(
         .map(|n| crate::time::naive_to_unix_with(n, lookup))
 }
 
-/// Parse an Insight Timer CSV export into the `(label_names, rows)`
-/// pair that `insert_sessions_with_labels` consumes. The CSV format
-/// is:
-///   col 0: "Started At" (a local-time string — the gtk shell uses
-///          glib for parsing; Android uses chrono; either way the
-///          caller passes a `parse_dt` closure that returns the
-///          unix timestamp).
-///   col 1: "Duration" — HMS string parseable by `parse_hms_duration`.
-///   col 3: "Activity" — free-form text, becomes the session's
-///          label. Empty cells produce a label-less row.
-///
-/// Case-insensitive label dedup: two rows with `Activity` differing
-/// only in case land in the same label (the first spelling wins).
-/// Duration must be positive; zero rows are rejected with
-/// `DataIoError::Parse` carrying the line number.
-///
-/// Pure once `parse_dt` is supplied; both shells pass
-/// `insighttimer_started_at`, tests a fixed-zone stand-in.
-pub fn parse_insighttimer_csv<F>(
-    path: &Path,
-    parse_dt: F,
-) -> Result<(Vec<String>, Vec<ImportedRow>), DataIoError>
+/// Read an Insight Timer CSV export without writing. Columns:
+///   col 0: "Started At", a local time read by `parse_dt` (both
+///          shells pass `insighttimer_started_at`, tests a stand-in).
+///   col 1: "Duration", an HMS string for `parse_hms_duration`.
+///   col 3: "Activity", the session's label; empty means none.
+/// Insight Timer doesn't record countdown-vs-stopwatch: everything is
+/// a Timer session (the closer match: they picked a time).
+pub fn parse_insighttimer_csv<F>(path: &Path, parse_dt: F) -> Result<ParsedImport, DataIoError>
 where
     F: Fn(&str) -> Option<i64>,
 {
-    let file = File::open(path)?;
-    let mut rdr = csv::Reader::from_reader(BufReader::new(file));
-    let mut label_names: Vec<String> = Vec::new();
-    let mut rows: Vec<ImportedRow> = Vec::new();
-    for (i, record) in rdr.records().enumerate() {
+    let mut out = ParsedImport::default();
+    for (i, record) in reader(path)?.records().enumerate() {
         let rec = record?;
-        let line = i + 2;
-        let started_raw = rec.get(0).unwrap_or("").trim();
-        let duration_raw = rec.get(1).unwrap_or("").trim();
-        let activity = rec.get(3).unwrap_or("").trim().to_string();
-
-        let start_time = parse_dt(started_raw).ok_or_else(|| {
-            DataIoError::Parse(format!(
-                "line {line}: can't parse 'Started At' {started_raw:?}"
-            ))
-        })?;
-        let duration_secs: u32 = crate::format::parse_hms_duration(duration_raw)
-            .and_then(|d| u32::try_from(d.as_secs()).ok())
-            .ok_or_else(|| {
-                DataIoError::Parse(format!(
-                    "line {line}: can't parse 'Duration' {duration_raw:?}"
-                ))
-            })?;
-        if duration_secs == 0 {
-            return Err(DataIoError::Parse(format!(
-                "line {line}: duration must be positive, got {duration_raw:?}"
-            )));
-        }
-        // Insight Timer doesn't record countdown-vs-stopwatch — treat
-        // everything as countdown (the closer match: they picked a time).
-        let label_idx = if activity.is_empty() {
-            usize::MAX
-        } else {
-            let lower = activity.to_lowercase();
-            label_names
-                .iter()
-                .position(|n| n.to_lowercase() == lower)
-                .unwrap_or_else(|| {
-                    label_names.push(activity.clone());
-                    label_names.len() - 1
-                })
+        let line = line_of(&rec, i);
+        let field = |n: usize| rec.get(n).map_or("", str::trim);
+        let Some(start_iso) = parse_dt(field(0)).and_then(crate::time::unix_to_local_iso_checked) else {
+            out.unreadable.push((line, Unreadable::StartTime));
+            continue;
         };
-        rows.push((start_time, duration_secs, SessionMode::Timer, None, label_idx));
-    }
-    Ok((label_names, rows))
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Resolve the accumulated `label_names` to ids (creating missing labels)
-/// and bulk-insert the `rows`. `usize::MAX` in the label-index column means
-/// "no label". Each tuple in `rows` is
-/// `(start_time_unix, duration_secs, mode, note, label_idx)`.
-///
-/// `pub` so the gtk shell's Insight Timer importer (which stays
-/// shell-side because it needs a host datetime API for the local-time
-/// conversion) shares the second pass without duplicating the vec walk.
-///
-/// Dedupe: rows whose exact `(start_iso,
-/// duration_secs)` already exists in the DB — or appeared earlier
-/// in the same batch — are skipped, so re-importing a backup into
-/// a non-empty log is a no-op instead of doubling it. Second-level
-/// start precision makes a legitimate collision practically
-/// impossible. Returns the number actually inserted.
-pub fn insert_sessions_with_labels(
-    db: &Database,
-    label_names: &[String],
-    rows: &[(i64, u32, SessionMode, Option<String>, usize)],
-) -> Result<usize, DataIoError> {
-    let mut label_ids: Vec<i64> = Vec::with_capacity(label_names.len());
-    for name in label_names {
-        label_ids.push(db.find_or_create_label(name)?);
-    }
-    let mut seen = db.session_start_duration_pairs()?;
-    let sessions: Vec<Session> = rows
-        .iter()
-        .map(|(start_unix, duration_secs, mode, note, label_idx)| Session {
-            start_iso: unix_to_local_iso(*start_unix),
-            duration_secs: *duration_secs,
-            label_id: (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
-            notes: note.clone(),
-            mode: *mode,
+        let Some(duration_secs) = crate::format::parse_hms_duration(field(1))
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
+        else {
+            out.unreadable.push((line, Unreadable::Duration));
+            continue;
+        };
+        if duration_secs == 0 {
+            continue;
+        }
+        let label = out.label(field(3), None);
+        let session = Session {
+            start_iso,
+            duration_secs,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
-        })
-        .filter(|s| {
-            seen.insert((s.start_iso.clone(), s.duration_secs))
-        })
-        .collect();
-    Ok(db.bulk_insert_sessions(&sessions)?)
+        };
+        out.rows.push((session, label));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::unix_to_local_iso;
     use std::io::Write;
 
     fn write_csv(contents: &str) -> tempfile::NamedTempFile {
@@ -389,11 +397,11 @@ mod tests {
                    03/29/2026 02:30:00,00:20:00,T,Meditation\n\
                    03/29/2026 08:00:00,00:15:00,T,Meditation\n";
         let f = write_csv(csv);
-        let (_, rows) = parse_insighttimer_csv(f.path(), |s| {
+        let p = parse_insighttimer_csv(f.path(), |s| {
             insighttimer_started_at_with(s, crate::time::test_zone::berlin)
         })
         .unwrap();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(p.rows.len(), 3);
         let shifted = chrono::NaiveDate::from_ymd_opt(2026, 3, 29)
             .unwrap()
             .and_hms_opt(3, 30, 0)
@@ -401,7 +409,7 @@ mod tests {
             .and_utc()
             .timestamp()
             - 7200;
-        assert_eq!(rows[1].0, shifted);
+        assert_eq!(p.rows[1].0.start_iso, unix_to_local_iso(shifted));
     }
 
     #[test]
@@ -409,7 +417,7 @@ mod tests {
         let csv = "Started At,Duration,Type,Activity\n\
                    10/25/2026 02:30:00,00:10:00,T,Meditation\n";
         let f = write_csv(csv);
-        let (_, rows) = parse_insighttimer_csv(f.path(), |s| {
+        let p = parse_insighttimer_csv(f.path(), |s| {
             insighttimer_started_at_with(s, crate::time::test_zone::berlin)
         })
         .unwrap();
@@ -420,7 +428,7 @@ mod tests {
             .and_utc()
             .timestamp()
             - 7200;
-        assert_eq!(rows[0].0, first);
+        assert_eq!(p.rows[0].0.start_iso, unix_to_local_iso(first));
     }
 
     #[test]
@@ -445,6 +453,11 @@ mod tests {
         assert_eq!(insighttimer_started_at_with("not a date", crate::time::test_zone::berlin), None);
     }
 
+    /// A stub "Started At" reader: a distinct, valid time per text.
+    fn stub_time(s: &str) -> Option<i64> {
+        (!s.is_empty()).then(|| 1_700_000_000 + s.len() as i64 * 60)
+    }
+
     #[test]
     fn parse_insighttimer_csv_dedupes_labels_case_insensitively() {
         // Two rows whose Activity differs only in case must land
@@ -453,66 +466,89 @@ mod tests {
                    2024-04-17T08:00:00,00:10:00,T,Meditation\n\
                    2024-04-18T08:00:00,00:15:00,T,meditation\n";
         let f = write_csv(csv);
-        // Stub datetime parser: returns a unique value per spelling
-        // so we can confirm parsing actually fired.
-        let (labels, rows) =
-            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap();
-        assert_eq!(labels, vec!["Meditation".to_string()]);
-        assert_eq!(rows.len(), 2);
-        // Both rows reference label index 0.
-        assert_eq!(rows[0].4, 0);
-        assert_eq!(rows[1].4, 0);
+        let p = parse_insighttimer_csv(f.path(), stub_time).unwrap();
+        assert_eq!(p.labels, vec![("Meditation".to_string(), None)]);
+        assert_eq!(p.rows.len(), 2);
+        assert_eq!(p.rows[0].1, Some(0));
+        assert_eq!(p.rows[1].1, Some(0));
     }
 
     #[test]
-    fn parse_insighttimer_csv_empty_activity_yields_no_label_sentinel() {
+    fn parse_insighttimer_csv_empty_activity_yields_no_label() {
         let csv = "Started At,Duration,Type,Activity\n\
                    2024-04-17T08:00:00,00:10:00,T,\n";
         let f = write_csv(csv);
-        let (labels, rows) =
-            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap();
-        assert!(labels.is_empty());
-        assert_eq!(rows[0].4, usize::MAX);
+        let p = parse_insighttimer_csv(f.path(), stub_time).unwrap();
+        assert!(p.labels.is_empty());
+        assert_eq!(p.rows[0].1, None);
     }
 
     #[test]
-    fn parse_insighttimer_csv_rejects_zero_duration_with_line_number() {
-        let csv = "Started At,Duration,Type,Activity\n\
-                   2024-04-17T08:00:00,00:00:00,T,Meditation\n";
-        let f = write_csv(csv);
-        let err =
-            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap_err();
-        // The data row is on line 2 (after the header).
-        let msg = err.to_string();
-        assert!(msg.contains("line 2"), "expected 'line 2' in {msg:?}");
+    fn zero_second_rows_are_skipped_not_fatal() {
+        // A 0 s session (a crash in its first minute) failed the whole
+        // import, and older backups contain them.
+        let it = "Started At,Duration,Type,Activity\n\
+                  2024-04-17T08:00:00,00:00:00,T,Meditation\n\
+                  2024-04-18T08:00:00,00:10:00,T,Meditation\n";
+        let p = parse_insighttimer_csv(write_csv(it).path(), stub_time).unwrap();
+        assert_eq!((p.rows.len(), p.question()), (1, None));
+        let ours = "start_time_unix,duration_secs,mode,label,note\n\
+                    1700000000,0,timer,,\n\
+                    1700003600,600,timer,,\n";
+        let p = parse_csv(write_csv(ours).path()).unwrap();
+        assert_eq!((p.rows.len(), p.question()), (1, None));
     }
 
     #[test]
-    fn parse_insighttimer_csv_propagates_datetime_parse_failure() {
+    fn an_unreadable_insighttimer_time_is_listed_not_fatal() {
         let csv = "Started At,Duration,Type,Activity\n\
-                   garbage,00:10:00,T,Meditation\n";
-        let f = write_csv(csv);
-        let err =
-            parse_insighttimer_csv(f.path(), |_| None).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("Started At"), "expected 'Started At' in {msg:?}");
+                   garbage,00:10:00,T,Meditation\n\
+                   2024-04-18T08:00:00,00:10:00,T,Meditation\n";
+        let p = parse_insighttimer_csv(write_csv(csv).path(), |s| (s != "garbage").then_some(1_700_000_000)).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.unreadable, [(2, Unreadable::StartTime)]);
     }
 
     fn fresh_db() -> Database {
         Database::open_in_memory().unwrap()
     }
 
+    fn row(start_unix: i64, duration_secs: u32, mode: SessionMode, note: Option<&str>, label: Option<usize>) -> (Session, Option<usize>) {
+        let session = Session {
+            start_iso: unix_to_local_iso(start_unix),
+            duration_secs,
+            label_id: None,
+            notes: note.map(str::to_string),
+            mode,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        };
+        (session, label)
+    }
+
+    fn parsed(labels: &[&str], rows: Vec<(Session, Option<usize>)>) -> ParsedImport {
+        ParsedImport {
+            labels: labels.iter().map(|n| ((*n).to_string(), None)).collect(),
+            rows,
+            unreadable: Vec::new(),
+        }
+    }
+
+    /// Import a file that has no unreadable lines.
+    fn import_file(db: &Database, path: &Path) -> usize {
+        let p = parse_csv(path).unwrap();
+        assert_eq!(p.question(), None);
+        import_parsed(db, &p).unwrap()
+    }
+
     #[test]
-    fn csv_export_import_roundtrip_preserves_sessions() {
+    fn a_restored_backup_keeps_ids_start_times_labels_and_guided_files() {
+        // Rows got new ids on import, so a backup restored next to the
+        // synced log doubled it (1,500 became 3,000), every label came
+        // back as a "(conflict)" copy, and restored rows could wipe
+        // the guided file shown under a session.
         let db = fresh_db();
-
         let morning = db.find_or_create_label("Morning").unwrap();
-        let evening = db.find_or_create_label("Evening").unwrap();
-
-        // Three sessions covering the shape matrix:
-        //   1) labeled + note     — normal case, plus CSV quoting on the note
-        //   2) labeled + no note  — covers the `None` → empty-string branch
-        //   3) no label + note    — covers the `Option<label_id>` None branch
         let originals = [
             Session {
                 start_iso: unix_to_local_iso(1_712_000_000),
@@ -522,23 +558,14 @@ mod tests {
                 // Commas and a quote to exercise CSV escaping on the note column.
                 notes: Some("first sit, \"nice\" focus".to_string()),
                 uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
+                guided_file_uuid: Some("6f1c6a54-3d8e-4c2a-9b1e-2f7d8a9c0b1d".into()),
             },
             Session {
                 start_iso: unix_to_local_iso(1_712_086_400),
                 duration_secs: 1200,
-                mode: SessionMode::Timer,
-                label_id: Some(evening),
-                notes: None,
-                uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
-            },
-            Session {
-                start_iso: unix_to_local_iso(1_712_172_800),
-                duration_secs: 300,
-                mode: SessionMode::Timer,
+                mode: SessionMode::BoxBreath,
                 label_id: None,
-                notes: Some("no label on this one".to_string()),
+                notes: None,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             },
@@ -546,37 +573,137 @@ mod tests {
         for s in &originals {
             db.insert_session(s).unwrap();
         }
-
-        // Export to a tempfile, wipe sessions (keeping the labels so the
-        // import's case-insensitive lookup resolves back to the same ids),
-        // then import.
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        let written = export_csv(&db, tmp.path()).unwrap();
-        assert_eq!(written, originals.len());
+        assert_eq!(export_csv(&db, tmp.path()).unwrap(), originals.len());
 
-        db.delete_all_sessions().unwrap();
-        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 0);
-
-        let imported = import_csv(&db, tmp.path()).unwrap();
-        assert_eq!(imported, originals.len());
-
-        // Pull the sessions back and compare: the export is ascending,
-        // so the re-inserted ids run parallel to `originals`.
-        let rows = crate::db::list_sessions_from_db(&db).unwrap();
-        assert_eq!(rows.len(), originals.len());
-
-        for (orig, (_id, got)) in originals.iter().zip(rows.iter()) {
-            // UUIDs are regenerated on import; everything else should
-            // round-trip byte-for-byte through the unix↔ISO bridge.
-            assert_eq!(got.start_iso, orig.start_iso);
-            assert_eq!(got.duration_secs, orig.duration_secs);
-            assert_eq!(got.mode, orig.mode);
-            assert_eq!(got.notes, orig.notes);
-            assert_eq!(
-                got.label_id, orig.label_id,
-                "label_id mismatch: import should have resolved case-insensitively back to the same row"
-            );
+        let fresh = fresh_db();
+        assert_eq!(import_file(&fresh, tmp.path()), originals.len());
+        let label_uuid = |db: &Database, id: Option<i64>| {
+            id.map(|id| crate::db::list_labels_from_db(db).unwrap().into_iter().find(|l| l.id == id).unwrap().uuid)
+        };
+        let before = crate::db::list_sessions_from_db(&db).unwrap();
+        let after = crate::db::list_sessions_from_db(&fresh).unwrap();
+        assert_eq!(after.len(), before.len());
+        for ((_, want), (_, got)) in before.iter().zip(&after) {
+            assert_eq!(got.uuid, want.uuid);
+            assert_eq!(got.start_iso, want.start_iso);
+            assert_eq!(got.duration_secs, want.duration_secs);
+            assert_eq!(got.mode, want.mode);
+            assert_eq!(got.notes, want.notes);
+            assert_eq!(got.guided_file_uuid, want.guided_file_uuid);
+            assert_eq!(label_uuid(&fresh, got.label_id), label_uuid(&db, want.label_id));
         }
+    }
+
+    #[test]
+    fn older_versions_still_find_their_five_columns_first() {
+        let db = fresh_db();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, tmp.path()).unwrap();
+        let header = std::fs::read_to_string(tmp.path()).unwrap();
+        assert!(header.starts_with("start_time_unix,duration_secs,mode,label,note,"), "{header}");
+    }
+
+    #[test]
+    fn an_old_five_column_backup_still_imports() {
+        let csv = "start_time_unix,duration_secs,mode,label,note\n\
+                   1700000000,600,timer,Morning,calm\n";
+        let db = fresh_db();
+        assert_eq!(import_file(&db, write_csv(csv).path()), 1);
+        let (_, s) = crate::db::list_sessions_from_db(&db).unwrap().remove(0);
+        assert_eq!(s.start_iso, unix_to_local_iso(1_700_000_000));
+        assert!(!s.uuid.is_empty(), "a new id");
+    }
+
+    #[test]
+    fn the_stored_start_time_is_used_as_written() {
+        // The unix column moved every start by the time-zone change
+        // between export and import (07:00 in Berlin became 01:00).
+        let csv = "start_time_unix,duration_secs,mode,label,note,uuid,start_local,label_uuid,guided_file_uuid\n\
+                   1,600,timer,,,,2026-03-01T07:00:00,,\n";
+        let db = fresh_db();
+        assert_eq!(import_file(&db, write_csv(csv).path()), 1);
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap()[0].1.start_iso, "2026-03-01T07:00:00");
+    }
+
+    #[test]
+    fn a_session_already_here_is_skipped_by_its_id() {
+        // Even when it was edited since the backup: same session.
+        let db = fresh_db();
+        db.insert_session(&row(1_700_000_000, 600, SessionMode::Timer, None, None).0).unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, tmp.path()).unwrap();
+        let (id, mut s) = crate::db::list_sessions_from_db(&db).unwrap().remove(0);
+        s.duration_secs = 900;
+        db.update_session(id, &s).unwrap();
+        assert_eq!(import_file(&db, tmp.path()), 0);
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 1);
+    }
+
+    #[test]
+    fn an_id_repeated_in_one_file_imports_once() {
+        let id = "0c6b2f7e-7f4a-4d3e-9a51-3e2b1c0d9f8a";
+        let csv = format!(
+            "start_time_unix,duration_secs,mode,label,note,uuid,start_local,label_uuid,guided_file_uuid\n\
+             1700000000,600,timer,,,{id},,,\n\
+             1700003600,900,timer,,,{id},,,\n"
+        );
+        let db = fresh_db();
+        assert_eq!(import_file(&db, write_csv(&csv).path()), 1);
+    }
+
+    #[test]
+    fn a_millisecond_start_time_is_unreadable_not_1970() {
+        // It became 1970-01-01, and the duplicate check then kept one
+        // row per duration while reporting success.
+        let csv = "start_time_unix,duration_secs,mode,label,note\n\
+                   1700000000000,600,timer,,\n\
+                   1700003600000,600,timer,,\n";
+        let p = parse_csv(write_csv(csv).path()).unwrap();
+        assert_eq!(p.unreadable, [(2, Unreadable::StartTime), (3, Unreadable::StartTime)]);
+        assert!(p.rows.is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_line_is_named_by_its_line_in_the_file() {
+        // The record index ignored the newline inside a quoted note.
+        let csv = "start_time_unix,duration_secs,mode,label,note\n\
+                   1700000000,600,timer,,\"two\nlines\"\n\
+                   1700003600,abc,timer,,\n";
+        let p = parse_csv(write_csv(csv).path()).unwrap();
+        assert_eq!(p.unreadable, [(4, Unreadable::Duration)]);
+    }
+
+    #[test]
+    fn readable_lines_wait_while_the_question_says_what_was_not() {
+        let csv = "start_time_unix,duration_secs,mode,label,note\n\
+                   1700000000,600,timer,,\n\
+                   x,600,timer,,\n\
+                   1700007200,,timer,,\n\
+                   1700010800,600,timer,,\n";
+        let p = parse_csv(write_csv(csv).path()).unwrap();
+        assert_eq!(p.rows.len(), 2);
+        assert_eq!(
+            p.question(),
+            Some(ImportQuestion { line: 3, what: Unreadable::StartTime, more: 1, can_import: true })
+        );
+        let none = "start_time_unix,duration_secs,mode,label,note\nx,600,timer,,\n";
+        let p = parse_csv(write_csv(none).path()).unwrap();
+        assert_eq!(p.question().map(|q| q.can_import), Some(false));
+    }
+
+    #[test]
+    fn a_reimport_creates_no_label_for_rows_it_skips() {
+        // Labels were made for every name in the file before the
+        // duplicate check: a deleted "Work" came back empty.
+        let db = fresh_db();
+        import_parsed(&db, &parsed(&["Work"], vec![row(1_700_000_000, 600, SessionMode::Timer, None, Some(0))])).unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, tmp.path()).unwrap();
+        let work = crate::db::list_labels_from_db(&db).unwrap()[0].id;
+        db.delete_label(work).unwrap();
+        assert_eq!(import_file(&db, tmp.path()), 0);
+        assert!(crate::db::list_labels_from_db(&db).unwrap().iter().all(|l| l.name != "Work"));
     }
 
     #[test]
@@ -607,12 +734,12 @@ mod tests {
         // The backup-restore foot-gun: importing rows that already
         // exist (same start + duration) must not duplicate them.
         let db = Database::open_in_memory().unwrap();
-        let rows = vec![
-            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
-            (1_700_010_000_i64, 900_u32, SessionMode::Timer, None, usize::MAX),
-        ];
-        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 2);
-        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 0,
+        let p = parsed(&[], vec![
+            row(1_700_000_000, 600, SessionMode::Timer, None, None),
+            row(1_700_010_000, 900, SessionMode::Timer, None, None),
+        ]);
+        assert_eq!(import_parsed(&db, &p).unwrap(), 2);
+        assert_eq!(import_parsed(&db, &p).unwrap(), 0,
             "exact (start, duration) matches must be skipped");
         assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 2);
     }
@@ -620,21 +747,21 @@ mod tests {
     #[test]
     fn duplicate_rows_within_one_batch_insert_once() {
         let db = Database::open_in_memory().unwrap();
-        let rows = vec![
-            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
-            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
-        ];
-        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 1);
+        let p = parsed(&[], vec![
+            row(1_700_000_000, 600, SessionMode::Timer, None, None),
+            row(1_700_000_000, 600, SessionMode::Timer, None, None),
+        ]);
+        assert_eq!(import_parsed(&db, &p).unwrap(), 1);
     }
 
     #[test]
     fn same_start_different_duration_is_not_a_duplicate() {
         let db = Database::open_in_memory().unwrap();
-        let rows = vec![
-            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
-            (1_700_000_000_i64, 601_u32, SessionMode::Timer, None, usize::MAX),
-        ];
-        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 2);
+        let p = parsed(&[], vec![
+            row(1_700_000_000, 600, SessionMode::Timer, None, None),
+            row(1_700_000_000, 601, SessionMode::Timer, None, None),
+        ]);
+        assert_eq!(import_parsed(&db, &p).unwrap(), 2);
     }
 
     #[test]
@@ -643,18 +770,17 @@ mod tests {
         // text, and import trimmed notes (#7).
         let db = fresh_db();
         let notes = ["- calm", "=x", "+y", "@z", "\tt", "  indented ", "plain"];
-        let rows: Vec<ImportedRow> = notes
+        let rows = notes
             .iter()
             .enumerate()
-            .map(|(i, n)| (1_700_000_000 + i as i64 * 3600, 600, SessionMode::Timer,
-                Some((*n).to_string()), 0))
+            .map(|(i, n)| row(1_700_000_000 + i as i64 * 3600, 600, SessionMode::Timer, Some(n), Some(0)))
             .collect();
-        insert_sessions_with_labels(&db, &["-Work".to_string()], &rows).unwrap();
+        import_parsed(&db, &parsed(&["-Work"], rows)).unwrap();
         let f = tempfile::NamedTempFile::new().unwrap();
         export_csv(&db, f.path()).unwrap();
 
         let fresh = fresh_db();
-        assert_eq!(import_csv(&fresh, f.path()).unwrap(), notes.len());
+        assert_eq!(import_file(&fresh, f.path()), notes.len());
         let mut got: Vec<String> = crate::db::list_sessions_from_db(&fresh)
             .unwrap()
             .into_iter()
@@ -673,11 +799,11 @@ mod tests {
     fn export_is_in_start_time_order() {
         // Rows came out by id, reversed (#36).
         let db = fresh_db();
-        let rows: Vec<ImportedRow> = [1_700_020_000_i64, 1_700_000_000, 1_700_010_000]
+        let rows = [1_700_020_000_i64, 1_700_000_000, 1_700_010_000]
             .iter()
-            .map(|t| (*t, 600, SessionMode::Timer, None, usize::MAX))
+            .map(|t| row(*t, 600, SessionMode::Timer, None, None))
             .collect();
-        insert_sessions_with_labels(&db, &[], &rows).unwrap();
+        import_parsed(&db, &parsed(&[], rows)).unwrap();
         let f = tempfile::NamedTempFile::new().unwrap();
         export_csv(&db, f.path()).unwrap();
         let starts: Vec<i64> = csv::Reader::from_path(f.path())
@@ -693,16 +819,14 @@ mod tests {
         // End-to-end user story: export your own log, re-import the
         // file into the same DB — the log must not double.
         let db = Database::open_in_memory().unwrap();
-        let rows = vec![
-            (1_700_000_000_i64, 600_u32, SessionMode::Timer,
-             Some("note".to_string()), 0_usize),
-            (1_700_010_000_i64, 1200_u32, SessionMode::BoxBreath, None, usize::MAX),
-        ];
-        insert_sessions_with_labels(&db, &["Sitting".to_string()], &rows)
-            .unwrap();
+        let p = parsed(&["Sitting"], vec![
+            row(1_700_000_000, 600, SessionMode::Timer, Some("note"), Some(0)),
+            row(1_700_010_000, 1200, SessionMode::BoxBreath, None, None),
+        ]);
+        import_parsed(&db, &p).unwrap();
         let f = tempfile::NamedTempFile::new().unwrap();
         export_csv(&db, f.path()).unwrap();
-        assert_eq!(import_csv(&db, f.path()).unwrap(), 0,
+        assert_eq!(import_file(&db, f.path()), 0,
             "re-import of an unmodified export must be a no-op");
         assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 2);
     }

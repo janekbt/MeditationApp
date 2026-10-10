@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 22:45+0200\n"
+"POT-Creation-Date: 2026-10-10 10:09+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -86,7 +86,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:398 src/guided.rs:1172 src/log/imp.rs:677
-#: src/presets.rs:704 src/timer/imp.rs:3577 src/vibrations.rs:476
+#: src/presets.rs:704 src/timer/imp.rs:3582 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr "撤销"
@@ -117,11 +117,12 @@ msgstr "此铃声将不再在会话期间响起。"
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:759 src/guided.rs:215 src/guided.rs:933
 #: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
-#: src/preferences.rs:593 src/presets.rs:445 src/presets.rs:507
-#: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
-#: src/recovery_dialog.rs:103 src/sounds.rs:530 src/sounds.rs:913
-#: src/sounds.rs:979 src/timer/imp.rs:2526 src/timer/imp.rs:3706
-#: src/vibration_editor.rs:129 src/vibrations.rs:557 src/vibrations.rs:647
+#: src/preferences.rs:589 src/preferences.rs:663 src/presets.rs:445
+#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
+#: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
+#: src/sounds.rs:913 src/sounds.rs:979 src/timer/imp.rs:2531
+#: src/timer/imp.rs:3711 src/vibration_editor.rs:129 src/vibrations.rs:557
+#: src/vibrations.rs:647
 msgid "Cancel"
 msgstr "取消"
 
@@ -182,7 +183,7 @@ msgstr "结束前"
 msgid "Kind"
 msgstr "类型"
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3680
+#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3685
 msgid "Minutes"
 msgstr "分钟"
 
@@ -232,23 +233,23 @@ msgstr "删除铃声"
 msgid "Edit Bell"
 msgstr "编辑铃声"
 
-#: src/data_io.rs:32
+#: src/data_io.rs:29
 msgid "File error"
 msgstr "文件错误"
 
-#: src/data_io.rs:33
+#: src/data_io.rs:30
 msgid "CSV error"
 msgstr "CSV 错误"
 
-#: src/data_io.rs:34
+#: src/data_io.rs:31
 msgid "Parse error"
 msgstr "解析错误"
 
-#: src/data_io.rs:35
+#: src/data_io.rs:32
 msgid "Database error"
 msgstr "数据库错误"
 
-#: src/data_io.rs:36 src/preferences.rs:433
+#: src/data_io.rs:33 src/preferences.rs:433
 msgid "Database unavailable"
 msgstr "数据库不可用"
 
@@ -463,7 +464,7 @@ msgid "1 session"
 msgid_plural "{n} sessions"
 msgstr[0] "{n} 个会话"
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3673
+#: src/log/imp.rs:814 src/timer/imp.rs:3678
 msgid "Hours"
 msgstr "小时"
 
@@ -530,11 +531,11 @@ msgstr "编辑会话"
 msgid "Add Session"
 msgstr "添加会话"
 
-#: src/log/imp.rs:1189 src/timer/imp.rs:2470
+#: src/log/imp.rs:1189 src/timer/imp.rs:2475
 msgid "Couldn't save session — storage error"
 msgstr "无法保存会话——存储错误"
 
-#: src/log/imp.rs:1194 src/timer/imp.rs:2488
+#: src/log/imp.rs:1194 src/timer/imp.rs:2493
 msgid "Couldn't save session — storage unavailable"
 msgstr "无法保存会话——存储不可用"
 
@@ -598,7 +599,7 @@ msgstr "迁移"
 msgid "Import sessions from another meditation app."
 msgstr "从其他冥想应用导入会话。"
 
-#: src/preferences.rs:149 src/preferences.rs:576
+#: src/preferences.rs:149 src/preferences.rs:574
 msgid "Import from Insight Timer"
 msgstr "从 Insight Timer 导入"
 
@@ -696,7 +697,7 @@ msgstr "URL 必须以 https:// 开头"
 msgid "Keyring write failed"
 msgstr "写入密钥环失败"
 
-#: src/preferences.rs:429 src/timer/imp.rs:3552
+#: src/preferences.rs:429 src/timer/imp.rs:3557
 msgid "Save failed"
 msgstr "保存失败"
 
@@ -747,41 +748,69 @@ msgstr "导出失败：{error}"
 msgid "Import Session Log"
 msgstr "导入会话记录"
 
-#: src/preferences.rs:588
+#: src/preferences.rs:584
 msgid "Delete Every Session?"
 msgstr "删除所有会话？"
 
-#: src/preferences.rs:589
+#: src/preferences.rs:585
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr "这将永久删除日志中的所有会话。如需保留历史，请先导出备份。"
 
-#: src/preferences.rs:594
+#: src/preferences.rs:590
 msgid "Delete All"
 msgstr "全部删除"
 
-#: src/preferences.rs:605
+#: src/preferences.rs:601
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "已删除 {n} 个会话"
 
-#: src/preferences.rs:612
+#: src/preferences.rs:608
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "删除失败：{error}"
 
-#: src/preferences.rs:652
+#: src/preferences.rs:648 src/preferences.rs:710
+#, rust-format
+msgid "Import failed: {error}"
+msgstr "导入失败：{error}"
+
+#: src/preferences.rs:658
+msgid "Some Lines Can't Be Read"
+msgstr "部分行无法读取"
+
+#: src/preferences.rs:664
+msgid "Import the Rest"
+msgstr "导入其余部分"
+
+#: src/preferences.rs:677
+#, rust-format
+msgid "Line {line}: the start time can't be read."
+msgstr "第 {line} 行：无法读取开始时间。"
+
+#: src/preferences.rs:678
+#, rust-format
+msgid "Line {line}: the duration can't be read."
+msgstr "第 {line} 行：无法读取时长。"
+
+#: src/preferences.rs:685
+#, rust-format
+msgid "{n} more line can't be read either."
+msgid_plural "{n} more lines can't be read either."
+msgstr[0] "另有 {n} 行也无法读取。"
+
+#: src/preferences.rs:694
+msgid "Nothing in this file can be imported."
+msgstr "此文件中没有可导入的内容。"
+
+#: src/preferences.rs:703
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
 msgstr[0] "已导入 {n} 个会话"
-
-#: src/preferences.rs:659
-#, rust-format
-msgid "Import failed: {error}"
-msgstr "导入失败：{error}"
 
 #: src/preset_subtitle.rs:28
 #, rust-format
@@ -1147,122 +1176,122 @@ msgstr "{duration} · {count} 个会话"
 msgid "Meditation session running"
 msgstr "冥想会话进行中"
 
-#: src/timer/imp.rs:1731
+#: src/timer/imp.rs:1732
 msgid "This device can't vibrate, so nothing plays"
 msgstr "此设备无法振动，因此不会播放任何提示"
 
-#: src/timer/imp.rs:1732
+#: src/timer/imp.rs:1733
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "此设备无法振动，因此只会播放声音"
 
-#: src/timer/imp.rs:1944
+#: src/timer/imp.rs:1949
 msgid "Paused"
 msgstr "已暂停"
 
-#: src/timer/imp.rs:1971 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1976 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "小时 · 分钟"
 
-#: src/timer/imp.rs:2139
+#: src/timer/imp.rs:2144
 msgid "Couldn't start playback"
 msgstr "无法开始播放"
 
-#: src/timer/imp.rs:2230 src/window/imp.rs:397
+#: src/timer/imp.rs:2235 src/window/imp.rs:397
 msgid "Pause"
 msgstr "已暂停"
 
-#: src/timer/imp.rs:2231 src/window/imp.rs:399
+#: src/timer/imp.rs:2236 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr "暂停计时"
 
-#: src/timer/imp.rs:2273 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2278 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr "继续"
 
-#: src/timer/imp.rs:2274
+#: src/timer/imp.rs:2279
 msgid "Resume Timer"
 msgstr "继续计时"
 
-#: src/timer/imp.rs:2517
+#: src/timer/imp.rs:2522
 msgid "Discard Session?"
 msgstr "放弃会话？"
 
-#: src/timer/imp.rs:2518
+#: src/timer/imp.rs:2523
 msgid "Your note will be lost."
 msgstr "您的笔记将会丢失。"
 
-#: src/timer/imp.rs:2527 data/ui/timer_view.blp:879
+#: src/timer/imp.rs:2532 data/ui/timer_view.blp:879
 msgid "Discard"
 msgstr "放弃"
 
-#: src/timer/imp.rs:2826
+#: src/timer/imp.rs:2831
 msgid "Finish"
 msgstr "完成"
 
-#: src/timer/imp.rs:2828
+#: src/timer/imp.rs:2833
 msgid "End at the planned duration"
 msgstr "在计划时长结束"
 
-#: src/timer/imp.rs:3183
+#: src/timer/imp.rs:3188
 msgid "Start your streak today"
 msgstr "今天开始连续打卡"
 
-#: src/timer/imp.rs:3184 src/timer/imp.rs:3186
+#: src/timer/imp.rs:3189 src/timer/imp.rs:3191
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "连续 {n} 天"
 
-#: src/timer/imp.rs:3242
+#: src/timer/imp.rs:3247
 msgid "Tap Save Settings to create your first preset"
 msgstr "点按“保存设置”创建你的第一个预设"
 
-#: src/timer/imp.rs:3319
+#: src/timer/imp.rs:3324
 msgid "No starred files"
 msgstr "没有已收藏的文件"
 
-#: src/timer/imp.rs:3321
+#: src/timer/imp.rs:3326
 msgid "Tap Open File then Import File, or star a file in Manage Files"
 msgstr "点按“打开文件”再点“导入文件”，或在“管理文件”中收藏文件"
 
-#: src/timer/imp.rs:3388 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3393 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "未选择文件"
 
-#: src/timer/imp.rs:3390 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3395 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "点按“打开文件”或从下方列表选择"
 
-#: src/timer/imp.rs:3398
+#: src/timer/imp.rs:3403
 msgid "Open New File"
 msgstr "打开新文件"
 
-#: src/timer/imp.rs:3400 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3405 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "打开文件"
 
-#: src/timer/imp.rs:3575
+#: src/timer/imp.rs:3580
 #, rust-format
 msgid "'{name}' applied"
 msgstr "已应用“{name}”"
 
-#: src/timer/imp.rs:3700
+#: src/timer/imp.rs:3705
 msgid "Custom Time"
 msgstr "自定义时间"
 
-#: src/timer/imp.rs:3701
+#: src/timer/imp.rs:3706
 msgid "Hours : Minutes"
 msgstr "小时 : 分钟"
 
-#: src/timer/imp.rs:3707
+#: src/timer/imp.rs:3712
 msgid "Set"
 msgstr "设置"
 
-#: src/timer/imp.rs:3762 src/timer/imp.rs:3789
+#: src/timer/imp.rs:3767 src/timer/imp.rs:3794
 msgid "(none — pick one)"
 msgstr "（无——请选择）"
 
-#: src/timer/imp.rs:3764 src/timer/imp.rs:3791
+#: src/timer/imp.rs:3769 src/timer/imp.rs:3796
 msgid "Off"
 msgstr "关闭"
 
@@ -1274,42 +1303,42 @@ msgstr "关闭"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4053
+#: src/timer/imp.rs:4058
 #, rust-format
 msgid "Add {time} ?"
 msgstr "加上 {time}？"
 
-#: src/timer/imp.rs:4063
+#: src/timer/imp.rs:4068
 msgid "None enabled"
 msgstr "未启用"
 
-#: src/timer/imp.rs:4064 src/timer/imp.rs:4065
+#: src/timer/imp.rs:4069 src/timer/imp.rs:4070
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "已启用 {n} 个"
 
-#: src/timer/imp.rs:4089 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4094 data/ui/timer_view.blp:605
 msgid "Inhale"
 msgstr "吸气"
 
-#: src/timer/imp.rs:4090
+#: src/timer/imp.rs:4095
 msgid "Hold (full)"
 msgstr "屏息（吸气后）"
 
-#: src/timer/imp.rs:4091 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4096 data/ui/timer_view.blp:701
 msgid "Exhale"
 msgstr "呼气"
 
-#: src/timer/imp.rs:4092
+#: src/timer/imp.rs:4097
 msgid "Hold (empty)"
 msgstr "屏息（呼气后）"
 
-#: src/timer/imp.rs:4154
+#: src/timer/imp.rs:4159
 msgid "Decrease"
 msgstr "减少"
 
-#: src/timer/imp.rs:4165
+#: src/timer/imp.rs:4170
 msgid "Increase"
 msgstr "增加"
 

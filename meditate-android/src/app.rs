@@ -1221,7 +1221,37 @@ mod tests {
             })
             .collect();
         assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "label-conflict"]);
-        assert_eq!(slint.matches(": ConfirmDialog {").count(), 15);
+        assert_eq!(slint.matches(": ConfirmDialog {").count(), 16);
+    }
+
+    #[test]
+    fn a_partly_unreadable_file_asks_before_importing() {
+        // A file is read before anything is written; one with unreadable
+        // lines is imported in part only when the user says so, and
+        // Cancel writes nothing. Like GTK.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(code.contains("match parsed.question() {\n                            None => write_import(&ui, &parsed),"));
+        assert!(code.contains("ui.set_modal(Modal::ImportUnreadable);"));
+        assert_eq!(code.matches("data_io::import_parsed(").count(), 1, "one write");
+        let at = code.find("ui.on_import_unreadable_confirm(").unwrap();
+        assert!(code[at..at + 400].contains("PENDING_IMPORT.take()"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("confirm-enabled: root.import-can-write;"));
+        // "Den Rest importieren" ran past the card beside "Abbrechen":
+        // the buttons stack, one per line.
+        let at = slint.find("if root.modal == Modal.import-unreadable : ConfirmDialog {").unwrap();
+        assert!(slint[at..at + 400].contains("stacked: true;"));
+        assert!(slint.contains("if root.stacked : VerticalLayout {"));
+    }
+
+    #[test]
+    fn a_failed_merge_says_so() {
+        // It closed the dialog and did nothing, with no word.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("write_ok(&ui, \"label.merge\", lock_db().map(|db| db.merge_labels(suffixed_id, base_id)))"));
     }
 
     #[test]
@@ -2667,7 +2697,8 @@ mod tests {
         let body = &kt[at..at + kt[at..].find("\n    }\n").unwrap()];
         assert!(body.contains("\"err:\" + (e.message ?: e.javaClass.simpleName)"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        assert!(lib.contains("Err(e) => (Err(format!(\"copy FAILED: {e}\")), \"?\".into()),"));
+        assert!(lib.contains("Err(e) => Err(format!(\"copy FAILED: {e}\")),"));
+        assert!(lib.contains("show_notice(&ui, ui.global::<Tr>().invoke_import_failed(), None, 4);"));
     }
 
     #[test]
