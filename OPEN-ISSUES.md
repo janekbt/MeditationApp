@@ -28,7 +28,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
-| [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160 | hidden controls, lost edits |
+| [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160, #189 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
@@ -564,6 +564,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
   - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection, and Slint's editable only reports text replacements, never a selection-only change.
   - Other pages with a Material `TextField` (rename and name dialogs, Log edit) may keep the handle after closing too; check each close path like Preferences.
 - Fix: patch the Java helper (hide the handle at x = -1, report `setSelection` back through `updateText`, then the content rect), which means vendoring the backend like `third_party/i-slint-compiler`: build environment, so ask first, then run the repro probe. Report it upstream either way.
+
+### #189 Android: the selected guided file isn't highlighted in the list
+- Where: `meditate-android/ui/main.slint`, the Guided file lists (library and Local Folder) under the "Current file" row (line 3352-).
+- Problem: seen on the FP5 2026-10-12: after picking a file, nothing in the list shows which one is selected; only the "Current file" row names it. Not checked yet whether GTK marks it.
+- Fix: mark the selected row (a check or a highlighted background), matching GTK if it does so.
 
 ## N. Stats numbers
 
