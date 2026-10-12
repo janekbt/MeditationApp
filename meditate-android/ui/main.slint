@@ -182,6 +182,21 @@ export global Tr {
     // Label-delete dialog body (delete_impact_key)
     public pure function label-unused() -> string { return @tr("This label is not used by any sessions."); }
     public pure function n-sessions-unlabelled(n: int) -> string { return @tr("{n} session tagged with this label will be un-labelled." | "{n} sessions tagged with this label will be un-labelled." % n); }
+    // Guided Local Folder (GitHub #4)
+    public pure function local-folder() -> string { return @tr("Local folder"); }
+    public pure function local-folder-title() -> string { return @tr("Local Folder"); }
+    public pure function local-file() -> string { return @tr("Local file"); }
+    public pure function not-found() -> string { return @tr("not found"); }
+    public pure function file-not-found() -> string { return @tr("File not found in the local folder"); }
+    public pure function reading-length() -> string { return @tr("Reading length"); }
+    public pure function length-not-read() -> string { return @tr("length not read yet"); }
+    public pure function never-played() -> string { return @tr("never played"); }
+    public pure function played-n(n: int) -> string { return @tr("played {n} time" | "played {n} times" % n); }
+    public pure function n-folders(n: int) -> string { return @tr("{n} folder" | "{n} folders" % n); }
+    public pure function n-files(n: int) -> string { return @tr("{n} file" | "{n} files" % n); }
+    public pure function reading-files(read: int, total: int) -> string { return @tr("reading {}/{}", read, total); }
+    public pure function couldnt-read-audio() -> string { return @tr("Couldn't read audio file"); }
+    public pure function folder-picker-failed() -> string { return @tr("Couldn't open the folder picker"); }
 }
 
 // Single-glyph font (U+25CF, subset from DejaVu Sans, family
@@ -285,6 +300,20 @@ export struct GuidedFileItem {
     // only ever carries starred rows (always true there);
     // Manage Files lists every file so the toggle can flip it.
     is-starred: bool,
+    // A starred Local Folder file the last scan did not find:
+    // highlighted, not pickable, unstarrable in place.
+    missing: bool,
+}
+
+// One row of the Guided Local Folder page: a subfolder (opens the
+// next level) or a file (picks it). `key` is the folder's path or
+// the file's row id. Mirrors GTK's src/local_folder.rs rows.
+export struct LocalRow {
+    is-folder: bool,
+    key: string,
+    title: string,
+    subtitle: string,
+    starred: bool,
 }
 
 // One row in the Interval Bells library (B-5c). `title` is the
@@ -1988,6 +2017,32 @@ export component MainWindow inherits Window {
     // it (Current-file row updates; uuid recorded for save
     // attribution). Mirrors GTK's `guided_files_group`.
     in property <[GuidedFileItem]> guided-files: [];
+    // Current file's second line for a Local Folder pick ("Local
+    // folder · Sleep · 23:00"); empty shows the usual hint.
+    in property <string> guided-subtitle: "";
+    // A Local Folder pick whose length is still being read: Start
+    // waits for it.
+    in property <bool> guided-reading: false;
+    callback guided-local-unstar(string);
+    // Guided Local Folder page (GitHub #4).
+    in property <bool> local-page: false;
+    in property <bool> local-has-folder: false;
+    in property <bool> local-unreachable: false;
+    in property <bool> local-top: true;
+    in property <string> local-title: "";
+    in property <string> local-path: "";
+    in property <string> local-folder-line: "";
+    in-out property <int> local-view: 0;
+    in-out property <int> local-sort: 0;
+    in property <[LocalRow]> local-rows: [];
+    callback local-folder-tap();
+    callback local-back();
+    callback local-refresh();
+    callback local-choose();
+    callback local-view-changed(int);
+    callback local-sort-changed(int);
+    callback local-row-tap(bool, string);
+    callback local-star-tap(string);
     callback guided-file-tap(string);
     // Manage Files chooser (GM-F4) — full-screen slide-in,
     // mirrors GTK's `push_guided_files_chooser`. Lists ALL
@@ -2979,6 +3034,8 @@ export component MainWindow inherits Window {
     animate preset-chooser-offset { duration: 300ms; easing: ease-out; }
     // Guided Manage Files slide-in (GM-F4). Same symmetric push.
     property <length> guided-manage-offset: root.guided-manage-page ? root.width : 0px;
+    property <length> local-offset: root.local-page ? root.width : 0px;
+    animate local-offset { duration: 300ms; easing: ease-out; }
     animate guided-manage-offset { duration: 300ms; easing: ease-out; }
     // Preferences slide-in (SY-2). Same symmetric push.
     property <length> preferences-offset: root.preferences-page ? root.width : 0px;
@@ -3190,7 +3247,7 @@ export component MainWindow inherits Window {
                     && (root.stopwatch-on
                         || root.setup-hours > 0
                         || root.setup-minutes > 0))
-                    || (root.setup-mode == 1 && root.guided-name != "");
+                    || (root.setup-mode == 1 && root.guided-name != "" && !root.guided-reading);
                 clicked => { root.action-tap(); }
             }
 
@@ -3324,10 +3381,12 @@ export component MainWindow inherits Window {
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: @tr("Tap Open File or pick from list below");
+                                    text: root.guided-subtitle != ""
+                                        ? root.guided-subtitle
+                                        : @tr("Tap Open File or pick from list below");
                                     font-size: 13px;
                                     color: MaterialPalette.on-surface-variant;
-                                    overflow: elide;
+                                    wrap: word-wrap;
                                 }
                             }
                         }
@@ -3369,10 +3428,12 @@ export component MainWindow inherits Window {
                             background: MaterialPalette.outline-variant;
                         }
                         Rectangle {
-                            height: 64px;
-                            background: gf-touch.has-hover
-                                ? MaterialPalette.surface-container-high
-                                : transparent;
+                            min-height: 64px;
+                            background: item.missing
+                                ? MaterialPalette.error-container
+                                : gf-touch.has-hover
+                                    ? MaterialPalette.surface-container-high
+                                    : transparent;
                             gf-touch := TouchArea {
                                 clicked => {
                                     root.guided-file-tap(item.uuid);
@@ -3380,22 +3441,47 @@ export component MainWindow inherits Window {
                             }
                             HorizontalLayout {
                                 padding-left: 16px;
-                                padding-right: 16px;
+                                padding-right: item.missing ? 4px : 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
                                 spacing: 12px;
                                 alignment: stretch;
+                                if item.missing : VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: @image-url("assets/warning.svg");
+                                        width: 22px;
+                                        height: 22px;
+                                        colorize: MaterialPalette.error;
+                                    }
+                                }
                                 VerticalLayout {
                                     alignment: center;
                                     horizontal-stretch: 1;
                                     Text {
                                         text: item.name;
                                         font-size: 16px;
-                                        color: MaterialPalette.on-surface;
-                                        overflow: elide;
+                                        color: item.missing
+                                            ? MaterialPalette.on-error-container
+                                            : MaterialPalette.on-surface;
+                                        wrap: word-wrap;
                                     }
                                     Text {
                                         text: item.subtitle;
                                         font-size: 12px;
-                                        color: MaterialPalette.on-surface-variant;
+                                        font-weight: item.missing ? 700 : 400;
+                                        color: item.missing
+                                            ? MaterialPalette.on-error-container
+                                            : MaterialPalette.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                if item.missing : VerticalLayout {
+                                    alignment: center;
+                                    IconButton {
+                                        icon: @image-url("assets/star_filled.svg");
+                                        tooltip: @tr("Unstar");
+                                        clicked => { root.guided-local-unstar(item.uuid); }
                                     }
                                 }
                             }
@@ -3421,7 +3507,7 @@ export component MainWindow inherits Window {
                                     color: MaterialPalette.on-surface-variant;
                                 }
                                 Text {
-                                    text: @tr("Tap Open File then Import File, or star a file in Manage Files");
+                                    text: @tr("Tap Open File then Import File, or star a file in Manage Imports");
                                     font-size: 13px;
                                     color: MaterialPalette.on-surface-variant;
                                     overflow: elide;
@@ -3432,9 +3518,15 @@ export component MainWindow inherits Window {
                 }
                 // Manage Files — opens the full chooser
                 // (GTK's `manage_guided_files_btn`).
+                // Stacked, not side by side: "Управление файлами" next
+                // to "Локальная папка" doesn't fit 360 px.
                 OutlineButton {
-                    text: @tr("Manage Files");
+                    text: @tr("Manage Imports");
                     clicked => { root.manage-guided-tap(); }
+                }
+                OutlineButton {
+                    text: @tr("Local Folder");
+                    clicked => { root.local-folder-tap(); }
                 }
             }
             // Box Breath body — Breath Phases heading + 2×2 phase
@@ -7137,7 +7229,7 @@ export component MainWindow inherits Window {
             alignment: start;
 
             PageHeader {
-                title: @tr("Manage Files");
+                title: @tr("Manage Imports");
                 back => { root.guided-manage-back(); }
             }
 
@@ -7272,6 +7364,260 @@ export component MainWindow inherits Window {
             }
         }
         } // Flickable (gm-scroll)
+    }
+
+    // ── Guided Local Folder page (GitHub #4) ─────────────────────
+    // Full-screen slide-in like Manage Files, declared after it.
+    // One folder level at a time: Rust swaps `local-rows` and the
+    // titles as the user opens folders and goes back. Mirrors GTK's
+    // src/local_folder.rs pages.
+    Rectangle {
+        x: parent.width - root.local-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        TouchArea {}
+
+        if !root.local-has-folder : VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+
+            PageHeader {
+                title: @tr("Local Folder");
+                back => { root.local-back(); }
+            }
+            VerticalLayout {
+                vertical-stretch: 1;
+                alignment: center;
+                spacing: 12px;
+                padding-left: 16px;
+                padding-right: 16px;
+                HorizontalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("assets/folder.svg");
+                        width: 88px;
+                        height: 88px;
+                        colorize: MaterialPalette.outline-variant;
+                    }
+                }
+                Text {
+                    text: @tr("No local folder");
+                    font-size: 24px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: @tr("Choose a folder of guided meditations. Meditate plays the files where they are and doesn't copy them. They stay on this phone and don't sync.");
+                    font-size: 15px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    color: MaterialPalette.on-surface-variant;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    padding-top: 8px;
+                    FilledButton {
+                        text: @tr("Choose Folder");
+                        clicked => { root.local-choose(); }
+                    }
+                }
+            }
+        }
+
+        if root.local-has-folder : Flickable {
+            viewport-width: self.width;
+            viewport-height: lf-scroll.preferred-height;
+
+            lf-scroll := VerticalLayout {
+                padding-top: root.status-bar-inset + 24px;
+                padding-bottom: root.bottom-bar-inset + 24px;
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 16px;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        PageHeader {
+                            title: root.local-title;
+                            back => { root.local-back(); }
+                        }
+                        if root.local-path != "" : Text {
+                            text: root.local-path;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                            color: MaterialPalette.on-surface-variant;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            icon: @image-url("assets/refresh.svg");
+                            tooltip: @tr("Refresh");
+                            clicked => { root.local-refresh(); }
+                        }
+                    }
+                }
+
+                if root.local-unreachable : Rectangle {
+                    border-radius: 12px;
+                    background: MaterialPalette.error-container;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        Text {
+                            text: @tr("Folder not reachable");
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            color: MaterialPalette.on-error-container;
+                        }
+                        TextButton {
+                            text: @tr("Choose Again");
+                            clicked => { root.local-choose(); }
+                        }
+                    }
+                }
+
+                if root.local-top : BoxedList {
+                    Rectangle {
+                        min-height: 64px;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 8px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: @tr("Folder");
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                }
+                                Text {
+                                    text: root.local-folder-line;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                TextButton {
+                                    text: @tr("Change");
+                                    clicked => { root.local-choose(); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.local-top : ModeToggle {
+                    labels: [@tr("Folders"), @tr("List")];
+                    current-index <=> root.local-view;
+                    changed(idx) => { root.local-view-changed(idx); }
+                }
+
+                if root.local-top && root.local-view == 1 : DropDownMenu {
+                    label: @tr("Sort by");
+                    items: [
+                        { text: @tr("Name"), enabled: true },
+                        { text: @tr("Length"), enabled: true },
+                        { text: @tr("Most played"), enabled: true },
+                        { text: @tr("Least played"), enabled: true },
+                    ];
+                    current-index <=> root.local-sort;
+                    selected(idx) => { root.local-sort-changed(idx); }
+                }
+
+                if root.local-rows.length == 0 : Text {
+                    text: @tr("No audio files in this folder");
+                    wrap: word-wrap;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                if root.local-rows.length > 0 : BoxedList {
+                    for row[idx] in root.local-rows : VerticalLayout {
+                        spacing: 0;
+                        if idx > 0 : Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        Rectangle {
+                            min-height: 64px;
+                            background: lr-touch.has-hover
+                                ? MaterialPalette.surface-container-high
+                                : transparent;
+                            lr-touch := TouchArea {
+                                clicked => { root.local-row-tap(row.is-folder, row.key); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: row.is-folder ? 12px : 4px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                spacing: 14px;
+                                if row.is-folder : VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: @image-url("assets/folder.svg");
+                                        width: 22px;
+                                        height: 22px;
+                                        colorize: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: row.title;
+                                        font-size: 16px;
+                                        wrap: word-wrap;
+                                        color: MaterialPalette.on-surface;
+                                    }
+                                    Text {
+                                        text: row.subtitle;
+                                        font-size: 13px;
+                                        wrap: word-wrap;
+                                        color: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                                if row.is-folder : VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: Icons.chevron-forward;
+                                        width: 20px;
+                                        height: 20px;
+                                        colorize: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                                if !row.is-folder : VerticalLayout {
+                                    alignment: center;
+                                    IconButton {
+                                        icon: row.starred
+                                            ? @image-url("assets/star_filled.svg")
+                                            : @image-url("assets/star.svg");
+                                        tooltip: row.starred ? @tr("Unstar") : @tr("Star");
+                                        clicked => { root.local-star-tap(row.key); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── Preferences page (Phase 7 SY-2) ──────────────────────────

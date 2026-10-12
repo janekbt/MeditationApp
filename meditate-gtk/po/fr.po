@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-12 16:36+0200\n"
+"POT-Creation-Date: 2026-10-12 20:07+0200\n"
 "PO-Revision-Date: 2026-04-20 18:20+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: French\n"
@@ -44,7 +44,7 @@ msgstr "'{name}' remplacé"
 msgid "Updated"
 msgstr "Mis à jour"
 
-#: src/announcement.rs:39 src/guided.rs:1119
+#: src/announcement.rs:39 src/guided.rs:1134
 msgid "Deleted"
 msgstr "Supprimé"
 
@@ -90,13 +90,13 @@ msgstr "Quitter"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:408 src/guided.rs:1182 src/log/imp.rs:677
-#: src/presets.rs:698 src/timer/imp.rs:3624 src/vibrations.rs:476
+#: src/application.rs:408 src/guided.rs:1197 src/log/imp.rs:677
+#: src/presets.rs:698 src/timer/imp.rs:3784 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr "Annuler"
 
-#: src/bells.rs:47 data/ui/timer_view.blp:492
+#: src/bells.rs:47 data/ui/timer_view.blp:505
 msgid "Interval Bells"
 msgstr "Cloches d'intervalle"
 
@@ -120,18 +120,18 @@ msgstr "Cette cloche ne sonnera plus pendant les séances."
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:317 src/bells.rs:759 src/guided.rs:216 src/guided.rs:943
-#: src/guided.rs:1058 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
+#: src/bells.rs:317 src/bells.rs:759 src/guided.rs:231 src/guided.rs:958
+#: src/guided.rs:1073 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
 #: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
 #: src/presets.rs:507 src/presets.rs:574 src/presets.rs:635
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2552
-#: src/timer/imp.rs:3753 src/vibration_editor.rs:129 src/vibrations.rs:548
+#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2590
+#: src/timer/imp.rs:3913 src/vibration_editor.rs:129 src/vibrations.rs:548
 #: src/vibrations.rs:638
 msgid "Cancel"
 msgstr "Annuler"
 
-#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1059 src/labels.rs:402
+#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1074 src/labels.rs:402
 #: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:639
 msgid "Delete"
 msgstr "Supprimer"
@@ -140,7 +140,7 @@ msgstr "Supprimer"
 msgid "No interval bells configured"
 msgstr "Aucune cloche d'intervalle configurée"
 
-#: src/bells.rs:344 src/guided.rs:902
+#: src/bells.rs:344 src/guided.rs:917
 msgid "Tap the row above to add one"
 msgstr "Touchez la ligne ci-dessus pour en ajouter"
 
@@ -192,7 +192,7 @@ msgstr "Avant la fin"
 msgid "Kind"
 msgstr "Type"
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3727
+#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3887
 msgid "Minutes"
 msgstr "Minutes"
 
@@ -204,33 +204,33 @@ msgstr "Variation"
 msgid "Percent — randomises the next ring"
 msgstr "En pourcentage — rend aléatoire la prochaine sonnerie"
 
-#: src/bells.rs:498 data/ui/timer_view.blp:420 data/ui/timer_view.blp:522
-#: data/ui/timer_view.blp:610 data/ui/timer_view.blp:658
-#: data/ui/timer_view.blp:706 data/ui/timer_view.blp:754
+#: src/bells.rs:498 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
+#: data/ui/timer_view.blp:623 data/ui/timer_view.blp:671
+#: data/ui/timer_view.blp:719 data/ui/timer_view.blp:767
 msgid "Type"
 msgstr "Type"
 
-#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1575
-#: src/timer/imp.rs:1649 src/timer/imp.rs:1714 data/ui/timer_view.blp:623
-#: data/ui/timer_view.blp:671 data/ui/timer_view.blp:719
-#: data/ui/timer_view.blp:767
+#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1603
+#: src/timer/imp.rs:1677 src/timer/imp.rs:1742 data/ui/timer_view.blp:636
+#: data/ui/timer_view.blp:684 data/ui/timer_view.blp:732
+#: data/ui/timer_view.blp:780
 msgid "Sound"
 msgstr "Son"
 
-#: src/bells.rs:517 src/timer/imp.rs:1579 src/timer/imp.rs:1651
-#: src/timer/imp.rs:1716
+#: src/bells.rs:517 src/timer/imp.rs:1607 src/timer/imp.rs:1679
+#: src/timer/imp.rs:1744
 msgid "Vibration"
 msgstr "Vibration"
 
-#: src/bells.rs:521 src/timer/imp.rs:1583 src/timer/imp.rs:1653
-#: src/timer/imp.rs:1718
+#: src/bells.rs:521 src/timer/imp.rs:1611 src/timer/imp.rs:1681
+#: src/timer/imp.rs:1746
 msgid "Both"
 msgstr "Les deux"
 
-#: src/bells.rs:551 src/vibration_editor.rs:235 data/ui/timer_view.blp:461
-#: data/ui/timer_view.blp:563 data/ui/timer_view.blp:644
-#: data/ui/timer_view.blp:692 data/ui/timer_view.blp:740
-#: data/ui/timer_view.blp:788
+#: src/bells.rs:551 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
+#: data/ui/timer_view.blp:576 data/ui/timer_view.blp:657
+#: data/ui/timer_view.blp:705 data/ui/timer_view.blp:753
+#: data/ui/timer_view.blp:801
 msgid "Pattern"
 msgstr "Motif"
 
@@ -289,122 +289,122 @@ msgstr[1] "{n} h"
 msgid "{h} {m}"
 msgstr "{h} {m}"
 
-#: src/guided.rs:91
+#: src/guided.rs:104
 msgid "Choose Guided Meditation"
 msgstr "Choisir une méditation guidée"
 
-#: src/guided.rs:116
+#: src/guided.rs:129
 msgid "File picker error"
 msgstr "Erreur du sélecteur de fichiers"
 
-#: src/guided.rs:125
+#: src/guided.rs:138
 msgid "Picked file has no local path"
 msgstr "Le fichier choisi n'a pas de chemin local"
 
-#: src/guided.rs:144 src/guided.rs:351 src/sounds.rs:420 src/sounds.rs:644
+#: src/guided.rs:159 src/guided.rs:366 src/sounds.rs:420 src/sounds.rs:644
 msgid "This file has no audio track"
 msgstr "Ce fichier ne contient aucune piste audio"
 
-#: src/guided.rs:149
+#: src/guided.rs:164 src/timer/imp.rs:3598
 msgid "Couldn't read audio file"
 msgstr "Impossible de lire le fichier audio"
 
-#: src/guided.rs:174
+#: src/guided.rs:189
 msgid "Track name"
 msgstr "Nom de la piste"
 
-#: src/guided.rs:178 src/guided.rs:925
+#: src/guided.rs:193 src/guided.rs:940
 msgid "A guided file with this name already exists."
 msgstr "Un fichier guidé portant ce nom existe déjà."
 
-#: src/guided.rs:185 src/preferences.rs:134 src/sounds.rs:498
+#: src/guided.rs:200 src/preferences.rs:134 src/sounds.rs:498
 msgid "Import"
 msgstr "Importer"
 
-#: src/guided.rs:205
+#: src/guided.rs:220
 msgid "Import Guided File"
 msgstr "Importer un fichier guidé"
 
-#: src/guided.rs:208 src/sounds.rs:525
+#: src/guided.rs:223 src/sounds.rs:525
 msgid "Importing:"
 msgstr "Import :"
 
-#: src/guided.rs:287 src/sounds.rs:595
+#: src/guided.rs:302 src/sounds.rs:595
 msgid "Converting…"
 msgstr "Conversion…"
 
-#: src/guided.rs:339 src/guided.rs:356
+#: src/guided.rs:354 src/guided.rs:371
 msgid "Import failed"
 msgstr "Échec de l'import"
 
-#: src/guided.rs:360
+#: src/guided.rs:375
 msgid "Import worker died"
 msgstr "Le processus d'import s'est arrêté"
 
 #. / Why an imported file was refused: even compressed it's bigger than
 #. / sync carries.
-#: src/guided.rs:425
+#: src/guided.rs:440
 msgid "Over 100 MB, too large to sync"
 msgstr "Plus de 100 Mo, non synchronisable"
 
-#: src/guided.rs:568 data/ui/timer_view.blp:289
-msgid "Manage Files"
-msgstr "Gérer les fichiers"
+#: src/guided.rs:583 data/ui/timer_view.blp:297
+msgid "Manage Imports"
+msgstr "Gérer les imports"
 
-#: src/guided.rs:676
+#: src/guided.rs:691
 msgid "Create new guided file…"
 msgstr "Créer un nouveau fichier guidé…"
 
-#: src/guided.rs:743
+#: src/guided.rs:758
 msgid "Unstar — remove from home list"
 msgstr "Retirer des favoris — masquer de la liste d'accueil"
 
-#: src/guided.rs:745
+#: src/guided.rs:760
 msgid "Star — show in home list"
 msgstr "Ajouter aux favoris — afficher dans la liste d'accueil"
 
-#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:319
+#: src/guided.rs:785 src/guided.rs:959 src/labels.rs:195 src/labels.rs:319
 #: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:915
 #: src/vibrations.rs:417 src/vibrations.rs:549
 msgid "Rename"
 msgstr "Renommer"
 
-#: src/guided.rs:800
+#: src/guided.rs:815
 msgid "Delete file"
 msgstr "Supprimer le fichier"
 
-#: src/guided.rs:846 src/guided.rs:863 src/guided.rs:888
+#: src/guided.rs:861 src/guided.rs:878 src/guided.rs:903
 #: src/vibration_editor.rs:245 src/vibration_editor.rs:561
 #: src/vibration_editor.rs:599
 msgid "Preview"
 msgstr "Aperçu"
 
-#: src/guided.rs:872 src/sounds.rs:305 src/vibration_editor.rs:587
+#: src/guided.rs:887 src/sounds.rs:305 src/vibration_editor.rs:587
 #: src/vibrations.rs:324 src/volume_row.rs:60
 msgid "Stop preview"
 msgstr "Arrêter l'aperçu"
 
-#: src/guided.rs:901
+#: src/guided.rs:916
 msgid "No guided files imported"
 msgstr "Aucun fichier guidé importé"
 
-#: src/guided.rs:938
+#: src/guided.rs:953
 msgid "Rename Guided File"
 msgstr "Renommer le fichier guidé"
 
-#: src/guided.rs:1011
+#: src/guided.rs:1026
 msgid "File renamed"
 msgstr "Fichier renommé"
 
-#: src/guided.rs:1048
+#: src/guided.rs:1063
 msgid "Delete Guided File?"
 msgstr "Supprimer le fichier guidé ?"
 
-#: src/guided.rs:1051
+#: src/guided.rs:1066
 msgid "This will permanently remove"
 msgstr "Ceci supprimera définitivement"
 
-#: src/guided.rs:1053
+#: src/guided.rs:1068
 msgid "Past sessions logged with this file stay in the log."
 msgstr ""
 "Les séances passées enregistrées avec ce fichier restent dans le journal."
@@ -479,9 +479,125 @@ msgstr "Garder les deux"
 msgid "Merge"
 msgstr "Fusionner"
 
-#: src/labels.rs:467 src/preferences.rs:436 src/timer/imp.rs:3599
+#: src/labels.rs:467 src/local_folder.rs:60 src/preferences.rs:436
+#: src/timer/imp.rs:3759
 msgid "Save failed"
 msgstr "Échec de l'enregistrement"
+
+#: src/local_folder.rs:176
+msgid "length not read yet"
+msgstr "durée pas encore lue"
+
+#: src/local_folder.rs:182
+msgid "never played"
+msgstr "jamais écouté"
+
+#: src/local_folder.rs:183
+#, rust-format
+msgid "played once"
+msgid_plural "played {n} times"
+msgstr[0] "écouté {n} fois"
+msgstr[1] "écouté {n} fois"
+
+#: src/local_folder.rs:188
+#, rust-format
+msgid "1 folder"
+msgid_plural "{n} folders"
+msgstr[0] "{n} dossier"
+msgstr[1] "{n} dossiers"
+
+#: src/local_folder.rs:189
+#, rust-format
+msgid "1 file"
+msgid_plural "{n} files"
+msgstr[0] "{n} fichier"
+msgstr[1] "{n} fichiers"
+
+#: src/local_folder.rs:205
+#, rust-format
+msgid "reading {read}/{total}"
+msgstr "lecture {read}/{total}"
+
+#: src/local_folder.rs:225 src/timer/imp.rs:3497
+msgid "Unstar"
+msgstr "Retirer l'étoile"
+
+#: src/local_folder.rs:225
+msgid "Star"
+msgstr "Ajouter une étoile"
+
+#: src/local_folder.rs:289 src/local_folder.rs:314 data/ui/timer_view.blp:301
+msgid "Local Folder"
+msgstr "Dossier local"
+
+#: src/local_folder.rs:295
+msgid "Refresh"
+msgstr "Actualiser"
+
+#: src/local_folder.rs:299
+msgid "Folder not reachable"
+msgstr "Dossier inaccessible"
+
+#: src/local_folder.rs:300
+msgid "Choose Again"
+msgstr "Choisir à nouveau"
+
+#: src/local_folder.rs:373 src/local_folder.rs:408
+msgid "Choose Folder"
+msgstr "Choisir un dossier"
+
+#: src/local_folder.rs:417
+msgid "No Local Folder"
+msgstr "Aucun dossier local"
+
+#: src/local_folder.rs:419
+msgid ""
+"Choose a folder of guided meditations. Meditate plays the files where they "
+"are and doesn't copy them. They stay on this device and don't sync."
+msgstr ""
+"Choisissez un dossier de méditations guidées. Meditate lit les fichiers là "
+"où ils sont et ne les copie pas. Ils restent sur cet appareil et ne sont pas "
+"synchronisés."
+
+#: src/local_folder.rs:446
+msgid "Folder"
+msgstr "Dossier"
+
+#: src/local_folder.rs:450
+msgid "Change"
+msgstr "Changer"
+
+#: src/local_folder.rs:463
+msgid "Folders"
+msgstr "Dossiers"
+
+#: src/local_folder.rs:464
+msgid "List"
+msgstr "Liste"
+
+#: src/local_folder.rs:482 src/vibration_editor.rs:154
+msgid "Name"
+msgstr "Nom"
+
+#: src/local_folder.rs:482
+msgid "Length"
+msgstr "Durée"
+
+#: src/local_folder.rs:482
+msgid "Most played"
+msgstr "Les plus écoutés"
+
+#: src/local_folder.rs:482
+msgid "Least played"
+msgstr "Les moins écoutés"
+
+#: src/local_folder.rs:485
+msgid "Sort by"
+msgstr "Trier par"
+
+#: src/local_folder.rs:545
+msgid "No audio files in this folder"
+msgstr "Aucun fichier audio dans ce dossier"
 
 #: src/log/imp.rs:324
 msgid "All labels"
@@ -516,7 +632,7 @@ msgid_plural "{n} sessions"
 msgstr[0] "{n} séance"
 msgstr[1] "{n} séances"
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3720
+#: src/log/imp.rs:814 src/timer/imp.rs:3880
 msgid "Hours"
 msgstr "Heures"
 
@@ -536,25 +652,25 @@ msgstr "Heure"
 msgid "Minute"
 msgstr "Minute"
 
-#: src/log/imp.rs:908 data/ui/timer_view.blp:363 data/ui/timer_view.blp:860
+#: src/log/imp.rs:908 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
 msgid "Selected"
 msgstr "Sélectionnée"
 
-#: src/log/imp.rs:923 data/ui/timer_view.blp:357 data/ui/timer_view.blp:854
+#: src/log/imp.rs:923 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
 #: data/ui/window.blp:107
 msgid "Label"
 msgstr "Étiquette"
 
-#: src/log/imp.rs:924 data/ui/timer_view.blp:358 data/ui/timer_view.blp:855
+#: src/log/imp.rs:924 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
 msgid "Tag this session"
 msgstr "Étiqueter cette séance"
 
-#: src/log/imp.rs:982 data/ui/timer_view.blp:830
+#: src/log/imp.rs:982 data/ui/timer_view.blp:843
 msgid "Note (optional)"
 msgstr "Note (facultative)"
 
-#: src/log/imp.rs:1002 src/vibration_editor.rs:171 data/ui/timer_view.blp:339
-#: data/ui/timer_view.blp:479
+#: src/log/imp.rs:1002 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
+#: data/ui/timer_view.blp:492
 msgid "Duration"
 msgstr "Durée"
 
@@ -583,15 +699,15 @@ msgstr "Modifier la séance"
 msgid "Add Session"
 msgstr "Ajouter une séance"
 
-#: src/log/imp.rs:1113 src/timer/imp.rs:3809 src/timer/imp.rs:3847
+#: src/log/imp.rs:1113 src/timer/imp.rs:3969 src/timer/imp.rs:4007
 msgid "(none — pick one)"
 msgstr "(aucune — choisissez-en une)"
 
-#: src/log/imp.rs:1209 src/timer/imp.rs:2496
+#: src/log/imp.rs:1209 src/timer/imp.rs:2534
 msgid "Couldn't save session — storage error"
 msgstr "Impossible d'enregistrer la séance — erreur de stockage"
 
-#: src/log/imp.rs:1214 src/timer/imp.rs:2514
+#: src/log/imp.rs:1214 src/timer/imp.rs:2552
 msgid "Couldn't save session — storage unavailable"
 msgstr "Impossible d'enregistrer la séance — stockage indisponible"
 
@@ -1244,129 +1360,147 @@ msgstr "{duration} · 1 séance"
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} séances"
 
-#: src/timer/imp.rs:1162
+#: src/timer/imp.rs:1190
 msgid "Meditation session running"
 msgstr "Séance de méditation en cours"
 
-#: src/timer/imp.rs:1165
+#: src/timer/imp.rs:1193
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Impossible de garder l’ordinateur éveillé pour les cloches"
 
-#: src/timer/imp.rs:1751
+#: src/timer/imp.rs:1779
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Cet appareil ne peut pas vibrer, donc rien ne sera joué"
 
-#: src/timer/imp.rs:1752
+#: src/timer/imp.rs:1780
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Cet appareil ne peut pas vibrer, donc seul le son sera joué"
 
-#: src/timer/imp.rs:1968
+#: src/timer/imp.rs:2000
 msgid "Paused"
 msgstr "En pause"
 
-#: src/timer/imp.rs:1995 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2027 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Heures · Minutes"
 
-#: src/timer/imp.rs:2163
+#: src/timer/imp.rs:2195
 msgid "Couldn't start playback"
 msgstr "Impossible de démarrer la lecture"
 
-#: src/timer/imp.rs:2252 src/window/imp.rs:397
+#: src/timer/imp.rs:2284 src/window/imp.rs:397
 msgid "Pause"
 msgstr "En pause"
 
-#: src/timer/imp.rs:2253 src/window/imp.rs:399
+#: src/timer/imp.rs:2285 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr "Mettre le minuteur en pause"
 
-#: src/timer/imp.rs:2299 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2331 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr "Reprendre"
 
-#: src/timer/imp.rs:2300
+#: src/timer/imp.rs:2332
 msgid "Resume Timer"
 msgstr "Reprendre le minuteur"
 
-#: src/timer/imp.rs:2543
+#: src/timer/imp.rs:2581
 msgid "Discard Session?"
 msgstr "Abandonner la séance ?"
 
-#: src/timer/imp.rs:2544
+#: src/timer/imp.rs:2582
 msgid "Your note will be lost."
 msgstr "Votre note sera perdue."
 
-#: src/timer/imp.rs:2553 data/ui/timer_view.blp:879
+#: src/timer/imp.rs:2591 data/ui/timer_view.blp:892
 msgid "Discard"
 msgstr "Abandonner"
 
-#: src/timer/imp.rs:2876
+#: src/timer/imp.rs:2914
 msgid "Finish"
 msgstr "Terminer"
 
-#: src/timer/imp.rs:2878
+#: src/timer/imp.rs:2916
 msgid "End at the planned duration"
 msgstr "Terminer à la durée prévue"
 
-#: src/timer/imp.rs:3230
+#: src/timer/imp.rs:3268
 msgid "Start your streak today"
 msgstr "Commencez votre série aujourd’hui"
 
-#: src/timer/imp.rs:3231 src/timer/imp.rs:3233
+#: src/timer/imp.rs:3269 src/timer/imp.rs:3271
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Série de {n} jour"
 msgstr[1] "Série de {n} jours"
 
-#: src/timer/imp.rs:3289
+#: src/timer/imp.rs:3327
 msgid "Tap Save Settings to create your first preset"
 msgstr "Touchez Enregistrer pour créer votre premier préréglage"
 
-#: src/timer/imp.rs:3366
+#: src/timer/imp.rs:3401
 msgid "No starred files"
 msgstr "Aucun fichier favori"
 
-#: src/timer/imp.rs:3368
-msgid "Tap Open File then Import File, or star a file in Manage Files"
-msgstr ""
-"Touchez Ouvrir un fichier puis Importer le fichier, ou marquez un fichier en "
-"favori dans Gérer les fichiers"
+#: src/timer/imp.rs:3403
+msgid "Tap Open File then Import File, or star a file in Manage Imports"
+msgstr "Touchez Ouvrir un fichier puis Importer le fichier, ou ajoutez une étoile à un fichier dans Gérer les imports"
 
-#: src/timer/imp.rs:3435 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3475
+msgid "not found"
+msgstr "introuvable"
+
+#: src/timer/imp.rs:3479
+msgid "Local file"
+msgstr "Fichier local"
+
+#: src/timer/imp.rs:3511
+msgid "File not found in the local folder"
+msgstr "Fichier introuvable dans le dossier local"
+
+#: src/timer/imp.rs:3528
+msgid "Reading length"
+msgstr "Lecture de la durée"
+
+#: src/timer/imp.rs:3534 src/timer/imp.rs:3535
+msgid "Local folder"
+msgstr "Dossier local"
+
+#: src/timer/imp.rs:3541 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "Aucun fichier sélectionné"
 
-#: src/timer/imp.rs:3437 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3543 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "Touchez Ouvrir un fichier ou choisissez dans la liste"
 
-#: src/timer/imp.rs:3445
+#: src/timer/imp.rs:3551
 msgid "Open New File"
 msgstr "Ouvrir un nouveau fichier"
 
-#: src/timer/imp.rs:3447 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3553 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "Ouvrir un fichier"
 
-#: src/timer/imp.rs:3622
+#: src/timer/imp.rs:3782
 #, rust-format
 msgid "'{name}' applied"
 msgstr "'{name}' appliqué"
 
-#: src/timer/imp.rs:3747
+#: src/timer/imp.rs:3907
 msgid "Custom Time"
 msgstr "Temps personnalisé"
 
-#: src/timer/imp.rs:3748
+#: src/timer/imp.rs:3908
 msgid "Hours : Minutes"
 msgstr "Heures : Minutes"
 
-#: src/timer/imp.rs:3754
+#: src/timer/imp.rs:3914
 msgid "Set"
 msgstr "Définir"
 
-#: src/timer/imp.rs:3811 src/timer/imp.rs:3849
+#: src/timer/imp.rs:3971 src/timer/imp.rs:4009
 msgid "Off"
 msgstr "Désactivée"
 
@@ -1378,59 +1512,55 @@ msgstr "Désactivée"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4111
+#: src/timer/imp.rs:4271
 #, rust-format
 msgid "Add {time} ?"
 msgstr "Ajouter {time} ?"
 
-#: src/timer/imp.rs:4121
+#: src/timer/imp.rs:4281
 msgid "None enabled"
 msgstr "Aucune active"
 
-#: src/timer/imp.rs:4122 src/timer/imp.rs:4123
+#: src/timer/imp.rs:4282 src/timer/imp.rs:4283
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} active"
 msgstr[1] "{n} actives"
 
-#: src/timer/imp.rs:4147 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4307 data/ui/timer_view.blp:618
 msgid "Inhale"
 msgstr "Inspirer"
 
-#: src/timer/imp.rs:4148
+#: src/timer/imp.rs:4308
 msgid "Hold (full)"
 msgstr "Retenir (plein)"
 
-#: src/timer/imp.rs:4149 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4309 data/ui/timer_view.blp:714
 msgid "Exhale"
 msgstr "Expirer"
 
-#: src/timer/imp.rs:4150
+#: src/timer/imp.rs:4310
 msgid "Hold (empty)"
 msgstr "Retenir (vide)"
 
-#: src/timer/imp.rs:4212
+#: src/timer/imp.rs:4372
 msgid "Decrease"
 msgstr "Diminuer"
 
-#: src/timer/imp.rs:4223
+#: src/timer/imp.rs:4383
 msgid "Increase"
 msgstr "Augmenter"
 
-#: src/vibration_editor.rs:130 data/ui/timer_view.blp:884
+#: src/vibration_editor.rs:130 data/ui/timer_view.blp:897
 msgid "Save"
 msgstr "Enregistrer"
-
-#: src/vibration_editor.rs:154
-msgid "Name"
-msgstr "Nom"
 
 #: src/vibration_editor.rs:167
 msgid "Shape"
 msgstr "Forme"
 
-#: src/vibration_editor.rs:172 data/ui/timer_view.blp:480
+#: src/vibration_editor.rs:172 data/ui/timer_view.blp:493
 msgid "Seconds"
 msgstr "Secondes"
 
@@ -1703,87 +1833,87 @@ msgstr "Importer le fichier"
 msgid "Starred Files"
 msgstr "Fichiers favoris"
 
-#: data/ui/timer_view.blp:300
+#: data/ui/timer_view.blp:313
 msgid "Session"
 msgstr "Séance"
 
-#: data/ui/timer_view.blp:312
+#: data/ui/timer_view.blp:325
 msgid "Cues"
 msgstr "Signaux"
 
-#: data/ui/timer_view.blp:330
+#: data/ui/timer_view.blp:343
 msgid "Stopwatch Mode"
 msgstr "Mode chronomètre"
 
-#: data/ui/timer_view.blp:331
+#: data/ui/timer_view.blp:344
 msgid "Count up from zero"
 msgstr "Compter depuis zéro"
 
-#: data/ui/timer_view.blp:383
+#: data/ui/timer_view.blp:396
 msgid "Keep Screen Awake"
 msgstr "Garder l'écran allumé"
 
-#: data/ui/timer_view.blp:384
+#: data/ui/timer_view.blp:397
 msgid "Prevent display sleep during a session"
 msgstr "Empêche l'écran de s'éteindre pendant une séance"
 
-#: data/ui/timer_view.blp:402
+#: data/ui/timer_view.blp:415
 msgid "Bells"
 msgstr "Cloches"
 
-#: data/ui/timer_view.blp:414
+#: data/ui/timer_view.blp:427
 msgid "Starting Bell"
 msgstr "Cloche de début"
 
-#: data/ui/timer_view.blp:415
+#: data/ui/timer_view.blp:428
 msgid "Play a signal when the session begins"
 msgstr "Émettre un signal au début de la séance"
 
-#: data/ui/timer_view.blp:435 data/ui/timer_view.blp:537
+#: data/ui/timer_view.blp:448 data/ui/timer_view.blp:550
 msgid "Bell Sound"
 msgstr "Son de cloche"
 
-#: data/ui/timer_view.blp:473
+#: data/ui/timer_view.blp:486
 msgid "Preparation Time"
 msgstr "Temps de préparation"
 
-#: data/ui/timer_view.blp:474
+#: data/ui/timer_view.blp:487
 msgid "Silence before the starting bell"
 msgstr "Silence avant la cloche de début"
 
-#: data/ui/timer_view.blp:493
+#: data/ui/timer_view.blp:506
 msgid "Ring during the session"
 msgstr "Sonnent pendant la séance"
 
-#: data/ui/timer_view.blp:498
+#: data/ui/timer_view.blp:511
 msgid "Manage Bells"
 msgstr "Gérer les cloches"
 
-#: data/ui/timer_view.blp:516
+#: data/ui/timer_view.blp:529
 msgid "End Bell"
 msgstr "Cloche de fin"
 
-#: data/ui/timer_view.blp:517
+#: data/ui/timer_view.blp:530
 msgid "Play a signal when the session ends"
 msgstr "Émettre un signal à la fin de la séance"
 
-#: data/ui/timer_view.blp:596
+#: data/ui/timer_view.blp:609
 msgid "Box Breath cues"
 msgstr "Signaux de respiration carrée"
 
-#: data/ui/timer_view.blp:599
+#: data/ui/timer_view.blp:612
 msgid "Cues during phases"
 msgstr "Signaux pendant les phases"
 
-#: data/ui/timer_view.blp:600
+#: data/ui/timer_view.blp:613
 msgid "Different cue per phase to feel the cycle"
 msgstr "Un signal différent par phase pour ressentir le cycle"
 
-#: data/ui/timer_view.blp:653
+#: data/ui/timer_view.blp:666
 msgid "Hold (in)"
 msgstr "Retenir (plein)"
 
-#: data/ui/timer_view.blp:749
+#: data/ui/timer_view.blp:762
 msgid "Hold (out)"
 msgstr "Retenir (vide)"
 
@@ -2398,6 +2528,9 @@ msgstr ""
 msgid "Initial release."
 msgstr "Première version."
 
+#~ msgid "Manage Files"
+#~ msgstr "Gérer les fichiers"
+
 #~ msgid "Wait for sync — some bell sounds are missing"
 #~ msgstr "Attendez la synchro — sons de cloche manquants"
 
@@ -2424,9 +2557,6 @@ msgstr "Première version."
 
 #~ msgid "End sound"
 #~ msgstr "Son de fin"
-
-#~ msgid "Sound file"
-#~ msgstr "Fichier audio"
 
 #~ msgid "Vibrate on session end"
 #~ msgstr "Vibrer à la fin de la séance"

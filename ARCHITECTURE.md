@@ -68,6 +68,13 @@ and a delete wins a tie with a mutate, so insert and delete arriving
 out of order still end deleted. A peer can drop the cache and
 rebuild it from the log at any time.
 
+One table is not a cache and writes no events: `local_guided_files`,
+the Guided Local Folder's files (length, star, play count) on this
+device only, with the chosen folder in the local-only `sync_state`
+under `local_guided_folder`. Wipe Local keeps both, and no row is
+ever deleted, so a file that goes away for a while keeps its star
+and plays.
+
 Device-local tables that never sync: `device`, `sync_state` (account,
 cursors, cache version), the `known_remote_*` trackers and
 `session_in_progress` (see "Crash resilience"). The diagnostics log

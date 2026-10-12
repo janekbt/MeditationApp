@@ -343,8 +343,8 @@ msgstr "MINUTEN / WOCHE"
 msgid "Manage Bells"
 msgstr "Glocken verwalten"
 
-msgid "Manage Files"
-msgstr "Dateien verwalten"
+msgid "Manage Imports"
+msgstr "Importe verwalten"
 
 msgid "Manage Presets"
 msgstr "Verwalten"
@@ -583,8 +583,8 @@ msgstr "Sitzung taggen"
 msgid "Tap Open File or pick from list below"
 msgstr "Tippe auf „Datei öffnen“ oder wähle unten aus der Liste"
 
-msgid "Tap Open File then Import File, or star a file in Manage Files"
-msgstr "Tippe auf „Datei öffnen“, dann „Datei importieren“ – oder markiere eine Datei unter „Dateien verwalten“"
+msgid "Tap Open File then Import File, or star a file in Manage Imports"
+msgstr "Tippe auf „Datei öffnen“, dann „Datei importieren“, oder markiere eine Datei unter „Importe verwalten“"
 
 msgid "Test connection"
 msgstr "Verbindung testen"
@@ -1036,3 +1036,103 @@ msgstr "{0}: vom Server abgelehnt ({1})"
 
 msgid "No password saved, tap to enter it"
 msgstr "Kein Passwort gespeichert, zum Eingeben tippen"
+
+msgid "Local folder"
+msgstr "Lokaler Ordner"
+
+msgid "Local Folder"
+msgstr "Lokaler Ordner"
+
+msgid "Local file"
+msgstr "Lokale Datei"
+
+msgid "not found"
+msgstr "nicht gefunden"
+
+msgid "File not found in the local folder"
+msgstr "Datei im lokalen Ordner nicht gefunden"
+
+msgid "Reading length"
+msgstr "Länge wird gelesen"
+
+msgid "length not read yet"
+msgstr "Länge noch nicht gelesen"
+
+msgid "never played"
+msgstr "nie abgespielt"
+
+msgid "played {n} time"
+msgid_plural "played {n} times"
+msgstr[0] "{n}-mal abgespielt"
+msgstr[1] "{n}-mal abgespielt"
+
+msgid "{n} folder"
+msgid_plural "{n} folders"
+msgstr[0] "{n} Ordner"
+msgstr[1] "{n} Ordner"
+
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} Datei"
+msgstr[1] "{n} Dateien"
+
+
+msgid "Couldn't read audio file"
+msgstr "Audiodatei konnte nicht gelesen werden"
+
+msgid "Unstar"
+msgstr "Stern entfernen"
+
+msgid "Star"
+msgstr "Mit Stern markieren"
+
+msgid "No local folder"
+msgstr "Kein lokaler Ordner"
+
+msgid "Choose a folder of guided meditations. Meditate plays the files where they are and doesn't copy them. They stay on this phone and don't sync."
+msgstr "Wähle einen Ordner mit geführten Meditationen. Meditate spielt die Dateien dort ab, wo sie liegen, und kopiert sie nicht. Sie bleiben auf diesem Telefon und werden nicht synchronisiert."
+
+msgid "Choose Folder"
+msgstr "Ordner wählen"
+
+msgid "Refresh"
+msgstr "Aktualisieren"
+
+msgid "Folder not reachable"
+msgstr "Ordner nicht erreichbar"
+
+msgid "Choose Again"
+msgstr "Erneut wählen"
+
+msgid "Folder"
+msgstr "Ordner"
+
+msgid "Change"
+msgstr "Ändern"
+
+msgid "Folders"
+msgstr "Ordner"
+
+msgid "List"
+msgstr "Liste"
+
+msgid "Sort by"
+msgstr "Sortieren nach"
+
+msgid "Length"
+msgstr "Länge"
+
+msgid "Most played"
+msgstr "Am häufigsten gespielt"
+
+msgid "Least played"
+msgstr "Am seltensten gespielt"
+
+msgid "No audio files in this folder"
+msgstr "Keine Audiodateien in diesem Ordner"
+
+msgid "reading {}/{}"
+msgstr "lese {}/{}"
+
+msgid "Couldn't open the folder picker"
+msgstr "Ordnerauswahl konnte nicht geöffnet werden"

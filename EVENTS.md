@@ -392,6 +392,11 @@ pattern uuid.
 
 Recompute: `recompute_guided_file`. `target_id` is the file uuid.
 
+Files in a Guided Local Folder are not guided files and write no
+event: their stars, lengths and play counts stay on the device. A
+session played from one syncs with `guided_file_uuid` null, like an
+Open File pick.
+
 ### `guided_file_insert` / `guided_file_update`
 
 ```json
@@ -414,7 +419,7 @@ Recompute: `recompute_guided_file`. `target_id` is the file uuid.
 - `duration_secs`: decoded once at import; cached so the Setup
   view doesn't re-decode on every render.
 - `is_starred`: starred files are listed directly on the Setup
-  Guided list; unstarred ones appear only in Manage Files.
+  Guided list; unstarred ones appear only in Manage Imports.
 
 ### `guided_file_delete`
 

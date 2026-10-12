@@ -73,7 +73,20 @@ pub struct GuidedFilePick {
     pub source_path: PathBuf,
     /// Duration in whole seconds, probed via gstreamer playbin.
     /// Drives the hero countdown the moment the row populates.
+    /// 0 for a local-folder file whose length is still being read.
     pub duration_secs: u32,
+    /// Set for a file from the Local Folder: its row, whose play a
+    /// saved session counts.
+    pub local_file_id: Option<i64>,
+    /// The Local Folder file's folder, shown on the current file.
+    pub folder: Option<String>,
+}
+
+impl GuidedFilePick {
+    /// A Local Folder file whose length is not known yet: Start waits.
+    pub fn reading_length(&self) -> bool {
+        self.local_file_id.is_some() && self.duration_secs == 0
+    }
 }
 
 // ── 1. Open File picker ──────────────────────────────────────────────
@@ -137,6 +150,8 @@ pub fn pick_file_for_open(
                     display_name,
                     source_path: path,
                     duration_secs,
+                    local_file_id: None,
+                    folder: None,
                 });
             }
             Err(AudioFileError::NoAudioTrack) => add_toast_to_window(
@@ -565,7 +580,7 @@ pub fn push_guided_files_chooser<F>(
 
     let page = adw::NavigationPage::builder()
         .tag("guided-files")
-        .title(gettext("Manage Files"))
+        .title(gettext("Manage Imports"))
         .child(&toolbar)
         .build();
 

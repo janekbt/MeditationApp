@@ -42,6 +42,7 @@ mod events;
 mod guided_files;
 mod interval_bells;
 mod known_remote;
+pub(crate) mod local_guided_files;
 mod labels;
 mod local_changes;
 mod presets;
@@ -65,6 +66,11 @@ pub use guided_files::{
     is_guided_file_name_taken_from_db, list_guided_files_from_db, GuidedFile,
 };
 pub use interval_bells::{IntervalBell, IntervalBellKind};
+pub use local_guided_files::{
+    find_local_file_from_db, list_local_files_from_db, list_starred_local_files_from_db,
+    local_folder_from_db, walk_folder, FolderScan, LocalGuidedFile,
+    ScannedFile,
+};
 // Domain enums whose persisted-string mapping lives with the type
 // definition in the domain module. Re-exported here so the `db`
 // API surface stays stable across the promotion pass.

@@ -285,8 +285,21 @@ template $TimerView : Gtk.Widget {
 
               // Manage Files — pushes the chooser NavigationPage
               // built in src/guided.rs::push_guided_files_chooser.
-              Gtk.Button manage_guided_files_btn {
-                label: _("Manage Files");
+              // [Manage Files] [Local Folder]: the library, and the
+              // user's own folder played in place (src/local_folder.rs).
+              Gtk.Box {
+                orientation: horizontal;
+                spacing: 8;
+                homogeneous: true;
+                halign: fill;
+
+                Gtk.Button manage_guided_files_btn {
+                  label: _("Manage Imports");
+                }
+
+                Gtk.Button local_folder_btn {
+                  label: _("Local Folder");
+                }
               }
             };
           }

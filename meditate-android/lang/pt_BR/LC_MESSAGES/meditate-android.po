@@ -430,8 +430,8 @@ msgstr "MINUTOS / SEMANA"
 msgid "Manage Bells"
 msgstr "Gerenciar sinos"
 
-msgid "Manage Files"
-msgstr "Gerenciar arquivos"
+msgid "Manage Imports"
+msgstr "Gerenciar importações"
 
 msgid "Manage Presets"
 msgstr "Gerenciar"
@@ -607,8 +607,8 @@ msgstr "Rotule esta sessão"
 msgid "Tap Open File or pick from list below"
 msgstr "Toque em Abrir arquivo ou escolha na lista"
 
-msgid "Tap Open File then Import File, or star a file in Manage Files"
-msgstr "Toque em Abrir arquivo e depois em Importar arquivo, ou favorite um arquivo em Gerenciar arquivos"
+msgid "Tap Open File then Import File, or star a file in Manage Imports"
+msgstr "Toque em Abrir arquivo e depois em Importar arquivo, ou marque um arquivo com estrela em Gerenciar importações"
 
 msgid "Test connection"
 msgstr "Testar conexão"
@@ -1036,3 +1036,103 @@ msgstr "{0}: recusado pelo servidor ({1})"
 
 msgid "No password saved, tap to enter it"
 msgstr "Nenhuma senha salva, toque para digitá-la"
+
+msgid "Local folder"
+msgstr "Pasta local"
+
+msgid "Local Folder"
+msgstr "Pasta local"
+
+msgid "Local file"
+msgstr "Arquivo local"
+
+msgid "not found"
+msgstr "não encontrado"
+
+msgid "File not found in the local folder"
+msgstr "Arquivo não encontrado na pasta local"
+
+msgid "Reading length"
+msgstr "Lendo duração"
+
+msgid "length not read yet"
+msgstr "duração ainda não lida"
+
+msgid "never played"
+msgstr "nunca reproduzido"
+
+msgid "played {n} time"
+msgid_plural "played {n} times"
+msgstr[0] "reproduzido {n} vez"
+msgstr[1] "reproduzido {n} vezes"
+
+msgid "{n} folder"
+msgid_plural "{n} folders"
+msgstr[0] "{n} pasta"
+msgstr[1] "{n} pastas"
+
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} arquivo"
+msgstr[1] "{n} arquivos"
+
+
+msgid "Couldn't read audio file"
+msgstr "Não foi possível ler o arquivo de áudio"
+
+msgid "Unstar"
+msgstr "Remover estrela"
+
+msgid "Star"
+msgstr "Marcar com estrela"
+
+msgid "No local folder"
+msgstr "Nenhuma pasta local"
+
+msgid "Choose a folder of guided meditations. Meditate plays the files where they are and doesn't copy them. They stay on this phone and don't sync."
+msgstr "Escolha uma pasta de meditações guiadas. O Meditate reproduz os arquivos onde estão e não os copia. Eles ficam neste celular e não são sincronizados."
+
+msgid "Choose Folder"
+msgstr "Escolher pasta"
+
+msgid "Refresh"
+msgstr "Atualizar"
+
+msgid "Folder not reachable"
+msgstr "Pasta inacessível"
+
+msgid "Choose Again"
+msgstr "Escolher de novo"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "Change"
+msgstr "Alterar"
+
+msgid "Folders"
+msgstr "Pastas"
+
+msgid "List"
+msgstr "Lista"
+
+msgid "Sort by"
+msgstr "Ordenar por"
+
+msgid "Length"
+msgstr "Duração"
+
+msgid "Most played"
+msgstr "Mais reproduzidos"
+
+msgid "Least played"
+msgstr "Menos reproduzidos"
+
+msgid "No audio files in this folder"
+msgstr "Nenhum arquivo de áudio nesta pasta"
+
+msgid "reading {}/{}"
+msgstr "lendo {}/{}"
+
+msgid "Couldn't open the folder picker"
+msgstr "Não foi possível abrir o seletor de pastas"

@@ -430,8 +430,8 @@ msgstr "МИНУТЫ / НЕДЕЛЯ"
 msgid "Manage Bells"
 msgstr "Управление колоколами"
 
-msgid "Manage Files"
-msgstr "Управление файлами"
+msgid "Manage Imports"
+msgstr "Управление импортом"
 
 msgid "Manage Presets"
 msgstr "Управлять"
@@ -607,8 +607,8 @@ msgstr "Отметьте эту сессию"
 msgid "Tap Open File or pick from list below"
 msgstr "Нажмите «Открыть файл» или выберите из списка"
 
-msgid "Tap Open File then Import File, or star a file in Manage Files"
-msgstr "Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в избранное в «Управлении файлами»"
+msgid "Tap Open File then Import File, or star a file in Manage Imports"
+msgstr "Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в избранное в разделе «Управление импортом»"
 
 msgid "Test connection"
 msgstr "Проверить соединение"
@@ -1059,3 +1059,106 @@ msgstr "{0}: сервер отклонил файл ({1})"
 
 msgid "No password saved, tap to enter it"
 msgstr "Пароль не сохранён, нажмите, чтобы ввести его"
+
+msgid "Local folder"
+msgstr "Локальная папка"
+
+msgid "Local Folder"
+msgstr "Локальная папка"
+
+msgid "Local file"
+msgstr "Локальный файл"
+
+msgid "not found"
+msgstr "не найден"
+
+msgid "File not found in the local folder"
+msgstr "Файл не найден в локальной папке"
+
+msgid "Reading length"
+msgstr "Чтение длительности"
+
+msgid "length not read yet"
+msgstr "длительность ещё не прочитана"
+
+msgid "never played"
+msgstr "ни разу не прослушано"
+
+msgid "played {n} time"
+msgid_plural "played {n} times"
+msgstr[0] "прослушано {n} раз"
+msgstr[1] "прослушано {n} раза"
+msgstr[2] "прослушано {n} раз"
+
+msgid "{n} folder"
+msgid_plural "{n} folders"
+msgstr[0] "{n} папка"
+msgstr[1] "{n} папки"
+msgstr[2] "{n} папок"
+
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} файл"
+msgstr[1] "{n} файла"
+msgstr[2] "{n} файлов"
+
+
+msgid "Couldn't read audio file"
+msgstr "Не удалось прочитать аудиофайл"
+
+msgid "Unstar"
+msgstr "Убрать из избранного"
+
+msgid "Star"
+msgstr "Добавить в избранное"
+
+msgid "No local folder"
+msgstr "Нет локальной папки"
+
+msgid "Choose a folder of guided meditations. Meditate plays the files where they are and doesn't copy them. They stay on this phone and don't sync."
+msgstr "Выберите папку с медитациями. Meditate воспроизводит файлы там, где они лежат, и не копирует их. Они остаются на этом телефоне и не синхронизируются."
+
+msgid "Choose Folder"
+msgstr "Выбрать папку"
+
+msgid "Refresh"
+msgstr "Обновить"
+
+msgid "Folder not reachable"
+msgstr "Папка недоступна"
+
+msgid "Choose Again"
+msgstr "Выбрать снова"
+
+msgid "Folder"
+msgstr "Папка"
+
+msgid "Change"
+msgstr "Изменить"
+
+msgid "Folders"
+msgstr "Папки"
+
+msgid "List"
+msgstr "Список"
+
+msgid "Sort by"
+msgstr "Сортировка"
+
+msgid "Length"
+msgstr "Длительность"
+
+msgid "Most played"
+msgstr "Чаще всего"
+
+msgid "Least played"
+msgstr "Реже всего"
+
+msgid "No audio files in this folder"
+msgstr "В этой папке нет аудиофайлов"
+
+msgid "reading {}/{}"
+msgstr "чтение {}/{}"
+
+msgid "Couldn't open the folder picker"
+msgstr "Не удалось открыть выбор папки"

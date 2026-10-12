@@ -130,6 +130,17 @@ impl MeditateWindow {
         );
     }
 
+    /// Push the Guided Local Folder page; `on_pick` gets the tapped file.
+    pub fn push_local_folder_page(
+        &self,
+        app: &crate::application::MeditateApplication,
+        on_pick: std::rc::Rc<dyn Fn(crate::guided::GuidedFilePick)>,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        clear_focus_before_push(self);
+        crate::local_folder::push_page(&self.imp().nav_view, app, on_pick);
+    }
+
     /// Push the guided-meditation Manage Files chooser. Triggered by
     /// the timer Setup view's Manage Files button under Guided mode.
     /// `on_changed` fires after every DB write inside the chooser

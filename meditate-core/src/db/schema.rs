@@ -325,5 +325,20 @@ pub(super) fn schema() -> String {
         label_id         INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         guided_file_uuid TEXT
     );
+    -- Guided audio in a folder the user manages outside the app.
+    -- Device-local: no events, kept by Wipe Local, rows never deleted
+    -- (a missing file keeps its star and plays until it returns).
+    CREATE TABLE IF NOT EXISTS local_guided_files (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        root          TEXT    NOT NULL,
+        rel_path      TEXT    NOT NULL,
+        size          INTEGER NOT NULL,
+        mtime         INTEGER NOT NULL,
+        duration_secs INTEGER,
+        is_starred    INTEGER NOT NULL DEFAULT 0,
+        play_count    INTEGER NOT NULL DEFAULT 0,
+        missing       INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (root, rel_path)
+    );
 ")
 }

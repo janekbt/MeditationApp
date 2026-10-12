@@ -108,6 +108,7 @@ pub struct TimerView {
     #[template_child] pub import_file_btn:        TemplateChild<gtk::Button>,
     #[template_child] pub guided_files_group:     TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub manage_guided_files_btn: TemplateChild<gtk::Button>,
+    #[template_child] pub local_folder_btn:      TemplateChild<gtk::Button>,
     #[template_child] pub phase_tiles_grid:       TemplateChild<gtk::Grid>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
@@ -288,7 +289,7 @@ pub struct TimerView {
     /// Starred guided-file rows currently attached to the home-list
     /// group. Same shape as `starred_preset_rows` so the rebuild path
     /// can drain and re-add cleanly without leaking rows.
-    starred_guided_rows: RefCell<Vec<(adw::ActionRow, String)>>,
+    starred_guided_rows: RefCell<Vec<adw::ActionRow>>,
     /// Active gst playbin instance during a Guided session. Set by
     /// `start_session`'s Guided arm, paused/resumed alongside the
     /// hero countdown, and torn down (Drop runs set_state(Null) +
@@ -597,6 +598,8 @@ impl TimerView {
                                 row.uuid.as_str(),
                             ),
                             duration_secs: row.duration_secs,
+                            local_file_id: None,
+                            folder: None,
                         });
                         imp.rebuild_starred_guided_list();
                         imp.refresh_guided_selected_row();
@@ -624,6 +627,31 @@ impl TimerView {
                 );
             },
         ));
+
+        // Local Folder: browse the user's own folder; a tapped file
+        // becomes the current file, played in place.
+        self.local_folder_btn.connect_clicked(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_downcast::<crate::window::MeditateWindow>()
+                else { return; };
+                let this_for_pick = this.clone();
+                window.push_local_folder_page(&app, std::rc::Rc::new(move |pick| {
+                    this_for_pick.imp().select_local_pick(pick);
+                }));
+            },
+        ));
+        // A scan or a length read: refresh Starred Files, and finish a
+        // pick that was waiting for its length.
+        let weak = obj.downgrade();
+        crate::local_folder::on_change(move || {
+            let Some(this) = weak.upgrade() else { return false };
+            this.imp().on_local_folder_change();
+            true
+        });
 
         // ── Done-page label expander ────────────────────────────────
         // Per-session pick. Initialized in show_done from the Setup
@@ -1853,6 +1881,9 @@ impl TimerView {
         if mode == TimerMode::Guided {
             self.rebuild_starred_guided_list();
             self.refresh_guided_selected_row();
+            if let Some(app) = self.get_app() {
+                crate::local_folder::scan(&app);
+            }
         } else {
             self.rebuild_starred_presets_list();
         }
@@ -1925,6 +1956,7 @@ impl TimerView {
     /// in core so the Android shell consults the same source.
     fn apply_setup_visibility(&self, mode: TimerMode) {
         let v = meditate_core::preset_config::setup_visibility(mode.into());
+        self.refresh_start_sensitive(mode);
         self.countdown_inputs.set_visible(v.countdown);
         self.boxbreath_inputs.set_visible(v.boxbreath);
         self.guided_section.set_visible(v.guided);
@@ -2440,6 +2472,12 @@ impl TimerView {
             note,
             guided_file_uuid,
         };
+        // A file from the Local Folder: the save counts its play.
+        let local_file_id = if mode == TimerMode::Guided {
+            self.guided_pick.borrow().as_ref().and_then(|p| p.local_file_id)
+        } else {
+            None
+        };
 
         // Record the user's pick as the new persisted default for
         // this mode — covers the case where they changed the
@@ -2475,7 +2513,7 @@ impl TimerView {
             let obj = self.obj().clone();
             glib::MainContext::default().spawn_local(async move {
                 let result = app
-                    .with_db_blocking_mut(move |db| db.save_ended_session(&data))
+                    .with_db_blocking_mut(move |db| db.save_ended_session(&data, local_file_id))
                     .await;
                 obj.imp().saving.set(false);
                 let session = match result {
@@ -3343,21 +3381,18 @@ impl TimerView {
     /// stashes the uuid in `guided_selected_uuid` so the session-save
     /// path can record per-file attribution.
     pub fn rebuild_starred_guided_list(&self) {
-        for (row, _) in self.starred_guided_rows.borrow_mut().drain(..) {
+        for row in self.starred_guided_rows.borrow_mut().drain(..) {
             self.guided_files_group.remove(&row);
         }
 
         let app_opt = self.get_app();
-        let files = app_opt
+        let starred = app_opt
             .as_ref()
-            .and_then(|app| app.with_db(super::super::db::Database::list_guided_files))
+            .and_then(|app| app.with_db(|db| meditate_core::local_folder::starred_guided_from_db(db.core())))
             .and_then(std::result::Result::ok)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|f| f.is_starred)
-            .collect::<Vec<_>>();
+            .unwrap_or_default();
 
-        if files.is_empty() {
+        if starred.is_empty() {
             // Empty-state row inside the group keeps the section
             // visually tall enough that the [Open / Import] buttons
             // above don't feel cramped against the group title.
@@ -3365,56 +3400,118 @@ impl TimerView {
             let row = adw::ActionRow::builder()
                 .title(gettext("No starred files"))
                 .subtitle(gettext(
-                    "Tap Open File then Import File, or star a file in Manage Files",
+                    "Tap Open File then Import File, or star a file in Manage Imports",
                 ))
                 .activatable(false)
                 .selectable(false)
                 .build();
             row.add_css_class("dim-label");
             self.guided_files_group.add(&row);
-            self.starred_guided_rows.borrow_mut().push((row, String::new()));
+            self.starred_guided_rows.borrow_mut().push(row);
             return;
         }
 
-        let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(files.len());
-        for f in &files {
-            let row = adw::ActionRow::builder()
-                .title(&f.name)
-                .subtitle(crate::guided::format_duration_brief(f.duration_secs))
-                .activatable(true)
-                .build();
-            // Star prefix (always on for the home-list — destarring
-            // happens via Manage Files).
+        let mut tracked: Vec<adw::ActionRow> = Vec::with_capacity(starred.len());
+        for entry in starred {
+            let row = match entry {
+                meditate_core::local_folder::StarredGuided::Library(f) => self.starred_library_row(f),
+                meditate_core::local_folder::StarredGuided::Local { file, found } => {
+                    self.starred_local_row(file, found)
+                }
+            };
+            self.guided_files_group.add(&row);
+            tracked.push(row);
+        }
+        *self.starred_guided_rows.borrow_mut() = tracked;
+    }
+
+    /// A starred library file: tap makes it the current file.
+    fn starred_library_row(&self, f: crate::db::GuidedFile) -> adw::ActionRow {
+        let row = adw::ActionRow::builder()
+            .title(glib::markup_escape_text(&f.name))
+            .subtitle(crate::guided::format_duration_brief(f.duration_secs))
+            .activatable(true)
+            .build();
+        // Star prefix (always on for the home-list — destarring
+        // happens via Manage Files).
+        let star = gtk::Image::from_icon_name("starred-symbolic");
+        star.add_css_class("preset-star-on");
+        row.add_prefix(&star);
+
+        let uuid = f.uuid.0.clone();
+        let path = meditate_core::audio_files::guided_file_path(
+            &crate::sync_runner::local_guided_dir(),
+            f.uuid.as_str(),
+        );
+        let obj = self.obj().clone();
+        row.connect_activated(move |_| {
+            let imp = obj.imp();
+            // Promote this starred row into the Selected slot and
+            // record its uuid for the session-save path.
+            *imp.guided_selected_uuid.borrow_mut() = Some(uuid.clone());
+            *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
+                display_name: f.name.clone(),
+                source_path: path.clone(),
+                duration_secs: f.duration_secs,
+                local_file_id: None,
+                folder: None,
+            });
+            imp.refresh_guided_selected_row();
+            imp.refresh_hero_for_idle();
+        });
+        row
+    }
+
+    /// A starred Local Folder file. One the last scan did not find is
+    /// highlighted, can't be picked, and can be unstarred right here.
+    fn starred_local_row(
+        &self,
+        file: meditate_core::db::LocalGuidedFile,
+        found: bool,
+    ) -> adw::ActionRow {
+        let detail = if found {
+            crate::local_folder::length_text(file.duration_secs)
+        } else {
+            gettext("not found")
+        };
+        let row = adw::ActionRow::builder()
+            .title(glib::markup_escape_text(meditate_core::local_folder::file_name(&file.rel_path)))
+            .subtitle(glib::markup_escape_text(&format!("{} · {detail}", gettext("Local file"))))
+            .activatable(true)
+            .build();
+        let Some(app) = self.get_app() else { return row };
+        if found {
             let star = gtk::Image::from_icon_name("starred-symbolic");
             star.add_css_class("preset-star-on");
             row.add_prefix(&star);
-
-            let uuid = f.uuid.0.clone();
-            let name = f.name.clone();
-            let path = meditate_core::audio_files::guided_file_path(
-                &crate::sync_runner::local_guided_dir(),
-                f.uuid.as_str(),
-            );
-            let duration_secs = f.duration_secs;
             let obj = self.obj().clone();
             row.connect_activated(move |_| {
-                let imp = obj.imp();
-                // Promote this starred row into the Selected slot and
-                // record its uuid for the session-save path.
-                *imp.guided_selected_uuid.borrow_mut() = Some(uuid.clone());
-                *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
-                    display_name: name.clone(),
-                    source_path: path.clone(),
-                    duration_secs,
-                });
-                imp.refresh_guided_selected_row();
-                imp.refresh_hero_for_idle();
+                obj.imp().select_local_pick(crate::local_folder::pick_for(&app, &file));
             });
-
-            self.guided_files_group.add(&row);
-            tracked.push((row, f.uuid.0.clone()));
+            return row;
         }
-        *self.starred_guided_rows.borrow_mut() = tracked;
+        row.add_css_class("warning");
+        row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+        let unstar = gtk::Button::builder()
+            .icon_name("starred-symbolic")
+            .tooltip_text(gettext("Unstar"))
+            .valign(gtk::Align::Center)
+            .css_classes(["flat", "preset-star-on"])
+            .build();
+        let (id, app_for_unstar) = (file.id, app.clone());
+        let obj = self.obj().clone();
+        unstar.connect_clicked(move |_| {
+            crate::local_folder::save(&app_for_unstar, |db| db.set_local_file_starred(id, false));
+            obj.imp().rebuild_starred_guided_list();
+        });
+        row.add_suffix(&unstar);
+        let obj = self.obj().clone();
+        row.connect_activated(move |_| {
+            if let Some(window) = obj.root().and_downcast::<crate::window::MeditateWindow>() {
+                window.add_toast(adw::Toast::new(&gettext("File not found in the local folder")));
+            }
+        });
+        row
     }
 
     /// Update the Selected row's title/subtitle from the current
@@ -3426,9 +3523,18 @@ impl TimerView {
         let has_pick = self.guided_pick.borrow().is_some();
         match self.guided_pick.borrow().as_ref() {
             Some(pick) => {
-                self.guided_selected_row.set_title(&pick.display_name);
-                self.guided_selected_row
-                    .set_subtitle(&crate::guided::format_duration_brief(pick.duration_secs));
+                self.guided_selected_row.set_title(&glib::markup_escape_text(&pick.display_name));
+                let length = if pick.reading_length() {
+                    gettext("Reading length")
+                } else {
+                    crate::guided::format_duration_brief(pick.duration_secs)
+                };
+                let subtitle = match pick.folder.as_deref() {
+                    None => length,
+                    Some("") => format!("{} · {length}", gettext("Local folder")),
+                    Some(folder) => format!("{} · {folder} · {length}", gettext("Local folder")),
+                };
+                self.guided_selected_row.set_subtitle(&glib::markup_escape_text(&subtitle));
                 self.guided_selected_row.remove_css_class("dim-label");
             }
             None => {
@@ -3449,8 +3555,62 @@ impl TimerView {
         // Import button is greyed when there's no transient pick OR
         // when the current pick is already a starred library row
         // (selected_uuid Some → already imported).
+        // Local Folder files are played in place, not imported.
+        let local = self.guided_pick.borrow().as_ref().is_some_and(|p| p.local_file_id.is_some());
         let has_transient = has_pick && self.guided_selected_uuid.borrow().is_none();
-        self.import_file_btn.set_sensitive(has_transient);
+        self.import_file_btn.set_sensitive(has_transient && !local);
+        self.refresh_start_sensitive(self.current_mode());
+    }
+
+    /// Start waits while a Local Folder file's length is being read.
+    fn refresh_start_sensitive(&self, mode: TimerMode) {
+        let reading = mode == TimerMode::Guided
+            && self.guided_pick.borrow().as_ref().is_some_and(|p| p.reading_length());
+        self.start_btn.set_sensitive(!reading);
+    }
+
+    /// Make a Local Folder file the current file.
+    pub fn select_local_pick(&self, pick: crate::guided::GuidedFilePick) {
+        *self.guided_selected_uuid.borrow_mut() = None;
+        *self.guided_pick.borrow_mut() = Some(pick);
+        self.refresh_guided_selected_row();
+        self.refresh_hero_for_idle();
+    }
+
+    /// After a Local Folder scan or length read.
+    fn on_local_folder_change(&self) {
+        if self.current_mode() == TimerMode::Guided {
+            self.rebuild_starred_guided_list();
+        }
+        let waiting = self
+            .guided_pick
+            .borrow()
+            .as_ref()
+            .filter(|p| p.reading_length())
+            .and_then(|p| p.local_file_id);
+        let Some(id) = waiting else { return };
+        let Some(app) = self.get_app() else { return };
+        if crate::local_folder::length_failed(id) {
+            *self.guided_pick.borrow_mut() = None;
+            self.refresh_guided_selected_row();
+            self.refresh_hero_for_idle();
+            if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
+                window.add_toast(adw::Toast::new(&gettext("Couldn't read audio file")));
+            }
+            return;
+        }
+        let secs = app
+            .with_db(|db| meditate_core::db::find_local_file_from_db(db.core(), id))
+            .and_then(Result::ok)
+            .flatten()
+            .and_then(|f| f.duration_secs);
+        if let Some(secs) = secs {
+            if let Some(pick) = self.guided_pick.borrow_mut().as_mut() {
+                pick.duration_secs = secs;
+            }
+            self.refresh_guided_selected_row();
+            self.refresh_hero_for_idle();
+        }
     }
 
     /// Snapshot the live Setup state into a `PresetConfig`. Reads

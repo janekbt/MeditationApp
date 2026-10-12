@@ -61,6 +61,7 @@ pub mod format;
 pub mod goal;
 pub mod insights;
 pub mod labels;
+pub mod local_folder;
 pub mod naming;
 pub mod preset_config;
 pub mod preview;

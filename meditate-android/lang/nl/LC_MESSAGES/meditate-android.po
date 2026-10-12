@@ -430,8 +430,8 @@ msgstr "MINUTEN / WEEK"
 msgid "Manage Bells"
 msgstr "Bellen beheren"
 
-msgid "Manage Files"
-msgstr "Bestanden beheren"
+msgid "Manage Imports"
+msgstr "Importen beheren"
 
 msgid "Manage Presets"
 msgstr "Beheren"
@@ -607,8 +607,8 @@ msgstr "Label deze sessie"
 msgid "Tap Open File or pick from list below"
 msgstr "Tik op Bestand openen of kies uit de lijst"
 
-msgid "Tap Open File then Import File, or star a file in Manage Files"
-msgstr "Tik op Bestand openen en dan Bestand importeren, of markeer een bestand als favoriet in Bestanden beheren"
+msgid "Tap Open File then Import File, or star a file in Manage Imports"
+msgstr "Tik op Bestand openen en dan Bestand importeren, of geef een bestand een ster in Importen beheren"
 
 msgid "Test connection"
 msgstr "Verbinding testen"
@@ -1036,3 +1036,103 @@ msgstr "{0}: geweigerd door de server ({1})"
 
 msgid "No password saved, tap to enter it"
 msgstr "Geen wachtwoord opgeslagen, tik om het in te voeren"
+
+msgid "Local folder"
+msgstr "Lokale map"
+
+msgid "Local Folder"
+msgstr "Lokale map"
+
+msgid "Local file"
+msgstr "Lokaal bestand"
+
+msgid "not found"
+msgstr "niet gevonden"
+
+msgid "File not found in the local folder"
+msgstr "Bestand niet gevonden in de lokale map"
+
+msgid "Reading length"
+msgstr "Lengte wordt gelezen"
+
+msgid "length not read yet"
+msgstr "lengte nog niet gelezen"
+
+msgid "never played"
+msgstr "nooit afgespeeld"
+
+msgid "played {n} time"
+msgid_plural "played {n} times"
+msgstr[0] "{n} keer afgespeeld"
+msgstr[1] "{n} keer afgespeeld"
+
+msgid "{n} folder"
+msgid_plural "{n} folders"
+msgstr[0] "{n} map"
+msgstr[1] "{n} mappen"
+
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} bestand"
+msgstr[1] "{n} bestanden"
+
+
+msgid "Couldn't read audio file"
+msgstr "Kan audiobestand niet lezen"
+
+msgid "Unstar"
+msgstr "Ster verwijderen"
+
+msgid "Star"
+msgstr "Ster geven"
+
+msgid "No local folder"
+msgstr "Geen lokale map"
+
+msgid "Choose a folder of guided meditations. Meditate plays the files where they are and doesn't copy them. They stay on this phone and don't sync."
+msgstr "Kies een map met geleide meditaties. Meditate speelt de bestanden af waar ze staan en kopieert ze niet. Ze blijven op deze telefoon en worden niet gesynchroniseerd."
+
+msgid "Choose Folder"
+msgstr "Map kiezen"
+
+msgid "Refresh"
+msgstr "Vernieuwen"
+
+msgid "Folder not reachable"
+msgstr "Map niet bereikbaar"
+
+msgid "Choose Again"
+msgstr "Opnieuw kiezen"
+
+msgid "Folder"
+msgstr "Map"
+
+msgid "Change"
+msgstr "Wijzigen"
+
+msgid "Folders"
+msgstr "Mappen"
+
+msgid "List"
+msgstr "Lijst"
+
+msgid "Sort by"
+msgstr "Sorteren op"
+
+msgid "Length"
+msgstr "Lengte"
+
+msgid "Most played"
+msgstr "Vaakst afgespeeld"
+
+msgid "Least played"
+msgstr "Minst afgespeeld"
+
+msgid "No audio files in this folder"
+msgstr "Geen audiobestanden in deze map"
+
+msgid "reading {}/{}"
+msgstr "lezen {}/{}"
+
+msgid "Couldn't open the folder picker"
+msgstr "Kan de mapkiezer niet openen"

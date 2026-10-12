@@ -42,7 +42,12 @@ object MeditateGuided {
             val mp = MediaPlayer()
             try {
                 mp.setAudioAttributes(attrs)
-                mp.setDataSource(path)
+                // A Local Folder file plays from its content address.
+                if (path.startsWith("content://")) {
+                    mp.setDataSource(context, android.net.Uri.parse(path))
+                } else {
+                    mp.setDataSource(path)
+                }
                 mp.setOnCompletionListener {
                     markEos(context)
                     synchronized(lock) { releaseLocked(context) }

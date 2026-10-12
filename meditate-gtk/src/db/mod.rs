@@ -718,10 +718,14 @@ impl Database {
     }
 
     /// Save a just-ended session and drop its recovery snapshot in
-    /// one write (see core's `insert_session_clearing_snapshot`).
-    pub fn save_ended_session(&self, data: &SessionData) -> Result<Session> {
+    /// one write, counting the play of its Local Folder file (see
+    /// core's `insert_session_counting_local_play`).
+    pub fn save_ended_session(&self, data: &SessionData, local_file_id: Option<i64>) -> Result<Session> {
         let core = session_data_to_core(data);
-        let (id, stored) = self.inner.insert_session_clearing_snapshot(&core).map_err(map_core_err)?;
+        let (id, stored) = self
+            .inner
+            .insert_session_counting_local_play(&core, local_file_id)
+            .map_err(map_core_err)?;
         Ok(session_from_core(id, &stored))
     }
 

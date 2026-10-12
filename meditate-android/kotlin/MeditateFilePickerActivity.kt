@@ -49,6 +49,14 @@ class MeditateFilePickerActivity : Activity() {
                         ?: "meditate-sessions.csv",
                 )
             }
+            // Guided Local Folder: a folder the user manages outside
+            // the app, read in place (meditate-android/src/local_folder.rs).
+            "folder" -> Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                )
+            }
             // CSV imports (DP): Meditate backup or Insight Timer
             // export. */* because CSV mime types are a mess across
             // file managers (text/csv, text/comma-separated-values,
@@ -106,6 +114,21 @@ class MeditateFilePickerActivity : Activity() {
             if (target == "export") {
                 intent.getStringExtra(EXTRA_SRC_PATH)?.let { runCatching { File(it).delete() } }
             }
+            finish()
+            return
+        }
+        if (target == "folder") {
+            // Keep read access across restarts; nothing is copied.
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }.onFailure { Log.w(TAG, "persist folder access failed: $it") }
+            MeditateDropFile.write(
+                File(File(filesDir, "meditate"), "local_folder_pick"),
+                uri.toString(),
+            )
             finish()
             return
         }
@@ -227,45 +250,51 @@ class MeditateFilePickerActivity : Activity() {
     // Second value: true iff the file opened but has no audio
     // track (a failed probe reports false — never block a file
     // the probe merely couldn't read).
-    private fun probe(f: File): Pair<Long, Boolean> {
-        val ex = MediaExtractor()
-        return try {
-            ex.setDataSource(f.absolutePath)
-            var bestUs = 0L
-            var sawAudio = false
-            for (i in 0 until ex.trackCount) {
-                val fmt = ex.getTrackFormat(i)
-                val mime = fmt.getString(MediaFormat.KEY_MIME)
-                if (mime?.startsWith("audio/") != true) continue
-                sawAudio = true
-                if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
-                    bestUs = maxOf(
-                        bestUs,
-                        fmt.getLong(MediaFormat.KEY_DURATION),
-                    )
-                }
-                ex.selectTrack(i)
-                var lastUs = 0L
-                while (true) {
-                    val t = ex.sampleTime
-                    if (t < 0) break
-                    lastUs = t
-                    if (!ex.advance()) break
-                }
-                bestUs = maxOf(bestUs, lastUs)
-                break
-            }
-            val secs = if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
-            Pair(secs, !sawAudio)
-        } catch (e: Exception) {
-            Log.w(TAG, "duration probe failed: $e")
-            Pair(0L, false)
-        } finally { ex.release() }
-    }
+    private fun probe(f: File): Pair<Long, Boolean> =
+        probeWith { it.setDataSource(f.absolutePath) }
 
     companion object {
         private const val TAG = "MeditateGuided"
         const val EXTRA_SRC_PATH = "src_path"
         const val EXTRA_SUGGESTED_NAME = "suggested_name"
+
+        // `probe` for any source: `setSource` points the extractor
+        // at a file path or a content address.
+        @JvmStatic
+        fun probeWith(setSource: (MediaExtractor) -> Unit): Pair<Long, Boolean> {
+            val ex = MediaExtractor()
+            return try {
+                setSource(ex)
+                var bestUs = 0L
+                var sawAudio = false
+                for (i in 0 until ex.trackCount) {
+                    val fmt = ex.getTrackFormat(i)
+                    val mime = fmt.getString(MediaFormat.KEY_MIME)
+                    if (mime?.startsWith("audio/") != true) continue
+                    sawAudio = true
+                    if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
+                        bestUs = maxOf(
+                            bestUs,
+                            fmt.getLong(MediaFormat.KEY_DURATION),
+                        )
+                    }
+                    ex.selectTrack(i)
+                    var lastUs = 0L
+                    while (true) {
+                        val t = ex.sampleTime
+                        if (t < 0) break
+                        lastUs = t
+                        if (!ex.advance()) break
+                    }
+                    bestUs = maxOf(bestUs, lastUs)
+                    break
+                }
+                val secs = if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
+                Pair(secs, !sawAudio)
+            } catch (e: Exception) {
+                Log.w(TAG, "duration probe failed: $e")
+                Pair(0L, false)
+            } finally { ex.release() }
+        }
     }
 }

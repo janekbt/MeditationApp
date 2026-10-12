@@ -156,6 +156,17 @@ impl Database {
     /// is saved as no note. Returns the new rowid and the row as
     /// stored.
     pub fn insert_session_clearing_snapshot(&self, session: &Session) -> Result<(i64, Session)> {
+        self.insert_session_counting_local_play(session, None)
+    }
+
+    /// `insert_session_clearing_snapshot` that also counts one play
+    /// of the local-folder file the session played, in the same
+    /// transaction.
+    pub fn insert_session_counting_local_play(
+        &self,
+        session: &Session,
+        local_file_id: Option<i64>,
+    ) -> Result<(i64, Session)> {
         let notes = super::sessions::note_or_none(&session.notes).map(str::to_owned);
         let session = Session { notes, ..session.clone() };
         let tx = self.conn.unchecked_transaction()?;
@@ -164,6 +175,12 @@ impl Database {
             "DELETE FROM session_in_progress WHERE id = 1 AND start_iso = ?1",
             [&session.start_iso],
         )?;
+        if let Some(id) = local_file_id {
+            self.conn.execute(
+                "UPDATE local_guided_files SET play_count = play_count + 1 WHERE id = ?1",
+                [id],
+            )?;
+        }
         tx.commit()?;
         Ok((rowid, Session { uuid: super::SessionUuid::new(uuid), ..session }))
     }

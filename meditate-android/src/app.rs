@@ -714,6 +714,65 @@ pub fn parse_csv_pick(raw: &str) -> Option<Result<(String, String), String>> {
     Some(Ok((first.to_string(), kind)))
 }
 
+/// The Local Folder walk as `MeditateLocalFolder.scan` drops it: "ok"
+/// then one `rel_path\tsize\tmtime` line per file, or "err" when the
+/// folder can't be read.
+pub fn parse_local_scan(raw: &str) -> meditate_core::db::FolderScan {
+    use meditate_core::db::{FolderScan, ScannedFile};
+    let mut lines = raw.lines();
+    if lines.next().map(str::trim) != Some("ok") {
+        return FolderScan::Unreachable;
+    }
+    FolderScan::Found(
+        lines
+            .filter_map(|line| {
+                let mut parts = line.split('\t');
+                let rel_path = parts.next()?.to_string();
+                let size = parts.next()?.trim().parse().ok()?;
+                let mtime = parts.next()?.trim().parse().ok()?;
+                Some(ScannedFile { rel_path, size, mtime })
+            })
+            .collect(),
+    )
+}
+
+/// Length results as `MeditateLocalFolder.readLengths` drops them:
+/// `id\tsecs` per line, 0 for a file it couldn't read (`None`).
+pub fn parse_local_lengths(raw: &str) -> Vec<(i64, Option<u32>)> {
+    raw.lines()
+        .filter_map(|line| {
+            let (id, secs) = line.split_once('\t')?;
+            let secs: u32 = secs.trim().parse().ok()?;
+            Some((id.trim().parse().ok()?, (secs > 0).then_some(secs)))
+        })
+        .collect()
+}
+
+/// The chosen folder's name from its tree address: the last part of
+/// the document id, `Meditations` in `.../tree/primary%3AMusic%2FMeditations`.
+pub fn tree_folder_name(tree: &str) -> String {
+    let encoded = tree.rsplit('/').next().unwrap_or(tree);
+    let mut bytes = Vec::with_capacity(encoded.len());
+    let raw = encoded.as_bytes();
+    let mut i = 0;
+    while i < raw.len() {
+        let hex = raw.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
+        match (raw[i], hex.and_then(|h| u8::from_str_radix(h, 16).ok())) {
+            (b'%', Some(byte)) => {
+                bytes.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                bytes.push(byte);
+                i += 1;
+            }
+        }
+    }
+    let doc_id = String::from_utf8_lossy(&bytes);
+    let doc_id = doc_id.trim_end_matches(['/', ':']);
+    doc_id.rsplit(['/', ':']).next().unwrap_or(doc_id).to_string()
+}
+
 /// Remove the import worker's per-run files (cancel flag, progress,
 /// result) from `dir`. At startup no run is waiting for them: an
 /// import that was interrupted left them behind.
@@ -768,6 +827,40 @@ impl Notice {
     /// Undo was tapped, or the notice timed out.
     pub fn take(&mut self) -> Option<PendingUndo> {
         self.0.take()
+    }
+}
+
+#[cfg(test)]
+mod local_folder_tests {
+    use super::*;
+    use meditate_core::db::{FolderScan, ScannedFile};
+
+    #[test]
+    fn a_scan_drop_becomes_the_folder_files() {
+        let scan = parse_local_scan("ok\nSleep/Body scan.ogg\t1200\t1700000000\nb.mp3\t5\t7\nbroken line\n");
+        assert_eq!(
+            scan,
+            FolderScan::Found(vec![
+                ScannedFile { rel_path: "Sleep/Body scan.ogg".into(), size: 1200, mtime: 1_700_000_000 },
+                ScannedFile { rel_path: "b.mp3".into(), size: 5, mtime: 7 },
+            ])
+        );
+        assert_eq!(parse_local_scan("ok\n"), FolderScan::Found(vec![]));
+        assert_eq!(parse_local_scan("err"), FolderScan::Unreachable);
+        assert_eq!(parse_local_scan(""), FolderScan::Unreachable);
+    }
+
+    #[test]
+    fn a_lengths_drop_gives_each_files_length() {
+        assert_eq!(parse_local_lengths("3\t600\n4\t0\nx\n"), vec![(3, Some(600)), (4, None)]);
+    }
+
+    #[test]
+    fn the_folder_name_comes_from_the_tree_address() {
+        let base = "content://com.android.externalstorage.documents/tree/";
+        assert_eq!(tree_folder_name(&format!("{base}primary%3AMusic%2FMeditations")), "Meditations");
+        assert_eq!(tree_folder_name(&format!("{base}primary%3AM%C3%BCsik")), "Müsik");
+        assert_eq!(tree_folder_name(&format!("{base}1234-ABCD%3A")), "1234-ABCD");
     }
 }
 
@@ -1165,13 +1258,13 @@ mod tests {
         // "Muster bearbeiten" pushed Save off the screen.
         assert!(header.contains("wrap: word-wrap;") && header.contains("min-width: 0;"), "a long title can't push Save away");
         for back in ["labels-back", "interval-bells-back", "bell-chooser-back", "pattern-chooser-back",
-            "preset-chooser-back", "guided-manage-back", "preferences-back", "diag-back"] {
+            "preset-chooser-back", "guided-manage-back", "preferences-back", "diag-back", "local-back"] {
             assert!(slint.contains(&format!("back => {{ root.{back}(); }}")), "{back}");
         }
         for cancel in ["edit-cancel-tap", "interval-editor-cancel", "vibration-editor-cancel"] {
             assert!(slint.contains(&format!("back => {{ root.{cancel}(); }}")), "{cancel}");
         }
-        assert_eq!(slint.matches("PageHeader {").count(), 11);
+        assert_eq!(slint.matches("PageHeader {").count(), 13);
         assert!(slint.contains("accessible-label: root.sync-indicator-tooltip;"));
     }
 
@@ -1902,13 +1995,13 @@ mod tests {
 
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
-        let first_play = code.find("guided::play(app, &sel.path)").expect("session start plays the track");
+        let first_play = code.find("guided::play(app, &source)").expect("session start plays the track");
         let session_start = code.find("AppState::start_session(").expect("session start");
         assert!(first_play < session_start, "the track starts before the session");
         let gate = &code[first_play..session_start];
         assert!(gate.contains("show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);"), "a failure says so");
         assert!(gate.contains("return;"), "and nothing starts");
-        assert_eq!(code.matches("guided::play(app, &sel.path)").count(), 1, "no second start after the session began");
+        assert_eq!(code.matches("guided::play(app, &source)").count(), 1, "no second start after the session began");
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("public pure function playback-failed() -> string { return @tr(\"Couldn't start playback\"); }"));
@@ -2072,7 +2165,7 @@ mod tests {
         assert!(text.contains("invoke_save_failed_storage()") && text.contains("invoke_save_failed_unavailable()"));
         assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
         // Saving clears the snapshot in the same write (core).
-        assert!(body.contains("insert_session_clearing_snapshot(&session)"), "cleared only once saved");
+        assert!(body.contains("insert_session_counting_local_play(&session, session_local_file())"), "cleared only once saved");
         assert!(!after[ok..err].contains("clear_session_in_progress_snapshot"), "no second clear");
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
@@ -2587,10 +2680,13 @@ mod tests {
         let helper = read("MeditateDropFile.kt");
         assert!(helper.contains("tmp.renameTo(file)"));
         let picker = read("MeditateFilePickerActivity.kt");
-        assert_eq!(picker.matches("MeditateDropFile.write(").count(), 4, "pick, failed pick, export result, csv pick");
+        assert_eq!(picker.matches("MeditateDropFile.write(").count(), 5, "pick, failed pick, export result, csv pick, local folder");
         assert!(!picker.contains(".writeText("));
         assert!(read("MeditateWidgetProvider.kt").contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
         assert!(read("MeditateGuidedImport.kt").contains("MeditateDropFile.write(File(dir, \"guided_import_result.$run\"), result)"));
+        let local = read("MeditateLocalFolder.kt");
+        assert_eq!(local.matches("MeditateDropFile.write(").count(), 2, "scan, lengths");
+        assert!(!local.contains(".writeText("));
     }
 
     #[test]

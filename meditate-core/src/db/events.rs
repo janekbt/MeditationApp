@@ -1231,6 +1231,30 @@ mod tests {
     }
 
     #[test]
+    fn wipe_local_event_log_keeps_the_local_folder() {
+        // Nothing can pull local-folder rows back from the server.
+        use crate::db::local_guided_files::{FolderScan, ScannedFile};
+        let db = Database::open_in_memory().unwrap();
+        db.set_local_folder("/music").unwrap();
+        db.apply_local_scan(
+            "/music",
+            &FolderScan::Found(vec![ScannedFile { rel_path: "a.ogg".into(), size: 1, mtime: 1 }]),
+        )
+        .unwrap();
+        let id = crate::db::list_local_files_from_db(&db, "/music").unwrap()[0].id;
+        db.set_local_file_starred(id, true).unwrap();
+        db.conn.execute("UPDATE local_guided_files SET play_count = 4", []).unwrap();
+
+        db.wipe_local_event_log().unwrap();
+
+        assert_eq!(crate::db::local_folder_from_db(&db).unwrap().as_deref(), Some("/music"));
+        let files = crate::db::list_local_files_from_db(&db, "/music").unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].is_starred);
+        assert_eq!(files[0].play_count, 4);
+    }
+
+    #[test]
     fn wipe_local_event_log_preserves_sync_state() {
         // The configured Nextcloud account (URL, username) must
         // survive — the user is wiping local state to converge with

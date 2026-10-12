@@ -21,6 +21,14 @@ const PLAYER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuided";
 const IMPORT_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuidedImport";
+const LOCAL_CLASS_DOTTED: &str =
+    "io.github.janekbt.Meditate.MeditateLocalFolder";
+/// Local Folder drop files (MeditateFilePickerActivity's "folder"
+/// route and MeditateLocalFolder): the chosen tree's address, the
+/// walk, and the lengths read so far.
+const LOCAL_PICK_FILENAME: &str = "local_folder_pick";
+const LOCAL_SCAN_FILENAME: &str = "local_folder_scan";
+const LOCAL_LENGTHS_FILENAME: &str = "local_folder_lengths";
 // The import files carry the import's uuid (`<name>.<uuid>`, the
 // dest's file stem), so a cancelled worker that is still copying can
 // never read the next import's cancel flag or write its result.
@@ -371,4 +379,111 @@ fn invoke_player_noarg(
         )?;
         Ok(())
     })
+}
+
+// ── Guided Local Folder (MeditateLocalFolder) ───────────────────────
+
+/// Open the system folder picker; the chosen folder's address
+/// arrives through `take_folder_pick`. `false` when it couldn't open.
+pub fn open_folder_picker(app: &AndroidApp) -> bool {
+    let opened = invoke_open(app, "folder", &[]);
+    if let Err(e) = &opened {
+        meditate_core::log("guided", &format!("open_folder_picker FAILED: {e:?}"));
+    }
+    opened.is_ok()
+}
+
+pub fn take_folder_pick(app: &AndroidApp) -> Option<String> {
+    let raw = crate::drop_file::take(app, LOCAL_PICK_FILENAME)?;
+    let tree = raw.trim();
+    (!tree.is_empty()).then(|| tree.to_string())
+}
+
+/// Walk `tree` on a worker thread; the result arrives through
+/// `take_local_scan`. `false` when the walk never started.
+pub fn start_local_scan(app: &AndroidApp, tree: &str) -> bool {
+    let started = crate::jni_call::with_env(app, |env, activity| {
+        let jtree = env.new_string(tree)?;
+        let class = crate::jni_call::load_class(env, activity, LOCAL_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            "scan",
+            "(Landroid/content/Context;Ljava/lang/String;)V",
+            &[activity.into(), (&jtree).into()],
+        )?;
+        Ok(())
+    });
+    if let Err(e) = &started {
+        meditate_core::log("guided", &format!("start_local_scan FAILED: {e:?}"));
+    }
+    started.is_ok()
+}
+
+pub fn take_local_scan(app: &AndroidApp) -> Option<meditate_core::db::FolderScan> {
+    Some(crate::app::parse_local_scan(&crate::drop_file::take(app, LOCAL_SCAN_FILENAME)?))
+}
+
+/// Read the lengths of `files` (id, path under `tree`) on a worker
+/// thread; results arrive through `take_local_lengths`. `false` when
+/// the worker never started.
+pub fn read_local_lengths(app: &AndroidApp, tree: &str, files: &[(i64, String)]) -> bool {
+    let started = crate::jni_call::with_env(app, |env, activity| {
+        let jtree = env.new_string(tree)?;
+        let len = i32::try_from(files.len()).unwrap_or(0);
+        let jids = env.new_long_array(len)?;
+        let ids: Vec<i64> = files.iter().map(|(id, _)| *id).collect();
+        env.set_long_array_region(&jids, 0, &ids)?;
+        let jrels = env.new_object_array(len, "java/lang/String", JObject::null())?;
+        for (i, (_, rel)) in files.iter().enumerate() {
+            let jrel = env.new_string(rel)?;
+            env.set_object_array_element(&jrels, i32::try_from(i).unwrap_or(0), jrel)?;
+        }
+        let class = crate::jni_call::load_class(env, activity, LOCAL_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            "readLengths",
+            "(Landroid/content/Context;Ljava/lang/String;[J[Ljava/lang/String;)V",
+            &[activity.into(), (&jtree).into(), (&jids).into(), (&jrels).into()],
+        )?;
+        Ok(())
+    });
+    if let Err(e) = &started {
+        meditate_core::log("guided", &format!("read_local_lengths FAILED: {e:?}"));
+    }
+    started.is_ok()
+}
+
+pub fn take_local_lengths(app: &AndroidApp) -> Option<Vec<(i64, Option<u32>)>> {
+    Some(crate::app::parse_local_lengths(&crate::drop_file::take(app, LOCAL_LENGTHS_FILENAME)?))
+}
+
+/// The content address of `rel` under `tree`, for `play`; `None`
+/// when the file is gone or the folder can't be read.
+pub fn local_document_address(app: &AndroidApp, tree: &str, rel: &str) -> Option<String> {
+    let found = crate::jni_call::with_env(app, |env, activity| {
+        let jtree = env.new_string(tree)?;
+        let jrel = env.new_string(rel)?;
+        let class = crate::jni_call::load_class(env, activity, LOCAL_CLASS_DOTTED)?;
+        let address = env
+            .call_static_method(
+                class,
+                "documentAddress",
+                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[activity.into(), (&jtree).into(), (&jrel).into()],
+            )?
+            .l()?;
+        if address.is_null() {
+            return Ok(None);
+        }
+        let address = jni::objects::JString::from(address);
+        let address: String = env.get_string(&address)?.into();
+        Ok(Some(address))
+    });
+    match found {
+        Ok(address) => address,
+        Err(e) => {
+            meditate_core::log("guided", &format!("local_document_address FAILED: {e:?}"));
+            None
+        }
+    }
 }

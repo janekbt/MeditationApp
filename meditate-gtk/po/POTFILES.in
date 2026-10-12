@@ -11,6 +11,7 @@ src/format.rs
 src/guided.rs
 src/i18n.rs
 src/labels.rs
+src/local_folder.rs
 src/log/imp.rs
 src/log/mod.rs
 src/main.rs

@@ -858,6 +858,7 @@ fn close_transient_overlays(ui: &MainWindow) {
     ui.set_preferences_page(false);
     ui.set_diag_page(false);
     ui.set_guided_manage_page(false);
+    ui.set_local_page(false);
     ui.set_preset_chooser_page(false);
     ui.set_bell_chooser_page(false);
     ui.set_pattern_chooser_page(false);
@@ -987,12 +988,13 @@ fn try_guided_pick(
         path: path.clone(),
         duration_secs: dur,
         uuid: None, // transient Open-File pick
+        local_id: None,
+        folder: None,
+        local_root: None,
     });
-    ui.set_guided_name(name.clone().into());
-    ui.set_guided_pick_in_library(false);
     // Feed the idle hero + countdown target (next refresh tick
     // picks it up via configured_duration).
-    ui.set_guided_duration_secs(dur as i32);
+    show_guided_sel(ui, guided_sel.borrow().as_ref());
     // Create-from-Manage: route straight into the import dialog
     // (GTK's create row calls import_picked_file directly).
     if create_import.replace(false) {
@@ -1082,15 +1084,32 @@ fn insert_guided_file(
 /// duration. The Slint side shows a dim empty-state row when the
 /// model is empty.
 fn refresh_guided_files(ui: &MainWindow) {
-    let items: Vec<GuidedFileItem> = {
+    use meditate_core::local_folder::StarredGuided;
+    let starred = {
         let Some(db) = lock_db() else { return; };
-        meditate_core::db::list_guided_files_from_db(&db)
-            .unwrap_or_default()
-    }
-    .into_iter()
-    .filter(|f| f.is_starred)
-    .map(guided_file_item)
-    .collect();
+        meditate_core::local_folder::starred_guided_from_db(&db).unwrap_or_default()
+    };
+    let tr = ui.global::<Tr>();
+    let items: Vec<GuidedFileItem> = starred
+        .into_iter()
+        .map(|entry| match entry {
+            StarredGuided::Library(f) => guided_file_item(f),
+            StarredGuided::Local { file, found } => {
+                let detail = if found {
+                    local_length_text(ui, file.duration_secs)
+                } else {
+                    tr.invoke_not_found().to_string()
+                };
+                GuidedFileItem {
+                    uuid: format!("local:{}", file.id).into(),
+                    name: meditate_core::local_folder::file_name(&file.rel_path).into(),
+                    subtitle: format!("{} · {detail}", tr.invoke_local_file()).into(),
+                    is_starred: true,
+                    missing: !found,
+                }
+            }
+        })
+        .collect();
     ui.set_guided_files(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
@@ -1109,6 +1128,7 @@ fn guided_file_item(
         )
         .into(),
         is_starred: f.is_starred,
+        missing: false,
     }
 }
 
@@ -1126,6 +1146,316 @@ fn refresh_guided_manage(ui: &MainWindow) {
     ui.set_guided_manage_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+// ── Guided Local Folder (GitHub #4) ────────────────────────────────
+// Core decides the rows (meditate_core::local_folder); Kotlin walks
+// the folder and reads lengths (MeditateLocalFolder) and hands the
+// results back through drop files polled in `poll_local_folder`.
+// Mirrors GTK's src/local_folder.rs.
+
+#[derive(Default)]
+struct LocalFolderState {
+    /// The open folder level, "" for the chosen folder itself.
+    dir: String,
+    unreachable: bool,
+    /// The folder being walked, while a walk runs.
+    scanning: Option<String>,
+    /// Files whose length is being read.
+    reading: std::collections::HashSet<i64>,
+    /// Files whose length could not be read in this run.
+    failed: std::collections::HashSet<i64>,
+}
+
+thread_local! {
+    static LOCAL_FOLDER: std::cell::RefCell<LocalFolderState> =
+        std::cell::RefCell::new(LocalFolderState::default());
+}
+
+fn local_root() -> Option<String> {
+    let db = lock_db()?;
+    meditate_core::db::local_folder_from_db(&db).ok().flatten()
+}
+
+fn local_files(root: &str) -> Vec<meditate_core::db::LocalGuidedFile> {
+    let Some(db) = lock_db() else { return Vec::new() };
+    meditate_core::db::list_local_files_from_db(&db, root).unwrap_or_default()
+}
+
+/// A Local Folder write; a failure says "Save failed" (these write
+/// no event, so nothing else would tell the user).
+fn local_save<T, E: std::fmt::Debug>(
+    ui: &MainWindow,
+    what: &str,
+    f: impl FnOnce(&meditate_core::Database) -> Result<T, E>,
+) -> Option<T> {
+    let done = match lock_db() {
+        Some(db) => f(&db).map_err(|e| format!("{e:?}")),
+        None => Err("db not open".to_string()),
+    };
+    match done {
+        Ok(v) => Some(v),
+        Err(e) => {
+            meditate_core::log("guided.local", &format!("{what} FAILED: {e}"));
+            show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+            None
+        }
+    }
+}
+
+fn set_local_starred(ui: &MainWindow, id: i64, starred: bool) {
+    local_save(ui, "star", |db| db.set_local_file_starred(id, starred));
+}
+
+fn local_length_text(ui: &MainWindow, secs: Option<u32>) -> String {
+    match secs {
+        Some(secs) => meditate_core::format::format_duration_brief(secs),
+        None => ui.global::<Tr>().invoke_length_not_read().to_string(),
+    }
+}
+
+fn local_counts_text(ui: &MainWindow, folders: u32, files: u32) -> String {
+    let tr = ui.global::<Tr>();
+    let folders_text = tr.invoke_n_folders(folders as i32).to_string();
+    let files_text = tr.invoke_n_files(files as i32).to_string();
+    match (folders, files) {
+        (0, _) => files_text,
+        (_, 0) => folders_text,
+        _ => format!("{folders_text}, {files_text}"),
+    }
+}
+
+/// Walk the chosen folder (no-op while a walk runs; the finished
+/// walk starts the next one if the folder changed meanwhile).
+fn local_scan() {
+    let Some(root) = local_root() else { return };
+    let Some(app) = android_app() else { return };
+    let busy = LOCAL_FOLDER.with(|l| {
+        let mut l = l.borrow_mut();
+        l.scanning.is_some() || {
+            l.scanning = Some(root.clone());
+            false
+        }
+    });
+    if !busy && !guided::start_local_scan(app, &root) {
+        LOCAL_FOLDER.with(|l| l.borrow_mut().scanning = None);
+    }
+}
+
+/// Ask Kotlin to read these files' lengths (skipping ones already
+/// being read).
+fn read_local_lengths(root: &str, files: Vec<(i64, String)>) {
+    let Some(app) = android_app() else { return };
+    let files: Vec<_> = LOCAL_FOLDER.with(|l| {
+        let mut l = l.borrow_mut();
+        files.into_iter().filter(|(id, _)| l.reading.insert(*id)).collect()
+    });
+    if !files.is_empty() && !guided::read_local_lengths(app, root, &files) {
+        // Never started: let a later scan or pick ask again.
+        LOCAL_FOLDER.with(|l| {
+            let mut l = l.borrow_mut();
+            for (id, _) in &files {
+                l.reading.remove(id);
+            }
+        });
+    }
+}
+
+/// Make Local Folder file `id` the current Guided file. A missing
+/// one says so and selects nothing; a length not read yet is read
+/// first, and Start waits for it.
+fn select_local_file(ui: &MainWindow, guided_sel: &Slot<GuidedSel>, id: i64) {
+    let Some(file) = local_save(ui, "find", |db| meditate_core::db::find_local_file_from_db(db, id)).flatten()
+    else {
+        return;
+    };
+    let found = !file.missing && local_root().as_deref() == Some(file.root.as_str());
+    if !found {
+        show_notice(ui, ui.global::<Tr>().invoke_file_not_found(), None, 4);
+        return;
+    }
+    if file.duration_secs.is_none() {
+        LOCAL_FOLDER.with(|l| {
+            let mut l = l.borrow_mut();
+            l.failed.remove(&id);
+            l.reading.remove(&id);
+        });
+        read_local_lengths(&file.root, vec![(id, file.rel_path.clone())]);
+    }
+    let sel = GuidedSel {
+        name: meditate_core::local_folder::file_name(&file.rel_path).to_string(),
+        path: file.rel_path.clone(),
+        duration_secs: file.duration_secs.unwrap_or(0),
+        uuid: None,
+        local_id: Some(id),
+        folder: Some(meditate_core::local_folder::folder_label(&file.rel_path)),
+        local_root: Some(file.root.clone()),
+    };
+    show_guided_sel(ui, Some(&sel));
+    *guided_sel.borrow_mut() = Some(sel);
+}
+
+/// Redraw the Local Folder page for its open level.
+fn refresh_local_page(ui: &MainWindow) {
+    use meditate_core::local_folder::{self as lf, FolderRow, ListSort};
+    let Some(root) = local_root() else {
+        ui.set_local_has_folder(false);
+        return;
+    };
+    let tr = ui.global::<Tr>();
+    let (dir, unreachable, busy) = LOCAL_FOLDER.with(|l| {
+        let l = l.borrow();
+        (l.dir.clone(), l.unreachable, l.scanning.is_some() || !l.reading.is_empty())
+    });
+    let files = local_files(&root);
+    ui.set_local_has_folder(true);
+    ui.set_local_unreachable(unreachable);
+    ui.set_local_top(dir.is_empty());
+    let folder_name = crate::app::tree_folder_name(&root);
+    if dir.is_empty() {
+        ui.set_local_title(ui.global::<Tr>().invoke_local_folder_title());
+        ui.set_local_path("".into());
+    } else {
+        let (title, parent) = lf::folder_title(&dir);
+        ui.set_local_title(title.into());
+        ui.set_local_path(parent.unwrap_or_default().into());
+    }
+    let line = lf::folder_line(&files);
+    let count = if busy && line.read < line.files {
+        tr.invoke_reading_files(line.read as i32, line.files as i32).to_string()
+    } else {
+        tr.invoke_n_files(line.files as i32).to_string()
+    };
+    ui.set_local_folder_line(format!("{folder_name} · {count}").into());
+
+    let (list_on, sort) = match lock_db() {
+        Some(db) => (lf::list_view_on_from_db(&db), lf::list_sort_from_db(&db)),
+        None => (false, ListSort::Name),
+    };
+    ui.set_local_view(i32::from(list_on));
+    let sorts = [ListSort::Name, ListSort::Length, ListSort::MostPlayed, ListSort::LeastPlayed];
+    ui.set_local_sort(sorts.iter().position(|s| *s == sort).unwrap_or(0) as i32);
+
+    let file_row = |f: &meditate_core::db::LocalGuidedFile, with_folder: bool| {
+        let mut parts = Vec::new();
+        let folder = lf::folder_label(&f.rel_path);
+        if with_folder && !folder.is_empty() {
+            parts.push(folder);
+        }
+        parts.push(local_length_text(ui, f.duration_secs));
+        parts.push(match f.play_count {
+            0 => tr.invoke_never_played().to_string(),
+            n => tr.invoke_played_n(n as i32).to_string(),
+        });
+        LocalRow {
+            is_folder: false,
+            key: f.id.to_string().into(),
+            title: lf::file_name(&f.rel_path).into(),
+            subtitle: parts.join(" · ").into(),
+            starred: f.is_starred,
+        }
+    };
+    let rows: Vec<LocalRow> = if dir.is_empty() && list_on {
+        lf::list_view(&files, sort).into_iter().map(|f| file_row(f, true)).collect()
+    } else {
+        lf::folder_view(&files, &dir)
+            .into_iter()
+            .map(|row| match row {
+                FolderRow::Folder { name, path, folders, files } => LocalRow {
+                    is_folder: true,
+                    key: path.into(),
+                    title: name.into(),
+                    subtitle: local_counts_text(ui, folders, files).into(),
+                    starred: false,
+                },
+                FolderRow::File(f) => file_row(f, false),
+            })
+            .collect()
+    };
+    ui.set_local_rows(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+}
+
+/// Each tick: adopt a chosen folder, a finished walk and read
+/// lengths. A pick waiting for its length gets it, or is dropped
+/// with a message when the file can't be read.
+fn poll_local_folder(ui: &MainWindow, guided_sel: &Slot<GuidedSel>) {
+    let Some(app) = android_app() else { return };
+    let mut changed = false;
+    if let Some(tree) = guided::take_folder_pick(app) {
+        local_save(ui, "set folder", |db| db.set_local_folder(&tree));
+        LOCAL_FOLDER.with(|l| {
+            let mut l = l.borrow_mut();
+            l.dir.clear();
+            l.unreachable = false;
+        });
+        local_scan();
+        changed = true;
+    }
+    if let Some(scan) = guided::take_local_scan(app) {
+        // The walk belongs to the folder it started on, which may no
+        // longer be the chosen one.
+        let walked = LOCAL_FOLDER.with(|l| l.borrow_mut().scanning.take());
+        // A failed write is not an unreachable folder: it says "Save failed".
+        let reachable = walked
+            .as_deref()
+            .map(|root| local_save(ui, "apply scan", |db| db.apply_local_scan(root, &scan)).unwrap_or(true));
+        let current = local_root();
+        if walked.is_some() && walked == current {
+            LOCAL_FOLDER.with(|l| l.borrow_mut().unreachable = reachable == Some(false));
+        } else {
+            local_scan();
+        }
+        if let Some(root) = walked.filter(|_| reachable == Some(true)) {
+            let unread = local_files(&root)
+                .into_iter()
+                .filter(|f| !f.missing && f.duration_secs.is_none())
+                .map(|f| (f.id, f.rel_path))
+                .collect();
+            read_local_lengths(&root, unread);
+        }
+        changed = true;
+    }
+    if let Some(lengths) = guided::take_local_lengths(app) {
+        local_save(ui, "lengths", |db| {
+            lengths.iter().try_for_each(|(id, secs)| match secs {
+                Some(secs) => db.set_local_file_duration(*id, *secs),
+                None => Ok(()),
+            })
+        });
+        LOCAL_FOLDER.with(|l| {
+            let mut l = l.borrow_mut();
+            for (id, secs) in &lengths {
+                l.reading.remove(id);
+                if secs.is_none() {
+                    l.failed.insert(*id);
+                }
+            }
+        });
+        let waiting = guided_sel.borrow().as_ref().filter(|s| s.reading_length()).and_then(|s| s.local_id);
+        if let Some(id) = waiting {
+            match lengths.iter().rev().find(|(other, _)| *other == id) {
+                Some((_, Some(secs))) => {
+                    if let Some(sel) = guided_sel.borrow_mut().as_mut() {
+                        sel.duration_secs = *secs;
+                    }
+                    show_guided_sel(ui, guided_sel.borrow().as_ref());
+                }
+                Some((_, None)) => {
+                    *guided_sel.borrow_mut() = None;
+                    show_guided_sel(ui, None);
+                    show_notice(ui, ui.global::<Tr>().invoke_couldnt_read_audio(), None, 4);
+                }
+                None => {}
+            }
+        }
+        changed = true;
+    }
+    if changed {
+        if ui.get_local_page() {
+            refresh_local_page(ui);
+        }
+        refresh_guided_files(ui);
+    }
 }
 
 /// A single-value slot shared between UI callbacks.
@@ -1255,6 +1585,9 @@ fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
         path: local_guided_path(row.uuid.as_str()),
         duration_secs: row.duration_secs,
         uuid: Some(row.uuid.0),
+        local_id: None,
+        folder: None,
+        local_root: None,
     })
 }
 
@@ -2696,6 +3029,20 @@ fn set_session_guided_file(uuid: Option<String>) {
     }
 }
 
+/// The running session's Local Folder file, whose play the save
+/// counts. Like `SESSION_GUIDED_FILE`, fixed at session start.
+static SESSION_LOCAL_FILE: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
+
+fn set_session_local_file(id: Option<i64>) {
+    if let Ok(mut slot) = SESSION_LOCAL_FILE.lock() {
+        *slot = id;
+    }
+}
+
+fn session_local_file() -> Option<i64> {
+    SESSION_LOCAL_FILE.lock().ok().and_then(|slot| *slot)
+}
+
 fn session_guided_file() -> Option<meditate_core::db::GuidedFileUuid> {
     SESSION_GUIDED_FILE
         .lock()
@@ -3117,7 +3464,7 @@ fn finalize_session(
         // None. Mirrors GTK's `guided_selected_uuid` at save.
         guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
     );
-    match db.insert_session_clearing_snapshot(&session) {
+    match db.insert_session_counting_local_play(&session, session_local_file()) {
         Ok((rowid, _)) => {
             meditate_core::log(
                 "session.insert",
@@ -3814,6 +4161,49 @@ struct GuidedSel {
     /// transient Open-File pick. Mirrors GTK's
     /// `guided_selected_uuid`.
     uuid: Option<String>,
+    /// A Local Folder file: its row (whose play the save counts);
+    /// `path` then is its path under the folder, and
+    /// `duration_secs` 0 means the length is still being read.
+    local_id: Option<i64>,
+    /// The Local Folder file's folder, for the current-file line.
+    folder: Option<String>,
+    /// The chosen folder the Local Folder file belongs to, so a later
+    /// folder change can't make Start play another folder's file.
+    local_root: Option<String>,
+}
+
+impl GuidedSel {
+    fn reading_length(&self) -> bool {
+        self.local_id.is_some() && self.duration_secs == 0
+    }
+}
+
+/// Show the current Guided file (or none) on the Setup row: name,
+/// length for the hero, the Local Folder line, and the Start gate.
+/// Mirrors GTK's `refresh_guided_selected_row`.
+fn show_guided_sel(ui: &MainWindow, sel: Option<&GuidedSel>) {
+    ui.set_guided_name(sel.map(|s| s.name.clone()).unwrap_or_default().into());
+    ui.set_guided_duration_secs(sel.map_or(0, |s| s.duration_secs as i32));
+    // Import is off for library files and for Local Folder files,
+    // which are played in place.
+    ui.set_guided_pick_in_library(sel.is_some_and(|s| s.uuid.is_some() || s.local_id.is_some()));
+    ui.set_guided_reading(sel.is_some_and(GuidedSel::reading_length));
+    let subtitle = sel
+        .filter(|s| s.local_id.is_some())
+        .map(|s| {
+            let tr = ui.global::<Tr>();
+            let length = if s.reading_length() {
+                tr.invoke_reading_length().to_string()
+            } else {
+                meditate_core::format::format_duration_brief(s.duration_secs)
+            };
+            match s.folder.as_deref() {
+                None | Some("") => format!("{} · {length}", tr.invoke_local_folder()),
+                Some(folder) => format!("{} · {folder} · {length}", tr.invoke_local_folder()),
+            }
+        })
+        .unwrap_or_default();
+    ui.set_guided_subtitle(subtitle.into());
 }
 
 fn build_ui() -> MainWindow {
@@ -4131,10 +4521,20 @@ fn build_ui() -> MainWindow {
             // start and its "Couldn't start playback" toast.
             if !was_active && current_mode.get() == TimerMode::Guided {
                 let started = android_app().is_some_and(|app| {
-                    guided_sel
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|sel| sel.duration_secs > 0 && guided::play(app, &sel.path))
+                    guided_sel.borrow().as_ref().is_some_and(|sel| {
+                        if sel.duration_secs == 0 {
+                            return false;
+                        }
+                        // A Local Folder file plays from its content address.
+                        let source = match sel.local_id {
+                            None => Some(sel.path.clone()),
+                            Some(_) => sel
+                                .local_root
+                                .as_deref()
+                                .and_then(|root| guided::local_document_address(app, root, &sel.path)),
+                        };
+                        source.is_some_and(|source| guided::play(app, &source))
+                    })
                 });
                 if !started {
                     show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
@@ -4174,6 +4574,11 @@ fn build_ui() -> MainWindow {
                     current_mode.get(),
                     guided_sel.borrow().as_ref().and_then(|g| g.uuid.as_deref()),
                 ));
+                set_session_local_file(if current_mode.get() == TimerMode::Guided {
+                    guided_sel.borrow().as_ref().and_then(|g| g.local_id)
+                } else {
+                    None
+                });
                 // First snapshot right away, so a session killed in
                 // its first minute is still recovered (GTK writes
                 // one at start too).
@@ -4315,6 +4720,9 @@ fn build_ui() -> MainWindow {
                     &guided_import_src_tick,
                     &guided_import_kind_tick,
                 );
+                // Local Folder: a chosen folder, a finished walk,
+                // lengths read.
+                poll_local_folder(&ui, &guided_sel);
                 // Bell-sound pick (BI): a target="bell" pick
                 // routes straight into the shared import dialog.
                 if let Some(app) = android_app() {
@@ -4565,6 +4973,9 @@ fn build_ui() -> MainWindow {
                                         path: dest,
                                         duration_secs: secs,
                                         uuid: Some(uuid.clone()),
+                                        local_id: None,
+                                        folder: None,
+                                        local_root: None,
                                     });
                                     // New import is auto-starred →
                                     // surfaces in both lists now
@@ -4572,9 +4983,7 @@ fn build_ui() -> MainWindow {
                                     // the Create row).
                                     refresh_guided_files(&ui);
                                     refresh_guided_manage(&ui);
-                                    ui.set_guided_name(name.into());
-                                    ui.set_guided_pick_in_library(true);
-                                    ui.set_guided_duration_secs(secs as i32);
+                                    show_guided_sel(&ui, guided_sel.borrow().as_ref());
                                 })
                             };
                             // Success or failure, the dialog closes,
@@ -4926,29 +5335,14 @@ fn build_ui() -> MainWindow {
                 finish_notice(&ui);
                 // Reflect the current Guided pick (if any) into
                 // the Setup row + Start gate.
-                {
-                    let g = guided_sel.borrow();
-                    ui.set_guided_name(
-                        g.as_ref()
-                            .map(|s| s.name.clone())
-                            .unwrap_or_default()
-                            .into(),
-                    );
-                    ui.set_guided_duration_secs(
-                        g.as_ref()
-                            .map(|s| s.duration_secs as i32)
-                            .unwrap_or(0),
-                    );
-                    ui.set_guided_pick_in_library(
-                        g.as_ref().is_some_and(|s| s.uuid.is_some()),
-                    );
-                }
+                show_guided_sel(&ui, guided_sel.borrow().as_ref());
                 load_setup_for_mode(&ui, core_mode, &timer_session_secs);
                 // Starred presets are per-mode (P-2).
                 refresh_preset_chips(&ui, core_mode);
                 // Guided starred-files list (GM-F3).
                 if new_mode == TimerMode::Guided {
                     refresh_guided_files(&ui);
+                    local_scan();
                 }
                 // End Bell is per-mode (2026-07-17) — reload its
                 // rows for the newly-shown mode.
@@ -5024,6 +5418,11 @@ fn build_ui() -> MainWindow {
         let guided_sel = guided_sel.clone();
         ui.on_guided_file_tap(move |uuid| {
             if let Some(ui) = weak.upgrade() {
+                // A starred Local Folder file ("local:<id>").
+                if let Some(id) = uuid.strip_prefix("local:").and_then(|id| id.parse().ok()) {
+                    select_local_file(&ui, &guided_sel, id);
+                    return;
+                }
                 let Some(sel) = guided_file_by_uuid(&uuid) else {
                     // Row raced a delete — drop it from the list.
                     refresh_guided_files(&ui);
@@ -5036,12 +5435,19 @@ fn build_ui() -> MainWindow {
                         sel.name, sel.duration_secs,
                     ),
                 );
-                ui.set_guided_name(sel.name.clone().into());
-                ui.set_guided_pick_in_library(sel.uuid.is_some());
-                ui.set_guided_duration_secs(
-                    sel.duration_secs as i32,
-                );
+                show_guided_sel(&ui, Some(&sel));
                 *guided_sel.borrow_mut() = Some(sel);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_local_unstar(move |uuid| {
+            if let Some(ui) = weak.upgrade() {
+                if let Some(id) = uuid.strip_prefix("local:").and_then(|id| id.parse().ok()) {
+                    set_local_starred(&ui, id, false);
+                }
+                refresh_guided_files(&ui);
             }
         });
     }
@@ -5164,6 +5570,107 @@ fn build_ui() -> MainWindow {
                 }
             }
             let _ = weak.clone();
+        });
+    }
+
+    // ── Guided Local Folder page (GitHub #4) ─────────────────
+    // Mirrors GTK's `local_folder_btn` → src/local_folder.rs.
+    {
+        let weak = ui.as_weak();
+        ui.on_local_folder_tap(move || {
+            if let Some(ui) = weak.upgrade() {
+                LOCAL_FOLDER.with(|l| l.borrow_mut().dir.clear());
+                refresh_local_page(&ui);
+                ui.set_local_page(true);
+                local_scan();
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_local_back(move || {
+            if let Some(ui) = weak.upgrade() {
+                let up = LOCAL_FOLDER.with(|l| {
+                    let mut l = l.borrow_mut();
+                    if l.dir.is_empty() {
+                        return false;
+                    }
+                    l.dir = l.dir.rsplit_once('/').map(|(parent, _)| parent.to_string()).unwrap_or_default();
+                    true
+                });
+                if up {
+                    refresh_local_page(&ui);
+                } else {
+                    ui.set_local_page(false);
+                }
+            }
+        });
+    }
+    ui.on_local_refresh(local_scan);
+    {
+        let weak = ui.as_weak();
+        ui.on_local_choose(move || {
+            let opened = android_app().is_some_and(guided::open_folder_picker);
+            if let (false, Some(ui)) = (opened, weak.upgrade()) {
+                show_notice(&ui, ui.global::<Tr>().invoke_folder_picker_failed(), None, 4);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_local_view_changed(move |idx| {
+            if let Some(ui) = weak.upgrade() {
+                local_save(&ui, "list view", |db| meditate_core::local_folder::set_list_view_on(db, idx == 1));
+                refresh_local_page(&ui);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_local_sort_changed(move |idx| {
+            use meditate_core::local_folder::ListSort;
+            let sort = match idx {
+                1 => ListSort::Length,
+                2 => ListSort::MostPlayed,
+                3 => ListSort::LeastPlayed,
+                _ => ListSort::Name,
+            };
+            if let Some(ui) = weak.upgrade() {
+                local_save(&ui, "sort", |db| meditate_core::local_folder::set_list_sort(db, sort));
+                refresh_local_page(&ui);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let guided_sel = guided_sel.clone();
+        ui.on_local_row_tap(move |is_folder, key| {
+            let Some(ui) = weak.upgrade() else { return };
+            if is_folder {
+                LOCAL_FOLDER.with(|l| l.borrow_mut().dir = key.to_string());
+                refresh_local_page(&ui);
+                return;
+            }
+            if let Ok(id) = key.parse() {
+                select_local_file(&ui, &guided_sel, id);
+                ui.set_local_page(false);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_local_star_tap(move |key| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Ok(id) = key.parse::<i64>() else { return };
+            let starred = local_root()
+                .map(|root| local_files(&root))
+                .unwrap_or_default()
+                .into_iter()
+                .find(|f| f.id == id)
+                .is_some_and(|f| f.is_starred);
+            set_local_starred(&ui, id, !starred);
+            refresh_local_page(&ui);
+            refresh_guided_files(&ui);
         });
     }
 
@@ -5297,9 +5804,7 @@ fn build_ui() -> MainWindow {
                     == Some(uuid.as_str())
                 {
                     *guided_sel.borrow_mut() = None;
-                    ui.set_guided_name("".into());
-                    ui.set_guided_pick_in_library(false);
-                    ui.set_guided_duration_secs(0);
+                    show_guided_sel(&ui, None);
                 }
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
@@ -9268,6 +9773,10 @@ fn build_ui() -> MainWindow {
             }
             if ui.get_guided_manage_page() {
                 ui.invoke_guided_manage_back();
+                return;
+            }
+            if ui.get_local_page() {
+                ui.invoke_local_back();
                 return;
             }
             if ui.get_preset_chooser_page() {

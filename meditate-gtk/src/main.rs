@@ -9,6 +9,7 @@ pub mod guided;
 pub mod i18n;
 pub mod keychain;
 pub mod labels;
+pub mod local_folder;
 pub mod log;
 mod preferences;
 pub mod preset_subtitle;

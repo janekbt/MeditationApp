@@ -850,6 +850,10 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 ### #182 Mindfulness bell during the day
 - Idea (tentative): a tab that rings at intervals during set hours. Prototype background scheduling first (Android exact alarms; Linux notifications or feedbackd).
 
+### #186 Log label colours ignore the accent colour
+- Where: gtk `log/imp.rs:387-400` (`label_color_class`) and the fixed `@log_c0`... colours in the stylesheet (`.log-stripe.log-cN`, line 234-); android `ui/main.slint:4438` (label stripe).
+- Idea: the stripe colours follow the system accent (GTK) and the accent the user picked (Android, `apply_accent`), for example tones of the accent instead of a fixed palette. Labels must still be told apart.
+
 ### #183 Nextcloud with a self-signed or private-CA certificate can't connect
 - Where: `meditate-core/Cargo.toml:20` (`ureq = "2"`, built-in roots only), `sync/webdav.rs:176`.
 - Idea: also trust the system store or a user-pinned certificate. A new dependency changes Cargo.lock: ask first.
