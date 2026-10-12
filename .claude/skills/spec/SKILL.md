@@ -46,6 +46,9 @@ it is done. A skipped step stays unticked with its reason on the line.
   that proves it and leaves the list.
 - Record the base: `git rev-parse HEAD` goes into `tasks.md`. The working
   tree must be clean; if it is not, ask what the uncommitted work is.
+- Run the test suites on the base and note the result next to it. A
+  later failure is then yours, not an older one; a red base is told to
+  the human before anything is built.
 - Say back what you understood before you plan: in two or three
   sentences, name the screen, the element and what changes on it,
   in both apps. Wait for "yes" or a correction.
@@ -124,6 +127,11 @@ For each scenario, in the order of `tasks.md`:
 4. Run the whole suite, not just the file. A failure you saw and did
    not report is a false report.
 5. Tick the task in `tasks.md`.
+
+The spec is a hypothesis that building tests. A case the plan missed
+(found while building, by a review or on the device) goes into the
+deltas as a scenario with its test before its code, like every other.
+If it changes what the human approved, ask first.
 
 A test is good when you can name the production change that would make
 it fail. No tests that only restate the code (change detectors), none

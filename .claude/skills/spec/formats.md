@@ -144,7 +144,7 @@ numbers if any.>
 ```markdown
 # Tasks: <change name>
 
-Base: <commit hash from step 1>
+Base: <commit hash from step 1>; suites on it: <green, or what failed>
 
 ## Loop
 - [ ] 1 Understand
