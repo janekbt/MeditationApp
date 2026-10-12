@@ -46,8 +46,17 @@ it is done. A skipped step stays unticked with its reason on the line.
   that proves it and leaves the list.
 - Record the base: `git rev-parse HEAD` goes into `tasks.md`. The working
   tree must be clean; if it is not, ask what the uncommitted work is.
-- Unclear intent: ask the human, one question per message. A guess
-  they can correct beats an open question; mark it as a guess.
+- Say back what you understood before you plan: in two or three
+  sentences, name the screen, the element and what changes on it,
+  in both apps. Wait for "yes" or a correction.
+- Then settle every decision only the human can make (how it looks,
+  its wording, a real trade-off), one per message, as a multiple-
+  choice question with 2 to 4 concrete options and your recommendation
+  first (Claude Code: AskUserQuestion). Answer from the code what the
+  code can answer. Minor choices are your call; mark them as such in
+  the proposal. A UI change with more than one sensible layout gets a
+  mock-up to react to.
+- End with the list of decisions; it goes into proposal.md.
 
 ### 2. Propose
 
@@ -197,6 +206,7 @@ not approval either: reply with the test steps and wait.
 
 | The thought | The truth |
 |---|---|
+| "I know what they mean." | Say it back first. A wrong guess costs a whole proposal. |
 | "Too small for a change folder." | Small changes skip the most steps and break the most rules. Use the size table. |
 | "The tests are green, I'll commit and the human tests later." | No commit before the device test. Hard gate. |
 | "I'll update the docs and specs at the end." | The end is when they get forgotten. Step 5 is before the hand-over. |

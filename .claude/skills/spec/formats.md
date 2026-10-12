@@ -92,6 +92,10 @@ numbers if any.>
 - <one line per behaviour that changes>
 - Left out: <what was dropped in the scope pushback, and why>
 
+## Decisions
+- <each decision settled in step 1, with the human's answer>
+- <a minor choice you made yourself, marked "(my call)">
+
 ## Capabilities
 ### New Capabilities
 - `<area>`: <one line>
