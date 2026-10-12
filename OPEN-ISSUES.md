@@ -23,7 +23,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
 | [x] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #122, #158 | names that differ per device, saves that fail |
 | [x] | U1. /spec groundwork (before H) | #161 | every later batch leaves specs and gets a review |
-| [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166 | wrong minutes, bells at wrong times |
+| [x] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166, #185 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
@@ -348,6 +348,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-gtk/src/window/imp.rs:454` (the session ticks only from `add_tick_callback`); `timer/imp.rs:2212-2216, 2238-2240` (no 1 Hz tick for Breathing).
 - Problem: with the screen blank, the window minimised or on another workspace there are no frames, so no phase cues and no end bell until the window is drawn again (and then #39 saves the inflated time).
 - Fix: run the 1 Hz `start_tick` for Breathing too, dispatching the session's effects; keep the frame callback for drawing only. Do it with #39.
+
+### #185 Linux: a session doesn't stop the computer from suspending
+- Where: `meditate-gtk/src/timer/imp.rs:1142-1160` (`acquire_screen_awake_lock` inhibits only IDLE, and only with "Keep screen awake" on).
+- Problem: automatic suspend can hit in the middle of a session, so bells and the end come late; Android avoids this with a wake lock.
+- Fix: inhibit SUSPEND for every running session, plus IDLE with "Keep screen awake"; release at the end as now.
 
 ## I. GTK timer and bells
 

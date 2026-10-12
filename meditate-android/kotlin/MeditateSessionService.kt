@@ -43,6 +43,8 @@ class MeditateSessionService : Service() {
         // mid-session-update intent can be added without colliding.
         const val ACTION_START_SESSION = "io.github.janekbt.Meditate.START_SESSION"
         const val ACTION_STOP_SESSION = "io.github.janekbt.Meditate.STOP_SESSION"
+        const val ACTION_PAUSE_SESSION = "io.github.janekbt.Meditate.PAUSE_SESSION"
+        const val ACTION_RESUME_SESSION = "io.github.janekbt.Meditate.RESUME_SESSION"
 
         // Persistent notification slot. Stable across start/stop so
         // a stop-then-start within the same process re-uses the
@@ -171,6 +173,24 @@ class MeditateSessionService : Service() {
             }
             context.startService(intent)
         }
+
+        /// A paused session lets the phone sleep; the service and its
+        /// notification stay.
+        @JvmStatic
+        fun pause(context: Context) {
+            val intent = Intent(context, MeditateSessionService::class.java).apply {
+                action = ACTION_PAUSE_SESSION
+            }
+            context.startService(intent)
+        }
+
+        @JvmStatic
+        fun resume(context: Context) {
+            val intent = Intent(context, MeditateSessionService::class.java).apply {
+                action = ACTION_RESUME_SESSION
+            }
+            context.startService(intent)
+        }
     }
 
     // MediaSession is the lever that pins our notification in the
@@ -232,18 +252,10 @@ class MeditateSessionService : Service() {
         when (intent?.action) {
             ACTION_START_SESSION -> {
                 startForeground(NOTIFICATION_ID, buildNotification())
-                if (wakeLock == null) {
-                    val pm = getSystemService(PowerManager::class.java)
-                    wakeLock = pm.newWakeLock(
-                        PowerManager.PARTIAL_WAKE_LOCK,
-                        "Meditate:session",
-                    ).apply {
-                        setReferenceCounted(false)
-                        acquire(WAKE_LOCK_WINDOW_MS)
-                    }
-                    wakeLockHandler.postDelayed(renewWakeLock, WAKE_LOCK_RENEW_MS)
-                }
+                acquireWakeLock()
             }
+            ACTION_PAUSE_SESSION -> releaseWakeLock()
+            ACTION_RESUME_SESSION -> acquireWakeLock()
             ACTION_STOP_SESSION -> {
                 releaseWakeLock()
                 // STOP_FOREGROUND_REMOVE = clear the notification
@@ -288,6 +300,19 @@ class MeditateSessionService : Service() {
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        val pm = getSystemService(PowerManager::class.java)
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "Meditate:session",
+        ).apply {
+            setReferenceCounted(false)
+            acquire(WAKE_LOCK_WINDOW_MS)
+        }
+        wakeLockHandler.postDelayed(renewWakeLock, WAKE_LOCK_RENEW_MS)
     }
 
     private fun releaseWakeLock() {

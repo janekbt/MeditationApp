@@ -3018,6 +3018,25 @@ mod tests {
     }
 
     #[test]
+    fn a_paused_session_lets_the_phone_sleep() {
+        // The wake lock (and the screen-on hold) stayed through a
+        // pause, so a forgotten pause kept the phone awake for hours.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = ui.find("fn wake_follows_pause(").unwrap();
+        let body = &ui[at..at + ui[at..].find("\n}\n").unwrap()];
+        assert!(body.contains("service::pause(app)"));
+        assert!(body.contains("screen::set_keep_awake(app, false)"));
+        assert!(body.contains("service::resume(app)"));
+        assert_eq!(ui.matches("wake_follows_pause(app, &").count(), 2, "Pause button and focus loss");
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let at = kt.find("ACTION_PAUSE_SESSION -> ").unwrap();
+        assert!(kt[at..at + 80].contains("releaseWakeLock()"));
+        let at = kt.find("ACTION_RESUME_SESSION -> ").unwrap();
+        assert!(kt[at..at + 80].contains("acquireWakeLock()"));
+    }
+
+    #[test]
     fn swiping_the_app_away_silences_it() {
         // The service stopped, but the guided track (a process-wide
         // player) played on with nothing left to stop it.

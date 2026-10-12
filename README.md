@@ -12,7 +12,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Guided: play your own guided-meditation audio; the end bell rings when the track finishes. Imported files go into a library where you star the ones you use; files that aren't Ogg (WAV, MP3 and so on) are converted on import
 - Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor
 - Optional preparation time before the starting bell
-- Keep the screen awake during a session, set per mode
+- The computer or phone stays awake during a session so bells ring on time; keeping the screen on too is set per mode
 - Quick presets plus custom durations
 - Per-mode labels: each mode remembers the label you last used for it
 - Optional post-session notes

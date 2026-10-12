@@ -148,10 +148,6 @@ impl TimerView {
         self.imp().stopwatch_toggle_on.get()
     }
 
-    pub fn finish_breath_session(&self) {
-        self.imp().finish_breath_session();
-    }
-
 }
 
 #[cfg(test)]
@@ -343,5 +339,50 @@ mod tests {
         let app = read("src/application.rs");
         let quit = &app[app.find("SimpleAction::new(\"quit\"").unwrap()..];
         assert!(!quit[..quit.find("add_action").unwrap()].contains("app.quit()"), "Ctrl+Q goes through close");
+    }
+
+    /// Box Breath ticked only from the drawing area's frame clock, so
+    /// a minimised window or a blank screen stopped its cues and its
+    /// end. It now ticks on a timer like Android; frames only draw.
+    #[test]
+    fn box_breath_ticks_on_a_timer_not_on_redraws() {
+        let imp = read("src/timer/imp.rs");
+        let tick = body_of(&imp, "    fn start_tick(&self) {");
+        assert!(tick.contains("Duration::from_millis(200)"), "Box Breath ticks every 200 ms");
+        assert!(tick.contains("imp.tick_breathing()"));
+        for sig in ["    fn on_start(&self) {", "    fn on_resume(&self) {"] {
+            assert!(!body_of(&imp, sig).contains("if mode != TimerMode::Breathing"), "{sig}");
+        }
+        let window = read("src/window/imp.rs");
+        assert!(!window.contains("box_breath_session_tick()"), "the frame callback only draws");
+    }
+
+    /// Automatic suspend could hit mid-session on Linux: only the
+    /// screen was kept on, and only with "Keep screen awake".
+    #[test]
+    fn a_running_session_blocks_suspend() {
+        let imp = read("src/timer/imp.rs");
+        let lock = body_of(&imp, "    pub(crate) fn acquire_screen_awake_lock(");
+        assert!(lock.contains("let mut flags = gtk::ApplicationInhibitFlags::SUSPEND;"), "SUSPEND whatever the setting");
+        assert!(!lock.contains("if !active { return; }"), "suspend is blocked even without Keep screen awake");
+    }
+
+    /// A paused session held the suspend block, so a forgotten pause
+    /// kept the computer awake for hours.
+    #[test]
+    fn a_paused_session_lets_the_computer_suspend() {
+        let imp = read("src/timer/imp.rs");
+        assert!(body_of(&imp, "    pub fn on_pause(&self) {").contains("self.release_screen_awake_lock(&app)"));
+        assert!(body_of(&imp, "    fn on_resume(&self) {").contains("self.acquire_screen_awake_lock(&app)"));
+    }
+
+    /// GNOME or the portal can refuse the block (cookie 0); the
+    /// session then ran without it and nothing said so.
+    #[test]
+    fn a_refused_suspend_block_tells_the_user() {
+        let imp = read("src/timer/imp.rs");
+        let lock = body_of(&imp, "    pub(crate) fn acquire_screen_awake_lock(");
+        assert!(lock.contains("if cookie == 0 {"));
+        assert!(lock.contains("self.toast(&gettext(\"Couldn't keep the computer awake for the bells\"))"));
     }
 }

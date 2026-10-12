@@ -26,9 +26,8 @@ pub enum Effect {
     /// configured for the new phase (master toggle on + per-phase
     /// row enabled). Carries the resolved sound + vibration + the
     /// effective signal_mode (per-phase AND per-mode override
-    /// already applied). The first tick of a box-breath session
-    /// seeds `last_phase` silently; only subsequent transitions
-    /// emit.
+    /// already applied). `Session::start` emits it for the first
+    /// inhale; after that, each phase change emits it.
     FireBoxBreathCue {
         phase: BoxBreathPhaseId,
         sound_uuid: String,

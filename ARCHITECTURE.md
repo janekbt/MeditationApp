@@ -166,7 +166,7 @@ SessionShape + DB  ->  SessionSettings  ->  Session  ->  Effect
 
 The shell picks a `SessionShape`, calls
 `SessionSettings::from_db(db, shape)`, starts a `Session`, then calls
-`tick(now)` on a repeating timer (1 s on GTK, 200 ms on Android) and
+`tick(now)` on a repeating timer (1 s on GTK, 200 ms for GTK Box Breath and on Android) and
 dispatches the effects that come back.
 
 ### SessionSettings: the frozen plan
@@ -374,6 +374,9 @@ worth knowing before reading it:
   (mediaPlayback foreground service, MediaSession, partial wake lock)
   keeps the process alive and the CPU awake for the session, so bells
   ring on time under Doze. The Rust tick loop stays the only timer.
+  The Linux app does the same with a GTK suspend inhibit (plus an
+  idle inhibit with "Keep screen awake"). On both, a pause releases
+  the lock and the screen-on hold, and resume takes them back.
 - **Legacy back, on purpose.** Back arrives as `Key.Back`, caught by
   the root `FocusScope` in `main.slint` and routed to the
   `back-pressed` callback (`ui.rs`, `on_back_pressed`). The manifest

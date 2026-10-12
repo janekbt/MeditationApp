@@ -446,23 +446,14 @@ impl MeditateWindow {
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
         let pattern_for_tick = pattern;
-        // Stage 4 of item 13: phase-boundary cue firing + cycle-
-        // aligned end are owned by the portable Session. The frame
-        // tick still drives the visual rendering (phase label, dot,
-        // counter), but the *decisions* now flow through Session
-        // effects.
+        // The frame callback only draws (phase label, dot, counter).
+        // The session itself ticks on the TimerView's timer, which
+        // keeps running while the window isn't drawn.
         drawing_area.add_tick_callback(move |_, _clock| {
-            use meditate_core::session::Effect as CoreSessionEffect;
             let tv = obj.imp().timer_view.clone();
-
-            let effects = tv.imp().box_breath_session_tick();
-            let session_ended = effects
-                .iter()
-                .any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. }));
-            // FireBoxBreathCue + FireEndBell route through the shared
-            // dispatcher; UpdateDisplay stays redundant (counter reads
-            // breath_elapsed() at frame rate already).
-            tv.imp().dispatch_session_effects(&effects);
+            if !matches!(tv.imp().ui_state(), meditate_core::session::UiState::Running | meditate_core::session::UiState::Paused) {
+                return glib::ControlFlow::Break;
+            }
 
             // Visual render. breath_elapsed() is wall-clock anchored
             // and freezes on pause, so it's the right input for both
@@ -494,14 +485,6 @@ impl MeditateWindow {
                 da.queue_draw();
             }
 
-            // Cycle-aligned stop, signalled by the Session's
-            // EndBoxBreath effect above. Use finish_breath_session
-            // (natural completion: chime, vibration, notification)
-            // rather than stop() (user-initiated, silent).
-            if session_ended {
-                tv.finish_breath_session();
-                return glib::ControlFlow::Break;
-            }
             glib::ControlFlow::Continue
         });
 

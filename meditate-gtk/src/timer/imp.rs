@@ -1134,10 +1134,11 @@ impl TimerView {
         self.bells_loading.set(false);
     }
 
-    /// If the active mode's keep-screen-awake setting is on, hold an
-    /// idle inhibit for the duration of the session. Cookie is stashed
-    /// on `screen_awake_cookie`; calling release_screen_awake_lock
-    /// uninhibits and clears it. No-op if no mode requested it or if
+    /// Hold a suspend inhibit while the session runs (not while
+    /// paused), plus an idle inhibit when the mode's keep-screen-awake
+    /// setting is on. Says so when the system refuses it.
+    /// Cookie is stashed on `screen_awake_cookie`;
+    /// release_screen_awake_lock uninhibits and clears it. No-op if
     /// the cookie is already held (idempotent).
     pub(crate) fn acquire_screen_awake_lock(
         &self,
@@ -1145,20 +1146,28 @@ impl TimerView {
     ) {
         if self.screen_awake_cookie.get() != 0 { return; }
         let mode = self.current_mode().into();
-        let active = app
+        let keep_screen_on = app
             .with_db(|db| meditate_core::settings_keys::keep_screen_awake_from_db(db.core(), mode))
             .unwrap_or(false);
-        if !active { return; }
+        // Every session blocks suspend so bells and the end stay on
+        // time; the screen stays on only with "Keep screen awake".
+        let mut flags = gtk::ApplicationInhibitFlags::SUSPEND;
+        if keep_screen_on {
+            flags |= gtk::ApplicationInhibitFlags::IDLE;
+        }
         let window = app.active_window();
         let cookie = app.inhibit(
             window.as_ref(),
-            gtk::ApplicationInhibitFlags::IDLE,
+            flags,
             Some(&gettext("Meditation session running")),
         );
+        if cookie == 0 {
+            self.toast(&gettext("Couldn't keep the computer awake for the bells"));
+        }
         self.screen_awake_cookie.set(cookie);
     }
 
-    /// Release the idle-inhibit cookie acquired at session start, if
+    /// Release the inhibit cookie acquired at session start, if
     /// any. Idempotent.
     pub(crate) fn release_screen_awake_lock(
         &self,
@@ -2207,13 +2216,10 @@ impl TimerView {
         //   prior Timer-only behaviour.
 
         self.tick_mode.set(mode);
-        // Countdown/stopwatch use the shared 1 Hz tick; Breathing drives
-        // its own DrawingArea tick from window::push_running_page.
-        // Preparing is Timer-mode-only and uses the same tick — the
-        // tick's state branch handles prep countdown vs. running.
-        if mode != TimerMode::Breathing {
-            self.start_tick();
-        }
+        // Every mode ticks on a timer, so a minimised window or a
+        // blank screen doesn't stop the session; Box Breath's
+        // DrawingArea frame callback only draws.
+        self.start_tick();
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
@@ -2235,8 +2241,9 @@ impl TimerView {
         }
 
         self.tick_mode.set(mode);
-        if mode != TimerMode::Breathing {
-            self.start_tick();
+        self.start_tick();
+        if let Some(app) = self.get_app() {
+            self.acquire_screen_awake_lock(&app);
         }
         // Flip the pause-button label back from "Resume" to "Pause"
         // — the running page stays up across pause/resume now, so
@@ -2278,6 +2285,10 @@ impl TimerView {
             if let Some(p) = self.guided_playback.borrow().as_ref() {
                 p.pause();
             }
+        }
+        // A forgotten pause shouldn't keep the computer awake.
+        if let Some(app) = self.get_app() {
+            self.release_screen_awake_lock(&app);
         }
 
         // Stay on the running page — morph the running pause-button
@@ -2712,13 +2723,22 @@ impl TimerView {
     fn start_tick(&self) {
         self.cancel_tick();
         let obj = self.obj().clone();
+        // Box Breath cues land on phase boundaries, so it ticks every
+        // 200 ms like the Android app; the others show whole seconds.
+        let breathing = self.tick_mode.get() == TimerMode::Breathing;
+        let interval = if breathing {
+            std::time::Duration::from_millis(200)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
 
         let source_id = glib::timeout_add_local(
-            std::time::Duration::from_secs(1),
+            interval,
             move || {
                 let imp = obj.imp();
                 match imp.ui_state() {
                     UiState::Preparing => imp.tick_prep(&obj),
+                    UiState::Running if breathing => imp.tick_breathing(),
                     UiState::Running => imp.tick_running(&obj),
                     UiState::Overtime => imp.tick_overtime(&obj),
                     _ => glib::ControlFlow::Break,
@@ -2757,6 +2777,21 @@ impl TimerView {
         // FireStartingBell (emitted by Session alongside EndPrep at
         // the boundary tick) flows through the shared dispatcher.
         self.dispatch_session_effects(&effects);
+        glib::ControlFlow::Continue
+    }
+
+    /// Box Breath tick: phase cues, the end bell and the cycle-aligned
+    /// end all come from the Session's effects.
+    fn tick_breathing(&self) -> glib::ControlFlow {
+        let effects = self.box_breath_session_tick();
+        self.dispatch_session_effects(&effects);
+        if effects.iter().any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. })) {
+            // The source ends with Break; forget its id so a later
+            // cancel_tick doesn't remove it a second time.
+            self.tick_source.borrow_mut().take();
+            self.finish_breath_session();
+            return glib::ControlFlow::Break;
+        }
         glib::ControlFlow::Continue
     }
 
@@ -2988,9 +3023,8 @@ impl TimerView {
         }
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
-        // End bell fires via Session's FireEndBell effect — emitted
-        // on EndBoxBreath in tick_box_breath, dispatched through
-        // dispatch_session_effects on the frame-tick callback before
+        // End bell fires via Session's FireEndBell effect, emitted
+        // with EndBoxBreath and dispatched by tick_breathing before
         // we get here. System notification stays in gtk.
         if let Some(app) = self.get_app() {
             if !app.active_window().is_some_and(|w| w.is_active()) {
@@ -3037,12 +3071,10 @@ impl TimerView {
     }
 
     /// Tick the portable Session against the current boot-anchored
-    /// elapsed; used by the box-breath per-frame callback in
-    /// window/imp.rs. Returns the effects (FireBoxBreathCue + the
-    /// cycle-aligned EndBoxBreath) so the caller can dispatch them
-    /// without touching `core_session` directly. Empty Vec when no
-    /// session is in flight or the session is paused.
-    pub(crate) fn box_breath_session_tick(&self) -> Vec<CoreSessionEffect> {
+    /// elapsed; used by `tick_breathing`. Returns the effects
+    /// (FireBoxBreathCue + the cycle-aligned EndBoxBreath). Empty Vec
+    /// when no session is in flight or the session is paused.
+    fn box_breath_session_tick(&self) -> Vec<CoreSessionEffect> {
         let now = self.elapsed_since_start();
         self.core_session
             .borrow_mut()

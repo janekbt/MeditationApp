@@ -194,8 +194,9 @@ pub struct ActiveBell {
 impl ActiveBell {
     /// Per-tick decision: did this bell's ring boundary just get crossed?
     /// Mutates the schedule so the next tick won't double-fire:
-    ///   - `Interval`: rerolls `next_ring_secs` using one draw from
-    ///     `rng()` for the jitter pick.
+    ///   - `Interval`: rerolls `next_ring_secs` (one `rng()` draw per
+    ///     step) until it is past `elapsed_secs`, so a time jump rings
+    ///     once.
     ///   - `Fixed`: flips `fired` to true.
     ///
     /// Returns `true` if the caller should dispatch this bell's
@@ -209,9 +210,13 @@ impl ActiveBell {
                 next_ring_secs,
             } => {
                 if elapsed_secs >= *next_ring_secs {
-                    let r = rng();
-                    *next_ring_secs =
-                        next_interval_ring_secs(*next_ring_secs, *base_min, *jitter_pct, r);
+                    // After a time jump: ring once, then continue from
+                    // the first due time still ahead.
+                    while elapsed_secs >= *next_ring_secs {
+                        let r = rng();
+                        *next_ring_secs =
+                            next_interval_ring_secs(*next_ring_secs, *base_min, *jitter_pct, r);
+                    }
                     true
                 } else {
                     false
@@ -947,24 +952,6 @@ mod tests {
             );
         } else {
             panic!("schedule shape changed");
-        }
-    }
-
-    #[test]
-    fn interval_rerolls_only_once_per_tick_even_when_far_past() {
-        // If the app was backgrounded and the tick catches up by
-        // multiple ring intervals, we still fire once and reroll once.
-        // Catching up is the shell's responsibility (call tick again
-        // with the new elapsed), not an internal loop.
-        let mut bell = interval_bell(5, 0, 300);
-        let mut rng = CountedRng::new(0.5);
-        assert!(bell.tick(900, &mut rng.closure()));
-        assert_eq!(rng.calls, 1);
-        // The next_ring rerolls relative to the prior value (300),
-        // not the actual elapsed (900). Catch-up firing happens on
-        // the next tick when the shell calls again.
-        if let BellSchedule::Interval { next_ring_secs, .. } = bell.schedule {
-            assert_eq!(next_ring_secs, 600);
         }
     }
 
@@ -1849,5 +1836,16 @@ mod tests {
             state = next;
         }
         assert!(!all_same, "xorshift64 collapsed to a constant");
+    }
+
+    /// After a suspend the bell rang once per tick until it caught
+    /// up: a 5-minute bell woken at 25:00 rang five times in 5 s.
+    #[test]
+    fn an_interval_bell_rings_once_after_a_time_jump() {
+        let mut bell = interval_bell(5, 0, 300);
+        let mut rng = || 0.5;
+        assert!(bell.tick(1500, &mut rng), "rings once on waking");
+        assert!(!bell.tick(1501, &mut rng), "and not again a second later");
+        assert!(matches!(bell.schedule, BellSchedule::Interval { next_ring_secs: 1800, .. }));
     }
 }

@@ -317,6 +317,21 @@ fn guided_follows_pause(app: &slint::android::AndroidApp, state: &AppState) {
     }
 }
 
+/// A paused session lets the phone sleep, like GTK dropping its
+/// suspend block: the wake lock and the screen-on hold go with the
+/// pause and come back on resume.
+fn wake_follows_pause(app: &slint::android::AndroidApp, state: &AppState, mode: meditate_core::SessionMode) {
+    if state.is_paused() {
+        service::pause(app);
+        screen::set_keep_awake(app, false);
+    } else {
+        service::resume(app);
+        if read_keep_awake_for_mode(mode) {
+            screen::set_keep_awake(app, true);
+        }
+    }
+}
+
 /// Silence a bell or vibration still going when the user leaves the
 /// Done screen (Save / Discard / back) — the same stop Stop and
 /// Finish trigger. Mirrors GTK's `stop_active_signals` in on_save /
@@ -4197,6 +4212,11 @@ fn build_ui() -> MainWindow {
                     }
                 }
             }
+            if was_active && is_active {
+                if let Some(app) = android_app() {
+                    wake_follows_pause(app, &s, current_mode.get().into());
+                }
+            }
             refresh(&ui, &s, now);
         });
     }
@@ -4629,6 +4649,7 @@ fn build_ui() -> MainWindow {
                         dispatch_effects(&t.effects);
                         *state.borrow_mut() = t.state;
                         guided_follows_pause(app, &state.borrow());
+                        wake_follows_pause(app, &state.borrow(), meditate_core::SessionMode::Guided);
                         if let Some(ui) = weak.upgrade() {
                             refresh(&ui, &state.borrow(), now_since_epoch());
                         }

@@ -58,6 +58,21 @@ pub fn stop(app: &AndroidApp) {
     }
 }
 
+/// Release the wake lock while the session is paused; the service
+/// and its notification stay. Same swallow-error policy.
+pub fn pause(app: &AndroidApp) {
+    if let Err(e) = invoke(app, "pause") {
+        meditate_core::log("service", &format!("pause FAILED: {e:?}"));
+    }
+}
+
+/// Take the wake lock back on resume. Same swallow-error policy.
+pub fn resume(app: &AndroidApp) {
+    if let Err(e) = invoke(app, "resume") {
+        meditate_core::log("service", &format!("resume FAILED: {e:?}"));
+    }
+}
+
 /// Post the "Meditation complete" notification; `duration` is the
 /// formatted session length for its body. Same swallow-error policy.
 pub fn notify_complete(app: &AndroidApp, duration: &str) {

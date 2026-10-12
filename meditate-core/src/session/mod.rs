@@ -153,8 +153,8 @@ pub struct Session {
     /// stay frozen at the pause moment.
     is_paused: bool,
     /// Box-Breath phase boundary tracking. `None` until the first
-    /// Running tick (which seeds it silently — the starting bell
-    /// already fired). `Some(p)` thereafter; a tick observes
+    /// Running tick, which seeds it silently because `Session::start`
+    /// already cued the first inhale. `Some(p)` thereafter; a tick observes
     /// `phase_at(elapsed) != p` and fires `FireBoxBreathCue`.
     /// Always `None` outside Box Breath mode.
     last_breath_phase: Option<Phase>,
@@ -244,7 +244,12 @@ impl Session {
             (Self::new(settings, SessionPhase::Prep, now), Vec::new())
         } else {
             let session = Self::new(settings, SessionPhase::Running, now);
-            let effects = starting_bell_effect(&session.settings).into_iter().collect();
+            let mut effects: Vec<Effect> = starting_bell_effect(&session.settings).into_iter().collect();
+            // Box Breath has no starting bell; its first inhale is cued here,
+            // and the first tick then seeds the phase silently.
+            if session.mode() == SessionMode::BoxBreath {
+                effects.extend(box_breath_cue_effect(&session.settings, BoxBreathPhaseId::In));
+            }
             (session, effects)
         }
     }
@@ -452,17 +457,22 @@ impl Session {
         let elapsed = self.phase_clock.elapsed(now);
 
         if elapsed >= target {
-            // Crossed the prep boundary. Transition to Running and
-            // restart the phase clock so Running's elapsed counts
-            // from this exact moment, not from prep start.
+            // Crossed the prep boundary. Running counts from the
+            // moment prep ended, not from this (possibly late) tick.
             self.phase = SessionPhase::Running;
-            self.phase_clock = Stopwatch::started_at(now);
+            let late = elapsed - target;
+            self.phase_clock = Stopwatch::started_at(now.saturating_sub(late));
             let mut effects = vec![Effect::EndPrep];
-            // Starting bell fires on the same tick as the boundary
-            // crossing — same instant the shell would have heard it
-            // before the migration.
-            if let Some(eff) = starting_bell_effect(&self.settings) {
-                effects.push(eff);
+            // The starting bell rings with the boundary crossing, unless
+            // a suspend already carried the session past its end: then
+            // only the end bell, on the next tick, makes sense.
+            let past_end = self
+                .settings
+                .shape
+                .target_secs()
+                .is_some_and(|t| late >= Duration::from_secs(u64::from(t)));
+            if !past_end {
+                effects.extend(starting_bell_effect(&self.settings));
             }
             return effects;
         }
@@ -498,8 +508,14 @@ impl Session {
         if let Some(target_secs) = self.settings.shape.target_secs() {
             let target = Duration::from_secs(u64::from(target_secs));
             if target.saturating_sub(elapsed).is_zero() {
-                // Bells skip this tick — gtk's historical behaviour is
-                // "transition first, bells fire on the next tick."
+                // The end bell stands for every bell due by now: advance
+                // them silently so none rings just after it.
+                let _ = fire_due_bells(
+                    &mut self.bells,
+                    &mut self.bell_rng_state,
+                    self.settings.signal_mode_override,
+                    elapsed,
+                );
                 self.phase = SessionPhase::Overtime;
                 return overtime_transition_effects(&self.settings);
             }
@@ -551,9 +567,27 @@ impl Session {
     ) -> Vec<Effect> {
         let mut effects: Vec<Effect> = Vec::new();
 
-        // Phase boundary detection. The first Running tick seeds
-        // `last_breath_phase` silently — the starting bell already
-        // fired at on_start so we don't double-cue Phase::In at t=0.
+        // Cycle-aligned end: the duration is rounded up to whole cycles
+        // at start, so the target lands on a cycle boundary. Checked
+        // before phase changes so the end doesn't cue another inhale,
+        // and the set length is saved however late this tick is.
+        // BoxBreathStopwatch (target None) never auto-ends.
+        if let Some(target_secs) = target_secs {
+            if elapsed >= Duration::from_secs(u64::from(target_secs)) {
+                let duration_secs = u64::from(target_secs);
+                self.phase = SessionPhase::Stopped;
+                self.final_duration_secs = Some(duration_secs);
+                effects.push(Effect::EndBoxBreath { duration_secs });
+                if let Some(eff) = end_bell_effect(&self.settings) {
+                    effects.push(eff);
+                }
+                return effects;
+            }
+        }
+
+        // Phase boundary detection. The first tick seeds
+        // `last_breath_phase` silently: `Session::start` already cued
+        // the first inhale.
         let info = pattern.phase_at(elapsed);
         match self.last_breath_phase {
             None => {
@@ -567,25 +601,6 @@ impl Session {
                 }
             }
             _ => {}
-        }
-
-        // Cycle-aligned end: the gtk shell rounds the chosen
-        // duration UP to the next full cycle at start time, so
-        // `elapsed >= target` already lands exactly on a cycle
-        // boundary. Box Breath is finished when that crossing
-        // happens. BoxBreathStopwatch (target None) never auto-ends.
-        if let Some(target_secs) = target_secs {
-            let target = Duration::from_secs(u64::from(target_secs));
-            if elapsed >= target {
-                let duration_secs = elapsed.as_secs();
-                self.phase = SessionPhase::Stopped;
-                self.final_duration_secs = Some(duration_secs);
-                effects.push(Effect::EndBoxBreath { duration_secs });
-                if let Some(eff) = end_bell_effect(&self.settings) {
-                    effects.push(eff);
-                }
-                return effects;
-            }
         }
 
         // Counter readout for the running-page top strip. Floor-
@@ -884,7 +899,7 @@ fn box_breath_cue_effect(
 /// and emit `FireBell` effects for every bell that crosses its
 /// ring boundary this tick. Mutates `bells` (Interval bells reroll
 /// their next_ring_secs; Fixed bells flip their fired flag) and
-/// the xorshift state (one draw per Interval-bell fire).
+/// the xorshift state (one draw per interval an Interval bell steps over).
 ///
 /// Free function rather than a method so the borrow checker sees
 /// the disjoint `&mut Vec<ActiveBell>` and `&mut u64` borrows
@@ -1077,11 +1092,11 @@ mod tests {
         assert_eq!(effects, vec![Effect::EndPrep]);
         assert_eq!(s.phase(), SessionPhase::Running);
 
-        // Subsequent tick is now in Running. EndPrep transitioned
-        // at host-time 135 s; one tick later, 1 s of Running has
-        // elapsed against the 600 s target → display 599.
+        // Subsequent tick is now in Running. Prep ended at 130 s
+        // (not at the late 135 s tick), so at 136 s, 6 s of the
+        // 600 s target have run → display 594.
         let effects = s.tick(Duration::from_secs(136));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 599 }]);
+        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 594 }]);
     }
 
     #[test]
@@ -1186,9 +1201,8 @@ mod tests {
     #[test]
     fn first_box_breath_tick_seeds_phase_silently() {
         // First tick into a Box-Breath running session must NOT
-        // emit FireBoxBreathCue — the starting bell already played
-        // at on_start; emitting a Phase::In cue here would be a
-        // duplicate.
+        // emit FireBoxBreathCue: `Session::start` already cued the
+        // first inhale, so a Phase::In cue here would be a duplicate.
         let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
         let effects = s.tick(Duration::from_millis(100_500)); // 0.5 s in, still Phase::In
         assert!(
@@ -2441,5 +2455,129 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let (s, _) = Session::start(timer_countdown_settings(60), t0);
         assert_eq!(s.display_secs(t0 + Duration::from_secs(20)), 40);
+    }
+
+    /// A blank screen or suspend delays the ending tick; the session
+    /// was saved with the late elapsed time (40 min for a 5 min sit).
+    #[test]
+    fn a_box_breath_session_ending_late_saves_its_set_length() {
+        let mut s = Session::start_running(box_breath_settings(Some(320)), Duration::from_secs(100));
+        let effects = s.tick(Duration::from_secs(100 + 2400));
+        assert!(effects.contains(&Effect::EndBoxBreath { duration_secs: 320 }), "{effects:?}");
+        assert_eq!(s.final_duration_secs(), Some(320));
+    }
+
+    /// A suspend during preparation restarted the countdown from 0
+    /// on waking; without preparation the same suspend ends it.
+    #[test]
+    fn a_late_tick_at_the_end_of_prep_keeps_the_countdown_on_time() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_prep(timer_prep_settings(30, 600), t0);
+        let _ = s.tick(t0 + Duration::from_secs(5));
+        let _ = s.tick(t0 + Duration::from_secs(20 * 60)); // wakes: ends prep
+        let effects = s.tick(t0 + Duration::from_secs(20 * 60 + 1));
+        assert!(effects.contains(&Effect::EnterOvertime), "{effects:?}");
+    }
+
+    #[test]
+    fn a_slightly_late_prep_tick_loses_no_countdown_time() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_prep(timer_prep_settings(30, 600), t0);
+        let _ = s.tick(t0 + Duration::from_millis(30_800));
+        assert_eq!(s.elapsed(t0 + Duration::from_millis(30_800)), Duration::from_millis(800));
+    }
+
+    /// The tick that crossed into overtime skipped the bells, so a
+    /// bell due at 10:00 rang at 10:01, after the end bell.
+    #[test]
+    fn an_interval_bell_due_at_the_end_gives_way_to_the_end_bell() {
+        let mut settings = timer_countdown_settings(600);
+        settings.bells = vec![interval_bell(5, "ding")];
+        settings.end_bell = Some(crate::bells::BellCue {
+            sound_uuid: "end".into(),
+            vibration_pattern_uuid: "pattern".into(),
+            signal_mode: SignalMode::Sound,
+            volume: Default::default(),
+        });
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_running(settings, t0);
+        assert!(s.tick(t0 + Duration::from_secs(300)).iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        let effects = s.tick(t0 + Duration::from_secs(600));
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
+        let effects = s.tick(t0 + Duration::from_secs(601));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
+    }
+
+    /// The last tick of a cycle-aligned session also entered the next
+    /// inhale, so "breathe in" played on top of the end bell.
+    #[test]
+    fn box_breath_ends_without_cueing_another_cycle() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_running(box_breath_settings(Some(320)), t0);
+        let mut last = Vec::new();
+        for sec in 1..=320 {
+            last = s.tick(t0 + Duration::from_secs(sec));
+        }
+        assert!(last.contains(&Effect::EndBoxBreath { duration_secs: 320 }), "{last:?}");
+        assert!(!last.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })), "{last:?}");
+    }
+
+    /// Box Breath has no starting bell, so with cues on the first
+    /// signal was "hold" at 4 s.
+    #[test]
+    fn box_breath_cues_the_first_inhale_at_the_start() {
+        let (mut s, effects) = Session::start(box_breath_settings(None), Duration::from_secs(100));
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::In, .. })),
+            "{effects:?}"
+        );
+        let effects = s.tick(Duration::from_millis(100_500));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })), "no second inhale cue");
+    }
+
+    /// A suspend that covered preparation and the whole countdown rang
+    /// the starting bell on waking, minutes late, then the end bell.
+    #[test]
+    fn a_suspend_past_the_end_during_prep_rings_only_the_end_bell() {
+        let cue = || crate::bells::BellCue {
+            sound_uuid: "bell".into(),
+            vibration_pattern_uuid: "pattern".into(),
+            signal_mode: SignalMode::Sound,
+            volume: Default::default(),
+        };
+        let mut settings = timer_prep_settings(30, 600);
+        settings.starting_bell = Some(cue());
+        settings.end_bell = Some(cue());
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_prep(settings, t0);
+        let _ = s.tick(t0 + Duration::from_secs(5));
+        let mut effects = s.tick(t0 + Duration::from_secs(20 * 60));
+        effects.extend(s.tick(t0 + Duration::from_secs(20 * 60 + 1)));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireStartingBell { .. })), "{effects:?}");
+        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::FireEndBell { .. })).count(), 1, "{effects:?}");
+    }
+
+    #[test]
+    fn a_suspend_past_the_end_during_prep_rings_no_interval_bell() {
+        let cue = || crate::bells::BellCue {
+            sound_uuid: "bell".into(),
+            vibration_pattern_uuid: "pattern".into(),
+            signal_mode: SignalMode::Sound,
+            volume: Default::default(),
+        };
+        let mut settings = timer_prep_settings(30, 60);
+        settings.starting_bell = Some(cue());
+        settings.end_bell = Some(cue());
+        settings.bells = vec![interval_bell(1, "interval")];
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_prep(settings, t0);
+        let _ = s.tick(t0 + Duration::from_secs(5));
+        let mut effects = Vec::new();
+        for secs in 180..185 {
+            effects.extend(s.tick(t0 + Duration::from_secs(secs)));
+        }
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
+        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::FireEndBell { .. })).count(), 1, "{effects:?}");
     }
 }
