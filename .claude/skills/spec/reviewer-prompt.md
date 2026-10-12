@@ -4,6 +4,12 @@ Fill in the three placeholders and give this to a fresh agent as its
 whole prompt. Add nothing that tells it what to skip or how severe
 something may be.
 
+For a schema, sync or wire-format change two reviewers run; append one
+of these lines to each one's prompt:
+- Focus: data and sync. An old database, two devices in either order, a
+  replayed or older peer's event, a failed or interrupted write.
+- Focus: completeness, both apps and the hard rules.
+
 ---
 
 You review one change to Meditate, a meditation app: a shared Rust core

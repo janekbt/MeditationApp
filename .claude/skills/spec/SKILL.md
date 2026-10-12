@@ -143,11 +143,22 @@ Start a fresh agent with [reviewer-prompt.md](reviewer-prompt.md), the
 change folder path and the base commit. Give it files, never this
 conversation, and never tell it what not to flag.
 
+A schema, sync or wire-format change gets two fresh agents in parallel
+instead, each with the brief plus one of its two focus lines (data and
+sync; completeness, both apps and rules). Two focuses find more than
+the same review twice.
+
 For each finding: check it against the code yourself. Fix what holds,
 one at a time, with a test where it is behaviour. A finding you reject
 gets one line in `tasks.md` (what, why) and is shown to the human. A
 finding that would change behaviour, UI text or data beyond the approved
 proposal is a question for the human, not a fix.
+
+Fixes are code no reviewer saw. When the fixes after the review, or
+after the device test in step 6, change behaviour, data or sync, a
+fresh agent reviews only those: give it the list of fixes from
+`tasks.md`, the files and the brief, and fix what it finds the same
+way. Fixes to wording, comments or docs need no second look.
 
 ### 5. Specs, docs and the list
 
