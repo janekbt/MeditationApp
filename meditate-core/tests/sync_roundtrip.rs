@@ -162,6 +162,7 @@ fn session_arriving_before_its_label_in_a_batch_links_after_recompute() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     })
     .expect("insert session");
 
@@ -227,6 +228,7 @@ fn replay_events_covers_every_entity_kind_in_one_batch() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     })
     .expect("session");
     a.insert_bell_sound(
@@ -662,6 +664,7 @@ fn fresh_device_recovers_full_state_from_remote_via_sync() {
             mode: SessionMode::Timer,
             uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         })
         .expect("session");
     sync_for(&source, &remote, &tempdir, "source")
@@ -760,6 +763,7 @@ fn session_delete_on_a_propagates_to_b() {
             mode: SessionMode::Timer,
             uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         })
         .expect("insert session");
     sync_for(&a, &remote, &tempdir, "device_a").sync().expect("A push");
@@ -813,6 +817,7 @@ fn second_sync_with_no_local_changes_is_a_no_op() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     })
     .expect("session");
 

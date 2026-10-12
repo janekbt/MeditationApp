@@ -215,6 +215,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap()
 }
 
@@ -232,5 +233,6 @@ fn update_session_notes(db: &Database, id: i64, notes: &str) {
         mode: current.mode,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
 }

@@ -1139,6 +1139,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
@@ -1332,7 +1333,7 @@ mod tests {
             start_iso: "2026-05-13T10:00:00".into(),
             accumulated_secs: 600,
             mode: SessionMode::Timer,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: None,
             guided_file_uuid: None,
         };
@@ -1360,6 +1361,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1);
         assert!(!db.pending_events().unwrap().is_empty(),
@@ -1414,6 +1416,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let row_uuid = crate::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         let events = db.pending_events().unwrap();
@@ -1431,6 +1434,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let row_uuid = crate::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
@@ -1550,12 +1554,14 @@ mod tests {
             duration_secs: 600, label_id: None, notes: Some("from A".to_string()),
             mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         device_b.insert_session(&Session {
             start_iso: "2026-04-30T18:00:00".to_string(),
             duration_secs: 1200, label_id: None, notes: Some("from B".to_string()),
             mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let events_a: Vec<Event> = device_a.pending_events().unwrap()
@@ -1595,6 +1601,7 @@ mod tests {
                 duration_secs: 600, label_id: None, notes: None,
                 mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let events: Vec<Event> = device_a.pending_events().unwrap()
@@ -1729,6 +1736,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let local_event = db.pending_events().unwrap()
             .into_iter()

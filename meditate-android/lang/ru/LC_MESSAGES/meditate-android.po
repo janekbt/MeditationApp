@@ -1157,8 +1157,11 @@ msgstr "Реже всего"
 msgid "No audio files in this folder"
 msgstr "В этой папке нет аудиофайлов"
 
-msgid "reading {}/{}"
-msgstr "чтение {}/{}"
+msgid "Folder refreshed"
+msgstr "Папка обновлена"
+
+msgid "{}%"
+msgstr "{} %"
 
 msgid "Couldn't open the folder picker"
 msgstr "Не удалось открыть выбор папки"

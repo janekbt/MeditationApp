@@ -1131,8 +1131,11 @@ msgstr "Menos reproduzidos"
 msgid "No audio files in this folder"
 msgstr "Nenhum arquivo de áudio nesta pasta"
 
-msgid "reading {}/{}"
-msgstr "lendo {}/{}"
+msgid "Folder refreshed"
+msgstr "Pasta atualizada"
+
+msgid "{}%"
+msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "Não foi possível abrir o seletor de pastas"

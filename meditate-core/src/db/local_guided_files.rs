@@ -192,24 +192,8 @@ pub fn list_local_files_from_db(db: &Database, root: &str) -> Result<Vec<LocalGu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::test_helpers::release_v26_10_1_database;
 
-    /// A database as v26.10.1 left it, with one session and one
-    /// library file.
-    fn release_v26_10_1_database() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("fixtures/schema_v26_10_1.sql")).unwrap();
-        conn.execute_batch(
-            "PRAGMA user_version = 1;
-             INSERT INTO sync_state (key, value) VALUES ('cache_schema_version', '2');
-             INSERT INTO sessions (start_iso, duration_secs, mode, uuid)
-                 VALUES ('2026-10-01T07:00:00', 1200, 'guided', 's1');
-             INSERT INTO guided_files (uuid, name, file_path, duration_secs, created_iso, updated_iso)
-                 VALUES ('g1', 'Body scan', 'guided/g1.ogg', 1380, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');",
-        )
-        .unwrap();
-        conn
-    }
 
     #[test]
     fn a_database_from_the_last_release_gains_the_local_folder_table() {
@@ -369,6 +353,7 @@ mod tests {
             mode: crate::db::SessionMode::Guided,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }
     }
 

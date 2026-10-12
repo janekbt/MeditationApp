@@ -112,19 +112,62 @@ pub fn list_view(files: &[LocalGuidedFile], sort: ListSort) -> Vec<&LocalGuidedF
     rows
 }
 
-/// The folder line: how many files there are and how many lengths
-/// are read. `read < files` means reading is still going on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FolderLine {
-    pub files: u32,
-    pub read: u32,
+/// The folder line's count: the files still in the folder.
+pub fn folder_line(files: &[LocalGuidedFile]) -> u32 {
+    files.iter().filter(|f| !f.missing).count() as u32
 }
 
-pub fn folder_line(files: &[LocalGuidedFile]) -> FolderLine {
-    let present = files.iter().filter(|f| !f.missing);
-    FolderLine {
-        files: present.clone().count() as u32,
-        read: present.filter(|f| f.duration_secs.is_some()).count() as u32,
+/// One refresh of the folder, as the refresh button shows it: the
+/// lengths this run has to read and how many are done, and whether
+/// the user tapped for it. Ids are kept, so a file queued twice
+/// counts once.
+#[derive(Debug, Default)]
+pub struct RefreshProgress {
+    tapped: bool,
+    failed: bool,
+    queued: std::collections::HashSet<i64>,
+    done: std::collections::HashSet<i64>,
+}
+
+impl RefreshProgress {
+    pub fn tap(&mut self) {
+        self.tapped = true;
+    }
+
+    /// A file whose length this run will read.
+    pub fn queued(&mut self, id: i64) {
+        self.queued.insert(id);
+    }
+
+    /// A length read, or failed to read.
+    pub fn finished(&mut self, id: i64) {
+        self.done.insert(id);
+    }
+
+    /// A scan or length could not be saved; the app said so already.
+    pub fn write_failed(&mut self) {
+        self.failed = true;
+    }
+
+    /// Percent of this run's lengths done; None while there are none
+    /// (the folder itself is still being walked).
+    pub fn percent(&self) -> Option<u32> {
+        let total = self.queued.len();
+        let done = self.done.intersection(&self.queued).count();
+        (total > 0).then(|| (done * 100 / total) as u32)
+    }
+
+    /// Call on every redraw. When nothing is read any more, starts the
+    /// next run afresh and returns true once if the user tapped for
+    /// this one, the folder could be read and everything was saved.
+    pub fn settle(&mut self, busy: bool, unreachable: bool) -> bool {
+        if busy {
+            return false;
+        }
+        self.queued.clear();
+        self.done.clear();
+        let failed = std::mem::take(&mut self.failed);
+        std::mem::take(&mut self.tapped) && !unreachable && !failed
     }
 }
 
@@ -299,10 +342,60 @@ mod tests {
     }
 
     #[test]
-    fn folder_line_counts_lengths_still_to_read() {
+    fn folder_line_counts_files_still_there() {
         let mut files: Vec<_> = (0..41).map(|i| f(&format!("{i}.ogg"), (i < 29).then_some(60), 0)).collect();
         files.push(LocalGuidedFile { missing: true, ..f("gone.ogg", None, 0) });
-        assert_eq!(folder_line(&files), FolderLine { files: 41, read: 29 });
+        assert_eq!(folder_line(&files), 41);
+    }
+
+    #[test]
+    fn a_tapped_refresh_reports_once_when_done() {
+        let mut p = RefreshProgress::default();
+        // A refresh the page started itself: no report.
+        p.queued(1);
+        p.finished(1);
+        assert!(!p.settle(false, false));
+        p.tap();
+        assert!(!p.settle(true, false), "not while it runs");
+        assert!(p.settle(false, false));
+        assert!(!p.settle(false, false), "once");
+    }
+
+    #[test]
+    fn an_unreachable_folder_reports_no_refresh() {
+        let mut p = RefreshProgress::default();
+        p.tap();
+        assert!(!p.settle(false, true));
+        assert!(!p.settle(false, false), "the tap was used up");
+    }
+
+    #[test]
+    fn a_failed_write_reports_no_refresh() {
+        let mut p = RefreshProgress::default();
+        p.tap();
+        p.write_failed();
+        assert!(!p.settle(false, false));
+        p.tap();
+        assert!(p.settle(false, false), "the next run starts clean");
+    }
+
+    #[test]
+    fn the_refresh_percentage_counts_this_runs_files() {
+        let mut p = RefreshProgress::default();
+        assert_eq!(p.percent(), None, "walking: no number");
+        for id in 1..=4 {
+            p.queued(id);
+        }
+        p.queued(2); // picked: read first, still one file
+        assert_eq!(p.percent(), Some(0));
+        p.finished(2);
+        assert_eq!(p.percent(), Some(25));
+        p.finished(1);
+        p.finished(3);
+        assert_eq!(p.percent(), Some(75));
+        p.finished(4);
+        p.settle(false, false);
+        assert_eq!(p.percent(), None, "the next run starts afresh");
     }
 
     #[test]

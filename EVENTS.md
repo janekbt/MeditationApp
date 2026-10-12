@@ -149,7 +149,8 @@ field with the new value. There is no "patch" semantics.
   "label_uuid":       "550e8400-e29b-41d4-a716-446655440002",
   "notes":            "Morning sit before standup",
   "mode":             "timer",
-  "guided_file_uuid": null
+  "guided_file_uuid": null,
+  "guided_file_name": null
 }
 ```
 
@@ -174,6 +175,13 @@ field with the new value. There is no "patch" semantics.
   guided file played without importing it. Once a file is deleted,
   its name for the Log comes from the last `guided_file_insert` /
   `_update` event that carried `name`.
+- `guided_file_name`: title of the file a guided session played, as
+  the Guided page showed it (library, Local Folder or Open File), else
+  `null`. The Log shows the library name when `guided_file_uuid`
+  resolves, otherwise this. Optional: older writers omit it.
+  The one exception to full overwrite: when the winning event has no
+  name, the newest event of the session that has one supplies it, so
+  an older peer's edit doesn't erase it.
 
 ### `session_delete`
 
@@ -394,8 +402,8 @@ Recompute: `recompute_guided_file`. `target_id` is the file uuid.
 
 Files in a Guided Local Folder are not guided files and write no
 event: their stars, lengths and play counts stay on the device. A
-session played from one syncs with `guided_file_uuid` null, like an
-Open File pick.
+session played from one syncs with `guided_file_uuid` null and the
+file's title in `guided_file_name`, like an Open File pick.
 
 ### `guided_file_insert` / `guided_file_update`
 

@@ -438,9 +438,10 @@ fn build_card(
         right_col.append(&build_label_chip(label_name, color_cls));
     }
 
-    // Guided library file the session played, as a dimmed caption.
+    // The guided file the session played, as a dimmed caption.
     if let Some(name) = meditate_core::db::guided_file_name_for(
         session.guided_file_uuid.as_deref(),
+        session.guided_file_name.as_deref(),
         guided_names,
     ) {
         let file_label = gtk::Label::builder()
@@ -808,6 +809,7 @@ impl LogView {
         let original_mode = session.map_or(SessionMode::Timer, |s| s.mode);
         let original_guided_file_uuid = session
             .and_then(|s| s.guided_file_uuid.clone());
+        let original_guided_file_name = session.and_then(|s| s.guided_file_name.clone());
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
@@ -1194,6 +1196,7 @@ impl LogView {
                     label_id,
                     note,
                     guided_file_uuid: original_guided_file_uuid.clone(),
+                    guided_file_name: original_guided_file_name.clone(),
                 };
 
                 if let Some(app) = imp.get_app() {

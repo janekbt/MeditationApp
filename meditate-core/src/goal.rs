@@ -149,6 +149,7 @@ mod tests {
                 mode: crate::SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             })
             .unwrap();
         }

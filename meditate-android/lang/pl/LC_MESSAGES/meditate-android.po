@@ -1157,8 +1157,11 @@ msgstr "Najrzadziej odtwarzane"
 msgid "No audio files in this folder"
 msgstr "Brak plików audio w tym folderze"
 
-msgid "reading {}/{}"
-msgstr "odczyt {}/{}"
+msgid "Folder refreshed"
+msgstr "Folder odświeżony"
+
+msgid "{}%"
+msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "Nie można otworzyć wyboru folderu"

@@ -1165,6 +1165,15 @@ struct LocalFolderState {
     reading: std::collections::HashSet<i64>,
     /// Files whose length could not be read in this run.
     failed: std::collections::HashSet<i64>,
+    /// What the refresh button shows, and whether a tap waits for its
+    /// snackbar.
+    progress: meditate_core::local_folder::RefreshProgress,
+}
+
+impl LocalFolderState {
+    fn busy(&self) -> bool {
+        self.scanning.is_some() || !self.reading.is_empty()
+    }
 }
 
 thread_local! {
@@ -1197,6 +1206,12 @@ fn local_save<T, E: std::fmt::Debug>(
         Ok(v) => Some(v),
         Err(e) => {
             meditate_core::log("guided.local", &format!("{what} FAILED: {e}"));
+            LOCAL_FOLDER.with(|l| {
+                let mut l = l.borrow_mut();
+                if l.busy() {
+                    l.progress.write_failed();
+                }
+            });
             show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
             None
         }
@@ -1248,6 +1263,9 @@ fn read_local_lengths(root: &str, files: Vec<(i64, String)>) {
     let Some(app) = android_app() else { return };
     let files: Vec<_> = LOCAL_FOLDER.with(|l| {
         let mut l = l.borrow_mut();
+        for (id, _) in &files {
+            l.progress.queued(*id);
+        }
         files.into_iter().filter(|(id, _)| l.reading.insert(*id)).collect()
     });
     if !files.is_empty() && !guided::read_local_lengths(app, root, &files) {
@@ -1303,9 +1321,9 @@ fn refresh_local_page(ui: &MainWindow) {
         return;
     };
     let tr = ui.global::<Tr>();
-    let (dir, unreachable, busy) = LOCAL_FOLDER.with(|l| {
+    let (dir, unreachable, busy, percent) = LOCAL_FOLDER.with(|l| {
         let l = l.borrow();
-        (l.dir.clone(), l.unreachable, l.scanning.is_some() || !l.reading.is_empty())
+        (l.dir.clone(), l.unreachable, l.busy(), l.progress.percent())
     });
     let files = local_files(&root);
     ui.set_local_has_folder(true);
@@ -1320,13 +1338,11 @@ fn refresh_local_page(ui: &MainWindow) {
         ui.set_local_title(title.into());
         ui.set_local_path(parent.unwrap_or_default().into());
     }
-    let line = lf::folder_line(&files);
-    let count = if busy && line.read < line.files {
-        tr.invoke_reading_files(line.read as i32, line.files as i32).to_string()
-    } else {
-        tr.invoke_n_files(line.files as i32).to_string()
-    };
+    let count = tr.invoke_n_files(lf::folder_line(&files) as i32);
     ui.set_local_folder_line(format!("{folder_name} · {count}").into());
+    ui.set_local_busy(busy);
+    let percent = percent.filter(|_| busy).map(|n| tr.invoke_percent(n as i32));
+    ui.set_local_percent(percent.unwrap_or_default());
 
     let (list_on, sort) = match lock_db() {
         Some(db) => (lf::list_view_on_from_db(&db), lf::list_sort_from_db(&db)),
@@ -1394,11 +1410,13 @@ fn poll_local_folder(ui: &MainWindow, guided_sel: &Slot<GuidedSel>) {
     if let Some(scan) = guided::take_local_scan(app) {
         // The walk belongs to the folder it started on, which may no
         // longer be the chosen one.
-        let walked = LOCAL_FOLDER.with(|l| l.borrow_mut().scanning.take());
+        let walked = LOCAL_FOLDER.with(|l| l.borrow().scanning.clone());
         // A failed write is not an unreachable folder: it says "Save failed".
+        // Still scanning while it saves, so a failure counts for this refresh.
         let reachable = walked
             .as_deref()
             .map(|root| local_save(ui, "apply scan", |db| db.apply_local_scan(root, &scan)).unwrap_or(true));
+        LOCAL_FOLDER.with(|l| l.borrow_mut().scanning = None);
         let current = local_root();
         if walked.is_some() && walked == current {
             LOCAL_FOLDER.with(|l| l.borrow_mut().unreachable = reachable == Some(false));
@@ -1426,6 +1444,7 @@ fn poll_local_folder(ui: &MainWindow, guided_sel: &Slot<GuidedSel>) {
             let mut l = l.borrow_mut();
             for (id, secs) in &lengths {
                 l.reading.remove(id);
+                l.progress.finished(*id);
                 if secs.is_none() {
                     l.failed.insert(*id);
                 }
@@ -1451,6 +1470,14 @@ fn poll_local_folder(ui: &MainWindow, guided_sel: &Slot<GuidedSel>) {
         changed = true;
     }
     if changed {
+        let refreshed = LOCAL_FOLDER.with(|l| {
+            let mut l = l.borrow_mut();
+            let (busy, unreachable) = (l.busy(), l.unreachable);
+            l.progress.settle(busy, unreachable)
+        });
+        if refreshed {
+            show_notice(ui, ui.global::<Tr>().invoke_folder_refreshed(), None, 4);
+        }
         if ui.get_local_page() {
             refresh_local_page(ui);
         }
@@ -2623,6 +2650,7 @@ fn group_log_sessions(
             label_name,
             guided_name: meditate_core::db::guided_file_name_for(
                 s.guided_file_uuid.as_ref().map(|u| u.as_str()),
+                s.guided_file_name.as_deref(),
                 guided_names,
             )
             .unwrap_or_default()
@@ -3029,6 +3057,20 @@ fn set_session_guided_file(uuid: Option<String>) {
     }
 }
 
+/// The running session's guided file title, for the Log. Like
+/// `SESSION_GUIDED_FILE`, fixed at session start.
+static SESSION_GUIDED_NAME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn set_session_guided_name(name: Option<String>) {
+    if let Ok(mut slot) = SESSION_GUIDED_NAME.lock() {
+        *slot = name;
+    }
+}
+
+fn session_guided_name() -> Option<String> {
+    SESSION_GUIDED_NAME.lock().ok().and_then(|slot| slot.clone())
+}
+
 /// The running session's Local Folder file, whose play the save
 /// counts. Like `SESSION_GUIDED_FILE`, fixed at session start.
 static SESSION_LOCAL_FILE: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
@@ -3055,9 +3097,7 @@ fn session_guided_file() -> Option<meditate_core::db::GuidedFileUuid> {
 /// `write_in_progress_snapshot` at `imp.rs:2536`: captures
 /// (unix_start, accumulated_secs, mode, label_id) so a process
 /// kill mid-session can be resurrected on the next launch via
-/// `finalize_session_in_progress`. mode_payload is "{}" until
-/// Box-Breath phase-progress capture lands (a v2 Resume feature,
-/// not Phase 2 work).
+/// `finalize_session_in_progress`.
 fn session_in_progress_snapshot(
     unix_start: i64,
     elapsed_secs: u32,
@@ -3072,7 +3112,7 @@ fn session_in_progress_snapshot(
         start_iso: meditate_core::time::unix_to_local_iso(unix_start),
         accumulated_secs: elapsed_secs,
         mode,
-        mode_payload: "{}".into(),
+        guided_file_name: session_guided_name(),
         label_id,
         guided_file_uuid: session_guided_file(),
     }
@@ -3463,6 +3503,7 @@ fn finalize_session(
         // Transient Open-File picks and Timer / Box Breath stay
         // None. Mirrors GTK's `guided_selected_uuid` at save.
         guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
+        session_guided_name(),
     );
     match db.insert_session_counting_local_play(&session, session_local_file()) {
         Ok((rowid, _)) => {
@@ -4574,11 +4615,13 @@ fn build_ui() -> MainWindow {
                     current_mode.get(),
                     guided_sel.borrow().as_ref().and_then(|g| g.uuid.as_deref()),
                 ));
-                set_session_local_file(if current_mode.get() == TimerMode::Guided {
-                    guided_sel.borrow().as_ref().and_then(|g| g.local_id)
-                } else {
-                    None
-                });
+                {
+                    let guided = current_mode.get() == TimerMode::Guided;
+                    let sel = guided_sel.borrow();
+                    let sel = sel.as_ref().filter(|_| guided);
+                    set_session_local_file(sel.and_then(|g| g.local_id));
+                    set_session_guided_name(sel.map(|g| g.name.clone()));
+                }
                 // First snapshot right away, so a session killed in
                 // its first minute is still recovered (GTK writes
                 // one at start too).
@@ -5606,7 +5649,22 @@ fn build_ui() -> MainWindow {
             }
         });
     }
-    ui.on_local_refresh(local_scan);
+    {
+        let weak = ui.as_weak();
+        ui.on_local_refresh(move || {
+            local_scan();
+            // Only a refresh that runs gets its snackbar.
+            LOCAL_FOLDER.with(|l| {
+                let mut l = l.borrow_mut();
+                if l.busy() {
+                    l.progress.tap();
+                }
+            });
+            if let Some(ui) = weak.upgrade() {
+                refresh_local_page(&ui);
+            }
+        });
+    }
     {
         let weak = ui.as_weak();
         ui.on_local_choose(move || {
@@ -8809,6 +8867,7 @@ fn build_ui() -> MainWindow {
                                     label_id,
                                     new_note,
                                     meditate_core::SessionMode::Timer,
+                                    None,
                                     None,
                                 );
                             db.insert_session(&session).map(|_| ())

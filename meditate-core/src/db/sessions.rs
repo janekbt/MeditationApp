@@ -28,6 +28,10 @@ pub struct Session {
     /// a file without importing it. Lets stats and the log surface
     /// per-file aggregates on top of the per-mode breakdown.
     pub guided_file_uuid: Option<super::GuidedFileUuid>,
+    /// Title of the file a guided session played, as the Guided page
+    /// showed it; the Log's name when the file isn't in the library
+    /// (local folder, Open File). Synced. None for other modes.
+    pub guided_file_name: Option<String>,
 }
 
 impl Session {
@@ -45,6 +49,7 @@ impl Session {
         notes: Option<String>,
         mode: SessionMode,
         guided_file_uuid: Option<super::GuidedFileUuid>,
+        guided_file_name: Option<String>,
     ) -> Self {
         Self {
             start_iso: crate::time::unix_to_local_iso(start_time),
@@ -54,6 +59,7 @@ impl Session {
             mode,
             uuid: super::SessionUuid::new(""),
             guided_file_uuid,
+            guided_file_name,
         }
     }
 
@@ -216,7 +222,7 @@ pub fn get_streak_from_db(db: &Database, today: chrono::NaiveDate) -> Result<u32
 /// should not depend on the order of equal-duration rows.
 pub fn get_longest_session_from_db(db: &Database) -> Result<Option<(i64, Session)>> {
     let mut stmt = db.conn.prepare_cached(
-        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
+        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name
          FROM sessions
          ORDER BY duration_secs DESC LIMIT 1",
     )?;
@@ -237,6 +243,7 @@ pub fn get_longest_session_from_db(db: &Database) -> Result<Option<(i64, Session
                     mode,
                     uuid: row.get(6)?,
                     guided_file_uuid: row.get(7)?,
+                    guided_file_name: row.get(8)?,
                 },
             )))
         }
@@ -340,7 +347,7 @@ pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<V
     // their own cached statement just like the previous hand-
     // unrolled branches.
     let mut sql = String::from(
-        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid \
+        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name \
          FROM sessions"
     );
     let mut clauses: Vec<&'static str> = Vec::new();
@@ -381,6 +388,7 @@ pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<V
                 mode,
                 uuid: row.get(6)?,
                 guided_file_uuid: row.get(7)?,
+                guided_file_name: row.get(8)?,
             },
         ))
     })?;
@@ -433,8 +441,8 @@ impl Database {
         let session_uuid = uuid::Uuid::new_v4().to_string();
         let (label_id, label_uuid) = self.session_label(session.label_id)?;
         self.conn.execute(
-            "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 session.start_iso,
                 session.duration_secs,
@@ -443,6 +451,7 @@ impl Database {
                 session.mode.as_db_str(),
                 session_uuid,
                 session.guided_file_uuid,
+                session.guided_file_name,
             ],
         )?;
         let rowid = self.conn.last_insert_rowid();
@@ -454,6 +463,7 @@ impl Database {
             "notes": note_or_none(&session.notes),
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
+            "guided_file_name": session.guided_file_name,
         }).to_string();
         self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
 
@@ -539,8 +549,8 @@ impl Database {
         let mut session_uuids: Vec<String> = Vec::with_capacity(sessions.len());
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for s in sessions {
                 let uuid = if s.uuid.is_empty() {
@@ -556,6 +566,7 @@ impl Database {
                     s.mode.as_db_str(),
                     uuid,
                     s.guided_file_uuid,
+                    s.guided_file_name,
                 ])?;
                 session_uuids.push(uuid);
             }
@@ -570,6 +581,7 @@ impl Database {
                 "notes": note_or_none(&s.notes),
                 "mode": s.mode.as_db_str(),
                 "guided_file_uuid": s.guided_file_uuid,
+                "guided_file_name": s.guided_file_name,
             }).to_string();
             self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
         }
@@ -664,8 +676,8 @@ impl Database {
         self.conn.execute(
             "UPDATE sessions
              SET start_iso = ?1, duration_secs = ?2, label_id = ?3,
-                 notes = ?4, mode = ?5, guided_file_uuid = ?6
-             WHERE id = ?7",
+                 notes = ?4, mode = ?5, guided_file_uuid = ?6, guided_file_name = ?7
+             WHERE id = ?8",
             params![
                 session.start_iso,
                 session.duration_secs,
@@ -673,6 +685,7 @@ impl Database {
                 note_or_none(&session.notes),
                 session.mode.as_db_str(),
                 session.guided_file_uuid,
+                session.guided_file_name,
                 id,
             ],
         )?;
@@ -684,6 +697,7 @@ impl Database {
             "notes": note_or_none(&session.notes),
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
+            "guided_file_name": session.guided_file_name,
         }).to_string();
         self.emit_event(tx, EventKind::SessionUpdate, &session_uuid, payload)
     }
@@ -820,7 +834,7 @@ impl Database {
 
     fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<(i64, Session)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid FROM sessions
+            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name FROM sessions
              WHERE ?1 IS NULL OR label_id = ?1
              ORDER BY id",
         )?;
@@ -840,6 +854,7 @@ impl Database {
                         mode,
                         uuid: row.get(6)?,
                         guided_file_uuid: row.get(7)?,
+                        guided_file_name: row.get(8)?,
                     },
                 ))
             })?
@@ -881,22 +896,37 @@ impl Database {
             let notes = v["notes"].as_str();
             let mode = v["mode"].as_str().unwrap_or("timer");
             let guided_file_uuid = v["guided_file_uuid"].as_str();
+            // An edit from a release before the name existed carries
+            // none: keep the newest name any event gave the session.
+            let guided_file_name: Option<String> = match v["guided_file_name"].as_str() {
+                Some(name) => Some(name.to_string()),
+                None => self.conn.prepare_cached(
+                    "SELECT json_extract(payload, '$.guided_file_name') FROM events
+                     WHERE target_id = ?1 AND kind IN (?2, ?3)
+                       AND json_extract(payload, '$.guided_file_name') IS NOT NULL
+                     ORDER BY lamport_ts DESC, device_id DESC LIMIT 1",
+                )?.query_row(
+                    params![session_uuid, EventKind::SessionInsert.as_db_str(), EventKind::SessionUpdate.as_db_str()],
+                    |row| row.get(0),
+                ).optional()?,
+            };
 
             // UPSERT — first time materialising creates the row, later
             // recomputes overwrite every field with the winning event's
             // values. The local rowid stays stable across recomputes
             // because the UNIQUE column we conflict on is `uuid`.
             self.conn.execute(
-                "INSERT INTO sessions (uuid, start_iso, duration_secs, label_id, notes, mode, guided_file_uuid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO sessions (uuid, start_iso, duration_secs, label_id, notes, mode, guided_file_uuid, guided_file_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(uuid) DO UPDATE SET
                     start_iso        = excluded.start_iso,
                     duration_secs    = excluded.duration_secs,
                     label_id         = excluded.label_id,
                     notes            = excluded.notes,
                     mode             = excluded.mode,
-                    guided_file_uuid = excluded.guided_file_uuid",
-                params![session_uuid, start_iso, duration_secs, label_id, notes, mode, guided_file_uuid],
+                    guided_file_uuid = excluded.guided_file_uuid,
+                    guided_file_name = excluded.guided_file_name",
+                params![session_uuid, start_iso, duration_secs, label_id, notes, mode, guided_file_uuid, guided_file_name],
             )?;
         }
         Ok(())
@@ -909,10 +939,88 @@ mod tests {
     use crate::db::test_helpers::*;
     use crate::test_macros::assert_f64_eq;
 
+    // ── Guided file name ────────────────────────────────────────────────────
+
+    fn guided_named(name: &str) -> Session {
+        Session::from_unix(1_790_000_000, 600, None, None, SessionMode::Guided, None, Some(name.into()))
+    }
+
+    #[test]
+    fn a_guided_session_carries_its_file_name_to_a_peer() {
+        let phone = Database::open_in_memory().unwrap();
+        let id = phone.insert_session(&guided_named("Body Scan")).unwrap();
+        let mut edited = list_sessions_from_db(&phone).unwrap().remove(0).1;
+        edited.notes = Some("calm".into());
+        phone.update_session(id, &edited).unwrap();
+
+        let laptop = Database::open_in_memory().unwrap();
+        for (_, event) in phone.pending_events().unwrap() {
+            laptop.apply_event(&event).unwrap();
+        }
+        let rows = list_sessions_from_db(&laptop).unwrap();
+        assert_eq!(rows[0].1.guided_file_name.as_deref(), Some("Body Scan"));
+        assert_eq!(rows[0].1.notes.as_deref(), Some("calm"));
+    }
+
+    #[test]
+    fn an_edit_without_a_file_name_keeps_the_stored_one() {
+        let db = Database::open_in_memory().unwrap();
+        let payload = |notes: Option<&str>, name: Option<&str>| {
+            let mut v = serde_json::json!({
+                "uuid": SESSION_X, "start_iso": "2026-10-12T07:00:00", "duration_secs": 600,
+                "label_uuid": null, "notes": notes, "mode": "guided", "guided_file_uuid": null,
+            });
+            if let Some(name) = name {
+                v["guided_file_name"] = name.into();
+            }
+            v
+        };
+        db.apply_event(&synth_event("session_insert", SESSION_X, 1, DEVICE_A, payload(None, Some("Body Scan"))))
+            .unwrap();
+        // A peer on the last release edits the note; it knows no name.
+        db.apply_event(&synth_event("session_update", SESSION_X, 2, DEVICE_B, payload(Some("calm"), None)))
+            .unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
+        assert_eq!(rows[0].1.notes.as_deref(), Some("calm"));
+        assert_eq!(rows[0].1.guided_file_name.as_deref(), Some("Body Scan"));
+    }
+
+    #[test]
+    fn a_name_received_before_the_update_shows_after_it() {
+        // The last release applied a peer's session and dropped the
+        // name it carried; the name is still in the event.
+        let conn = release_v26_10_1_database();
+        conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('e1', 1, ?1, 'session_insert', 's1', ?2)",
+            params![
+                DEVICE_A,
+                serde_json::json!({
+                    "uuid": "s1", "start_iso": "2026-10-01T07:00:00", "duration_secs": 1200,
+                    "label_uuid": null, "notes": null, "mode": "guided",
+                    "guided_file_uuid": null, "guided_file_name": "Body Scan",
+                })
+                .to_string(),
+            ],
+        )
+        .unwrap();
+        let db = Database::init(conn).unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
+        assert_eq!(rows[0].1.guided_file_name.as_deref(), Some("Body Scan"));
+    }
+
+    #[test]
+    fn a_database_from_the_last_release_gains_the_file_name_columns() {
+        let db = Database::init(release_v26_10_1_database()).unwrap();
+        db.insert_session(&guided_named("Body Scan")).unwrap();
+        let names: Vec<_> = list_sessions_from_db(&db).unwrap().into_iter().map(|(_, s)| s.guided_file_name).collect();
+        assert_eq!(names, vec![None, Some("Body Scan".to_string())]);
+    }
+
     // ── Imports ─────────────────────────────────────────────────────────────
 
     fn sit(start_unix: i64, duration_secs: i64) -> Session {
-        Session::from_unix(start_unix, duration_secs, None, None, SessionMode::Timer, None)
+        Session::from_unix(start_unix, duration_secs, None, None, SessionMode::Timer, None, None)
     }
 
     #[test]
@@ -967,6 +1075,7 @@ mod tests {
             Some("hello".into()),
             SessionMode::BoxBreath,
             None,
+            None,
         );
         assert_eq!(crate::time::local_iso_to_unix(&s.start_iso), 1_700_000_000);
         assert_eq!(s.duration_secs, 1234);
@@ -981,6 +1090,7 @@ mod tests {
     fn from_unix_clamps_negative_duration_to_zero() {
         let s = Session::from_unix(
             1_700_000_000, -1, None, None, SessionMode::Timer, None,
+            None,
         );
         assert_eq!(s.duration_secs, 0);
     }
@@ -989,6 +1099,7 @@ mod tests {
     fn from_unix_clamps_overflowing_duration_to_u32_max() {
         let s = Session::from_unix(
             0, i64::MAX, None, None, SessionMode::Timer, None,
+            None,
         );
         assert_eq!(s.duration_secs, u32::MAX);
     }
@@ -997,6 +1108,7 @@ mod tests {
     fn start_unix_round_trips_with_from_unix() {
         let s = Session::from_unix(
             1_700_000_000, 600, None, None, SessionMode::Timer, None,
+            None,
         );
         assert_eq!(s.start_unix(), 1_700_000_000);
     }
@@ -1270,6 +1382,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let events = db.pending_events().unwrap();
         assert_eq!(events.len(), 1, "one insert must produce exactly one event");
@@ -1289,6 +1402,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let row_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         let events = db.pending_events().unwrap();
@@ -1311,6 +1425,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["start_iso"], "2026-04-30T10:00:00");
@@ -1343,6 +1458,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid.0));
@@ -1362,6 +1478,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["notes"], serde_json::Value::Null);
@@ -1379,6 +1496,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let events = db.pending_events().unwrap();
         assert_eq!(events[0].1.device_id, device_id,
@@ -1400,6 +1518,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let lamport = db.lamport_clock().unwrap();
         assert!(lamport >= 1, "lamport must advance past zero");
@@ -1420,6 +1539,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let events = db.pending_events().unwrap();
@@ -1443,6 +1563,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         drain_events(&db);
 
@@ -1454,6 +1575,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let events = db.pending_events().unwrap();
         assert_eq!(events.len(), 1);
@@ -1475,6 +1597,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let original_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
@@ -1487,6 +1610,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["uuid"], serde_json::Value::String(original_uuid.0));
@@ -1503,6 +1627,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         drain_events(&db);
 
@@ -1514,6 +1639,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["start_iso"], "2026-05-01T11:00:00");
@@ -1537,6 +1663,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         drain_events(&db);
 
@@ -1548,6 +1675,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid.0));
@@ -1568,6 +1696,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         assert!(db.pending_events().unwrap().is_empty(),
             "no-match update must produce no event");
@@ -1584,6 +1713,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let row_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
@@ -1624,6 +1754,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
         let events = db.pending_events().unwrap();
@@ -1648,6 +1779,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
         let row_uuids: std::collections::HashSet<String> = list_sessions_from_db(&db)
@@ -1685,6 +1817,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
         let timestamps: Vec<i64> = db.pending_events().unwrap()
@@ -1710,6 +1843,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let row_uuids: std::collections::HashSet<String> = list_sessions_from_db(&db)
@@ -1810,6 +1944,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T07:00:00".to_string(),
@@ -1817,6 +1952,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Evening: 1 session, 1200s total — larger total, should sort first.
         db.insert_session(&Session {
@@ -1825,6 +1961,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Unlabeled session — must NOT appear.
         db.insert_session(&Session {
@@ -1833,6 +1970,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let got = label_totals_seconds_from_db(&db).unwrap();
@@ -1854,6 +1992,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T12:00:00".to_string(),
@@ -1861,6 +2000,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let got = label_totals_seconds_from_db(&db).unwrap();
         // 'alpha' (lowercase) sorts before 'Zebra' under NOCASE collation.
@@ -1882,6 +2022,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T10:00:00".to_string(),
@@ -1889,6 +2030,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let got = label_totals_seconds_from_db(&db).unwrap();
         assert_eq!(got[0], ("Morning".to_string(), 135, 2));
@@ -1913,6 +2055,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         // Morning (5 sessions, hours 0, 6, 11:00, 11:59).
         db.insert_session(&make(0, 0)).unwrap();
@@ -1947,6 +2090,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let (m, a, e) = hour_buckets_from_db(&db).unwrap();
@@ -1976,6 +2120,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         for d in 5..=6 {
@@ -1985,6 +2130,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         db.insert_session(&Session {
@@ -1993,6 +2139,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let got = active_months_from_db(&db).unwrap();
@@ -2010,6 +2157,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2025-12-15T10:00:00".to_string(),
@@ -2017,6 +2165,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let got = active_months_from_db(&db).unwrap();
         assert_eq!(got, vec![(2026, 1), (2025, 12)]);
@@ -2045,6 +2194,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         db.insert_session(&Session {
@@ -2053,6 +2203,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T10:00:00".to_string(),
@@ -2060,6 +2211,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // A session in March — must NOT appear in April's days.
         db.insert_session(&Session {
@@ -2068,6 +2220,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let got = active_days_in_month_from_db(&db, 2026, 4).unwrap();
@@ -2085,6 +2238,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Jan 1 next year — must NOT contribute.
         db.insert_session(&Session {
@@ -2093,6 +2247,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let got = active_days_in_month_from_db(&db, 2026, 12).unwrap();
         assert_eq!(got, vec![31u32]);
@@ -2117,6 +2272,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id = db.insert_session(&session).unwrap();
         let (got_id, got) = get_longest_session_from_db(&db).unwrap().unwrap();
@@ -2141,6 +2297,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let mut longest_session = Session {
@@ -2151,6 +2308,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let longest_id = db.insert_session(&longest_session).unwrap();
         // Add one more shorter after — the order of insertion must not
@@ -2163,6 +2321,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let (got_id, got) = get_longest_session_from_db(&db).unwrap().unwrap();
@@ -2191,6 +2350,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
@@ -2198,6 +2358,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Sub-minute remainder must NOT be lost — the whole point of
         // having a seconds aggregate alongside total_minutes.
@@ -2207,6 +2368,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         assert_eq!(total_seconds_from_db(&db).unwrap(), 600 + 1245 + 17);
     }
@@ -2227,6 +2389,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let _id_old = db.insert_session(&make("2026-04-25T10:00:00Z")).unwrap();
         let _id_new = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
@@ -2263,6 +2426,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let rows = query_sessions_from_db(&db, &SessionFilter {
@@ -2291,6 +2455,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         // Page 2 of size 3: skip 3, take 3.
@@ -2319,6 +2484,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let rows = query_sessions_from_db(&db, &SessionFilter {
             offset: Some(100),
@@ -2340,6 +2506,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
@@ -2347,6 +2514,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T19:00:00Z".to_string(),
@@ -2354,6 +2522,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T20:00:00Z".to_string(),
@@ -2361,6 +2530,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let rows = query_sessions_from_db(&db, &SessionFilter {
@@ -2385,6 +2555,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Without note (None).
         db.insert_session(&Session {
@@ -2393,6 +2564,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Empty-string note — also excluded.
         db.insert_session(&Session {
@@ -2402,6 +2574,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let rows = query_sessions_from_db(&db, &SessionFilter {
@@ -2424,6 +2597,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Morning, no note → dropped (notes filter).
         db.insert_session(&Session {
@@ -2432,6 +2606,7 @@ mod tests {
             notes: None, mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // No label, with note → dropped (label filter).
         db.insert_session(&Session {
@@ -2441,6 +2616,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         let rows = query_sessions_from_db(&db, &SessionFilter {
@@ -2463,6 +2639,7 @@ mod tests {
                 notes: None, mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         let mut seen: Vec<i64> = Vec::new();
@@ -2503,6 +2680,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         db.insert_session(&session).unwrap();
         assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
@@ -2522,6 +2700,7 @@ mod tests {
             mode: SessionMode::Guided,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         db.insert_session(&session).unwrap();
         assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
@@ -2542,6 +2721,7 @@ mod tests {
             mode: SessionMode::Guided,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: Some(file_uuid.into()),
+            guided_file_name: None,
         };
         db.insert_session(&session).unwrap();
         let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
@@ -2562,6 +2742,7 @@ mod tests {
             mode: SessionMode::Guided,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         db.insert_session(&session).unwrap();
         let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
@@ -2582,6 +2763,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let unlabeled = Session {
             start_iso: "2026-04-27T19:00:00Z".to_string(),
@@ -2591,6 +2773,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let labeled_id = db.insert_session(&labeled).unwrap();
         db.insert_session(&unlabeled).unwrap();
@@ -2612,6 +2795,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id = db.insert_session(&session).unwrap();
         let rows = list_sessions_from_db(&db).unwrap();
@@ -2638,6 +2822,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
         let id2 = db.insert_session(&make("2026-04-27T11:00:00Z")).unwrap();
@@ -2664,6 +2849,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id = db.insert_session(&original).unwrap();
 
@@ -2676,6 +2862,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         db.insert_label("Evening").unwrap();
@@ -2688,6 +2875,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         db.update_session(id, &updated).unwrap();
 
@@ -2725,6 +2913,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.update_session(id, &Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
@@ -2734,6 +2923,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let row = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(row.label_id, None);
@@ -2753,6 +2943,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.update_session(id + 999, &Session {
             start_iso: "2099-01-01T00:00:00Z".to_string(),
@@ -2762,6 +2953,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         // Original row is intact.
         let rows = list_sessions_from_db(&db).unwrap();
@@ -2782,6 +2974,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
         let id2 = db.insert_session(&make("2026-04-27T11:00:00Z")).unwrap();
@@ -2807,6 +3000,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.delete_session(id + 999).unwrap();
         // Original row still there.
@@ -2828,6 +3022,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         db.delete_session(id).unwrap();
@@ -2874,6 +3069,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
             Session {
                 start_iso: "2026-04-27T11:00:00Z".to_string(),
@@ -2883,6 +3079,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
             Session {
                 start_iso: "2026-04-27T12:00:00Z".to_string(),
@@ -2892,6 +3089,7 @@ mod tests {
                 mode: SessionMode::BoxBreath,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
         ];
 
@@ -2946,6 +3144,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
 
@@ -2959,6 +3158,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
             Session {
                 start_iso: "2026-04-27T11:00:00Z".to_string(),
@@ -2968,6 +3168,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
         ];
         let result = db.bulk_insert_sessions(&batch);
@@ -2996,6 +3197,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
         ];
         let _ = db.bulk_insert_sessions(&batch);
@@ -3019,6 +3221,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         assert_eq!(count_sessions_from_db(&db).unwrap(), 3);
@@ -3056,6 +3259,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id = db.insert_session(&labeled).unwrap();
         // Insert a second, unlabeled session — must not appear.
@@ -3067,6 +3271,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let rows = list_sessions_for_label_from_db(&db, morning).unwrap();
         assert_eq!(rows.len(), 1, "only the labeled session must be returned");
@@ -3094,6 +3299,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }
     }
 
@@ -3433,6 +3639,7 @@ mod tests {
             mode: SessionMode::Timer,
                         uuid: crate::db::SessionUuid::new(""),  // ignored — DB assigns
                         guided_file_uuid: None,
+                        guided_file_name: None,
         })
         .unwrap();
         let rows = list_sessions_from_db(&db).unwrap();
@@ -3452,6 +3659,7 @@ mod tests {
                 mode: SessionMode::Timer,
                                 uuid: crate::db::SessionUuid::new(""),
                                 guided_file_uuid: None,
+                                guided_file_name: None,
             })
             .unwrap();
         }
@@ -3472,6 +3680,7 @@ mod tests {
             mode: SessionMode::Timer,
                         uuid: crate::db::SessionUuid::new(""),
                         guided_file_uuid: None,
+                        guided_file_name: None,
         })
         .unwrap();
         let uuid = &list_sessions_from_db(&db).unwrap()[0].1.uuid;
@@ -3495,6 +3704,7 @@ mod tests {
                 mode: SessionMode::Timer,
                                 uuid: bogus.clone(),
                                 guided_file_uuid: None,
+                                guided_file_name: None,
             })
             .unwrap();
         }
@@ -3516,6 +3726,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: super::super::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         db.insert_session(&with_note("2026-10-01T08:00:00", "  ")).unwrap();
         db.bulk_insert_sessions(&[with_note("2026-10-02T08:00:00", "\t\n")]).unwrap();
@@ -3550,6 +3761,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         let id = db.insert_session(&session).unwrap();
         session.notes = Some("calm".into());

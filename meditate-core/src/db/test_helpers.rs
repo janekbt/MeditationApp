@@ -208,3 +208,20 @@ pub(super) fn looks_like_uuid_v4(s: &str) -> bool {
         matches!(i, 8 | 13 | 18 | 23) || c.is_ascii_hexdigit()
     })
 }
+
+/// A database as v26.10.1 left it, with one session and one
+/// library file.
+pub(super) fn release_v26_10_1_database() -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(include_str!("fixtures/schema_v26_10_1.sql")).unwrap();
+    conn.execute_batch(
+        "PRAGMA user_version = 1;
+         INSERT INTO sync_state (key, value) VALUES ('cache_schema_version', '2');
+         INSERT INTO sessions (start_iso, duration_secs, mode, uuid)
+             VALUES ('2026-10-01T07:00:00', 1200, 'guided', 's1');
+         INSERT INTO guided_files (uuid, name, file_path, duration_secs, created_iso, updated_iso)
+             VALUES ('g1', 'Body scan', 'guided/g1.ogg', 1380, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');",
+    )
+    .unwrap();
+    conn
+}

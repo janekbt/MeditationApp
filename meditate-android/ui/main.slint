@@ -194,7 +194,8 @@ export global Tr {
     public pure function played-n(n: int) -> string { return @tr("played {n} time" | "played {n} times" % n); }
     public pure function n-folders(n: int) -> string { return @tr("{n} folder" | "{n} folders" % n); }
     public pure function n-files(n: int) -> string { return @tr("{n} file" | "{n} files" % n); }
-    public pure function reading-files(read: int, total: int) -> string { return @tr("reading {}/{}", read, total); }
+    public pure function folder-refreshed() -> string { return @tr("Folder refreshed"); }
+    public pure function percent(n: int) -> string { return @tr("{}%", n); }
     public pure function couldnt-read-audio() -> string { return @tr("Couldn't read audio file"); }
     public pure function folder-picker-failed() -> string { return @tr("Couldn't open the folder picker"); }
 }
@@ -2032,6 +2033,10 @@ export component MainWindow inherits Window {
     in property <string> local-title: "";
     in property <string> local-path: "";
     in property <string> local-folder-line: "";
+    // The folder or lengths are being read; the percent of this
+    // refresh's lengths read, or "" while there is no number yet.
+    in property <bool> local-busy: false;
+    in property <string> local-percent: "";
     in-out property <int> local-view: 0;
     in-out property <int> local-sort: 0;
     in property <[LocalRow]> local-rows: [];
@@ -7460,10 +7465,32 @@ export component MainWindow inherits Window {
                     }
                     VerticalLayout {
                         alignment: center;
-                        IconButton {
+                        if !root.local-busy : IconButton {
                             icon: @image-url("assets/refresh.svg");
                             tooltip: @tr("Refresh");
                             clicked => { root.local-refresh(); }
+                        }
+                        // Still a button while it spins, like the GTK one.
+                        if root.local-busy : TouchArea {
+                            accessible-role: button;
+                            accessible-label: @tr("Refresh");
+                            clicked => { root.local-refresh(); }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                padding-right: 12px;
+                                alignment: end;
+                                if root.local-percent != "" : Text {
+                                    text: root.local-percent;
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                                CircularProgressIndicator {
+                                    width: 22px;
+                                    height: 22px;
+                                    indeterminate: true;
+                                }
+                            }
                         }
                     }
                 }

@@ -26,21 +26,38 @@ pub(crate) const CACHE_SCHEMA_VERSION: u32 = 2;
 /// build. Only additive, defaulted columns belong here: the release
 /// that created the database can still open and write it, so
 /// `SCHEMA_VERSION` stays put and going back stays possible.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
-    ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
+/// The fourth field, when set, runs once right after the column is
+/// added, to fill it from data the older release kept.
+const ADDED_COLUMNS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
+    ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
+    // A peer's name the older release received is still in its event.
+    ("sessions", "guided_file_name", "TEXT", Some(
+        "UPDATE sessions SET guided_file_name = (
+             SELECT json_extract(payload, '$.guided_file_name') FROM events
+             WHERE target_id = sessions.uuid
+               AND kind IN ('session_insert', 'session_update')
+               AND json_extract(payload, '$.guided_file_name') IS NOT NULL
+             ORDER BY lamport_ts DESC, device_id DESC LIMIT 1)"
+    )),
 ];
 
 /// Add any `ADDED_COLUMNS` the database lacks. Idempotent.
 pub(super) fn add_missing_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
-    for (table, column, definition) in ADDED_COLUMNS {
+    for (table, column, definition, fill) in ADDED_COLUMNS {
         let present: bool = conn.query_row(
             &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
             [column],
             |row| row.get::<_, i64>(0).map(|n| n > 0),
         )?;
         if !present {
-            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+            // Column and fill land together, or the next open tries again.
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+            if let Some(fill) = fill {
+                tx.execute_batch(fill)?;
+            }
+            tx.commit()?;
         }
     }
     Ok(())
@@ -123,7 +140,10 @@ pub(super) fn schema() -> String {
         -- per-file stats can resolve later. NULL for non-Guided rows
         -- AND for transient one-off guided sessions where the user
         -- played a file without importing it into the library.
-        guided_file_uuid TEXT
+        guided_file_uuid TEXT,
+        -- The played file's title, for the Log when the file isn't in
+        -- the library (local folder, Open File). Added after v26.10.1.
+        guided_file_name TEXT
     );
     -- Sessions are queried in two hot shapes that scan the table
     -- without these indexes: `ORDER BY start_iso DESC` (the log
@@ -313,8 +333,7 @@ pub(super) fn schema() -> String {
     -- captured accumulated_secs, and clears the row — same code
     -- path a normal end-of-session takes. Single-row CHECK keeps
     -- the table honest about the at-most-one-in-flight-session
-    -- invariant. mode_payload is opaque JSON the shell defines
-    -- (mirrors the PresetConfig convention).
+    -- invariant. mode_payload is JSON holding the guided file name.
     CREATE TABLE IF NOT EXISTS session_in_progress (
         id               INTEGER PRIMARY KEY CHECK (id = 1),
         start_iso        TEXT    NOT NULL,

@@ -393,7 +393,7 @@ mod tests {
         let from = db.insert_label("Walking").unwrap();
         let into = db.insert_label("Walk").unwrap();
         for i in 0..3 {
-            db.insert_session(&Session::from_unix(1_700_000_000 + i * 3600, 600, Some(from), None, SessionMode::Timer, None))
+            db.insert_session(&Session::from_unix(1_700_000_000 + i * 3600, 600, Some(from), None, SessionMode::Timer, None, None))
                 .unwrap();
         }
         db.conn
@@ -480,6 +480,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         db.insert_session(&Session {
@@ -490,6 +491,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         for i in 0..2 {
             db.insert_session(&Session {
@@ -500,6 +502,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
         }
         assert_eq!(label_session_count_from_db(&db, morning).unwrap(), 3);
@@ -547,6 +550,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let labeled_id2 = db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
@@ -556,6 +560,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         let unlabeled_id = db.insert_session(&Session {
             start_iso: "2026-04-27T12:00:00Z".to_string(),
@@ -565,6 +570,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
 
         db.delete_label(morning).unwrap();
@@ -592,6 +598,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         db.delete_label(morning).unwrap();
         let row = &crate::db::list_sessions_from_db(&db).unwrap()[0];
@@ -1269,6 +1276,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             }).unwrap();
             assert!(sid > 0);
         }
@@ -1292,6 +1300,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         assert!(sid > 0);
         db.merge_labels(suffixed_id, base_id).unwrap();
@@ -1443,6 +1452,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         sync(&laptop);
         sync(&phone);

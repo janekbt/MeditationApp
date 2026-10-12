@@ -2471,6 +2471,7 @@ impl TimerView {
             label_id,
             note,
             guided_file_uuid,
+            guided_file_name: self.guided_file_name(mode == TimerMode::Guided),
         };
         // A file from the Local Folder: the save counts its play.
         let local_file_id = if mode == TimerMode::Guided {
@@ -2653,10 +2654,11 @@ impl TimerView {
     /// a kernel OOM / battery-death / app crash mid-session leaves a
     /// row the next launch can finalise into a real session.
     ///
-    /// `mode_payload` is reserved for shell-side mode-specific data
-    /// (e.g. a future v2 Resume feature might capture box-breath
-    /// phase progress); v1 stores an empty JSON object — core treats
-    /// the field as opaque.
+    /// The played file's title for the Log: the current pick's name.
+    fn guided_file_name(&self, guided: bool) -> Option<String> {
+        guided.then(|| self.guided_pick.borrow().as_ref().map(|p| p.display_name.clone())).flatten()
+    }
+
     fn write_in_progress_snapshot(&self, accumulated_secs: u32) {
         let Some(app) = self.get_app() else { return; };
         let unix_start = self.session_start_time.get();
@@ -2680,7 +2682,7 @@ impl TimerView {
             start_iso: meditate_core::time::unix_to_local_iso(unix_start),
             accumulated_secs,
             mode,
-            mode_payload: "{}".into(),
+            guided_file_name: self.guided_file_name(matches!(mode, meditate_core::SessionMode::Guided)),
             label_id,
             guided_file_uuid,
         };

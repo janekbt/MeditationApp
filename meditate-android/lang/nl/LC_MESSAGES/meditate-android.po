@@ -1131,8 +1131,11 @@ msgstr "Minst afgespeeld"
 msgid "No audio files in this folder"
 msgstr "Geen audiobestanden in deze map"
 
-msgid "reading {}/{}"
-msgstr "lezen {}/{}"
+msgid "Folder refreshed"
+msgstr "Map vernieuwd"
+
+msgid "{}%"
+msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "Kan de mapkiezer niet openen"

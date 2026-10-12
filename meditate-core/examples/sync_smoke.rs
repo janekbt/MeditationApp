@@ -34,6 +34,7 @@ fn main() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     println!("Phone authored: 1 label (Morning), 1 session at 07:00 (600s)");
 
@@ -47,6 +48,7 @@ fn main() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     println!("Laptop authored: 1 label (Evening), 1 session at 20:00 (1200s)");
 
@@ -104,6 +106,7 @@ fn main() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     println!("Phone updated session: notes='phone says: I extended this', lamport now {}",
         phone.lamport_clock().unwrap());
@@ -117,6 +120,7 @@ fn main() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     println!("Laptop updated session: notes='laptop says: I went longer!', lamport now {}",
         laptop.lamport_clock().unwrap());
@@ -200,6 +204,7 @@ fn main() {
         notes: Some("from A".into()),
         mode: SessionMode::Timer, uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     let from_a = drain(&device_a);
     device_b.replay_events(&from_a).unwrap();
@@ -216,6 +221,7 @@ fn main() {
         notes: Some("from B".into()),
         mode: SessionMode::Timer, uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     let from_b_to_c = drain(&device_b);
     device_c.replay_events(&from_b_to_c).unwrap();
@@ -237,6 +243,7 @@ fn main() {
         notes: Some("from C".into()),
         mode: SessionMode::Timer, uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     }).unwrap();
     let from_c = drain(&device_c);
     device_a.replay_events(&from_c).unwrap();
@@ -279,6 +286,7 @@ fn main() {
             notes: Some("survives a restart".into()),
             mode: SessionMode::Timer, uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }).unwrap();
         saved_session_uuid = meditate_core::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         saved_lamport = db.lamport_clock().unwrap();

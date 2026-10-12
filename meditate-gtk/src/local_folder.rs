@@ -28,6 +28,13 @@ thread_local! {
     static READING: Cell<bool> = const { Cell::new(false) };
     /// Files whose length could not be read in this run of the app.
     static FAILED: RefCell<HashSet<i64>> = RefCell::new(HashSet::new());
+    /// What the refresh button shows, and whether a tap waits for its toast.
+    static PROGRESS: RefCell<lf::RefreshProgress> = RefCell::new(lf::RefreshProgress::default());
+}
+
+/// The folder is being walked or lengths are still being read.
+fn busy() -> bool {
+    SCANNING.with(Cell::get) || READING.with(Cell::get) || !QUEUE.with(|q| q.borrow().is_empty())
 }
 
 /// Run `f` after every scan or length read while it returns true.
@@ -36,6 +43,16 @@ pub fn on_change(f: impl Fn() -> bool + 'static) {
 }
 
 fn notify() {
+    let refreshed = PROGRESS.with(|p| p.borrow_mut().settle(busy(), UNREACHABLE.with(Cell::get)));
+    if refreshed {
+        let window = gtk::gio::Application::default()
+            .and_downcast::<MeditateApplication>()
+            .and_then(|app| app.active_window())
+            .and_downcast::<crate::window::MeditateWindow>();
+        if let Some(window) = window {
+            window.add_toast(adw::Toast::new(&gettext("Folder refreshed")));
+        }
+    }
     let listeners = LISTENERS.with(|l| std::mem::take(&mut *l.borrow_mut()));
     let kept: Vec<_> = listeners.into_iter().filter(|f| f()).collect();
     LISTENERS.with(|l| {
@@ -56,6 +73,9 @@ pub fn length_failed(id: i64) -> bool {
 pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Database) -> Result<T, E>) -> Option<T> {
     let done = app.with_db(|db| f(db.core())).and_then(Result::ok);
     if done.is_none() {
+        if busy() {
+            PROGRESS.with(|p| p.borrow_mut().write_failed());
+        }
         if let Some(window) = app.active_window().and_downcast::<crate::window::MeditateWindow>() {
             window.add_toast(adw::Toast::new(&gettext("Save failed")));
         }
@@ -82,6 +102,7 @@ pub fn scan(app: &MeditateApplication) {
     if SCANNING.with(|s| s.replace(true)) {
         return;
     }
+    notify();
     let app = app.clone();
     glib::MainContext::default().spawn_local(async move {
         let walk_root = root.clone();
@@ -96,10 +117,9 @@ pub fn scan(app: &MeditateApplication) {
         // A failed write is not an unreachable folder: it says "Save failed".
         let reachable = save(&app, |db| db.apply_local_scan(&root, &walk)).unwrap_or(true);
         UNREACHABLE.with(|u| u.set(!reachable));
-        SCANNING.with(|s| s.set(false));
-        notify();
         // Another folder chosen during the walk: walk that one too.
         if chosen_folder(&app).as_deref() != Some(root.as_str()) {
+            SCANNING.with(|s| s.set(false));
             scan(&app);
             return;
         }
@@ -111,11 +131,15 @@ pub fn scan(app: &MeditateApplication) {
         QUEUE.with(|q| {
             let mut q = q.borrow_mut();
             for item in unread {
+                PROGRESS.with(|p| p.borrow_mut().queued(item.0));
                 if !q.iter().any(|(id, _)| *id == item.0) {
                     q.push_back(item);
                 }
             }
         });
+        // Queued before the walk counts as done, so the button keeps going.
+        SCANNING.with(|s| s.set(false));
+        notify();
         read_lengths(&app);
     });
 }
@@ -127,6 +151,7 @@ pub fn read_first(app: &MeditateApplication, id: i64, path: PathBuf) {
         q.retain(|(other, _)| *other != id);
         q.push_front((id, path));
     });
+    PROGRESS.with(|p| p.borrow_mut().queued(id));
     read_lengths(app);
 }
 
@@ -146,9 +171,11 @@ fn read_lengths(app: &MeditateApplication) {
                     FAILED.with(|f| f.borrow_mut().insert(id));
                 }
             }
+            PROGRESS.with(|p| p.borrow_mut().finished(id));
             notify();
         }
         READING.with(|r| r.set(false));
+        notify();
     });
 }
 
@@ -194,21 +221,34 @@ fn counts_text(folders: u32, files: u32) -> String {
     }
 }
 
-/// Folder line: "~/Music/Meditations · 41 files" or, while reading,
-/// "~/Music/Meditations · reading 29/41".
+/// Folder line: "~/Music/Meditations · 41 files".
 fn folder_line_text(root: &str, files: &[LocalGuidedFile]) -> String {
-    let line = lf::folder_line(files);
-    let shown = home_relative(root);
-    // Reading stops at files it can't read; those keep no length.
-    let busy = READING.with(Cell::get) || !QUEUE.with(|q| q.borrow().is_empty());
-    let count = if busy && line.read < line.files {
-        gettext("reading {read}/{total}")
-            .replace("{read}", &line.read.to_string())
-            .replace("{total}", &line.files.to_string())
-    } else {
-        counts_text(0, line.files)
-    };
-    format!("{shown} · {count}")
+    format!("{} · {}", home_relative(root), counts_text(0, lf::folder_line(files)))
+}
+
+/// The refresh button's face: its icon, or a spinner with how far
+/// the length reading is.
+fn refresh_face() -> (gtk::Box, Rc<dyn Fn()>) {
+    let face = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let icon = gtk::Image::from_icon_name("view-refresh-symbolic");
+    let spinner = adw::Spinner::new();
+    let percent = gtk::Label::new(None);
+    percent.add_css_class("numeric");
+    face.append(&spinner);
+    face.append(&percent);
+    face.append(&icon);
+    let show: Rc<dyn Fn()> = Rc::new(move || {
+        let running = busy();
+        let shown = PROGRESS.with(|p| p.borrow().percent()).filter(|_| running);
+        icon.set_visible(!running);
+        spinner.set_visible(running);
+        percent.set_visible(shown.is_some());
+        if let Some(n) = shown {
+            percent.set_label(&gettext("{n}%").replace("{n}", &n.to_string()));
+        }
+    });
+    show();
+    (face, show)
 }
 
 fn home_relative(root: &str) -> String {
@@ -290,8 +330,9 @@ fn build_page(
     } else {
         header.set_title_widget(Some(&adw::WindowTitle::new(&title, parent.as_deref().unwrap_or(""))));
     }
+    let (face, show_refresh) = refresh_face();
     let refresh = gtk::Button::builder()
-        .icon_name("view-refresh-symbolic")
+        .child(&face)
         .tooltip_text(gettext("Refresh"))
         .build();
     header.pack_end(&refresh);
@@ -349,7 +390,13 @@ fn build_page(
     });
     refresh.connect_clicked({
         let app = app.clone();
-        move |_| scan(&app)
+        move |_| {
+            scan(&app);
+            // Only a refresh that runs gets its toast.
+            if busy() {
+                PROGRESS.with(|p| p.borrow_mut().tap());
+            }
+        }
     });
 
     if let Some(f) = rebuild.borrow().as_ref() {
@@ -360,6 +407,7 @@ fn build_page(
         if !alive.get() {
             return false;
         }
+        show_refresh();
         if let Some(f) = rebuild_for_listener.borrow().as_ref() {
             f();
         }

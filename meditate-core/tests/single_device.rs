@@ -66,6 +66,7 @@ fn wipe_then_replay_reconstructs_every_cache_row_from_the_event_log() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     })
     .expect("session");
     db.insert_bell_sound(
@@ -265,6 +266,7 @@ fn preset_config_round_trips_through_db_and_drives_a_session() {
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
+        guided_file_name: None,
     })
     .expect("session");
 
@@ -315,6 +317,7 @@ fn session_filter_returns_correct_subsets_for_label_notes_and_pagination() {
             mode: SessionMode::Timer,
             uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         })
         .expect("seed session");
     }
@@ -430,6 +433,7 @@ fn every_entity_table_survives_a_database_close_reopen_cycle() {
             mode: SessionMode::Timer,
             uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         })
         .expect("session");
 

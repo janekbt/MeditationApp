@@ -1105,8 +1105,11 @@ msgstr "播放最少"
 msgid "No audio files in this folder"
 msgstr "此文件夹中没有音频文件"
 
-msgid "reading {}/{}"
-msgstr "正在读取 {}/{}"
+msgid "Folder refreshed"
+msgstr "文件夹已刷新"
+
+msgid "{}%"
+msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "无法打开文件夹选择器"

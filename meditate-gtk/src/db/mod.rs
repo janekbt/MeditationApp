@@ -233,6 +233,8 @@ pub struct Session {
     /// Set on guided meditation rows that played a library-stored
     /// file. None for non-Guided modes and transient one-off plays.
     pub guided_file_uuid: Option<String>,
+    /// The played file's title, for the Log card (any guided session).
+    pub guided_file_name: Option<String>,
 }
 
 /// Parameters for creating or updating a session.
@@ -243,6 +245,7 @@ pub struct SessionData {
     pub label_id: Option<i64>,
     pub note: Option<String>,
     pub guided_file_uuid: Option<String>,
+    pub guided_file_name: Option<String>,
 }
 
 /// `SessionFilter` is the canonical core type — re-exported here so
@@ -265,6 +268,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
         s.note.clone(),
         s.mode,
         s.guided_file_uuid.clone().map(meditate_core::db::GuidedFileUuid::new),
+        s.guided_file_name.clone(),
     )
 }
 
@@ -281,6 +285,7 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
         label_id: core.label_id,
         note: core.notes.clone(),
         guided_file_uuid: core.guided_file_uuid.as_ref().map(|u| u.0.clone()),
+        guided_file_name: core.guided_file_name.clone(),
     }
 }
 

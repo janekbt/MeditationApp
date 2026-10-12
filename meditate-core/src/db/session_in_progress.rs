@@ -36,9 +36,8 @@ pub struct FinalizedSession {
 /// `start_iso` is when the session began (already-formatted local
 /// ISO 8601). `accumulated_secs` is the elapsed-time counter that
 /// freezes on pause and grows on resume — the only timing fact the
-/// recovery flow needs. `mode_payload` is opaque JSON the shell
-/// defines (mirrors the PresetConfig convention); core stores +
-/// round-trips it without parsing. `label_id` is the local rowid
+/// recovery flow needs. `guided_file_name` is the played file's
+/// title, so a recovered session keeps it in the Log. `label_id` is the local rowid
 /// (device-local table, no cross-device translation needed at
 /// snapshot time); finalize re-resolves it through `insert_session`
 /// which emits a session_insert event with the corresponding
@@ -48,7 +47,7 @@ pub struct SessionInProgress {
     pub start_iso: String,
     pub accumulated_secs: u32,
     pub mode: SessionMode,
-    pub mode_payload: String,
+    pub guided_file_name: Option<String>,
     pub label_id: Option<i64>,
     pub guided_file_uuid: Option<super::GuidedFileUuid>,
 }
@@ -75,7 +74,9 @@ impl Database {
                 snapshot.start_iso,
                 i64::from(snapshot.accumulated_secs),
                 snapshot.mode.as_db_str(),
-                snapshot.mode_payload,
+                // The release before this kept `mode_payload` as "{}";
+                // it now holds the file name.
+                serde_json::json!({ "guided_file_name": snapshot.guided_file_name }).to_string(),
                 snapshot.label_id,
                 snapshot.guided_file_uuid,
             ],
@@ -113,7 +114,9 @@ impl Database {
                 start_iso,
                 accumulated_secs: accumulated_secs as u32,
                 mode,
-                mode_payload,
+                guided_file_name: serde_json::from_str::<serde_json::Value>(&mode_payload)
+                    .ok()
+                    .and_then(|v| v["guided_file_name"].as_str().map(str::to_string)),
                 label_id,
                 guided_file_uuid: guided_file_uuid.map(super::GuidedFileUuid::new),
             })
@@ -217,6 +220,7 @@ impl Database {
             mode: snapshot.mode,
             uuid: super::SessionUuid::new(""),
             guided_file_uuid: snapshot.guided_file_uuid,
+            guided_file_name: snapshot.guided_file_name,
         };
         let (_rowid, session_uuid) = self.insert_session_tx_less(&tx, &session)?;
         self.conn.execute(
@@ -240,7 +244,7 @@ mod tests {
             start_iso: "2026-05-13T10:00:00".into(),
             accumulated_secs: secs,
             mode: SessionMode::Timer,
-            mode_payload: r#"{"target_secs":600}"#.into(),
+            guided_file_name: None,
             label_id: None,
             guided_file_uuid: None,
         }
@@ -259,7 +263,7 @@ mod tests {
             start_iso: "2026-05-13T10:00:00".into(),
             accumulated_secs: 420,
             mode: SessionMode::BoxBreath,
-            mode_payload: r#"{"pattern":[4,7,8,0]}"#.into(),
+            guided_file_name: Some("Body Scan".into()),
             label_id: None,
             guided_file_uuid: None,
         };
@@ -399,7 +403,7 @@ mod tests {
             start_iso: "2026-05-13T09:30:00".into(),
             accumulated_secs: 1800,
             mode: SessionMode::Timer,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: None,
             guided_file_uuid: None,
         }).unwrap();
@@ -455,7 +459,7 @@ mod tests {
             start_iso: "2026-05-13T10:00:00".into(),
             accumulated_secs: 600,
             mode: SessionMode::Timer,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: Some(label_id),
             guided_file_uuid: None,
         }).unwrap();
@@ -483,7 +487,7 @@ mod tests {
             start_iso: "2026-05-13T10:00:00".into(),
             accumulated_secs: 900,
             mode: SessionMode::Guided,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: None,
             guided_file_uuid: Some("ffffffff-ffff-4fff-8fff-ffffffffffff".into()),
         }).unwrap();
@@ -502,6 +506,20 @@ mod tests {
             Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
         );
         assert_eq!(sessions[0].1.mode, SessionMode::Guided);
+    }
+
+    #[test]
+    fn a_recovered_session_keeps_its_file_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&SessionInProgress {
+            mode: SessionMode::Guided,
+            guided_file_name: Some("Body Scan".into()),
+            ..sample(300)
+        })
+        .unwrap();
+        db.finalize_session_in_progress().unwrap();
+        let sessions = super::super::list_sessions_from_db(&db).unwrap();
+        assert_eq!(sessions[0].1.guided_file_name.as_deref(), Some("Body Scan"));
     }
 
     #[test]
@@ -568,7 +586,7 @@ mod tests {
             start_iso: "2026-10-03T21:00:00".into(),
             accumulated_secs: 1234,
             mode: SessionMode::Guided,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: Some(label_id),
             guided_file_uuid: Some("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".into()),
         }).unwrap();
@@ -655,6 +673,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: super::super::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }
     }
 

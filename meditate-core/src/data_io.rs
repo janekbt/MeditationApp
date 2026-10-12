@@ -2,8 +2,8 @@
 //!
 //! Native format (the one `export_csv` writes + `parse_csv` reads):
 //! ```csv
-//! start_time_unix,duration_secs,mode,label,note,uuid,start_local,label_uuid,guided_file_uuid
-//! 1712345678,600,timer,Morning,First sit of the day,<uuid>,2024-04-05T21:34:38,<uuid>,
+//! start_time_unix,duration_secs,mode,label,note,uuid,start_local,label_uuid,guided_file_uuid,guided_file_name
+//! 1712345678,600,timer,Morning,First sit of the day,<uuid>,2024-04-05T21:34:38,<uuid>,,
 //! ```
 //! - `start_time_unix`: UTC seconds since epoch, read when a file has
 //!   no `start_local`.
@@ -12,7 +12,8 @@
 //! - `label`: plain text — empty means no label. Matched by name on
 //!   import when no label with `label_uuid` is here.
 //! - `note`: optional free text (csv-quoted as needed).
-//! - `uuid`, `start_local`, `label_uuid`, `guided_file_uuid`: the
+//! - `uuid`, `start_local`, `label_uuid`, `guided_file_uuid`,
+//!   `guided_file_name`: the
 //!   session as stored, so a restored backup is the same data sync
 //!   brings, not a copy of it, in any time zone. Last, so older
 //!   versions still find the first five where they read them.
@@ -133,7 +134,7 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     let mut wtr = csv::Writer::from_writer(file);
     wtr.write_record([
         "start_time_unix", "duration_secs", "mode", "label", "note",
-        "uuid", "start_local", "label_uuid", "guided_file_uuid",
+        "uuid", "start_local", "label_uuid", "guided_file_uuid", "guided_file_name",
     ])?;
 
     // Start-time ascending, as a backup is read in chronological order.
@@ -157,6 +158,7 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
             s.start_iso.clone(),
             label_uuid,
             s.guided_file_uuid.as_ref().map(ToString::to_string).unwrap_or_default(),
+            csv_inject_guard(s.guided_file_name.as_deref().unwrap_or_default()),
         ])?;
         n += 1;
     }
@@ -295,6 +297,7 @@ pub fn parse_csv(path: &Path) -> Result<ParsedImport, DataIoError> {
             mode,
             uuid: crate::db::SessionUuid::new(an_id(field(5)).unwrap_or_default()),
             guided_file_uuid: an_id(field(8)).map(crate::db::GuidedFileUuid::new),
+            guided_file_name: rec.get(9).map(csv_unguard).filter(|n| !n.is_empty()).map(str::to_string),
         };
         out.rows.push((session, label));
     }
@@ -368,6 +371,7 @@ where
             mode: SessionMode::Timer,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         out.rows.push((session, label));
     }
@@ -522,6 +526,7 @@ mod tests {
             mode,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         };
         (session, label)
     }
@@ -542,6 +547,21 @@ mod tests {
     }
 
     #[test]
+    fn a_restored_backup_keeps_guided_file_names() {
+        let db = fresh_db();
+        db.insert_session(&Session::from_unix(
+            1_712_000_000, 600, None, None, SessionMode::Guided, None, Some("Body Scan, part 2".into()),
+        ))
+        .unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, tmp.path()).unwrap();
+        let fresh = fresh_db();
+        assert_eq!(import_file(&fresh, tmp.path()), 1);
+        let after = crate::db::list_sessions_from_db(&fresh).unwrap();
+        assert_eq!(after[0].1.guided_file_name.as_deref(), Some("Body Scan, part 2"));
+    }
+
+    #[test]
     fn a_restored_backup_keeps_ids_start_times_labels_and_guided_files() {
         // Rows got new ids on import, so a backup restored next to the
         // synced log doubled it (1,500 became 3,000), every label came
@@ -559,6 +579,7 @@ mod tests {
                 notes: Some("first sit, \"nice\" focus".to_string()),
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: Some("6f1c6a54-3d8e-4c2a-9b1e-2f7d8a9c0b1d".into()),
+                guided_file_name: None,
             },
             Session {
                 start_iso: unix_to_local_iso(1_712_086_400),
@@ -568,6 +589,7 @@ mod tests {
                 notes: None,
                 uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             },
         ];
         for s in &originals {

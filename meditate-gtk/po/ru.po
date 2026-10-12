@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-12 20:07+0200\n"
+"POT-Creation-Date: 2026-10-12 20:46+0200\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -92,8 +92,8 @@ msgstr "Выход"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:408 src/guided.rs:1197 src/log/imp.rs:677
-#: src/presets.rs:698 src/timer/imp.rs:3784 src/vibrations.rs:476
+#: src/application.rs:408 src/guided.rs:1197 src/log/imp.rs:678
+#: src/presets.rs:698 src/timer/imp.rs:3786 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr "Отменить"
@@ -127,8 +127,8 @@ msgstr "Этот колокол больше не будет звучать во
 #: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
 #: src/presets.rs:507 src/presets.rs:574 src/presets.rs:635
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2590
-#: src/timer/imp.rs:3913 src/vibration_editor.rs:129 src/vibrations.rs:548
+#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2591
+#: src/timer/imp.rs:3915 src/vibration_editor.rs:129 src/vibrations.rs:548
 #: src/vibrations.rs:638
 msgid "Cancel"
 msgstr "Отмена"
@@ -198,7 +198,7 @@ msgstr "До конца"
 msgid "Kind"
 msgstr "Вид"
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3887
+#: src/bells.rs:470 src/log/imp.rs:829 src/timer/imp.rs:3889
 msgid "Minutes"
 msgstr "Минуты"
 
@@ -313,7 +313,7 @@ msgstr "У выбранного файла нет локального пути"
 msgid "This file has no audio track"
 msgstr "В этом файле нет звуковой дорожки"
 
-#: src/guided.rs:164 src/timer/imp.rs:3598
+#: src/guided.rs:164 src/timer/imp.rs:3600
 msgid "Couldn't read audio file"
 msgstr "Не удалось прочитать аудиофайл"
 
@@ -488,20 +488,24 @@ msgstr "Оставить обе"
 msgid "Merge"
 msgstr "Объединить"
 
-#: src/labels.rs:467 src/local_folder.rs:60 src/preferences.rs:436
-#: src/timer/imp.rs:3759
+#: src/labels.rs:467 src/local_folder.rs:77 src/preferences.rs:436
+#: src/timer/imp.rs:3761
 msgid "Save failed"
 msgstr "Ошибка сохранения"
 
-#: src/local_folder.rs:176
+#: src/local_folder.rs:53
+msgid "Folder refreshed"
+msgstr "Папка обновлена"
+
+#: src/local_folder.rs:200
 msgid "length not read yet"
 msgstr "длительность ещё не прочитана"
 
-#: src/local_folder.rs:182
+#: src/local_folder.rs:206
 msgid "never played"
 msgstr "ни разу не прослушано"
 
-#: src/local_folder.rs:183
+#: src/local_folder.rs:207
 #, rust-format
 msgid "played once"
 msgid_plural "played {n} times"
@@ -509,7 +513,7 @@ msgstr[0] "прослушано {n} раз"
 msgstr[1] "прослушано {n} раза"
 msgstr[2] "прослушано {n} раз"
 
-#: src/local_folder.rs:188
+#: src/local_folder.rs:212
 #, rust-format
 msgid "1 folder"
 msgid_plural "{n} folders"
@@ -517,7 +521,7 @@ msgstr[0] "{n} папка"
 msgstr[1] "{n} папки"
 msgstr[2] "{n} папок"
 
-#: src/local_folder.rs:189
+#: src/local_folder.rs:213
 #, rust-format
 msgid "1 file"
 msgid_plural "{n} files"
@@ -525,44 +529,44 @@ msgstr[0] "{n} файл"
 msgstr[1] "{n} файла"
 msgstr[2] "{n} файлов"
 
-#: src/local_folder.rs:205
+#: src/local_folder.rs:244
 #, rust-format
-msgid "reading {read}/{total}"
-msgstr "чтение {read}/{total}"
+msgid "{n}%"
+msgstr "{n} %"
 
-#: src/local_folder.rs:225 src/timer/imp.rs:3497
+#: src/local_folder.rs:262 src/timer/imp.rs:3499
 msgid "Unstar"
 msgstr "Убрать из избранного"
 
-#: src/local_folder.rs:225
+#: src/local_folder.rs:262
 msgid "Star"
 msgstr "Добавить в избранное"
 
-#: src/local_folder.rs:289 src/local_folder.rs:314 data/ui/timer_view.blp:301
+#: src/local_folder.rs:326 src/local_folder.rs:352 data/ui/timer_view.blp:301
 msgid "Local Folder"
 msgstr "Локальная папка"
 
-#: src/local_folder.rs:295
+#: src/local_folder.rs:333
 msgid "Refresh"
 msgstr "Обновить"
 
-#: src/local_folder.rs:299
+#: src/local_folder.rs:337
 msgid "Folder not reachable"
 msgstr "Папка недоступна"
 
-#: src/local_folder.rs:300
+#: src/local_folder.rs:338
 msgid "Choose Again"
 msgstr "Выбрать снова"
 
-#: src/local_folder.rs:373 src/local_folder.rs:408
+#: src/local_folder.rs:417 src/local_folder.rs:452
 msgid "Choose Folder"
 msgstr "Выбрать папку"
 
-#: src/local_folder.rs:417
+#: src/local_folder.rs:461
 msgid "No Local Folder"
 msgstr "Нет локальной папки"
 
-#: src/local_folder.rs:419
+#: src/local_folder.rs:463
 msgid ""
 "Choose a folder of guided meditations. Meditate plays the files where they "
 "are and doesn't copy them. They stay on this device and don't sync."
@@ -571,43 +575,43 @@ msgstr ""
 "лежат, и не копирует их. Они остаются на этом устройстве и не "
 "синхронизируются."
 
-#: src/local_folder.rs:446
+#: src/local_folder.rs:490
 msgid "Folder"
 msgstr "Папка"
 
-#: src/local_folder.rs:450
+#: src/local_folder.rs:494
 msgid "Change"
 msgstr "Изменить"
 
-#: src/local_folder.rs:463
+#: src/local_folder.rs:507
 msgid "Folders"
 msgstr "Папки"
 
-#: src/local_folder.rs:464
+#: src/local_folder.rs:508
 msgid "List"
 msgstr "Список"
 
-#: src/local_folder.rs:482 src/vibration_editor.rs:154
+#: src/local_folder.rs:526 src/vibration_editor.rs:154
 msgid "Name"
 msgstr "Название"
 
-#: src/local_folder.rs:482
+#: src/local_folder.rs:526
 msgid "Length"
 msgstr "Длительность"
 
-#: src/local_folder.rs:482
+#: src/local_folder.rs:526
 msgid "Most played"
 msgstr "Чаще всего"
 
-#: src/local_folder.rs:482
+#: src/local_folder.rs:526
 msgid "Least played"
 msgstr "Реже всего"
 
-#: src/local_folder.rs:485
+#: src/local_folder.rs:529
 msgid "Sort by"
 msgstr "Сортировка"
 
-#: src/local_folder.rs:545
+#: src/local_folder.rs:589
 msgid "No audio files in this folder"
 msgstr "В этой папке нет аудиофайлов"
 
@@ -621,23 +625,23 @@ msgstr "Все метки"
 msgid "min"
 msgstr "мин"
 
-#: src/log/imp.rs:460
+#: src/log/imp.rs:461
 msgid "No note added"
 msgstr "Без заметки"
 
-#: src/log/imp.rs:502
+#: src/log/imp.rs:503
 msgid "Delete Session"
 msgstr "Удалить сессию"
 
-#: src/log/imp.rs:621
+#: src/log/imp.rs:622
 msgid "Today"
 msgstr "Сегодня"
 
-#: src/log/imp.rs:622
+#: src/log/imp.rs:623
 msgid "Yesterday"
 msgstr "Вчера"
 
-#: src/log/imp.rs:644 src/log/imp.rs:646
+#: src/log/imp.rs:645 src/log/imp.rs:647
 #, rust-format
 msgid "1 session"
 msgid_plural "{n} sessions"
@@ -645,82 +649,82 @@ msgstr[0] "{n} сессия"
 msgstr[1] "{n} сессии"
 msgstr[2] "{n} сессий"
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3880
+#: src/log/imp.rs:816 src/timer/imp.rs:3882
 msgid "Hours"
 msgstr "Часы"
 
-#: src/log/imp.rs:847
+#: src/log/imp.rs:849
 msgid "Date"
 msgstr "Дата"
 
-#: src/log/imp.rs:864
+#: src/log/imp.rs:866
 msgid "Pick a Date"
 msgstr "Выбрать дату"
 
-#: src/log/imp.rs:889
+#: src/log/imp.rs:891
 msgid "Hour"
 msgstr "Час"
 
-#: src/log/imp.rs:894
+#: src/log/imp.rs:896
 msgid "Minute"
 msgstr "Минута"
 
-#: src/log/imp.rs:908 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
+#: src/log/imp.rs:910 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
 msgid "Selected"
 msgstr "Выбрано"
 
-#: src/log/imp.rs:923 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
+#: src/log/imp.rs:925 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
 #: data/ui/window.blp:107
 msgid "Label"
 msgstr "Метка"
 
-#: src/log/imp.rs:924 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
+#: src/log/imp.rs:926 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
 msgid "Tag this session"
 msgstr "Отметьте эту сессию"
 
-#: src/log/imp.rs:982 data/ui/timer_view.blp:843
+#: src/log/imp.rs:984 data/ui/timer_view.blp:843
 msgid "Note (optional)"
 msgstr "Заметка (необязательно)"
 
-#: src/log/imp.rs:1002 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
+#: src/log/imp.rs:1004 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
 #: data/ui/timer_view.blp:492
 msgid "Duration"
 msgstr "Длительность"
 
-#: src/log/imp.rs:1008
+#: src/log/imp.rs:1010
 msgid "Start time"
 msgstr "Время начала"
 
-#: src/log/imp.rs:1037
+#: src/log/imp.rs:1039
 msgid "_Cancel"
 msgstr "_Отмена"
 
-#: src/log/imp.rs:1041 src/preferences.rs:343
+#: src/log/imp.rs:1043 src/preferences.rs:343
 msgid "_Save"
 msgstr "_Сохранить"
 
-#: src/log/imp.rs:1041
+#: src/log/imp.rs:1043
 msgid "_Add"
 msgstr "_Добавить"
 
-#: src/log/imp.rs:1085 src/log/imp.rs:1092
+#: src/log/imp.rs:1087 src/log/imp.rs:1094
 msgid "Edit Session"
 msgstr "Изменить сессию"
 
-#: src/log/imp.rs:1085 src/log/imp.rs:1092 data/ui/log_view.blp:18
+#: src/log/imp.rs:1087 src/log/imp.rs:1094 data/ui/log_view.blp:18
 #: data/ui/window.blp:117
 msgid "Add Session"
 msgstr "Добавить сессию"
 
-#: src/log/imp.rs:1113 src/timer/imp.rs:3969 src/timer/imp.rs:4007
+#: src/log/imp.rs:1115 src/timer/imp.rs:3971 src/timer/imp.rs:4009
 msgid "(none — pick one)"
 msgstr "(нет — выберите)"
 
-#: src/log/imp.rs:1209 src/timer/imp.rs:2534
+#: src/log/imp.rs:1212 src/timer/imp.rs:2535
 msgid "Couldn't save session — storage error"
 msgstr "Не удалось сохранить сессию — ошибка хранилища"
 
-#: src/log/imp.rs:1214 src/timer/imp.rs:2552
+#: src/log/imp.rs:1217 src/timer/imp.rs:2553
 msgid "Couldn't save session — storage unavailable"
 msgstr "Не удалось сохранить сессию — хранилище недоступно"
 
@@ -1423,31 +1427,31 @@ msgstr "Продолжить"
 msgid "Resume Timer"
 msgstr "Продолжить таймер"
 
-#: src/timer/imp.rs:2581
+#: src/timer/imp.rs:2582
 msgid "Discard Session?"
 msgstr "Удалить сессию?"
 
-#: src/timer/imp.rs:2582
+#: src/timer/imp.rs:2583
 msgid "Your note will be lost."
 msgstr "Заметка будет потеряна."
 
-#: src/timer/imp.rs:2591 data/ui/timer_view.blp:892
+#: src/timer/imp.rs:2592 data/ui/timer_view.blp:892
 msgid "Discard"
 msgstr "Удалить"
 
-#: src/timer/imp.rs:2914
+#: src/timer/imp.rs:2916
 msgid "Finish"
 msgstr "Завершить"
 
-#: src/timer/imp.rs:2916
+#: src/timer/imp.rs:2918
 msgid "End at the planned duration"
 msgstr "Завершить в запланированное время"
 
-#: src/timer/imp.rs:3268
+#: src/timer/imp.rs:3270
 msgid "Start your streak today"
 msgstr "Начните серию сегодня"
 
-#: src/timer/imp.rs:3269 src/timer/imp.rs:3271
+#: src/timer/imp.rs:3271 src/timer/imp.rs:3273
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
@@ -1455,72 +1459,74 @@ msgstr[0] "Серия: {n} день"
 msgstr[1] "Серия: {n} дня"
 msgstr[2] "Серия: {n} дней"
 
-#: src/timer/imp.rs:3327
+#: src/timer/imp.rs:3329
 msgid "Tap Save Settings to create your first preset"
 msgstr "Нажмите «Сохранить», чтобы создать первый пресет"
 
-#: src/timer/imp.rs:3401
+#: src/timer/imp.rs:3403
 msgid "No starred files"
 msgstr "Нет избранных файлов"
 
-#: src/timer/imp.rs:3403
+#: src/timer/imp.rs:3405
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
-msgstr "Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в избранное в разделе «Управление импортом»"
+msgstr ""
+"Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в "
+"избранное в разделе «Управление импортом»"
 
-#: src/timer/imp.rs:3475
+#: src/timer/imp.rs:3477
 msgid "not found"
 msgstr "не найден"
 
-#: src/timer/imp.rs:3479
+#: src/timer/imp.rs:3481
 msgid "Local file"
 msgstr "Локальный файл"
 
-#: src/timer/imp.rs:3511
+#: src/timer/imp.rs:3513
 msgid "File not found in the local folder"
 msgstr "Файл не найден в локальной папке"
 
-#: src/timer/imp.rs:3528
+#: src/timer/imp.rs:3530
 msgid "Reading length"
 msgstr "Чтение длительности"
 
-#: src/timer/imp.rs:3534 src/timer/imp.rs:3535
+#: src/timer/imp.rs:3536 src/timer/imp.rs:3537
 msgid "Local folder"
 msgstr "Локальная папка"
 
-#: src/timer/imp.rs:3541 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3543 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "Файл не выбран"
 
-#: src/timer/imp.rs:3543 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3545 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "Нажмите «Открыть файл» или выберите из списка"
 
-#: src/timer/imp.rs:3551
+#: src/timer/imp.rs:3553
 msgid "Open New File"
 msgstr "Открыть новый файл"
 
-#: src/timer/imp.rs:3553 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3555 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "Открыть файл"
 
-#: src/timer/imp.rs:3782
+#: src/timer/imp.rs:3784
 #, rust-format
 msgid "'{name}' applied"
 msgstr "Применено: '{name}'"
 
-#: src/timer/imp.rs:3907
+#: src/timer/imp.rs:3909
 msgid "Custom Time"
 msgstr "Своё время"
 
-#: src/timer/imp.rs:3908
+#: src/timer/imp.rs:3910
 msgid "Hours : Minutes"
 msgstr "Часы : Минуты"
 
-#: src/timer/imp.rs:3914
+#: src/timer/imp.rs:3916
 msgid "Set"
 msgstr "Задать"
 
-#: src/timer/imp.rs:3971 src/timer/imp.rs:4009
+#: src/timer/imp.rs:3973 src/timer/imp.rs:4011
 msgid "Off"
 msgstr "Выкл."
 
@@ -1532,16 +1538,16 @@ msgstr "Выкл."
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4271
+#: src/timer/imp.rs:4273
 #, rust-format
 msgid "Add {time} ?"
 msgstr "Добавить {time} ?"
 
-#: src/timer/imp.rs:4281
+#: src/timer/imp.rs:4283
 msgid "None enabled"
 msgstr "Нет активных"
 
-#: src/timer/imp.rs:4282 src/timer/imp.rs:4283
+#: src/timer/imp.rs:4284 src/timer/imp.rs:4285
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
@@ -1549,27 +1555,27 @@ msgstr[0] "Активно: {n}"
 msgstr[1] "Активно: {n}"
 msgstr[2] "Активно: {n}"
 
-#: src/timer/imp.rs:4307 data/ui/timer_view.blp:618
+#: src/timer/imp.rs:4309 data/ui/timer_view.blp:618
 msgid "Inhale"
 msgstr "Вдох"
 
-#: src/timer/imp.rs:4308
+#: src/timer/imp.rs:4310
 msgid "Hold (full)"
 msgstr "Задержка (на вдохе)"
 
-#: src/timer/imp.rs:4309 data/ui/timer_view.blp:714
+#: src/timer/imp.rs:4311 data/ui/timer_view.blp:714
 msgid "Exhale"
 msgstr "Выдох"
 
-#: src/timer/imp.rs:4310
+#: src/timer/imp.rs:4312
 msgid "Hold (empty)"
 msgstr "Задержка (на выдохе)"
 
-#: src/timer/imp.rs:4372
+#: src/timer/imp.rs:4374
 msgid "Decrease"
 msgstr "Уменьшить"
 
-#: src/timer/imp.rs:4383
+#: src/timer/imp.rs:4385
 msgid "Increase"
 msgstr "Увеличить"
 
@@ -2537,6 +2543,10 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:228
 msgid "Initial release."
 msgstr "Первый выпуск."
+
+#, rust-format
+#~ msgid "reading {read}/{total}"
+#~ msgstr "чтение {read}/{total}"
 
 #~ msgid "Manage Files"
 #~ msgstr "Управление файлами"

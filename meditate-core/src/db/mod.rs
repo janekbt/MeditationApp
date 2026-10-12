@@ -414,6 +414,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 uuid: SessionUuid::new(""),
                 guided_file_uuid: None,
+                guided_file_name: None,
             })
             .unwrap();
             db.conn.execute("UPDATE sessions SET uuid = ?1 WHERE uuid NOT IN ('a', 'b')", [uuid]).unwrap();

@@ -20,7 +20,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Daily streak and a system notification when you're away from the app
 
 ### Log
-- Date-grouped card feed of every session
+- Date-grouped card feed of every session, naming the guided file each one played
 - Filter by label, or sessions with notes
 - Add, edit, or delete sessions, with undo
 - Import from Insight Timer, and CSV import/export for backups

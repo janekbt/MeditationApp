@@ -143,7 +143,13 @@ The mechanisms in `db/schema.rs`:
   because a downgrade could silently drop data it doesn't know.
   Bump it only for changes an older build cannot read.
 - **`ADDED_COLUMNS`**: additive, defaulted columns.
-  `add_missing_columns` adds them to older databases on open.
+  `add_missing_columns` adds them to older databases on open, with an
+  optional one-time fill (`sessions.guided_file_name` takes the names
+  an older release kept only in its events). Prefer such a fill to a
+  `CACHE_SCHEMA_VERSION` bump: a full replay takes long on a phone. A
+  device that goes back to an older release after the column exists
+  and then updates again gets no second fill; names it received
+  meanwhile show once that session's next event arrives.
   `SCHEMA_VERSION` stays put, so the previous release can still open
   the DB.
 - **`CACHE_SCHEMA_VERSION`**: bump it when `apply_event_inner` learns
@@ -151,8 +157,9 @@ The mechanisms in `db/schema.rs`:
   lower stored value replays the whole log. Unknown kinds are
   recorded but not applied until then.
 - **Upgrade tests** start from a frozen schema of an earlier release
-  in `db/fixtures/` (currently only `schema_v26_8_5.sql`, used in
-  `db/mod.rs`); add the last release's schema when a change needs it.
+  in `db/fixtures/` (`schema_v26_8_5.sql` in `db/mod.rs`,
+  `schema_v26_10_1.sql` through `test_helpers::release_v26_10_1_database`);
+  add the last release's schema when a change needs it.
 
 ## Decisions in core, mechanisms in shell
 
@@ -288,8 +295,8 @@ the process.
 
 A running session must survive a crash, an OOM kill or a dead
 battery. The shell snapshots it into the device-local
-`session_in_progress` row (start time, accumulated seconds, mode and
-a mode payload) at start and then about once a minute. The row is
+`session_in_progress` row (start time, accumulated seconds, mode,
+label and the guided file, its title in the `mode_payload` JSON) at start and then about once a minute. The row is
 outside the event log, so sync sees nothing while a session runs. On
 the next launch core's `finalize_session_in_progress` saves what was
 done as an ordinary session and clears the row.

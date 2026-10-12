@@ -67,6 +67,7 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: SessionUuid::new(""),
             guided_file_uuid: None,
+            guided_file_name: None,
         }
     }
 
@@ -238,7 +239,7 @@ mod tests {
             start_iso: "2026-10-01T07:00:00".into(),
             accumulated_secs: 120,
             mode: SessionMode::Timer,
-            mode_payload: "{}".into(),
+            guided_file_name: None,
             label_id: None,
             guided_file_uuid: None,
         };

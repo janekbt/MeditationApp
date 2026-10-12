@@ -90,14 +90,14 @@ pub fn guided_file_names_from_db(db: &Database) -> Result<std::collections::Hash
     Ok(names)
 }
 
-/// The guided-file line for one Log card: the played file's name, or
-/// None when the session played no library file or the file is
-/// unknown on this device.
+/// The guided-file line for one Log card: the library file's name
+/// (so a rename shows), else the name the session stored, else None.
 pub fn guided_file_name_for<'a>(
     uuid: Option<&str>,
+    stored: Option<&'a str>,
     names: &'a std::collections::HashMap<String, String>,
 ) -> Option<&'a str> {
-    names.get(uuid?).map(String::as_str)
+    uuid.and_then(|uuid| names.get(uuid)).map(String::as_str).or(stored)
 }
 
 /// Look up a guided-file row by its cross-device uuid. Returns
@@ -411,13 +411,14 @@ mod tests {
     }
 
     #[test]
-    fn guided_file_name_for_a_session() {
+    fn the_log_name_prefers_the_library_then_the_stored_name() {
         let mut names = std::collections::HashMap::new();
-        names.insert("gf-1".to_string(), "Body Scan".to_string());
-        let with = |uuid: Option<&str>| guided_file_name_for(uuid, &names);
-        assert_eq!(with(Some("gf-1")), Some("Body Scan"));
-        assert_eq!(with(Some("gone")), None, "unknown file: no line");
-        assert_eq!(with(None), None, "not a library file: no line");
+        names.insert("gf-1".to_string(), "Body Scan (renamed)".to_string());
+        let line = |uuid, stored| guided_file_name_for(uuid, stored, &names);
+        assert_eq!(line(Some("gf-1"), Some("Body Scan")), Some("Body Scan (renamed)"));
+        assert_eq!(line(None, Some("Talk.mp3")), Some("Talk.mp3"));
+        assert_eq!(line(Some("unknown"), Some("Talk.mp3")), Some("Talk.mp3"));
+        assert_eq!(line(None, None), None, "a session from before: no line");
     }
 
     #[test]
