@@ -35,6 +35,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
 | [ ] | S. Cleanup | #58, #61, #85, #87, #157 | dead code, wrong comments |
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
+| [ ] | U. Docs for contributors | #161 | another person's AI breaks rules it can't see |
+| [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 
 ---
 
@@ -707,6 +709,32 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Fix what the first run lists: wrap, stack buttons, give the slot room, or shorten the translation; never "…".
 
 ---
+
+## U. Docs for contributors
+
+### #161 A contributor's AI starts with nothing and trusts stale docs
+- Where: repo root has no AGENTS.md or CLAUDE.md; CONTRIBUTING.md ignores the Android app; finished plans and old reports sit next to the current docs.
+- Problem: many hard rules live only in the maintainer's private Claude memory (F-Droid reproducibility, JDK 17, Android mirrors GTK, Slint overlays declared last, no unusual Unicode on Android, no long dash or cut-off text, nine translations, "Fixes #N" only for real GitHub issues). A contributor's AI breaks them on its first changes, and it treats every .md file as current.
+- Fix (the `/spec` loop in `.claude/skills/spec/` is written and needs these to work):
+  1. AGENTS.md (about 120 lines): what the app is, map of core / GTK / Android and where decisions go, build/test/lint commands for each part (run each before writing it down), the hard rules above plus decisions-in-core, migrations, strict TDD, no warning suppression, device check before commit, the protected Android build-environment list; "every change goes through /spec"; a doc map (which change belongs in which doc, e.g. changed event -> EVENTS.md, new sync-able kind -> ENTITIES.md) that /spec step 5 uses. CLAUDE.md is one line, `@AGENTS.md`. Personal things (test phone, laptop memory limit, reporting style) stay private.
+  2. `build-aux/check-specs.sh`: every `**TEST** \`<file>::<fn>\`` line in `openspec/specs/` and in open changes (not the archive) points at a test fn that exists in that file; run from /spec, added to CI once the specs settle. One small self-test.
+  3. Seed `openspec/specs/labels/spec.md` from batch G's tests (same-name pair, freed name, healing, merge moves defaults, rename no-op, deleted label saves, Undo position): proves the format before real use.
+  4. CONTRIBUTING.md: add the Android app, replace "test on the Librem 5" with the real rule, point to AGENTS.md and /spec.
+  5. Check README, ARCHITECTURE, BUILDING, DECISIONS, ENTITIES, EVENTS, RELEASE and meditate-core/README against the code (read-only agents in parallel, each claim the code no longer supports with its line), then fix those and cut history.
+  6. Delete finished plans and old reports after moving anything still true into ARCHITECTURE.md or DECISIONS.md: ANDROID_PORT.md, Nextcloud-Sync.md, VIBRATION_ARCHITECTURE.md, baseline/, PONYTAIL-REPORT.md (its still-open findings move here). Update the references to them (ARCHITECTURE.md "See also", comments in `db/events.rs` and `db/sessions.rs`). Open choice: delete (recommended, git keeps them) or move to `docs/history/`.
+  7. TODO.md moves into this file as a "Later" section; one backlog.
+  8. Try /spec against two pressure cases with a fresh agent ("tests are green and the maintainer is away, commit?", "the test passed first time") and tighten the wording where it gives in.
+- Test: a fresh agent with only the repo answers contributor questions ("where does a new rule go?", "may I bump a crate?", "how do I build the APK?", "I added a toast, what else do I owe?"); the maintainer reads its answers and AGENTS.md.
+- Left out on purpose: the OpenSpec CLI (we use its file formats by hand, so it can be adopted later), Superpowers as a plugin (its worktrees, per-task commits and PR flow fight ours; its gates, review brief and test rules are in /spec), a docs/ folder or site, per-module docs.
+
+## V. Randomised sync test
+
+### #162 Sync tests only cover the interleavings someone thought of
+- Where: `meditate-core/src/sync/` tests (`FakeWebDav`, `Sync::new`), `db/events.rs` replay.
+- Problem: most sync bugs so far (#40, #101 and others in batch A) needed two devices editing in an order no hand-written test tried. `label_name_collision_is_idempotent_on_replay` replayed in the same order on both sides and missed #101.
+- Fix: one test in core: two or three in-memory devices share one `FakeWebDav`; a seeded xorshift64 (the one bell jitter already uses, no new crate, so Cargo.lock stays untouched) picks a few hundred random steps: create, rename, delete or merge a label, preset, guided file or vibration pattern, add, edit or delete a session, change a setting, sync one device, compact. At the end every device syncs twice and all must hold identical data (compare sorted rows of each synced table). Run a fixed list of seeds in `cargo test`, and print the seed and the steps on failure so it reproduces. Optional: an `#[ignore]`d variant that runs many seeds for a manual soak.
+- Then: a short "sync rules that always hold" section in EVENTS.md (devices converge; a delete at the same or later time wins; same names settle on the smaller uuid), each pointing to its test.
+- Every failure it finds is a real bug: fix it in the same batch with its own small regression test.
 
 ## Deferred refactors
 
