@@ -7,7 +7,7 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
+    map_unique_err,
     Database, DbError, Result,
 };
 
@@ -153,23 +153,46 @@ impl Database {
         duration_secs: u32,
         is_starred: bool,
     ) -> Result<i64> {
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        self.insert_guided_file_at(&GuidedFile {
+            id: 0,
+            uuid: super::GuidedFileUuid::new(uuid_str),
+            name: name.to_string(),
+            file_path: file_path.to_string(),
+            duration_secs,
+            is_starred,
+            created_iso: now_iso.clone(),
+            updated_iso: now_iso,
+        })
+    }
+
+    /// Undo of a delete: the file comes back with its uuid and its
+    /// creation time, so it takes its old place in the list.
+    pub fn restore_guided_file(&self, file: &GuidedFile) -> Result<i64> {
+        self.insert_guided_file_at(file)
+    }
+
+    /// Insert `file` under its uuid and times (its id is ignored).
+    fn insert_guided_file_at(&self, file: &GuidedFile) -> Result<i64> {
+        let GuidedFile { uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso, .. } = file;
+        let (uuid_str, duration_secs, is_starred) = (uuid.as_str(), *duration_secs, *is_starred);
         let tx = self.conn.unchecked_transaction()?;
         if let Some(existing) = self.existing_rowid_by_uuid("guided_files", uuid_str)? {
             return Ok(existing);
         }
-        let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
                 "INSERT INTO guided_files
                     (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     uuid_str,
                     name,
                     file_path,
                     duration_secs,
                     i64::from(is_starred),
-                    now_iso,
+                    created_iso,
+                    updated_iso,
                 ],
             )
             .map_err(|e| map_unique_err(e, || DbError::DuplicateGuidedFile(name.to_string())))?;
@@ -180,8 +203,8 @@ impl Database {
             "file_path": file_path,
             "duration_secs": duration_secs,
             "is_starred": is_starred,
-            "created_iso": now_iso,
-            "updated_iso": now_iso,
+            "created_iso": created_iso,
+            "updated_iso": updated_iso,
         }).to_string();
         self.emit_event(&tx, EventKind::GuidedFileInsert, uuid_str, payload)?;
         tx.commit()?;
@@ -197,15 +220,18 @@ impl Database {
     /// new name (case-insensitive).
     pub fn rename_guided_file(&self, uuid_str: &str, name: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, i64, String)> = self.conn.query_row(
-            "SELECT file_path, duration_secs, created_iso
+        let row: Option<(String, i64, String, String)> = self.conn.query_row(
+            "SELECT file_path, duration_secs, created_iso, name
                FROM guided_files WHERE uuid = ?1",
             params![uuid_str],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).optional()?;
-        let Some((file_path, duration_secs, created_iso)) = row else {
+        let Some((file_path, duration_secs, created_iso, stored)) = row else {
             return Ok(());
         };
+        // Unchanged: a fresh event would undo a rename another device
+        // made in the meantime.
+        if stored == name { return Ok(()); }
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -326,28 +352,10 @@ impl Database {
                     is_starred    = excluded.is_starred,
                     created_iso   = excluded.created_iso,
                     updated_iso   = excluded.updated_iso";
-            let first = self.conn.execute(upsert_sql, params![
+            self.claim_name("guided_files", file_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 file_uuid, name, file_path, duration_secs,
                 i64::from(is_starred), created_iso, updated_iso,
-            ]);
-            match first {
-                Ok(_) => {}
-                Err(e) if is_unique_constraint_error(&e) => {
-                    let suffixed = conflict_suffixed_name(name, file_uuid);
-                    crate::diag::log(
-                        "guided_file.name_collision",
-                        &format!(
-                            "uuid={file_uuid} original={name:?} \
-                             resolved={suffixed:?}"
-                        ),
-                    );
-                    self.conn.execute(upsert_sql, params![
-                        file_uuid, suffixed, file_path, duration_secs,
-                        i64::from(is_starred), created_iso, updated_iso,
-                    ])?;
-                }
-                Err(e) => return Err(DbError::Sqlite(e)),
-            }
+            ]))?;
         }
         Ok(())
     }
@@ -736,5 +744,50 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Body Scan");
         assert!(!rows[0].is_starred);
+    }
+
+    const SMALL: &str = "11111111-0000-4000-8000-000000000001";
+    const LARGE: &str = "99999999-0000-4000-8000-000000000009";
+
+    #[test]
+    fn every_device_suffixes_the_same_guided_file_of_a_same_name_pair() {
+        for (mine, theirs) in [(SMALL, LARGE), (LARGE, SMALL)] {
+            let peer = Database::open_in_memory().unwrap();
+            peer.insert_guided_file_with_uuid(theirs, "Body Scan", "/p/b.ogg", 600, false).unwrap();
+            let events: Vec<Event> = peer.pending_events().unwrap().into_iter()
+                .map(|(_, e)| e).filter(|e| e.target_id == theirs).collect();
+            let db = Database::open_in_memory().unwrap();
+            db.insert_guided_file_with_uuid(mine, "Body Scan", "/p/a.ogg", 600, false).unwrap();
+            db.replay_events(&events).unwrap();
+            let name = |u: &str| list_guided_files_from_db(&db).unwrap().into_iter()
+                .find(|g| g.uuid.as_str() == u).unwrap().name;
+            assert_eq!(name(SMALL), "Body Scan");
+            assert_eq!(name(LARGE), "Body Scan (conflict-99999999)");
+        }
+    }
+
+    #[test]
+    fn renaming_a_guided_file_to_its_own_name_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(SMALL, "Body Scan", "/p/b.ogg", 600, false).unwrap();
+        let before = db.pending_events().unwrap().len();
+        db.rename_guided_file(SMALL, "Body Scan").unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before);
+    }
+
+    #[test]
+    fn an_undone_delete_puts_the_guided_file_back_in_its_place() {
+        let db = Database::open_in_memory().unwrap();
+        for (i, name) in ["Body Scan", "Breath", "Metta"].into_iter().enumerate() {
+            db.insert_guided_file_with_uuid(&format!("{i}0000000-0000-4000-8000-000000000000"), name, "/p/x.ogg", 600, false).unwrap();
+        }
+        let names = |db: &Database| -> Vec<String> {
+            list_guided_files_from_db(db).unwrap().into_iter().map(|g| g.name).collect()
+        };
+        let before = names(&db);
+        let first = list_guided_files_from_db(&db).unwrap().remove(0);
+        db.delete_guided_file(first.uuid.as_str()).unwrap();
+        db.restore_guided_file(&first).unwrap();
+        assert_eq!(names(&db), before);
     }
 }

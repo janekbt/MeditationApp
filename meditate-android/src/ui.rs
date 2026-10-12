@@ -5286,13 +5286,10 @@ fn build_ui() -> MainWindow {
                 show_notice(
                     &ui,
                     ui.global::<Tr>().invoke_deleted(row.name.clone().into()),
-                    Some(app::PendingUndo::GuidedDelete(
-                        row.uuid.0.clone(),
-                        row.name.clone(),
-                        local_guided_path(row.uuid.as_str()),
-                        row.duration_secs,
-                        row.is_starred,
-                    )),
+                    Some(app::PendingUndo::GuidedDelete(meditate_core::db::GuidedFile {
+                        file_path: local_guided_path(row.uuid.as_str()),
+                        ..row.clone()
+                    })),
                     5,
                 );
             }
@@ -5823,7 +5820,7 @@ fn build_ui() -> MainWindow {
                     return;
                 };
                 // Capture the full row so Undo can resurrect it
-                // identically (GTK's insert_preset_with_uuid).
+                // identically, in its place (core's restore_preset).
                 let Some(row) = find_preset_by_uuid(&uuid) else {
                     return;
                 };
@@ -5847,13 +5844,7 @@ fn build_ui() -> MainWindow {
                 show_notice(
                     &ui,
                     ui.global::<Tr>().invoke_deleted(row.name.clone().into()),
-                    Some(app::PendingUndo::PresetDelete(
-                        row.uuid.to_string(),
-                        row.name.clone(),
-                        row.mode,
-                        row.is_starred,
-                        row.config_json.clone(),
-                    )),
+                    Some(app::PendingUndo::PresetDelete(row.clone())),
                     5,
                 );
             }
@@ -7805,7 +7796,17 @@ fn build_ui() -> MainWindow {
             }
             let mode: meditate_core::SessionMode =
                 current_mode.get().into();
-            refresh_label_state(&ui, mode);
+            // An Edit or Done page on the merged-away label follows its
+            // sessions to the kept one; then Delete's cleanup (a mode
+            // default on it moved in core).
+            if i64::from(ui.get_done_label_id()) == suffixed_id {
+                ui.set_done_label_id(base_id as i32);
+            }
+            if i64::from(ui.get_edit_label_id()) == suffixed_id {
+                ui.set_edit_label_id(base_id as i32);
+            }
+            refresh_after_label_change(&ui, mode);
+            refresh_filter_label_items(&ui);
             reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             refresh_stats(&ui);
             check_label_conflicts(&ui, &slot);
@@ -8023,8 +8024,8 @@ fn build_ui() -> MainWindow {
                 U::PresetApply(json) => {
                     apply_preset_json(&ui, &json, core_mode, &timer_session_secs);
                 }
-                U::PresetDelete(u, name, mode, starred, json) => {
-                    write_ok(&ui, "preset.undo", lock_db().map(|db| db.insert_preset_with_uuid(&u, &name, mode, starred, &json)));
+                U::PresetDelete(p) => {
+                    write_ok(&ui, "preset.undo", lock_db().map(|db| db.restore_preset(&p)));
                     populate_preset_chooser(&ui, core_mode);
                     refresh_preset_chips(&ui, core_mode);
                     refresh_widget(&ui);
@@ -8037,22 +8038,13 @@ fn build_ui() -> MainWindow {
                     refresh_widget(&ui);
                 }
                 // The file was kept for Undo, so the row comes back whole.
-                U::GuidedDelete(u, name, path, secs, starred) => {
-                    write_ok(&ui, "guided.undo", lock_db().map(|db| db.insert_guided_file_with_uuid(&u, &name, &path, secs, starred)));
+                U::GuidedDelete(f) => {
+                    write_ok(&ui, "guided.undo", lock_db().map(|db| db.restore_guided_file(&f)));
                     refresh_guided_manage(&ui);
                     refresh_guided_files(&ui);
                 }
                 U::PatternDelete(p) => {
-                    write_ok(&ui, "pattern.undo", lock_db().map(|db| {
-                        db.insert_vibration_pattern_with_uuid(
-                            p.uuid.as_str(),
-                            &p.name,
-                            p.duration_ms,
-                            &p.intensities,
-                            p.chart_kind,
-                            p.is_bundled,
-                        )
-                    }));
+                    write_ok(&ui, "pattern.undo", lock_db().map(|db| db.restore_vibration_pattern(&p)));
                     refresh_after_pattern_change(&ui);
                 }
             }
@@ -9519,8 +9511,8 @@ fn commit_undo(ui: &MainWindow, undo: app::PendingUndo) {
             &LOG_PENDING_DELETES.with(Rc::clone),
         ),
         // The file was kept for Undo; GTK removes it when its toast goes.
-        app::PendingUndo::GuidedDelete(_, _, path, _, _) => {
-            let _ = std::fs::remove_file(&path);
+        app::PendingUndo::GuidedDelete(file) => {
+            let _ = std::fs::remove_file(local_guided_path(file.uuid.as_str()));
         }
         _ => {}
     }

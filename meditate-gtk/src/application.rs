@@ -654,6 +654,7 @@ impl MeditateApplication {
                         win.imp().timer_view.refresh_streak();
                         win.imp().stats_view.refresh();
                         win.imp().log_view.refresh();
+                        crate::labels::ask_about_label_conflict(&app, &win);
                     }
                 }
             });

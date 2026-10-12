@@ -21,7 +21,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
 | [x] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
 | [x] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
-| [ ] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #65, #122, #158 | names that differ per device, saves that fail |
+| [x] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #122, #158 | names that differ per device, saves that fail |
 | [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
@@ -296,12 +296,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `presets.rs:197`, `guided_files.rs:160`, `vibration_patterns.rs:140` (a new `created_iso`); lists ordered by `created_iso` or `id`. Undo: gtk `presets.rs:601-612`, `guided.rs:1101-1117`, `vibrations.rs:519-528`; android `ui.rs:8030-8061`.
 - Problem: chips "Morning, Evening, Walk": delete Morning, tap Undo, and they read "Evening, Walk, Morning".
 - Fix: an insert variant that takes the deleted row's `created_iso`, used only by Undo (Android's PresetDelete and GuidedDelete must carry it). Sort patterns by `created_iso` too (see #102).
-
-### #65 A label deleted on one device and renamed on another comes back without its sessions
-- Where: `meditate-core/src/db/labels.rs:106-118, 280-330`, `ON DELETE SET NULL` on `sessions.label_id`.
-- Problem: laptop deletes L, phone renames L concurrently, the rename wins; on the laptop L returns with a new rowid but its sessions stay unlabelled. Editing one of them there then sends `label_uuid: null` to every peer.
-- Fix: when `recompute_label` inserts a new row, recompute the sessions whose events name that label uuid. Or accept the gap: it needs a concurrent delete and rename.
-- Third audit: probably already handled. `labels.rs:328-354` relinks the sessions when the rename re-creates the label (a SQLite probe of this case relinked both). Only a session edited on the laptop while the label was gone stays unlabelled, on every device, which matches what the user did. Add a delete-then-rename test; if it passes, remove #65.
 
 ### #122 GTK: renaming or deleting a label leaves Log and Stats stale
 - Where: `meditate-gtk/src/labels.rs:277, 344, 402`; `guided.rs:976-985, 1001-1007`.

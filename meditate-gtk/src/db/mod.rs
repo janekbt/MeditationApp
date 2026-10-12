@@ -546,18 +546,6 @@ impl Database {
             .map_err(map_core_err)
     }
 
-    pub fn insert_preset_with_uuid(
-        &self,
-        uuid: &str,
-        name: &str,
-        mode: SessionMode,
-        is_starred: bool,
-        config_json: &str,
-    ) -> Result<i64> {
-        self.inner
-            .insert_preset_with_uuid(uuid, name, mode, is_starred, config_json)
-            .map_err(map_core_err)
-    }
 
     pub fn is_preset_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
         meditate_core::db::is_preset_name_taken_from_db(&self.inner, name, except_uuid).map_err(map_core_err)
@@ -662,21 +650,6 @@ impl Database {
             .map_err(map_core_err)
     }
 
-    pub fn insert_vibration_pattern_with_uuid(
-        &self,
-        uuid: &str,
-        name: &str,
-        duration_ms: u32,
-        intensities: &[f32],
-        chart_kind: ChartKind,
-        is_bundled: bool,
-    ) -> Result<i64> {
-        self.inner
-            .insert_vibration_pattern_with_uuid(
-                uuid, name, duration_ms, intensities, chart_kind, is_bundled,
-            )
-            .map_err(map_core_err)
-    }
 
     pub fn update_vibration_pattern(
         &self,

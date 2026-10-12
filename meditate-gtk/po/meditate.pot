@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-10 11:51+0200\n"
+"POT-Creation-Date: 2026-10-10 13:35+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Updated"
 msgstr ""
 
-#: src/announcement.rs:39 src/guided.rs:1116
+#: src/announcement.rs:39 src/guided.rs:1119
 msgid "Deleted"
 msgstr ""
 
@@ -87,7 +87,7 @@ msgid "Meditate"
 msgstr ""
 
 #: src/application.rs:408 src/guided.rs:1182 src/log/imp.rs:677
-#: src/presets.rs:704 src/timer/imp.rs:3582 src/vibrations.rs:476
+#: src/presets.rs:698 src/timer/imp.rs:3592 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr ""
@@ -117,18 +117,18 @@ msgstr ""
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:759 src/guided.rs:216 src/guided.rs:943
-#: src/guided.rs:1055 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
+#: src/guided.rs:1058 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
 #: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
-#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
+#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:635
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2531
-#: src/timer/imp.rs:3711 src/vibration_editor.rs:129 src/vibrations.rs:557
-#: src/vibrations.rs:647
+#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2541
+#: src/timer/imp.rs:3721 src/vibration_editor.rs:129 src/vibrations.rs:548
+#: src/vibrations.rs:638
 msgid "Cancel"
 msgstr ""
 
-#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1056 src/labels.rs:396
-#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:648
+#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1059 src/labels.rs:402
+#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:639
 msgid "Delete"
 msgstr ""
 
@@ -188,7 +188,7 @@ msgstr ""
 msgid "Kind"
 msgstr ""
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3685
+#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3695
 msgid "Minutes"
 msgstr ""
 
@@ -206,20 +206,20 @@ msgstr ""
 msgid "Type"
 msgstr ""
 
-#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1556
-#: src/timer/imp.rs:1630 src/timer/imp.rs:1695 data/ui/timer_view.blp:623
+#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1566
+#: src/timer/imp.rs:1640 src/timer/imp.rs:1705 data/ui/timer_view.blp:623
 #: data/ui/timer_view.blp:671 data/ui/timer_view.blp:719
 #: data/ui/timer_view.blp:767
 msgid "Sound"
 msgstr ""
 
-#: src/bells.rs:517 src/timer/imp.rs:1560 src/timer/imp.rs:1632
-#: src/timer/imp.rs:1697
+#: src/bells.rs:517 src/timer/imp.rs:1570 src/timer/imp.rs:1642
+#: src/timer/imp.rs:1707
 msgid "Vibration"
 msgstr ""
 
-#: src/bells.rs:521 src/timer/imp.rs:1564 src/timer/imp.rs:1634
-#: src/timer/imp.rs:1699
+#: src/bells.rs:521 src/timer/imp.rs:1574 src/timer/imp.rs:1644
+#: src/timer/imp.rs:1709
 msgid "Both"
 msgstr ""
 
@@ -361,9 +361,9 @@ msgstr ""
 msgid "Star — show in home list"
 msgstr ""
 
-#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:315
+#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:319
 #: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:915
-#: src/vibrations.rs:417 src/vibrations.rs:558
+#: src/vibrations.rs:417 src/vibrations.rs:549
 msgid "Rename"
 msgstr ""
 
@@ -390,19 +390,19 @@ msgstr ""
 msgid "Rename Guided File"
 msgstr ""
 
-#: src/guided.rs:1009
+#: src/guided.rs:1011
 msgid "File renamed"
 msgstr ""
 
-#: src/guided.rs:1045
+#: src/guided.rs:1048
 msgid "Delete Guided File?"
 msgstr ""
 
-#: src/guided.rs:1048
+#: src/guided.rs:1051
 msgid "This will permanently remove"
 msgstr ""
 
-#: src/guided.rs:1050
+#: src/guided.rs:1053
 msgid "Past sessions logged with this file stay in the log."
 msgstr ""
 
@@ -430,22 +430,52 @@ msgstr ""
 msgid "Create"
 msgstr ""
 
-#: src/labels.rs:309
+#: src/labels.rs:313
 msgid "Rename Label"
 msgstr ""
 
-#: src/labels.rs:380
+#: src/labels.rs:386
 msgid "Session tagged with this label will be un-labelled:"
 msgid_plural "Sessions tagged with this label will be un-labelled:"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/labels.rs:386
+#: src/labels.rs:392
 msgid "This label is not used by any sessions."
 msgstr ""
 
-#: src/labels.rs:390
+#: src/labels.rs:396
 msgid "Delete Label?"
+msgstr ""
+
+#: src/labels.rs:437
+#, rust-format
+msgid ""
+"'{duplicate}' has the same name as '{label}'. It was created independently "
+"on another device."
+msgstr ""
+
+#: src/labels.rs:441
+#, rust-format
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/labels.rs:448
+msgid "Duplicate Label"
+msgstr ""
+
+#: src/labels.rs:453
+msgid "Keep Both"
+msgstr ""
+
+#: src/labels.rs:454
+msgid "Merge"
+msgstr ""
+
+#: src/labels.rs:467 src/preferences.rs:436 src/timer/imp.rs:3567
+msgid "Save failed"
 msgstr ""
 
 #: src/log/imp.rs:324
@@ -481,7 +511,7 @@ msgid_plural "{n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3678
+#: src/log/imp.rs:814 src/timer/imp.rs:3688
 msgid "Hours"
 msgstr ""
 
@@ -548,11 +578,15 @@ msgstr ""
 msgid "Add Session"
 msgstr ""
 
-#: src/log/imp.rs:1189 src/timer/imp.rs:2475
+#: src/log/imp.rs:1113 src/timer/imp.rs:3777 src/timer/imp.rs:3815
+msgid "(none — pick one)"
+msgstr ""
+
+#: src/log/imp.rs:1209 src/timer/imp.rs:2485
 msgid "Couldn't save session — storage error"
 msgstr ""
 
-#: src/log/imp.rs:1194 src/timer/imp.rs:2493
+#: src/log/imp.rs:1214 src/timer/imp.rs:2503
 msgid "Couldn't save session — storage unavailable"
 msgstr ""
 
@@ -712,10 +746,6 @@ msgstr ""
 
 #: src/preferences.rs:417
 msgid "Keyring write failed"
-msgstr ""
-
-#: src/preferences.rs:436 src/timer/imp.rs:3557
-msgid "Save failed"
 msgstr ""
 
 #: src/preferences.rs:445
@@ -896,16 +926,16 @@ msgstr ""
 msgid "Delete Preset?"
 msgstr ""
 
-#: src/presets.rs:633
+#: src/presets.rs:627
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr ""
 
-#: src/presets.rs:636
+#: src/presets.rs:630
 msgid "Override Preset?"
 msgstr ""
 
-#: src/presets.rs:642
+#: src/presets.rs:636
 msgid "Override"
 msgstr ""
 
@@ -1190,127 +1220,123 @@ msgstr ""
 msgid "{duration} · {count} sessions"
 msgstr ""
 
-#: src/timer/imp.rs:1146
+#: src/timer/imp.rs:1156
 msgid "Meditation session running"
 msgstr ""
 
-#: src/timer/imp.rs:1732
+#: src/timer/imp.rs:1742
 msgid "This device can't vibrate, so nothing plays"
 msgstr ""
 
-#: src/timer/imp.rs:1733
+#: src/timer/imp.rs:1743
 msgid "This device can't vibrate, so only the sound plays"
 msgstr ""
 
-#: src/timer/imp.rs:1949
+#: src/timer/imp.rs:1959
 msgid "Paused"
 msgstr ""
 
-#: src/timer/imp.rs:1976 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1986 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr ""
 
-#: src/timer/imp.rs:2144
+#: src/timer/imp.rs:2154
 msgid "Couldn't start playback"
 msgstr ""
 
-#: src/timer/imp.rs:2235 src/window/imp.rs:397
+#: src/timer/imp.rs:2245 src/window/imp.rs:397
 msgid "Pause"
 msgstr ""
 
-#: src/timer/imp.rs:2236 src/window/imp.rs:399
+#: src/timer/imp.rs:2246 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr ""
 
-#: src/timer/imp.rs:2278 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2288 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr ""
 
-#: src/timer/imp.rs:2279
+#: src/timer/imp.rs:2289
 msgid "Resume Timer"
 msgstr ""
 
-#: src/timer/imp.rs:2522
+#: src/timer/imp.rs:2532
 msgid "Discard Session?"
 msgstr ""
 
-#: src/timer/imp.rs:2523
+#: src/timer/imp.rs:2533
 msgid "Your note will be lost."
 msgstr ""
 
-#: src/timer/imp.rs:2532 data/ui/timer_view.blp:879
+#: src/timer/imp.rs:2542 data/ui/timer_view.blp:879
 msgid "Discard"
 msgstr ""
 
-#: src/timer/imp.rs:2831
+#: src/timer/imp.rs:2841
 msgid "Finish"
 msgstr ""
 
-#: src/timer/imp.rs:2833
+#: src/timer/imp.rs:2843
 msgid "End at the planned duration"
 msgstr ""
 
-#: src/timer/imp.rs:3188
+#: src/timer/imp.rs:3198
 msgid "Start your streak today"
 msgstr ""
 
-#: src/timer/imp.rs:3189 src/timer/imp.rs:3191
+#: src/timer/imp.rs:3199 src/timer/imp.rs:3201
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/timer/imp.rs:3247
+#: src/timer/imp.rs:3257
 msgid "Tap Save Settings to create your first preset"
 msgstr ""
 
-#: src/timer/imp.rs:3324
+#: src/timer/imp.rs:3334
 msgid "No starred files"
 msgstr ""
 
-#: src/timer/imp.rs:3326
+#: src/timer/imp.rs:3336
 msgid "Tap Open File then Import File, or star a file in Manage Files"
 msgstr ""
 
-#: src/timer/imp.rs:3393 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3403 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr ""
 
-#: src/timer/imp.rs:3395 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3405 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr ""
 
-#: src/timer/imp.rs:3403
+#: src/timer/imp.rs:3413
 msgid "Open New File"
 msgstr ""
 
-#: src/timer/imp.rs:3405 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3415 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr ""
 
-#: src/timer/imp.rs:3580
+#: src/timer/imp.rs:3590
 #, rust-format
 msgid "'{name}' applied"
 msgstr ""
 
-#: src/timer/imp.rs:3705
+#: src/timer/imp.rs:3715
 msgid "Custom Time"
 msgstr ""
 
-#: src/timer/imp.rs:3706
+#: src/timer/imp.rs:3716
 msgid "Hours : Minutes"
 msgstr ""
 
-#: src/timer/imp.rs:3712
+#: src/timer/imp.rs:3722
 msgid "Set"
 msgstr ""
 
-#: src/timer/imp.rs:3767 src/timer/imp.rs:3794
-msgid "(none — pick one)"
-msgstr ""
-
-#: src/timer/imp.rs:3769 src/timer/imp.rs:3796
+#: src/timer/imp.rs:3779 src/timer/imp.rs:3817
 msgid "Off"
 msgstr ""
 
@@ -1329,43 +1355,43 @@ msgstr ""
 
 #. / word order via this gettext template.
 
-#: src/timer/imp.rs:4058
+#: src/timer/imp.rs:4079
 #, rust-format
 msgid "Add {time} ?"
 msgstr ""
 
-#: src/timer/imp.rs:4068
+#: src/timer/imp.rs:4089
 msgid "None enabled"
 msgstr ""
 
-#: src/timer/imp.rs:4069 src/timer/imp.rs:4070
+#: src/timer/imp.rs:4090 src/timer/imp.rs:4091
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/timer/imp.rs:4094 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4115 data/ui/timer_view.blp:605
 msgid "Inhale"
 msgstr ""
 
-#: src/timer/imp.rs:4095
+#: src/timer/imp.rs:4116
 msgid "Hold (full)"
 msgstr ""
 
-#: src/timer/imp.rs:4096 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4117 data/ui/timer_view.blp:701
 msgid "Exhale"
 msgstr ""
 
-#: src/timer/imp.rs:4097
+#: src/timer/imp.rs:4118
 msgid "Hold (empty)"
 msgstr ""
 
-#: src/timer/imp.rs:4159
+#: src/timer/imp.rs:4180
 msgid "Decrease"
 msgstr ""
 
-#: src/timer/imp.rs:4170
+#: src/timer/imp.rs:4191
 msgid "Increase"
 msgstr ""
 
@@ -1429,15 +1455,15 @@ msgstr ""
 msgid "Delete pattern"
 msgstr ""
 
-#: src/vibrations.rs:552
+#: src/vibrations.rs:543
 msgid "Rename Pattern"
 msgstr ""
 
-#: src/vibrations.rs:640
+#: src/vibrations.rs:631
 msgid "Delete Pattern?"
 msgstr ""
 
-#: src/vibrations.rs:642
+#: src/vibrations.rs:633
 msgid ""
 "Bells and Box Breath phases that reference this pattern will lose their "
 "vibration."

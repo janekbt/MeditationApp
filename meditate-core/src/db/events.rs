@@ -7,6 +7,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::{
+    conflict_suffixed_name, is_unique_constraint_error,
     target_id_is_well_formed_for, BoxBreathPhaseId, Database, DbError, Result,
     CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY,
 };
@@ -230,6 +231,7 @@ impl Database {
         for event in events {
             self.apply_event_inner(&event)?;
         }
+        self.reclaim_suffixed_names()?;
         self.set_sync_state(
             CACHE_SCHEMA_VERSION_KEY,
             &CACHE_SCHEMA_VERSION.to_string(),
@@ -530,6 +532,7 @@ impl Database {
     pub(crate) fn apply_event(&self, event: &Event) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         self.apply_event_inner(event)?;
+        self.reclaim_suffixed_names()?;
         tx.commit()?;
         Ok(())
     }
@@ -742,7 +745,76 @@ impl Database {
                 self.recompute_for(*entity, target_id)?;
             }
         }
+        self.reclaim_suffixed_names()?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Write a synced row under `name`, `upsert(name)` doing the write.
+    /// Two rows can carry one name (created on two devices before they
+    /// synced): the smaller uuid keeps it and the other takes the
+    /// "(conflict-…)" suffix, whichever arrives first, so every device
+    /// suffixes the same row. The holder is renamed without an event,
+    /// as every device makes the same move.
+    pub(super) fn claim_name(
+        &self,
+        table: &str,
+        uuid: &str,
+        name: &str,
+        upsert: impl Fn(&str) -> rusqlite::Result<usize>,
+    ) -> Result<()> {
+        match upsert(name) {
+            Ok(_) => return Ok(()),
+            Err(e) if is_unique_constraint_error(&e) => {}
+            Err(e) => return Err(DbError::Sqlite(e)),
+        }
+        let (holder_uuid, holder_name): (String, String) = self.conn.query_row(
+            &format!("SELECT uuid, name FROM {table} WHERE name = ?1 AND uuid != ?2"),
+            params![name, uuid],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (suffixed_uuid, resolved) = if uuid > holder_uuid.as_str() {
+            let suffixed = conflict_suffixed_name(name, uuid);
+            upsert(&suffixed)?;
+            (uuid, suffixed)
+        } else {
+            let suffixed = conflict_suffixed_name(&holder_name, &holder_uuid);
+            self.conn.execute(
+                &format!("UPDATE {table} SET name = ?1 WHERE uuid = ?2"),
+                params![suffixed, holder_uuid],
+            )?;
+            upsert(name)?;
+            (holder_uuid.as_str(), suffixed)
+        };
+        crate::diag::log(
+            "sync.name_collision",
+            &format!("{table} uuid={suffixed_uuid} original={name:?} resolved={resolved:?}"),
+        );
+        Ok(())
+    }
+
+    /// Rows that took the "(conflict-…)" suffix try for their own name
+    /// again: its holder may have been renamed or deleted since, or
+    /// (pairs suffixed before `claim_name`) have the larger uuid.
+    fn reclaim_suffixed_names(&self) -> Result<()> {
+        for (entity, table) in [
+            (EntityKind::Label, "labels"),
+            (EntityKind::Preset, "presets"),
+            (EntityKind::GuidedFile, "guided_files"),
+            (EntityKind::VibrationPattern, "vibration_patterns"),
+        ] {
+            let rows: Vec<(String, String)> = self.conn
+                .prepare(&format!("SELECT uuid, name FROM {table} WHERE name LIKE '% (conflict-%)'"))?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (uuid, name) in rows {
+                // Only the suffix this row's own uuid gives it, not a
+                // user-typed lookalike.
+                if name.ends_with(&conflict_suffixed_name("", &uuid)) {
+                    self.recompute_for(entity, &uuid)?;
+                }
+            }
+        }
         Ok(())
     }
 }

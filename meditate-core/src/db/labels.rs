@@ -4,10 +4,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
-use super::{
-    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
-    Database, DbError, LabelUuid, Result,
-};
+use super::{map_unique_err, Database, DbError, LabelUuid, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Label {
@@ -131,12 +128,15 @@ impl Database {
     /// row being updated.
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row_uuid: Option<String> = self.conn.query_row(
-            "SELECT uuid FROM labels WHERE id = ?1",
+        let row: Option<(String, String)> = self.conn.query_row(
+            "SELECT uuid, name FROM labels WHERE id = ?1",
             params![id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional()?;
-        let Some(label_uuid) = row_uuid else { return Ok(()); };
+        let Some((label_uuid, stored)) = row else { return Ok(()); };
+        // Unchanged (Enter on the prefilled dialog): a fresh event would
+        // undo a rename another device made in the meantime.
+        if stored == name { return Ok(()); }
         self.conn
             .execute(
                 "UPDATE labels SET name = ?1 WHERE id = ?2",
@@ -276,6 +276,19 @@ impl Database {
             session.label_id = Some(into_id);
             self.update_session_in(&tx, id, &session)?;
         }
+        // A mode whose default was the merged-away label takes the kept one.
+        let uuid_of = |id: i64| self.conn.query_row(
+            "SELECT uuid FROM labels WHERE id = ?1", params![id], |row| row.get::<_, String>(0),
+        ).optional();
+        if let (Some(from_uuid), Some(into_uuid)) = (uuid_of(from_id)?, uuid_of(into_id)?) {
+            for mode in [crate::SessionMode::Timer, crate::SessionMode::BoxBreath, crate::SessionMode::Guided] {
+                let current = crate::labels::label_uuid_from_db(self, mode)
+                    .unwrap_or_else(|| crate::settings_keys::default_label_uuid_for_mode(mode).to_string());
+                if current == from_uuid {
+                    self.set_setting_in(&tx, crate::settings_keys::label_uuid_key_for_mode(mode), &into_uuid)?;
+                }
+            }
+        }
         self.delete_label_in(&tx, from_id)?;
         tx.commit()?;
         crate::diag::log(
@@ -326,37 +339,14 @@ impl Database {
         };
         {
             let name = v["name"].as_str().unwrap_or_default();
-            // UPSERT keyed on uuid. The `name` column is UNIQUE
-            // COLLATE NOCASE — two peers offline can both pick the
-            // same label name independently. On collision, retry
-            // with a uuid-suffixed name so both rows materialise and
-            // sync keeps moving; without this retry the entire
-            // replay_events transaction rolled back and sync got
-            // hard-stuck on the poison event forever.
-            let upsert = self.conn.execute(
+            // Two peers offline can pick the same name (the column is
+            // UNIQUE COLLATE NOCASE); `claim_name` settles which row
+            // carries the suffix, so the replay never stalls on it.
+            self.claim_name("labels", label_uuid, name, |name| self.conn.execute(
                 "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
                  ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
                 params![label_uuid, name],
-            );
-            match upsert {
-                Ok(_) => {}
-                Err(e) if is_unique_constraint_error(&e) => {
-                    let suffixed = conflict_suffixed_name(name, label_uuid);
-                    crate::diag::log(
-                        "label.name_collision",
-                        &format!(
-                            "uuid={label_uuid} original={name:?} \
-                             resolved={suffixed:?}"
-                        ),
-                    );
-                    self.conn.execute(
-                        "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
-                         ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
-                        params![label_uuid, suffixed],
-                    )?;
-                }
-                Err(e) => return Err(DbError::Sqlite(e)),
-            }
+            ))?;
 
             // Re-link any sessions whose LATEST mutate event references
             // this label. Without this, an out-of-order delivery
@@ -1223,7 +1213,8 @@ mod tests {
     /// then a peer event inserting a different-uuid label with the
     /// same name (replay hits the UNIQUE retry → suffixed row).
     fn make_conflict(db: &Database, name: &str) -> (i64, i64, String) {
-        let base_id = db.insert_label(name).unwrap();
+        // Fixed uuids: the larger one takes the suffix.
+        let base_id = db.insert_label_with_uuid("00000000-1111-4222-8333-444455556666", name).unwrap();
         let peer_uuid = "aabbccdd-1111-4222-8333-444455556666";
         db.apply_event(&Event {
             event_uuid: "e-conflict-1".into(),
@@ -1334,5 +1325,138 @@ mod tests {
         db.dismiss_label_conflict(&uuid).unwrap();
         let stored = db.get_sync_state("label_conflict_dismissed", "").unwrap();
         assert_eq!(stored, uuid);
+    }
+
+    const SMALL: &str = "11111111-0000-4000-8000-000000000001";
+    const LARGE: &str = "99999999-0000-4000-8000-000000000009";
+
+    fn named(db: &Database, prefix: &str) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = list_labels_from_db(db).unwrap().into_iter()
+            .filter(|l| l.name.starts_with(prefix))
+            .map(|l| (l.uuid.as_str().to_string(), l.name))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Laptop and phone both created "Walking" before syncing, and each
+    /// suffixed the other's row: a merge on the phone then deleted the
+    /// laptop's label. Now the larger uuid takes the suffix, whichever
+    /// row arrives first.
+    #[test]
+    fn every_device_suffixes_the_same_row_of_a_same_name_pair() {
+        for (mine, theirs) in [(SMALL, LARGE), (LARGE, SMALL)] {
+            let db = Database::open_in_memory().unwrap();
+            db.insert_label_with_uuid(mine, "Walking").unwrap();
+            db.replay_events(&[synth_event("label_insert", theirs, 900, "peer",
+                serde_json::json!({ "uuid": theirs, "name": "Walking" }))]).unwrap();
+            assert_eq!(named(&db, "Walking"), [
+                (SMALL.to_string(), "Walking".to_string()),
+                (LARGE.to_string(), "Walking (conflict-99999999)".to_string()),
+            ]);
+        }
+    }
+
+    /// Inside one pull, a rename freeing "Walking" and a new "Walking"
+    /// left the new row suffixed or not depending on hash order.
+    #[test]
+    fn a_name_freed_in_the_same_pull_goes_to_the_new_row() {
+        for (renamed, new) in [(SMALL, LARGE), (LARGE, SMALL)] {
+            let db = Database::open_in_memory().unwrap();
+            db.insert_label_with_uuid(renamed, "Walking").unwrap();
+            db.replay_events(&[
+                synth_event("label_rename", renamed, 900, "peer",
+                    serde_json::json!({ "uuid": renamed, "name": "Hiking" })),
+                synth_event("label_insert", new, 901, "peer",
+                    serde_json::json!({ "uuid": new, "name": "Walking" })),
+            ]).unwrap();
+            assert_eq!(named(&db, "Walking"), [(new.to_string(), "Walking".to_string())]);
+            assert_eq!(named(&db, "Hiking"), [(renamed.to_string(), "Hiking".to_string())]);
+        }
+    }
+
+    /// Pairs suffixed before the rule differ per device; the next pull
+    /// brings them in line, with no cache rebuild.
+    #[test]
+    fn a_pair_suffixed_the_old_way_heals_on_the_next_pull() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label_with_uuid(LARGE, "Walking").unwrap();
+        db.replay_events(&[synth_event("label_insert", SMALL, 900, "peer",
+            serde_json::json!({ "uuid": SMALL, "name": "Walking" }))]).unwrap();
+        // What the old rule left here: the arriving (smaller) row suffixed.
+        db.conn.execute("UPDATE labels SET name = 'x' WHERE uuid = ?1", [SMALL]).unwrap();
+        db.conn.execute("UPDATE labels SET name = 'Walking' WHERE uuid = ?1", [LARGE]).unwrap();
+        db.conn.execute("UPDATE labels SET name = 'Walking (conflict-11111111)' WHERE uuid = ?1", [SMALL]).unwrap();
+
+        db.replay_events(&[synth_event("setting_changed", "anything", 901, "peer",
+            serde_json::json!({ "key": "anything", "value": "1" }))]).unwrap();
+        assert_eq!(named(&db, "Walking"), [
+            (SMALL.to_string(), "Walking".to_string()),
+            (LARGE.to_string(), "Walking (conflict-99999999)".to_string()),
+        ]);
+    }
+
+    /// A mode whose default label was merged away showed "(none, pick
+    /// one)" and saved new sessions unlabelled.
+    #[test]
+    fn a_merge_moves_a_modes_default_label_to_the_kept_one() {
+        let db = Database::open_in_memory().unwrap();
+        let (base_id, suffixed_id, uuid) = make_conflict(&db, "Walking");
+        crate::labels::persist_uuid_for_mode(&db, SessionMode::Guided, &uuid).unwrap();
+        db.merge_labels(suffixed_id, base_id).unwrap();
+        let base = list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == base_id).unwrap();
+        assert_eq!(
+            crate::labels::label_uuid_from_db(&db, SessionMode::Guided).as_deref(),
+            Some(base.uuid.as_str()),
+        );
+    }
+
+    /// Enter on the prefilled rename dialog sent the old name with a
+    /// fresh time, undoing another device's rename.
+    #[test]
+    fn renaming_a_label_to_its_own_name_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Yoga").unwrap();
+        let before = db.pending_events().unwrap().len();
+        db.update_label(id, "Yoga").unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before);
+        db.update_label(id, "yoga").unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before + 1, "a case change still saves");
+    }
+
+    /// Laptop deletes a label while the phone renames it, later: the
+    /// rename wins, and the label must come back with its sessions.
+    #[test]
+    fn a_label_renamed_elsewhere_while_deleted_here_keeps_its_sessions() {
+        use crate::sync::{FakeWebDav, Sync};
+        let server = FakeWebDav::new();
+        let sync = |db: &Database| {
+            Sync::new(db, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        };
+        let (laptop, phone) = (Database::open_in_memory().unwrap(), Database::open_in_memory().unwrap());
+        let yoga = laptop.insert_label("Yoga").unwrap();
+        laptop.insert_session(&Session {
+            start_iso: "2026-10-10T08:00:00".into(),
+            duration_secs: 600,
+            label_id: Some(yoga),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        }).unwrap();
+        sync(&laptop);
+        sync(&phone);
+
+        laptop.delete_label(yoga).unwrap();
+        let on_phone = find_label_by_name_from_db(&phone, "Yoga").unwrap().unwrap();
+        phone.insert_label("Later").unwrap();
+        phone.update_label(on_phone, "Zen").unwrap();
+        sync(&laptop);
+        sync(&phone);
+        sync(&laptop);
+
+        let zen = find_label_by_name_from_db(&laptop, "Zen").unwrap().expect("the rename wins");
+        let sessions = crate::db::list_sessions_from_db(&laptop).unwrap();
+        assert_eq!(sessions[0].1.label_id, Some(zen));
     }
 }

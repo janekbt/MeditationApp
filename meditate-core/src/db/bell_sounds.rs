@@ -144,8 +144,8 @@ impl Database {
     /// materialise from this rename alone.
     pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, i64, String, String, String)> = self.conn.query_row(
-            "SELECT file_path, is_bundled, mime_type, category, created_iso
+        let row: Option<(String, i64, String, String, String, String)> = self.conn.query_row(
+            "SELECT file_path, is_bundled, mime_type, category, created_iso, name
                FROM bell_sounds WHERE uuid = ?1",
             params![uuid_str],
             |row| Ok((
@@ -154,11 +154,15 @@ impl Database {
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             )),
         ).optional()?;
-        let Some((file_path, is_bundled, mime_type, category, created_iso)) = row else {
+        let Some((file_path, is_bundled, mime_type, category, created_iso, stored)) = row else {
             return Ok(());
         };
+        // Unchanged: a fresh event would undo a rename another device
+        // made in the meantime.
+        if stored == name { return Ok(()); }
         self.conn.execute(
             "UPDATE bell_sounds SET name = ?1 WHERE uuid = ?2",
             params![name, uuid_str],
@@ -603,5 +607,15 @@ mod tests {
         assert_eq!(sounds[0].name, "Singing Bowl");
         assert!(sounds[0].is_bundled);
         assert_eq!(sounds[0].file_path, "/p/bowl.wav");
+    }
+
+    #[test]
+    fn renaming_a_sound_to_its_own_name_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid = "11111111-0000-4000-8000-000000000001";
+        db.insert_bell_sound_with_uuid(uuid, "Gong", "/p/g.ogg", false, "audio/ogg", BellSoundCategory::General).unwrap();
+        let before = db.pending_events().unwrap().len();
+        db.rename_bell_sound(uuid, "Gong").unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before);
     }
 }

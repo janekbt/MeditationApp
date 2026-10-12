@@ -738,14 +738,14 @@ pub enum PendingUndo {
     /// The pre-apply snapshot. A mode switch closes the snackbar, so
     /// it always belongs to the mode shown.
     PresetApply(String),
-    /// A deleted preset: uuid, name, mode, starred, config JSON.
-    PresetDelete(String, String, meditate_core::SessionMode, bool, String),
+    /// A deleted preset, restored whole on Undo.
+    PresetDelete(meditate_core::db::Preset),
     /// An overridden preset: uuid, prior config JSON.
     Override(String, String),
-    /// A deleted guided file: uuid, name, file path, secs, starred.
-    /// Its file is removed only on commit.
-    GuidedDelete(String, String, String, u32, bool),
-    /// A deleted vibration pattern, re-inserted with its uuid on Undo.
+    /// A deleted guided file, its path the local copy, which is
+    /// removed only on commit.
+    GuidedDelete(meditate_core::db::GuidedFile),
+    /// A deleted vibration pattern, restored whole on Undo.
     PatternDelete(meditate_core::db::VibrationPattern),
 }
 
@@ -1355,6 +1355,33 @@ mod tests {
         ));
     }
 
+    /// A merge left an Edit or Done page on the merged-away label, so
+    /// Save failed, and a Log filter on it showed nothing. It now gets
+    /// Delete's cleanup, with the pick moved to the kept label.
+    #[test]
+    fn a_merge_cleans_up_like_a_delete() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = lib.find("ui.on_conflict_merge_tap(").unwrap();
+        let merge = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        let moved = merge.find("ui.set_done_label_id(base_id as i32);").expect("the Done pick follows");
+        assert!(merge.contains("ui.set_edit_label_id(base_id as i32);"));
+        let cleanup = merge.find("refresh_after_label_change(&ui, mode);").expect("Delete's cleanup");
+        assert!(moved < cleanup);
+        assert!(merge.contains("refresh_filter_label_items(&ui);"));
+    }
+
+    /// Undo after a delete put the item at the end of its list: Undo
+    /// carries the whole item and core restores its creation time.
+    #[test]
+    fn undo_puts_a_deleted_item_back_in_its_place() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("db.restore_preset(&p)"));
+        assert!(lib.contains("db.restore_guided_file(&f)"));
+        assert!(lib.contains("db.restore_vibration_pattern(&p)"));
+    }
+
     #[test]
     fn a_failed_merge_says_so() {
         // It closed the dialog and did nothing, with no word.
@@ -1451,7 +1478,7 @@ mod tests {
         assert!(confirm.contains("db.delete_vibration_pattern(&uuid)"));
         assert!(confirm.contains("Some(app::PendingUndo::PatternDelete(pattern))"));
         let at = lib.find("U::PatternDelete(p) => {").unwrap();
-        assert!(lib[at..at + 500].contains("db.insert_vibration_pattern_with_uuid("));
+        assert!(lib[at..at + 500].contains("db.restore_vibration_pattern(&p)"));
 
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
             let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
@@ -2849,7 +2876,7 @@ mod tests {
         // Any notice replacing it commits it (Notice::show), and a
         // committed guided delete removes its file.
         let at = lib.find("fn commit_undo(").unwrap();
-        assert!(lib[at..at + 600].contains("app::PendingUndo::GuidedDelete(_, _, path, _, _) => {\n            let _ = std::fs::remove_file(&path);"));
+        assert!(lib[at..at + 600].contains("app::PendingUndo::GuidedDelete(file) => {\n            let _ = std::fs::remove_file(local_guided_path(file.uuid.as_str()));"));
     }
 
     #[test]

@@ -989,6 +989,8 @@ fn present_rename_dialog(
             crate::db::surface_duplicate_toast(&anchor_for_response, &e);
             return;
         }
+        // Log cards name the file.
+        app_for_response.invalidate(crate::application::InvalidateScope::ALL);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -1011,6 +1013,7 @@ fn present_rename_dialog(
                 app_for_undo.with_db_mut(|db| {
                     db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
                 });
+                app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
                 if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
                     rb();
                 }
@@ -1118,13 +1121,10 @@ fn present_delete_dialog(
             ),
             move || {
                 app_for_undo.with_db_mut(|db| {
-                    db.insert_guided_file_with_uuid(
-                        file_for_undo.uuid.as_str(),
-                        &file_for_undo.name,
-                        &file_path_for_undo,
-                        file_for_undo.duration_secs,
-                        file_for_undo.is_starred,
-                    )
+                    let _ = db.core().restore_guided_file(&meditate_core::db::GuidedFile {
+                        file_path: file_path_for_undo.clone(),
+                        ..file_for_undo.clone()
+                    });
                 });
                 if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
                     rb();

@@ -19,6 +19,11 @@ impl TimerView {
         self.imp().refresh_streak();
     }
 
+    /// A label merge moved `from`'s sessions to `into`.
+    pub fn label_merged(&self, from: i64, into: i64) {
+        self.imp().label_merged(from, into);
+    }
+
     /// Refresh the "Manage Bells" subtitle (count of enabled interval
     /// bells). Called by the window after the user pops back from the
     /// bell-library page so the timer page reflects the new state

@@ -649,6 +649,16 @@ impl TimerView {
                 imp.refresh_done_label_chooser_subtitle();
             }
         ));
+        // A label renamed or deleted in the chooser (or by sync) shows
+        // as it is now when the row is back on screen.
+        self.setup_label_chooser_row.connect_map(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().refresh_setup_label_chooser_subtitle()
+        ));
+        self.done_label_chooser_row.connect_map(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().refresh_done_label_chooser_subtitle()
+        ));
         self.done_label_chooser_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
@@ -3775,6 +3785,17 @@ impl TimerView {
         self.labels_loading.set(true);
         self.setup_label_enabled_row.set_enable_expansion(active);
         self.labels_loading.set(false);
+    }
+
+    /// A merge moved `from`'s sessions to `into`: a Done pick on
+    /// `from` follows them, and both rows show the labels as they are
+    /// (core moved a mode default on `from` too).
+    pub(crate) fn label_merged(&self, from: i64, into: i64) {
+        if self.done_selected_label_id.get() == Some(from) {
+            self.done_selected_label_id.set(Some(into));
+        }
+        self.refresh_setup_label_chooser_subtitle();
+        self.refresh_done_label_chooser_subtitle();
     }
 
     /// Refresh the Done-view label chooser-row's subtitle from the

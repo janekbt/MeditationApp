@@ -517,16 +517,7 @@ fn show_undo_delete_toast(
         .build();
     let app = app.clone();
     toast.connect_button_clicked(move |t| {
-        let _ = app.with_db_mut(|db| {
-            db.insert_vibration_pattern_with_uuid(
-                snapshot.uuid.as_str(),
-                &snapshot.name,
-                snapshot.duration_ms,
-                &snapshot.intensities,
-                snapshot.chart_kind,
-                snapshot.is_bundled,
-            )
-        });
+        let _ = app.with_db_mut(|db| db.core().restore_vibration_pattern(&snapshot));
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }

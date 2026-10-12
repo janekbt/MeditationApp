@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-10 11:51+0200\n"
+"POT-Creation-Date: 2026-10-10 13:35+0200\n"
 "PO-Revision-Date: 2026-04-20 18:30+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Polish\n"
@@ -47,7 +47,7 @@ msgstr "Nadpisano '{name}'"
 msgid "Updated"
 msgstr "Zaktualizowano"
 
-#: src/announcement.rs:39 src/guided.rs:1116
+#: src/announcement.rs:39 src/guided.rs:1119
 msgid "Deleted"
 msgstr "Usunięto"
 
@@ -94,7 +94,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1182 src/log/imp.rs:677
-#: src/presets.rs:704 src/timer/imp.rs:3582 src/vibrations.rs:476
+#: src/presets.rs:698 src/timer/imp.rs:3592 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr "Cofnij"
@@ -124,18 +124,18 @@ msgstr "Ten dzwonek nie będzie już dzwonił podczas sesji."
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:759 src/guided.rs:216 src/guided.rs:943
-#: src/guided.rs:1055 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
+#: src/guided.rs:1058 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
 #: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
-#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:641
+#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:635
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2531
-#: src/timer/imp.rs:3711 src/vibration_editor.rs:129 src/vibrations.rs:557
-#: src/vibrations.rs:647
+#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2541
+#: src/timer/imp.rs:3721 src/vibration_editor.rs:129 src/vibrations.rs:548
+#: src/vibrations.rs:638
 msgid "Cancel"
 msgstr "Anuluj"
 
-#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1056 src/labels.rs:396
-#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:648
+#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1059 src/labels.rs:402
+#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:639
 msgid "Delete"
 msgstr "Usuń"
 
@@ -199,7 +199,7 @@ msgstr "Przed końcem"
 msgid "Kind"
 msgstr "Rodzaj"
 
-#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3685
+#: src/bells.rs:470 src/log/imp.rs:827 src/timer/imp.rs:3695
 msgid "Minutes"
 msgstr "Minuty"
 
@@ -217,20 +217,20 @@ msgstr "Procent — losowo przesuwa następne dzwonienie"
 msgid "Type"
 msgstr "Typ"
 
-#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1556
-#: src/timer/imp.rs:1630 src/timer/imp.rs:1695 data/ui/timer_view.blp:623
+#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1566
+#: src/timer/imp.rs:1640 src/timer/imp.rs:1705 data/ui/timer_view.blp:623
 #: data/ui/timer_view.blp:671 data/ui/timer_view.blp:719
 #: data/ui/timer_view.blp:767
 msgid "Sound"
 msgstr "Dźwięk"
 
-#: src/bells.rs:517 src/timer/imp.rs:1560 src/timer/imp.rs:1632
-#: src/timer/imp.rs:1697
+#: src/bells.rs:517 src/timer/imp.rs:1570 src/timer/imp.rs:1642
+#: src/timer/imp.rs:1707
 msgid "Vibration"
 msgstr "Wibracja"
 
-#: src/bells.rs:521 src/timer/imp.rs:1564 src/timer/imp.rs:1634
-#: src/timer/imp.rs:1699
+#: src/bells.rs:521 src/timer/imp.rs:1574 src/timer/imp.rs:1644
+#: src/timer/imp.rs:1709
 msgid "Both"
 msgstr "Oba"
 
@@ -372,9 +372,9 @@ msgstr "Usuń gwiazdkę — usuń z listy głównej"
 msgid "Star — show in home list"
 msgstr "Oznacz gwiazdką — pokaż na liście głównej"
 
-#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:315
+#: src/guided.rs:770 src/guided.rs:944 src/labels.rs:195 src/labels.rs:319
 #: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:915
-#: src/vibrations.rs:417 src/vibrations.rs:558
+#: src/vibrations.rs:417 src/vibrations.rs:549
 msgid "Rename"
 msgstr "Zmień nazwę"
 
@@ -401,19 +401,19 @@ msgstr "Nie zaimportowano plików z przewodnikiem"
 msgid "Rename Guided File"
 msgstr "Zmień nazwę pliku z przewodnikiem"
 
-#: src/guided.rs:1009
+#: src/guided.rs:1011
 msgid "File renamed"
 msgstr "Zmieniono nazwę pliku"
 
-#: src/guided.rs:1045
+#: src/guided.rs:1048
 msgid "Delete Guided File?"
 msgstr "Usunąć plik z przewodnikiem?"
 
-#: src/guided.rs:1048
+#: src/guided.rs:1051
 msgid "This will permanently remove"
 msgstr "Spowoduje to trwałe usunięcie"
 
-#: src/guided.rs:1050
+#: src/guided.rs:1053
 msgid "Past sessions logged with this file stay in the log."
 msgstr "Wcześniejsze sesje z tym plikiem pozostaną w dzienniku."
 
@@ -441,24 +441,55 @@ msgstr "Utwórz etykietę"
 msgid "Create"
 msgstr "Utwórz"
 
-#: src/labels.rs:309
+#: src/labels.rs:313
 msgid "Rename Label"
 msgstr "Zmień nazwę etykiety"
 
-#: src/labels.rs:380
+#: src/labels.rs:386
 msgid "Session tagged with this label will be un-labelled:"
 msgid_plural "Sessions tagged with this label will be un-labelled:"
 msgstr[0] "Sesja oznaczona tą etykietą utraci ją:"
 msgstr[1] "Sesje oznaczone tą etykietą utracą ją:"
 msgstr[2] "Sesje oznaczone tą etykietą utracą ją:"
 
-#: src/labels.rs:386
+#: src/labels.rs:392
 msgid "This label is not used by any sessions."
 msgstr "Żadna sesja nie używa tej etykiety."
 
-#: src/labels.rs:390
+#: src/labels.rs:396
 msgid "Delete Label?"
 msgstr "Usunąć etykietę?"
+
+#: src/labels.rs:437
+#, rust-format
+msgid ""
+"'{duplicate}' has the same name as '{label}'. It was created independently "
+"on another device."
+msgstr "'{duplicate}' ma tę samą nazwę co '{label}'. Utworzono ją niezależnie na innym urządzeniu."
+
+#: src/labels.rs:441
+#, rust-format
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "Scalenie przenosi {n} sesję i usuwa duplikat."
+msgstr[1] "Scalenie przenosi {n} sesje i usuwa duplikat."
+msgstr[2] "Scalenie przenosi {n} sesji i usuwa duplikat."
+
+#: src/labels.rs:448
+msgid "Duplicate Label"
+msgstr "Zduplikowana etykieta"
+
+#: src/labels.rs:453
+msgid "Keep Both"
+msgstr "Zachowaj obie"
+
+#: src/labels.rs:454
+msgid "Merge"
+msgstr "Scal"
+
+#: src/labels.rs:467 src/preferences.rs:436 src/timer/imp.rs:3567
+msgid "Save failed"
+msgstr "Zapis nie powiódł się"
 
 #: src/log/imp.rs:324
 msgid "All labels"
@@ -494,7 +525,7 @@ msgstr[0] "{n} sesja"
 msgstr[1] "{n} sesje"
 msgstr[2] "{n} sesji"
 
-#: src/log/imp.rs:814 src/timer/imp.rs:3678
+#: src/log/imp.rs:814 src/timer/imp.rs:3688
 msgid "Hours"
 msgstr "Godziny"
 
@@ -561,11 +592,15 @@ msgstr "Edytuj sesję"
 msgid "Add Session"
 msgstr "Dodaj sesję"
 
-#: src/log/imp.rs:1189 src/timer/imp.rs:2475
+#: src/log/imp.rs:1113 src/timer/imp.rs:3777 src/timer/imp.rs:3815
+msgid "(none — pick one)"
+msgstr "(brak — wybierz)"
+
+#: src/log/imp.rs:1209 src/timer/imp.rs:2485
 msgid "Couldn't save session — storage error"
 msgstr "Nie można zapisać sesji — błąd pamięci"
 
-#: src/log/imp.rs:1194 src/timer/imp.rs:2493
+#: src/log/imp.rs:1214 src/timer/imp.rs:2503
 msgid "Couldn't save session — storage unavailable"
 msgstr "Nie można zapisać sesji — pamięć niedostępna"
 
@@ -730,10 +765,6 @@ msgstr ""
 #: src/preferences.rs:417
 msgid "Keyring write failed"
 msgstr "Zapis do pęku kluczy nie powiódł się"
-
-#: src/preferences.rs:436 src/timer/imp.rs:3557
-msgid "Save failed"
-msgstr "Zapis nie powiódł się"
 
 #: src/preferences.rs:445
 msgid "Sync settings saved"
@@ -923,16 +954,16 @@ msgstr ""
 msgid "Delete Preset?"
 msgstr "Usunąć szablon?"
 
-#: src/presets.rs:633
+#: src/presets.rs:627
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr "Zastąpić zapisaną konfigurację '{name}' bieżącymi ustawieniami?"
 
-#: src/presets.rs:636
+#: src/presets.rs:630
 msgid "Override Preset?"
 msgstr "Nadpisać szablon?"
 
-#: src/presets.rs:642
+#: src/presets.rs:636
 msgid "Override"
 msgstr "Nadpisz"
 
@@ -1229,71 +1260,71 @@ msgstr "{duration} · 1 sesja"
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · sesje: {count}"
 
-#: src/timer/imp.rs:1146
+#: src/timer/imp.rs:1156
 msgid "Meditation session running"
 msgstr "Trwa sesja medytacji"
 
-#: src/timer/imp.rs:1732
+#: src/timer/imp.rs:1742
 msgid "This device can't vibrate, so nothing plays"
 msgstr "To urządzenie nie może wibrować, więc nic nie zabrzmi"
 
-#: src/timer/imp.rs:1733
+#: src/timer/imp.rs:1743
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "To urządzenie nie może wibrować, więc zabrzmi tylko dźwięk"
 
-#: src/timer/imp.rs:1949
+#: src/timer/imp.rs:1959
 msgid "Paused"
 msgstr "Wstrzymano"
 
-#: src/timer/imp.rs:1976 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1986 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Godziny · Minuty"
 
-#: src/timer/imp.rs:2144
+#: src/timer/imp.rs:2154
 msgid "Couldn't start playback"
 msgstr "Nie można rozpocząć odtwarzania"
 
-#: src/timer/imp.rs:2235 src/window/imp.rs:397
+#: src/timer/imp.rs:2245 src/window/imp.rs:397
 msgid "Pause"
 msgstr "Wstrzymano"
 
-#: src/timer/imp.rs:2236 src/window/imp.rs:399
+#: src/timer/imp.rs:2246 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr "Wstrzymaj minutnik"
 
-#: src/timer/imp.rs:2278 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2288 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr "Wznów"
 
-#: src/timer/imp.rs:2279
+#: src/timer/imp.rs:2289
 msgid "Resume Timer"
 msgstr "Wznów minutnik"
 
-#: src/timer/imp.rs:2522
+#: src/timer/imp.rs:2532
 msgid "Discard Session?"
 msgstr "Odrzucić sesję?"
 
-#: src/timer/imp.rs:2523
+#: src/timer/imp.rs:2533
 msgid "Your note will be lost."
 msgstr "Notatka zostanie utracona."
 
-#: src/timer/imp.rs:2532 data/ui/timer_view.blp:879
+#: src/timer/imp.rs:2542 data/ui/timer_view.blp:879
 msgid "Discard"
 msgstr "Odrzuć"
 
-#: src/timer/imp.rs:2831
+#: src/timer/imp.rs:2841
 msgid "Finish"
 msgstr "Zakończ"
 
-#: src/timer/imp.rs:2833
+#: src/timer/imp.rs:2843
 msgid "End at the planned duration"
 msgstr "Zakończ po zaplanowanym czasie"
 
-#: src/timer/imp.rs:3188
+#: src/timer/imp.rs:3198
 msgid "Start your streak today"
 msgstr "Rozpocznij dziś swoją passę"
 
-#: src/timer/imp.rs:3189 src/timer/imp.rs:3191
+#: src/timer/imp.rs:3199 src/timer/imp.rs:3201
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
@@ -1301,58 +1332,54 @@ msgstr[0] "Passa: {n} dzień"
 msgstr[1] "Passa: {n} dni"
 msgstr[2] "Passa: {n} dni"
 
-#: src/timer/imp.rs:3247
+#: src/timer/imp.rs:3257
 msgid "Tap Save Settings to create your first preset"
 msgstr "Dotknij Zapisz, aby utworzyć pierwszy szablon"
 
-#: src/timer/imp.rs:3324
+#: src/timer/imp.rs:3334
 msgid "No starred files"
 msgstr "Brak ulubionych plików"
 
-#: src/timer/imp.rs:3326
+#: src/timer/imp.rs:3336
 msgid "Tap Open File then Import File, or star a file in Manage Files"
 msgstr ""
 "Dotknij Otwórz plik, a potem Importuj plik, lub oznacz plik gwiazdką w "
 "Zarządzaj plikami"
 
-#: src/timer/imp.rs:3393 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3403 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "Nie wybrano pliku"
 
-#: src/timer/imp.rs:3395 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3405 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "Dotknij Otwórz plik lub wybierz z listy"
 
-#: src/timer/imp.rs:3403
+#: src/timer/imp.rs:3413
 msgid "Open New File"
 msgstr "Otwórz nowy plik"
 
-#: src/timer/imp.rs:3405 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3415 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "Otwórz plik"
 
-#: src/timer/imp.rs:3580
+#: src/timer/imp.rs:3590
 #, rust-format
 msgid "'{name}' applied"
 msgstr "Zastosowano '{name}'"
 
-#: src/timer/imp.rs:3705
+#: src/timer/imp.rs:3715
 msgid "Custom Time"
 msgstr "Własny czas"
 
-#: src/timer/imp.rs:3706
+#: src/timer/imp.rs:3716
 msgid "Hours : Minutes"
 msgstr "Godziny : Minuty"
 
-#: src/timer/imp.rs:3712
+#: src/timer/imp.rs:3722
 msgid "Set"
 msgstr "Ustaw"
 
-#: src/timer/imp.rs:3767 src/timer/imp.rs:3794
-msgid "(none — pick one)"
-msgstr "(brak — wybierz)"
-
-#: src/timer/imp.rs:3769 src/timer/imp.rs:3796
+#: src/timer/imp.rs:3779 src/timer/imp.rs:3817
 msgid "Off"
 msgstr "Wyłączone"
 
@@ -1364,16 +1391,16 @@ msgstr "Wyłączone"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4058
+#: src/timer/imp.rs:4079
 #, rust-format
 msgid "Add {time} ?"
 msgstr "Dodać {time}?"
 
-#: src/timer/imp.rs:4068
+#: src/timer/imp.rs:4089
 msgid "None enabled"
 msgstr "Żaden nie jest aktywny"
 
-#: src/timer/imp.rs:4069 src/timer/imp.rs:4070
+#: src/timer/imp.rs:4090 src/timer/imp.rs:4091
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
@@ -1381,27 +1408,27 @@ msgstr[0] "{n} aktywny"
 msgstr[1] "{n} aktywne"
 msgstr[2] "{n} aktywnych"
 
-#: src/timer/imp.rs:4094 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4115 data/ui/timer_view.blp:605
 msgid "Inhale"
 msgstr "Wdech"
 
-#: src/timer/imp.rs:4095
+#: src/timer/imp.rs:4116
 msgid "Hold (full)"
 msgstr "Zatrzymanie (pełne płuca)"
 
-#: src/timer/imp.rs:4096 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4117 data/ui/timer_view.blp:701
 msgid "Exhale"
 msgstr "Wydech"
 
-#: src/timer/imp.rs:4097
+#: src/timer/imp.rs:4118
 msgid "Hold (empty)"
 msgstr "Zatrzymanie (puste płuca)"
 
-#: src/timer/imp.rs:4159
+#: src/timer/imp.rs:4180
 msgid "Decrease"
 msgstr "Zmniejsz"
 
-#: src/timer/imp.rs:4170
+#: src/timer/imp.rs:4191
 msgid "Increase"
 msgstr "Zwiększ"
 
@@ -1466,15 +1493,15 @@ msgstr "Podgląd wzoru"
 msgid "Delete pattern"
 msgstr "Usuń wzór"
 
-#: src/vibrations.rs:552
+#: src/vibrations.rs:543
 msgid "Rename Pattern"
 msgstr "Zmień nazwę wzoru"
 
-#: src/vibrations.rs:640
+#: src/vibrations.rs:631
 msgid "Delete Pattern?"
 msgstr "Usunąć wzór?"
 
-#: src/vibrations.rs:642
+#: src/vibrations.rs:633
 msgid ""
 "Bells and Box Breath phases that reference this pattern will lose their "
 "vibration."

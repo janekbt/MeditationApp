@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
-use crate::application::MeditateApplication;
+use crate::application::{InvalidateScope, MeditateApplication};
 use crate::db::Label;
 use crate::i18n::{gettext, ngettext};
 use meditate_core::labels::DeleteImpactKey;
@@ -276,7 +276,11 @@ fn present_create_label_dialog(
         if name.is_empty() { return; }
         let outcome = app.with_db_mut(|db| db.create_label(&name));
         match outcome {
-            Some(Ok(label)) => on_created(label),
+            Some(Ok(label)) => {
+                // The Log's label filter lists it.
+                app.invalidate(InvalidateScope::LOG);
+                on_created(label);
+            }
             // Duplicate raced past the live `is_label_name_taken`
             // validation — surface as a toast so the user knows
             // why the action did nothing.
@@ -345,6 +349,8 @@ fn present_rename_label_dialog(
             crate::db::surface_duplicate_toast(&anchor_for_response, &e);
             return;
         }
+        // Log chips, its filter and the Stats rows show the name.
+        app.invalidate(InvalidateScope::ALL);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -400,6 +406,7 @@ fn present_delete_label_dialog(
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
         app.with_db_mut(|db| { let _ = db.delete_label(label_id); });
+        app.invalidate(InvalidateScope::ALL);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -409,5 +416,138 @@ fn present_delete_label_dialog(
         if let Ok(window) = root.downcast::<gtk::Window>() {
             dialog.present(Some(&window));
         }
+    }
+}
+
+/// After a sync: two devices named a label alike before they synced,
+/// and one copy carries the "(conflict-…)" suffix. Ask, like the phone
+/// does, whether to merge it into the other (its sessions move over)
+/// or keep both. Closing the dialog decides nothing: it asks again
+/// after the next sync.
+pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::window::MeditateWindow) {
+    use glib::subclass::prelude::ObjectSubclassIsExt;
+    if win.visible_dialog().is_some() {
+        return;
+    }
+    let Some(Ok(conflicts)) = app.with_db(|db| db.core().list_label_conflicts()) else { return; };
+    let Some(conflict) = conflicts.into_iter().next() else { return; };
+    let n = u32::try_from(conflict.suffixed_session_count).unwrap_or(u32::MAX);
+    let body = format!(
+        "{}\n\n{}",
+        gettext("'{duplicate}' has the same name as '{label}'. It was created independently on another device.")
+            .replace("{duplicate}", &conflict.suffixed_name)
+            .replace("{label}", &conflict.base_name),
+        ngettext(
+            "Merging moves {n} session and deletes the duplicate.",
+            "Merging moves {n} sessions and deletes the duplicate.",
+            n,
+        )
+        .replace("{n}", &n.to_string()),
+    );
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Duplicate Label"))
+        .body(body)
+        .close_response("later")
+        .default_response("merge")
+        .build();
+    dialog.add_response("keep", &gettext("Keep Both"));
+    dialog.add_response("merge", &gettext("Merge"));
+    dialog.set_response_appearance("merge", adw::ResponseAppearance::Suggested);
+    let decided = Rc::new(std::cell::Cell::new(false));
+    let app_for_response = app.clone();
+    let win_for_response = win.clone();
+    let decided_for_response = decided.clone();
+    dialog.connect_response(None, move |_, response| {
+        let app = &app_for_response;
+        match response {
+            "merge" => {
+                let merged = app.with_db_mut(|db| db.core().merge_labels(conflict.suffixed_id, conflict.base_id));
+                if !matches!(merged, Some(Ok(_))) {
+                    meditate_core::log("label.merge", &format!("failed: {merged:?}"));
+                    win_for_response.add_toast(adw::Toast::new(&gettext("Save failed")));
+                    return;
+                }
+                app.invalidate(InvalidateScope::ALL);
+                win_for_response.imp().timer_view.label_merged(conflict.suffixed_id, conflict.base_id);
+                win_for_response.imp().stats_view.refresh();
+                win_for_response.imp().log_view.refresh();
+            }
+            "keep" => {
+                if let Some(Err(e)) = app.with_db(|db| db.core().dismiss_label_conflict(&conflict.suffixed_uuid)) {
+                    meditate_core::log("label.conflict", &format!("dismiss failed: {e:?}"));
+                }
+            }
+            _ => return,
+        }
+        decided_for_response.set(true);
+    });
+    // Several can queue up: the next one once this dialog is gone.
+    let app = app.clone();
+    let win_for_next = win.clone();
+    dialog.connect_closed(move |_| {
+        if decided.get() {
+            ask_about_label_conflict(&app, &win_for_next);
+        }
+    });
+    dialog.present(Some(win));
+}
+
+#[cfg(test)]
+mod tests {
+    fn read(path: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+    }
+
+    fn body<'a>(src: &'a str, head: &str) -> &'a str {
+        let start = src.find(head).unwrap();
+        &src[start..start + src[start..].find("\n}\n").unwrap()]
+    }
+
+    /// Renaming or deleting a label (or renaming a guided file) left
+    /// the old chips, filter entries and Stats rows until a sync.
+    #[test]
+    fn name_changes_refresh_log_and_stats() {
+        let src = read("src/labels.rs");
+        assert!(body(&src, "fn present_rename_label_dialog(").contains("app.invalidate(InvalidateScope::ALL)"));
+        assert!(body(&src, "fn present_delete_label_dialog(").contains("app.invalidate(InvalidateScope::ALL)"));
+        assert!(body(&src, "fn present_create_label_dialog(").contains("app.invalidate(InvalidateScope::LOG)"));
+        let guided = read("src/guided.rs");
+        let rename = body(&guided, "fn present_rename_dialog(");
+        assert_eq!(rename.matches(".invalidate(crate::application::InvalidateScope::ALL)").count(), 2, "the rename and its Undo");
+        // A chooser opened from the Log edit dialog: the Log shows again
+        // when the dialog closes, with no tab switch to refresh it.
+        assert!(read("src/log/imp.rs").contains("dialog.connect_closed("));
+    }
+
+    /// A label deleted in the chooser kept its name on the Done page
+    /// and in the Log edit; the rows re-read it when they show again.
+    #[test]
+    fn label_rows_reread_their_label_when_shown_again() {
+        let timer = read("src/timer/imp.rs");
+        assert!(timer.contains("self.done_label_chooser_row.connect_map("));
+        assert!(timer.contains("self.setup_label_chooser_row.connect_map("));
+        assert!(read("src/log/imp.rs").contains("label_chooser_row.connect_map("));
+    }
+
+    /// Two devices that named a label alike before syncing kept a
+    /// "(conflict)" copy the laptop couldn't merge; the phone asks.
+    #[test]
+    fn a_sync_asks_about_a_duplicate_label_like_the_phone() {
+        assert!(read("src/application.rs").contains("crate::labels::ask_about_label_conflict(&app, &win);"));
+        let src = read("src/labels.rs");
+        let ask = body(&src, "pub(crate) fn ask_about_label_conflict(");
+        assert!(ask.contains("visible_dialog().is_some()"));
+        assert!(ask.contains("db.core().merge_labels(conflict.suffixed_id, conflict.base_id)"));
+        assert!(ask.contains("db.core().dismiss_label_conflict(&conflict.suffixed_uuid)"));
+        assert!(ask.contains("timer_view.label_merged(conflict.suffixed_id, conflict.base_id)"));
+        assert!(ask.contains(".close_response(\"later\")"));
+    }
+
+    /// Undo after a delete put the item at the end of its list.
+    #[test]
+    fn undo_puts_a_deleted_item_back_in_its_place() {
+        assert!(read("src/presets.rs").contains("db.core().restore_preset(&preset_undo)"));
+        assert!(read("src/guided.rs").contains("db.core().restore_guided_file(&"));
+        assert!(read("src/vibrations.rs").contains("db.core().restore_vibration_pattern(&snapshot)"));
     }
 }

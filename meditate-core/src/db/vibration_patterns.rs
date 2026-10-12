@@ -7,7 +7,7 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
+    map_unique_err,
     Database, DbError, Result,
 };
 use crate::vibration::ChartKind;
@@ -131,19 +131,46 @@ impl Database {
         chart_kind: ChartKind,
         is_bundled: bool,
     ) -> Result<i64> {
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        self.insert_vibration_pattern_at(&VibrationPattern {
+            id: 0,
+            uuid: super::VibrationPatternUuid::new(uuid_str),
+            name: name.to_string(),
+            duration_ms,
+            intensities: intensities.to_vec(),
+            chart_kind,
+            is_bundled,
+            created_iso: now_iso.clone(),
+            updated_iso: now_iso,
+        })
+    }
+
+    /// Undo of a delete: the pattern comes back with its uuid and its
+    /// creation time, so it takes its old place in the list.
+    pub fn restore_vibration_pattern(&self, pattern: &VibrationPattern) -> Result<i64> {
+        self.insert_vibration_pattern_at(pattern)
+    }
+
+    /// Insert `pattern` under its uuid and creation time (its id is
+    /// ignored).
+    fn insert_vibration_pattern_at(&self, pattern: &VibrationPattern) -> Result<i64> {
+        let VibrationPattern {
+            uuid, name, duration_ms, intensities, chart_kind, is_bundled, created_iso, updated_iso, ..
+        } = pattern;
+        let (uuid_str, duration_ms, chart_kind, is_bundled) =
+            (uuid.as_str(), *duration_ms, *chart_kind, *is_bundled);
         let tx = self.conn.unchecked_transaction()?;
         if let Some(existing) = self.existing_rowid_by_uuid("vibration_patterns", uuid_str)? {
             return Ok(existing);
         }
         let intensities_json = serde_json::to_string(intensities)
             .map_err(|e| DbError::Decode(format!("serialise intensities: {e}")))?;
-        let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
                 "INSERT INTO vibration_patterns
                     (uuid, name, duration_ms, intensities_json, chart_kind,
                      is_bundled, created_iso, updated_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     uuid_str,
                     name,
@@ -151,7 +178,8 @@ impl Database {
                     intensities_json,
                     chart_kind.as_db_str(),
                     i64::from(is_bundled),
-                    now_iso,
+                    created_iso,
+                    updated_iso,
                 ],
             )
             .map_err(|e| {
@@ -165,8 +193,8 @@ impl Database {
             "intensities_json": intensities_json,
             "chart_kind": chart_kind.as_db_str(),
             "is_bundled": is_bundled,
-            "created_iso": now_iso,
-            "updated_iso": now_iso,
+            "created_iso": created_iso,
+            "updated_iso": updated_iso,
         }).to_string();
         self.emit_event(&tx, EventKind::VibrationPatternInsert, uuid_str, payload)?;
         tx.commit()?;
@@ -345,28 +373,10 @@ impl Database {
                     is_bundled       = excluded.is_bundled,
                     created_iso      = excluded.created_iso,
                     updated_iso      = excluded.updated_iso";
-            let first = self.conn.execute(upsert_sql, params![
+            self.claim_name("vibration_patterns", pattern_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 pattern_uuid, name, duration_ms, intensities_json,
                 chart_kind, i64::from(is_bundled), created_iso, updated_iso,
-            ]);
-            match first {
-                Ok(_) => {}
-                Err(e) if is_unique_constraint_error(&e) => {
-                    let suffixed = conflict_suffixed_name(name, pattern_uuid);
-                    crate::diag::log(
-                        "vibration_pattern.name_collision",
-                        &format!(
-                            "uuid={pattern_uuid} original={name:?} \
-                             resolved={suffixed:?}"
-                        ),
-                    );
-                    self.conn.execute(upsert_sql, params![
-                        pattern_uuid, suffixed, duration_ms, intensities_json,
-                        chart_kind, i64::from(is_bundled), created_iso, updated_iso,
-                    ])?;
-                }
-                Err(e) => return Err(DbError::Sqlite(e)),
-            }
+            ]))?;
         }
         Ok(())
     }
@@ -741,5 +751,42 @@ mod tests {
             [],
         );
         assert!(bad.is_err());
+    }
+
+    const SMALL: &str = "11111111-0000-4000-8000-000000000001";
+    const LARGE: &str = "99999999-0000-4000-8000-000000000009";
+
+    #[test]
+    fn every_device_suffixes_the_same_pattern_of_a_same_name_pair() {
+        for (mine, theirs) in [(SMALL, LARGE), (LARGE, SMALL)] {
+            let peer = Database::open_in_memory().unwrap();
+            peer.insert_vibration_pattern_with_uuid(theirs, "Wave", 1000, &[0.0, 1.0], ChartKind::Line, false).unwrap();
+            let events: Vec<Event> = peer.pending_events().unwrap().into_iter()
+                .map(|(_, e)| e).filter(|e| e.target_id == theirs).collect();
+            let db = Database::open_in_memory().unwrap();
+            db.insert_vibration_pattern_with_uuid(mine, "Wave", 1000, &[0.0, 1.0], ChartKind::Line, false).unwrap();
+            db.replay_events(&events).unwrap();
+            let name = |u: &str| list_vibration_patterns_from_db(&db).unwrap().into_iter()
+                .find(|p| p.uuid.as_str() == u).unwrap().name;
+            assert_eq!(name(SMALL), "Wave");
+            assert_eq!(name(LARGE), "Wave (conflict-99999999)");
+        }
+    }
+
+    /// Undo after a delete put the pattern at the end of the list.
+    #[test]
+    fn an_undone_delete_puts_the_pattern_back_in_its_place() {
+        let db = Database::open_in_memory().unwrap();
+        for name in ["Wave", "Pulse Two", "Heartbeat Two"] {
+            db.insert_vibration_pattern(name, 1000, &[0.0, 1.0], ChartKind::Line, false).unwrap();
+        }
+        let names = |db: &Database| -> Vec<String> {
+            list_vibration_patterns_from_db(db).unwrap().into_iter().map(|p| p.name).collect()
+        };
+        let before = names(&db);
+        let wave = list_vibration_patterns_from_db(&db).unwrap().into_iter().find(|p| p.name == "Wave").unwrap();
+        db.delete_vibration_pattern(wave.uuid.as_str()).unwrap();
+        db.restore_vibration_pattern(&wave).unwrap();
+        assert_eq!(names(&db), before);
     }
 }

@@ -1093,6 +1093,26 @@ impl LogView {
             .content_width(360)
             .child(&dialog_nav_view)
             .build();
+        // A label renamed or deleted in the chooser: the Log behind the
+        // dialog shows again with no tab switch to refresh it.
+        {
+            let obj = self.obj().clone();
+            dialog.connect_closed(move |_| obj.refresh());
+        }
+        // The row shows the label as it is now when its page is back.
+        {
+            let obj = self.obj().clone();
+            let selected_label_id = selected_label_id.clone();
+            label_chooser_row.connect_map(move |row| {
+                let Some(id) = selected_label_id.get() else { return; };
+                let labels = obj.imp().get_app()
+                    .and_then(|app| app.with_db(crate::db::Database::list_labels))
+                    .and_then(std::result::Result::ok)
+                    .unwrap_or_default();
+                row.set_subtitle(&labels.iter().find(|l| l.id == id)
+                    .map_or_else(|| gettext("(none — pick one)"), |l| l.name.clone()));
+            });
+        }
 
         // Now that the dialog's nav_view exists, wire the label
         // chooser-row tap to push the chooser onto it.

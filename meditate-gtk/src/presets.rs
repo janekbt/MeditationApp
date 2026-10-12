@@ -604,13 +604,7 @@ fn present_delete_preset_dialog(
             &title,
             move || {
                 app_undo.with_db_mut(|db| {
-                    let _ = db.insert_preset_with_uuid(
-                        preset_undo.uuid.as_str(),
-                        &preset_undo.name,
-                        preset_undo.mode,
-                        preset_undo.is_starred,
-                        &preset_undo.config_json,
-                    );
+                    let _ = db.core().restore_preset(&preset_undo);
                 });
                 on_changed_undo();
                 if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }

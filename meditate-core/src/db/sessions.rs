@@ -393,17 +393,19 @@ pub fn list_sessions_for_label_from_db(db: &Database, label_id: i64) -> Result<V
     db.list_sessions_filtered(Some(label_id))
 }
 impl Database {
-    /// Look up a label's cross-device UUID by its local rowid. Used at
-    /// event-emission time to translate from the cache key (rowid) to
-    /// the cross-device identity. Errors when the rowid is unknown —
-    /// callers should already have validated this via the FK constraint
-    /// or by reading the row's `label_id` from a known-good source.
-    pub(super) fn label_uuid_by_id(&self, id: i64) -> Result<String> {
-        Ok(self.conn.query_row(
+    /// A session's label as it is saved: its local rowid and its
+    /// cross-device uuid (the peer applying the event has a different
+    /// rowid space). A label that is gone (deleted in a chooser, merged
+    /// away or deleted by sync while a page still showed it) saves as
+    /// none, instead of failing the save and losing the session.
+    fn session_label(&self, id: Option<i64>) -> Result<(Option<i64>, Option<String>)> {
+        let Some(id) = id else { return Ok((None, None)); };
+        let uuid: Option<String> = self.conn.query_row(
             "SELECT uuid FROM labels WHERE id = ?1",
             params![id],
-            |row| row.get::<_, String>(0),
-        )?)
+            |row| row.get(0),
+        ).optional()?;
+        Ok((uuid.as_ref().map(|_| id), uuid))
     }
 
 
@@ -429,13 +431,14 @@ impl Database {
         session: &Session,
     ) -> Result<(i64, String)> {
         let session_uuid = uuid::Uuid::new_v4().to_string();
+        let (label_id, label_uuid) = self.session_label(session.label_id)?;
         self.conn.execute(
             "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 session.start_iso,
                 session.duration_secs,
-                session.label_id,
+                label_id,
                 note_or_none(&session.notes),
                 session.mode.as_db_str(),
                 session_uuid,
@@ -443,13 +446,6 @@ impl Database {
             ],
         )?;
         let rowid = self.conn.last_insert_rowid();
-
-        // Translate label_id (local rowid) → label_uuid (cross-device).
-        // The peer applying this event has a different rowid space.
-        let label_uuid = match session.label_id {
-            Some(id) => Some(self.label_uuid_by_id(id)?),
-            None => None,
-        };
         let payload = serde_json::json!({
             "uuid": session_uuid,
             "start_iso": session.start_iso,
@@ -565,10 +561,7 @@ impl Database {
             }
         }
         for (s, session_uuid) in sessions.iter().zip(session_uuids) {
-            let label_uuid = match s.label_id {
-                Some(id) => Some(self.label_uuid_by_id(id)?),
-                None => None,
-            };
+            let (_, label_uuid) = self.session_label(s.label_id)?;
             let payload = serde_json::json!({
                 "uuid": session_uuid,
                 "start_iso": s.start_iso,
@@ -667,6 +660,7 @@ impl Database {
         let Some(session_uuid) = row_uuid else {
             return Ok(());
         };
+        let (label_id, label_uuid) = self.session_label(session.label_id)?;
         self.conn.execute(
             "UPDATE sessions
              SET start_iso = ?1, duration_secs = ?2, label_id = ?3,
@@ -675,17 +669,13 @@ impl Database {
             params![
                 session.start_iso,
                 session.duration_secs,
-                session.label_id,
+                label_id,
                 note_or_none(&session.notes),
                 session.mode.as_db_str(),
                 session.guided_file_uuid,
                 id,
             ],
         )?;
-        let label_uuid = match session.label_id {
-            Some(id) => Some(self.label_uuid_by_id(id)?),
-            None => None,
-        };
         let payload = serde_json::json!({
             "uuid": session_uuid,
             "start_iso": session.start_iso,
@@ -2850,28 +2840,19 @@ mod tests {
     }
 
     #[test]
-    fn insert_session_with_unknown_label_id_is_rejected_by_fk() {
-        // The labels.id ↔ sessions.label_id link is an enforced foreign key,
-        // not just documentation. Inserting a session that points at a
-        // non-existent label fails — the DB is the last line of defense
-        // against UI bugs that pass through bad ids.
+    fn the_label_link_is_an_enforced_foreign_key() {
+        // The labels.id ↔ sessions.label_id link is an enforced foreign
+        // key, not just documentation: the DB is the last line of
+        // defense. (Saves check the label first and drop a gone one.)
         let db = Database::open_in_memory().unwrap();
-        // Sanity: the PRAGMA must be on for the FK clause to actually fire.
         let pragma: i64 = db.conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
         assert_eq!(pragma, 1, "PRAGMA foreign_keys must be ON");
-
-        let bad_id = 9999i64;
-        let result = db.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00Z".to_string(),
-            duration_secs: 600,
-            label_id: Some(bad_id),
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        });
-        assert!(result.is_err(), "expected FK violation, got {result:?}");
-        // No row landed.
+        let raw = db.conn.execute(
+            "INSERT INTO sessions (start_iso, duration_secs, label_id, mode, uuid)
+             VALUES ('2026-04-27T10:00:00Z', 600, 9999, 'timer', 'u-1')",
+            [],
+        );
+        assert!(raw.is_err(), "expected FK violation, got {raw:?}");
         assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
     }
 
@@ -3326,21 +3307,6 @@ mod tests {
     }
 
     #[test]
-    fn inserting_session_with_unknown_label_id_is_rejected() {
-        let db = Database::open_in_memory().unwrap();
-        let result = db.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00Z".to_string(),
-            duration_secs: 600,
-            label_id: Some(999), // does not exist
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        });
-        assert!(result.is_err(), "FK constraint should reject unknown label");
-    }
-
-    #[test]
     fn data_persists_across_reopens() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
@@ -3565,5 +3531,33 @@ mod tests {
         db.update_session(kept, &with_note("2026-10-03T08:00:00", " typed ")).unwrap();
         let (_, s) = list_sessions_from_db(&db).unwrap().into_iter().find(|(i, _)| *i == kept).unwrap();
         assert_eq!(s.notes.as_deref(), Some(" typed "));
+    }
+
+    /// A label deleted while a page still had it selected (in the
+    /// chooser, by a merge or by sync) made Save fail: the session was
+    /// gone until the recovery brought it back, shorter and without its
+    /// note. It now saves without the label.
+    #[test]
+    fn a_session_on_a_deleted_label_saves_without_it() {
+        let db = Database::open_in_memory().unwrap();
+        let label = db.insert_label("Yoga").unwrap();
+        db.delete_label(label).unwrap();
+        let mut session = crate::db::Session {
+            start_iso: "2026-10-10T08:00:00".into(),
+            duration_secs: 600,
+            label_id: Some(label),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        };
+        let id = db.insert_session(&session).unwrap();
+        session.notes = Some("calm".into());
+        db.update_session(id, &session).unwrap();
+        let (_, saved) = &list_sessions_from_db(&db).unwrap()[0];
+        assert_eq!((saved.label_id, saved.notes.as_deref()), (None, Some("calm")));
+        assert!(db.pending_events().unwrap().iter()
+            .filter(|(_, e)| e.kind.starts_with("session_"))
+            .all(|(_, e)| e.payload.contains(r#""label_uuid":null"#)));
     }
 }

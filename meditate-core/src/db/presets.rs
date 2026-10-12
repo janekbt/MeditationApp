@@ -6,7 +6,7 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, map_unique_err, mint_uuid,
+    map_unique_err, mint_uuid,
     Database, DbError, Result, SessionMode,
 };
 
@@ -190,22 +190,45 @@ impl Database {
         is_starred: bool,
         config_json: &str,
     ) -> Result<i64> {
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        self.insert_preset_at(&Preset {
+            id: 0,
+            uuid: super::PresetUuid::new(uuid_str),
+            name: name.to_string(),
+            mode,
+            is_starred,
+            config_json: config_json.to_string(),
+            created_iso: now_iso.clone(),
+            updated_iso: now_iso,
+        })
+    }
+
+    /// Undo of a delete: the preset comes back with its uuid and its
+    /// creation time, so it takes its old place in the list.
+    pub fn restore_preset(&self, preset: &Preset) -> Result<i64> {
+        self.insert_preset_at(preset)
+    }
+
+    /// Insert `preset` under its uuid and times (its id is ignored).
+    fn insert_preset_at(&self, preset: &Preset) -> Result<i64> {
+        let Preset { uuid, name, mode, is_starred, config_json, created_iso, updated_iso, .. } = preset;
+        let (uuid_str, mode, is_starred) = (uuid.as_str(), *mode, *is_starred);
         let tx = self.conn.unchecked_transaction()?;
         if let Some(existing) = self.existing_rowid_by_uuid("presets", uuid_str)? {
             return Ok(existing);
         }
-        let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
                 "INSERT INTO presets (uuid, name, mode, is_starred, config_json, created_iso, updated_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     uuid_str,
                     name,
                     mode.as_db_str(),
                     i64::from(is_starred),
                     config_json,
-                    now_iso,
+                    created_iso,
+                    updated_iso,
                 ],
             )
             .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
@@ -216,8 +239,8 @@ impl Database {
             "mode": mode.as_db_str(),
             "is_starred": is_starred,
             "config_json": config_json,
-            "created_iso": now_iso,
-            "updated_iso": now_iso,
+            "created_iso": created_iso,
+            "updated_iso": updated_iso,
         }).to_string();
         self.emit_event(&tx, EventKind::PresetInsert, uuid_str, payload)?;
         tx.commit()?;
@@ -238,12 +261,14 @@ impl Database {
     /// excludes the row being updated.
     pub fn update_preset_name(&self, uuid_str: &str, name: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let exists: bool = self.conn.query_row(
-            "SELECT 1 FROM presets WHERE uuid = ?1",
+        let stored: Option<String> = self.conn.query_row(
+            "SELECT name FROM presets WHERE uuid = ?1",
             params![uuid_str],
-            |_| Ok(true),
-        ).optional()?.unwrap_or(false);
-        if !exists { return Ok(()); }
+            |row| row.get(0),
+        ).optional()?;
+        // Unknown, or unchanged: a fresh event would undo a rename
+        // another device made in the meantime.
+        if stored.map_or(true, |stored| stored == name) { return Ok(()); }
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -376,28 +401,10 @@ impl Database {
                     config_json = excluded.config_json,
                     created_iso = excluded.created_iso,
                     updated_iso = excluded.updated_iso";
-            let first = self.conn.execute(upsert_sql, params![
+            self.claim_name("presets", preset_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 preset_uuid, name, mode, i64::from(is_starred),
                 config_json, created_iso, updated_iso,
-            ]);
-            match first {
-                Ok(_) => {}
-                Err(e) if is_unique_constraint_error(&e) => {
-                    let suffixed = conflict_suffixed_name(name, preset_uuid);
-                    crate::diag::log(
-                        "preset.name_collision",
-                        &format!(
-                            "uuid={preset_uuid} original={name:?} \
-                             resolved={suffixed:?}"
-                        ),
-                    );
-                    self.conn.execute(upsert_sql, params![
-                        preset_uuid, suffixed, mode, i64::from(is_starred),
-                        config_json, created_iso, updated_iso,
-                    ])?;
-                }
-                Err(e) => return Err(DbError::Sqlite(e)),
-            }
+            ]))?;
         }
         Ok(())
     }
@@ -848,5 +855,51 @@ mod tests {
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
         assert!(find_preset_by_uuid_from_db(&dev_b, "u-1").unwrap().is_none());
+    }
+
+    const SMALL: &str = "11111111-0000-4000-8000-000000000001";
+    const LARGE: &str = "99999999-0000-4000-8000-000000000009";
+
+    /// Same rule as labels: the larger uuid of a same-name pair takes
+    /// the suffix, whichever arrives first.
+    #[test]
+    fn every_device_suffixes_the_same_preset_of_a_same_name_pair() {
+        for (mine, theirs) in [(SMALL, LARGE), (LARGE, SMALL)] {
+            let peer = Database::open_in_memory().unwrap();
+            peer.insert_preset_with_uuid(theirs, "Morning", SessionMode::Timer, false, "{}").unwrap();
+            let events: Vec<Event> = peer.pending_events().unwrap().into_iter()
+                .map(|(_, e)| e).filter(|e| e.target_id == theirs).collect();
+            let db = Database::open_in_memory().unwrap();
+            db.insert_preset_with_uuid(mine, "Morning", SessionMode::Timer, false, "{}").unwrap();
+            db.replay_events(&events).unwrap();
+            assert_eq!(find_preset_by_uuid_from_db(&db, SMALL).unwrap().unwrap().name, "Morning");
+            assert_eq!(find_preset_by_uuid_from_db(&db, LARGE).unwrap().unwrap().name, "Morning (conflict-99999999)");
+        }
+    }
+
+    #[test]
+    fn renaming_a_preset_to_its_own_name_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(SMALL, "Morning", SessionMode::Timer, false, "{}").unwrap();
+        let before = db.pending_events().unwrap().len();
+        db.update_preset_name(SMALL, "Morning").unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before);
+    }
+
+    /// Undo after a delete put the preset at the end of its chips.
+    #[test]
+    fn an_undone_delete_puts_the_preset_back_in_its_place() {
+        let db = Database::open_in_memory().unwrap();
+        for name in ["Morning", "Evening", "Walk"] {
+            insert_basic_preset(&db, name, SessionMode::Timer);
+        }
+        let names = |db: &Database| -> Vec<String> {
+            list_presets_from_db(db).unwrap().into_iter().map(|p| p.name).collect()
+        };
+        let before = names(&db);
+        let morning = list_presets_from_db(&db).unwrap().into_iter().find(|p| p.name == "Morning").unwrap();
+        db.delete_preset(morning.uuid.as_str()).unwrap();
+        db.restore_preset(&morning).unwrap();
+        assert_eq!(names(&db), before);
     }
 }

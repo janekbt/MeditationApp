@@ -667,8 +667,11 @@ mod tests {
     fn a_failed_save_keeps_the_snapshot_for_recovery() {
         let db = Database::open_in_memory().unwrap();
         db.hold_ended_session(&sample(600)).unwrap();
-        // A label that doesn't exist fails the foreign key.
-        let r = db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", None, Some(9999)));
+        // The write itself fails, as on a full disk.
+        db.conn.execute_batch(
+            "CREATE TEMP TRIGGER fail BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        ).unwrap();
+        let r = db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", None, None));
         assert!(r.is_err());
         assert_eq!(db.get_session_in_progress().unwrap(), Some(sample(600)));
         assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
