@@ -8,9 +8,11 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 
 ### Timer
 - Countdown, stopwatch, Box Breath, and Guided modes
-- Box Breath: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
-- Guided: play your own guided-meditation audio; the end bell rings when the track finishes
+- Box Breath: start from the 4-4-4-4 or 4-7-8-0 preset or set each phase yourself, with an optional sound or vibration cue for each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
+- Guided: play your own guided-meditation audio; the end bell rings when the track finishes. Imported files go into a library where you star the ones you use; files that aren't Ogg (WAV, MP3 and so on) are converted on import
 - Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor
+- Optional preparation time before the starting bell
+- Keep the screen awake during a session, set per mode
 - Quick presets plus custom durations
 - Per-mode labels: each mode remembers the label you last used for it
 - Optional post-session notes
@@ -20,7 +22,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 ### Log
 - Date-grouped card feed of every session
 - Filter by label, or sessions with notes
-- Add, edit, or swipe to delete — with undo
+- Add, edit, or delete sessions, with undo
 - Import from Insight Timer, and CSV import/export for backups
 
 ### Stats
@@ -29,14 +31,17 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Bar or line chart across week / month / 3 months / year
 - Per-label breakdown: totals and session counts for each label
 - Streak, total time, and session count at a glance
+- Insight cards: trend against last week and the previous 30 days, preferred time of day, typical and longest session, next milestone
 
 ### Sync
 - Optional sync between all your devices — Linux and Android — via your own Nextcloud (WebDAV, app password)
+- Sessions, labels, presets, preferences and your imported sounds and guided files sync
 - Offline-first: everything works without a network; changes merge whenever you're back online, with conflict handling that never loses a session
 
 ### Preferences
-- Daily goal and completion sound
-- Manage your labels and timer presets
+- Daily goal; CSV backup and restore, Insight Timer import, Nextcloud sync settings, delete all sessions
+- On Android, pick an accent colour
+- Labels, presets, bell sounds and vibration patterns are managed from the timer setup
 
 ### Android app
 - Native Android port (Slint + Material 3) in [`meditate-android/`](meditate-android/): the same modes, log, stats, presets, and Nextcloud sync on your phone, sharing the identical `meditate-core` logic — a session recorded on one device converges to all of them
@@ -45,7 +50,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 
 ### General
 - Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese) — on Linux and Android alike
-- Keyboard shortcuts for the common actions
+- Keyboard shortcuts for the common actions on Linux
 - Dark-mode and high-contrast safe; follows your system accent colour on Linux — on Android, pick from six accent colours in the app
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
   - Log file lives at `~/.var/app/io.github.janekbt.Meditate/data/meditate/diagnostics.log` on Flatpak, `~/.local/share/meditate/diagnostics.log` otherwise — useful when the About dialog itself can't be opened
@@ -75,6 +80,7 @@ not an option for this app.) CI runs attach the same bundles on the
 days and need a GitHub login.
 
 ```sh
+flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo  # provides the GNOME 50 runtime
 flatpak install --user meditate-<version>-<arch>.flatpak
 flatpak run io.github.janekbt.Meditate
 ```
@@ -89,9 +95,10 @@ flatpak run io.github.janekbt.Meditate
 Drop `--debug` for optimized builds. `build.sh` installs missing
 dependencies on Debian/Ubuntu, Fedora and Arch (it asks for your password
 once) and checks the GTK 4.18 / libadwaita 1.7 floor before compiling. The
-Android build needs **JDK 17 exactly** — see [`BUILDING.md`](BUILDING.md#android),
-which is the full reference: prerequisites, the Flatpak build, tests,
-translations, the Librem 5 cross-build and CI.
+Android build needs **JDK 17 exactly** and rustup installed first. See
+[`BUILDING.md`](BUILDING.md#android-toolchain), which is the full reference:
+prerequisites, the Flatpak build, tests, translations, testing on a phone,
+and CI.
 
 The workspace has three crates: the portable
 [`meditate-core`](meditate-core/README.md) (persistence, sync and session

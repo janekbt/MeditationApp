@@ -23,10 +23,10 @@ Do these BEFORE bumping, so fixes land in the release:
 
 - **Untranslated strings:** every user-visible string added since
   the last release must be in the Tr catalogue / @tr() and have
-  entries in ALL TEN Android po files (`meditate-android/lang/`)
+  entries in ALL NINE Android po files (`meditate-android/lang/`)
   and the GTK po files (`meditate-gtk/po/`) where applicable.
   Check coverage — every msgid in `lang/de/...po` must exist with
-  a non-empty msgstr in the other nine; write the missing
+  a non-empty msgstr in the other eight; write the missing
   translations yourself (match each language's established
   terminology; correct plural forms — fr/pt_BR `n>1`, pl/ru three
   forms, zh_CN one). Validate every file:
@@ -41,8 +41,8 @@ Do these BEFORE bumping, so fixes land in the release:
       git diff $(git log -1 --format=%H -- build-aux/cargo-sources.json) -- Cargo.lock
 
   If the only changes are the version lines of the workspace's own
-  crates (`meditate`, `meditate-android`, `meditate-core` — every
-  release bump does that), nothing to do. Otherwise regenerate
+  crates (`meditate`, `meditate-android`; every release bump does
+  that, and `meditate-core` stays at 0.0.0), nothing to do. Otherwise regenerate
   (needs Debian's `python3-aiohttp` and `python3-tomlkit`):
 
       curl -fsSL -o /tmp/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
@@ -85,13 +85,17 @@ Cargo.lock picks up the crate version bumps.
 ## 4. Verify
 
 All must pass before anything is tagged. Releases build on **JDK 17**
-(see [BUILDING.md → Android](BUILDING.md#android)); `env.sh` from a
-current `setup-android.sh` already points there — confirm:
+(see [BUILDING.md → Android toolchain](BUILDING.md#android-toolchain)); `env.sh`
+from a current `setup-android.sh` points there unless your shell exports
+another `JAVA_HOME`. Confirm:
 
     . ~/.config/meditate-android/env.sh && "$JAVA_HOME/bin/java" -version   # must say 17
     cargo test -p meditate-core -p meditate-android --lib
     cargo test --workspace          # GTK shell included
+    cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings
+    build-aux/check-specs.sh
     cd meditate-android/android && ./gradlew :app:assembleRelease   # exit-code gate, never grep
+    ./gradlew --stop
 
 - appstream sanity: `appstreamcli validate --no-net
   meditate-gtk/data/io.github.janekbt.Meditate.metainfo.xml.in`
@@ -100,16 +104,18 @@ current `setup-android.sh` already points there — confirm:
   `release: 26.8.1`), push, then dispatch Flatpak CI on beta:
   `gh workflow run flatpak.yml --ref beta` and WAIT for green
   (~35 min; poll `gh run view`). Do not proceed on red.
-- **[judgment] On-device check:** install the release APK on the
-  FP5 (`adb install -r .../app-release.apk`) and let Janek
-  confirm the release works before tagging — his standing rule is
-  release builds go on only at release time, debug builds while
-  iterating.
+- **[judgment] On-device check:** build the optimised release type
+  signed with the debug key, `MEDITATE_SIGNING=/nonexistent ./build.sh android`,
+  install that on the phone (`adb install -r
+  meditate-android/android/app/build/outputs/apk/release/app-release.apk`)
+  and let Janek confirm the release works before tagging. The
+  release-key APK is only for publishing: it can't install over a
+  debug-key install.
 
 ## 5. Tag and publish (needs Janek's explicit go)
 
-ORDER MATTERS. Once the app is in F-Droid, `UpdateCheckMode: Tags` means a
-new tag is picked up automatically, and their build fetches `Binaries` for
+ORDER MATTERS. F-Droid's `UpdateCheckMode: Tags` picks up a new tag
+automatically, and their build fetches `Binaries` for
 that version straight away. A tag visible before its APK is published makes
 that build fail and stalls the update. So the APK goes up first, and the tag
 becomes visible only once the asset is confirmed reachable.
@@ -127,6 +133,7 @@ invalid". Pushing a branch creates no tag, so nothing triggers F-Droid.
 
     cd meditate-android/android
     JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --no-daemon assembleRelease
+    ./gradlew --stop
     cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
     apksigner verify --print-certs /tmp/Meditate-<version>.apk   # see 5a — must be the release key
     gh release create v<version> /tmp/Meditate-<version>.apk --draft \
@@ -137,7 +144,8 @@ invalid". Pushing a branch creates no tag, so nothing triggers F-Droid.
 the tag; publishing does, so the asset is live before anything can see it:
 
     gh release edit v<version> --draft=false
-    curl -sIL -o /dev/null -w '%{http_code}\n' <Binaries URL>   # must be 200
+    curl -sIL -o /dev/null -w '%{http_code}\n' \
+        https://github.com/janekbt/MeditationApp/releases/download/v<version>/Meditate-<version>.apk   # must be 200
 
     git push origin --tags             # usually a no-op; the release made it
     git checkout beta
@@ -160,15 +168,10 @@ comes out identical on both sides (that d8 crashes on newer JDKs).
   `app-release.apk#Meditate-x.y.z.apk` publishes it as `app-release.apk`
   and the `Binaries:` URL 404s — F-Droid then silently stops updating.
 - The asset name must match `Binaries:` in the fdroiddata recipe
-  (`Meditate-%v.apk`). Confirm after upload:
-
-      curl -sIL <Binaries URL> | grep '^HTTP/'
+  (`Meditate-%v.apk`); the `curl` check above confirms it.
 - Signing uses `~/.config/meditate-android/signing.properties`. If that
   file is missing the build silently falls back to the debug keystore
-  and F-Droid will REJECT the upload — confirm before uploading:
-
-      apksigner verify --print-certs app-release.apk
-
+  and F-Droid will REJECT the upload. The `apksigner verify` above
   must print SHA-256 `4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cbca59970`.
 - Never let a release build run without the remap flags in
   `rust-build.sh`; they are what makes F-Droid's rebuild match ours.
@@ -196,13 +199,12 @@ tag rather than whatever was built last.
   there are no redundant runs tempting you to cancel in the first place.
 
 - F-Droid picks the new tag up automatically (`UpdateCheckMode: Tags`
-  in the fdroiddata recipe; our copy is
-  `build-aux/fdroid-metadata-draft.yml`). If a recipe change is ever
+  in the fdroiddata recipe, `metadata/io.github.janekbt.Meditate.yml` in
+  fdroiddata. `build-aux/fdroid-metadata-draft.yml` is the
+  initial-submission draft and is not kept current.) If a recipe change is ever
   needed, fdroiddata build entries must pin the FULL commit hash,
   never the tag name (maintainer rule).
-- Flathub is NOT a distribution path for this app (they do not accept
-  AI-assisted apps), so step 5b is the whole Linux release. The metainfo
-  release notes still matter: they are what the About dialog shows.
+- The metainfo release notes are what the About dialog shows.
 
 ## 6. Afterwards
 

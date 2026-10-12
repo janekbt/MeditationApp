@@ -1,8 +1,9 @@
 //! Portable Rust logic core for the Meditate app.
 //!
-//! Everything here is GTK-free — the gtk-rs shell and the future
-//! Slint/Android shell both consume this crate to share the
-//! decision logic, persistence, and sync that aren't UI-specific.
+//! Everything here is GTK-free. The GTK shell (`meditate-gtk`) and
+//! the Slint Android shell (`meditate-android`) both consume this
+//! crate to share the decision logic, persistence and sync that
+//! aren't UI-specific.
 //! Anything that needs a `gtk::` type stays in the shell.
 //!
 //! ## Architecture in one paragraph
@@ -18,14 +19,13 @@
 //!
 //! ## Conventions
 //!
-//! - **Decisions in core, mechanisms in the shell.** The shell glues
-//!   GTK widgets together; behaviour ("when do we fire a bell, what
-//!   does the streak read") lives here. See
-//!   `feedback_meditate_decisions_in_core`.
-//! - **Typed keys for translatable copy.** Helpers that previously
-//!   returned formatted English strings now return a typed
-//!   `*Key` enum; the shell maps each variant to `gettext`. See
-//!   `feedback_meditate_i18n_typed_keys`.
+//! - **Decisions in core, mechanisms in the shell.** The shells glue
+//!   widgets together; behaviour ("when do we fire a bell, what
+//!   does the streak read") lives here. See `DECISIONS.md` rule 1.
+//! - **Typed keys for translatable text.** Helpers that produce
+//!   user-visible text return a typed `*Key` enum; each shell maps
+//!   every variant to its own translations. See `DECISIONS.md`
+//!   rule 2.
 //! - **`_from_db` suffix** marks helpers that touch the DB so
 //!   call sites read like reads vs. computations.
 //! - **`apply_event_inner` is forward-compatible.** Unknown event
@@ -41,28 +41,8 @@
 //!
 //! ## Module map
 //!
-//! - `db`            — SQLite cache, event log, apply/replay,
-//!   recompute_* dispatch. Owns `Database`.
-//! - `sync/`         — WebDAV push/pull engine, settings, coordinator.
-//! - `session`       — session-mode state machine (`Session`,
-//!   `Effect`, `TickOutcome`).
-//! - `bells`         — interval / starting / end bell scheduling.
-//! - `breath`        — box-breath phases and perimeter math.
-//! - `vibration`     — vibration pattern editor + envelope helpers.
-//! - `format`        — translatable typed keys + plain formatters
-//!   (durations, counters, mini-stats).
-//! - `goal`          — weekly-goal snapshot logic.
-//! - `insights`      — derived stats (week-over-week, milestones).
-//! - `contrib`       — contribution-heatmap data model.
-//! - `preset_config` — JSON-encoded preset payload (Timer / BoxBreath /
-//!   Guided).
-//! - `time`          — `boot_time_now` (suspend-resilient) +
-//!   ISO-to-unix helpers.
-//! - `diag`          — ring-buffer log to `<data>/diagnostics.log`.
-//! - `data_io`       — CSV import / export of sessions.
-//! - `seeds`         — bundled vibration patterns + default presets.
-//! - `labels`, `naming`, `settings_keys`, `sound`,
-//!   `timer`, `date_math` — supporting utilities.
+//! See the module table in `meditate-core/README.md`; the design
+//! (sync, migrations, the session engine) is in `ARCHITECTURE.md`.
 
 #[cfg(test)]
 mod test_macros;

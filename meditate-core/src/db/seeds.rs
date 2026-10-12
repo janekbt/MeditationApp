@@ -140,7 +140,7 @@ impl Database {
     /// The bell-sound seed list stays in each shell because the
     /// audio files are platform-specific (gtk → gresource paths,
     /// Android → assets/raw paths); the shell calls
-    /// `seed_bundled_bell_sounds` separately.
+    /// `seed_bell_sounds_with_paths` separately.
     pub fn seed_all_non_audio(&self) -> Result<()> {
         self.seed_box_breath_phases()?;
         self.seed_default_labels()?;

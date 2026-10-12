@@ -23,21 +23,23 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
 | [x] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #122, #158 | names that differ per device, saves that fail |
 | [x] | U1. /spec groundwork (before H) | #161 | every later batch leaves specs and gets a review |
-| [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
+| [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
-| [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141 | failures that look like success, stale screens |
-| [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149 | other apps, phone transfer, audio focus, battery saver |
+| [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
+| [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
-| [ ] | S. Cleanup | #58, #61, #85, #87, #157 | dead code, wrong comments |
+| [ ] | S. Cleanup | #58, #61, #85, #87, #157, #167, #171, #175 | dead code, wrong comments |
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
-| [ ] | U2. Docs for contributors | #163 | stale docs an AI trusts |
+| [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
+| [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184 | one bad file or event blocks sync |
+| [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
 
 ---
 
@@ -180,7 +182,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 ### #109 Re-importing a backup brings back deleted labels
 - Where: `meditate-core/src/data_io.rs:348-350`.
 - Problem: labels are created for every name in the file before the duplicate filter runs. Delete "Work", re-import an older backup whose rows all exist: "Imported 0 sessions", yet an empty "Work" label comes back and syncs.
-- Fix: filter the rows first, then create only the labels the kept rows use, inside the session transaction (this also settles the import-labels transaction item in TODO.md).
+- Fix: filter the rows first, then create only the labels the kept rows use, inside the session transaction.
 
 ### #110 CSV import errors name the wrong line after a multi-line note
 - Where: `meditate-core/src/data_io.rs:188, 284`.
@@ -342,6 +344,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: the first tick records the phase silently because "the starting bell already fired", but Box Breath has no starting bell. With cues on, the first signal is Hold at 4 s.
 - Fix: in `Session::start`, add `box_breath_cue_effect(&settings, In)` to the start effects; update the test and the comments.
 
+### #166 GTK: Box Breath stops when the window isn't drawn
+- Where: `meditate-gtk/src/window/imp.rs:454` (the session ticks only from `add_tick_callback`); `timer/imp.rs:2212-2216, 2238-2240` (no 1 Hz tick for Breathing).
+- Problem: with the screen blank, the window minimised or on another workspace there are no frames, so no phase cues and no end bell until the window is drawn again (and then #39 saves the inflated time).
+- Fix: run the 1 Hz `start_tick` for Breathing too, dispatching the session's effects; keep the frame callback for drawing only. Do it with #39.
+
 ## I. GTK timer and bells
 
 ### #73 GTK: the Box Breath Duration row shows the Timer duration
@@ -459,6 +466,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: a sound whose file hasn't arrived fails to play (`play` returns 0), but the row switches to "Stop" in silence.
 - Fix: if the returned duration is 0 or less, stop the preview state and leave the uuid unset.
 
+### #170 CSV export empties the old backup before writing
+- Where: `meditate-core/src/data_io.rs:132` (`File::create(path)`).
+- Problem: exporting over an existing backup truncates it first; a full disk or a kill mid-write leaves neither the old nor a complete new backup.
+- Fix: write `<path>.tmp`, `sync_all`, rename (like `write_whole_file` in the orchestrator).
+
 ## L. Android platform (manifest: ask first)
 
 ### #50 Android: any installed app can start a meditation
@@ -491,6 +503,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-android/kotlin/MeditateHaptics.kt:67-84`.
 - Problem: below API 33 the code calls `vibrate(effect)` with no usage. In battery saver, Android 8-12 only lets alarm, ringtone and communication vibrations through, so a Vibration end bell is silent. The FP5 (Android 15) is not affected.
 - Fix: `vibrator.vibrate(effect, AudioAttributes` with `USAGE_ALARM)`, which exists since API 26; correct the comment that says it needs API 33.
+
+### #176 Android: a font-size or language change mid-session ends the session but leaves its service running
+- Where: `meditate-android/android/app/src/main/AndroidManifest.xml:56` (`configChanges` lacks `fontScale|locale|smallestScreenSize|keyboard|navigation|layoutDirection`); `service::stop` / `guided::stop` / `audio::stop` run only on an Active-to-inactive transition.
+- Problem: a font size or language change, split screen or a hardware keyboard recreates the NativeActivity. Startup finalizes the live snapshot as "recovered" (up to 60 s lost) and comes back Idle, while the foreground service, its notification, the wake lock and a guided track keep going. Not yet confirmed on the FP5.
+- Fix: add the missing `configChanges`; at startup stop any leftover service and players when no session is active. Manifest: ask first, run the repro probe.
 
 ## M. Android layout and editors
 
@@ -700,6 +717,20 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - android `ui.rs`: doc comments on the wrong item at 488-492, 803-822, 1128-1132, 2348-2350 (shows a start time with a UTC offset, which never exists), 2904-2909 and 9477-9481; false claims at 1406, 1444, 3874, 4028, 5878 and 5909.
 - `sync/fake.rs:1-4` claims the fake behaves like Nextcloud (see #91).
 
+### #167 Linux packaging: broken screenshot links and a Rust floor that's too low
+- Where: `meditate-gtk/data/io.github.janekbt.Meditate.metainfo.xml.in:27, 31, 35`; `build.sh:72`; `meditate-gtk/Cargo.toml:6`; `clippy.toml` (`msrv`).
+- Problem: the screenshot URLs point at `main/data/screenshots/`, which doesn't exist (the files are under `meditate-gtk/data/screenshots/`), so software centres show none. build.sh accepts rustc 1.85, but the locked gtk4 0.11.2 and glib 0.22.5 need 1.92, so the build fails halfway; `rust-version` and `msrv` still say 1.75.
+- Fix: add `meditate-gtk/` to the three URLs; raise the check, `rust-version` and `msrv` to 1.92 (Cargo.toml: ask first).
+
+### #171 The `synchronous=NORMAL` comment promises safety it doesn't have
+- Where: `meditate-core/src/db/mod.rs:229-241`.
+- Problem: "events are append-only and idempotent on re-sync" is only true for events already uploaded; a power cut can roll back a just-saved session that exists nowhere else.
+- Fix: correct the comment; or, if wanted, `PRAGMA synchronous=FULL` around Save and Edit only.
+
+### #175 Leftover config
+- Where: `meditate-android/manifest.yaml` (xbuild leftover) and the comment at `meditate-android/Cargo.toml:76-80`; `meditate-gtk/src/meson.build:3-9` (`cargo_profile_args` set, never used); `build-aux/io.github.janekbt.Meditate.json:25-26` (two Notifications talk-names, likely surplus under the portal).
+- Fix: delete them and check that notifications still show in the Flatpak. Cargo.toml and manifest.yaml are protected build environment: ask first.
+
 ## T. Text that doesn't fit
 
 ### #159 Text cut off or shortened with "…", found one screenshot at a time
@@ -743,6 +774,81 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Then: a short "sync rules that always hold" section in EVENTS.md (devices converge; a delete at the same or later time wins; same names settle on the smaller uuid), each pointing to its test.
 - Every failure it finds is a real bug: fix it in the same batch with its own small regression test.
 
+## W. Sync that stops on one bad item
+
+### #164 A batch this build can't read or apply stops every later pull
+- Where: `meditate-core/src/sync/orchestrator.rs:311-312` (an unparseable batch is fatal and never recorded as known); `db/sessions.rs:882, 889-900` writes an unknown `mode` straight into the CHECK column (`schema.rs:151`; the same for bell `category`, interval-bell `kind`, `signal_mode`, `chart_kind`); `db/events.rs:717-749` replays the whole pull in one transaction.
+- Problem: since #43 the device still uploads, but it never pulls again. A damaged batch file on the server never heals, and a newer peer's new mode or category blocks every later event from every device until this device updates; the status stays red.
+- Fix: decide first whether version skew should keep blocking on purpose. Then: an unparseable batch is logged and recorded as known; a value outside the CHECK set skips that event's recompute (the event stays recorded, as unknown kinds are) so a later build's cache walk applies it. One test per case.
+
+### #165 One audio file that fails to download stops the upload
+- Where: `meditate-core/src/sync/orchestrator.rs:757, 912` (`Err(e) => return Err(e.into())`), `500` (WebDAV errors skip push); `db/error.rs:103-115` (no length cap on ids).
+- Problem: a flaky link or a server error on one bell or guided file fails the pull, so push never runs and new sessions stay on that device. A uuid longer than 255 bytes makes `<uuid>.<ext>` too long for the file system, so every sync fails at the same file.
+- Fix: for a per-file GET or write error, log it, leave the uuid unknown and continue, as `NotFound` already does (keep `Unauthorized` fatal). Cap `target_id` length in `target_id_is_well_formed_for` (e.g. 128). One test each.
+
+### #172 A long Line vibration pattern overflows u32
+- Where: `meditate-core/src/vibration.rs:145`; replay `db/vibration_patterns.rs:358` (`as u32`, no clamp); editor cap `meditate-gtk/src/vibration_editor.rs:34` (10 s).
+- Problem: above about 463 s, `(2*i+1)*duration_ms` overflows: a panic in debug, a wrong envelope in release. Only a corrupt or hostile synced pattern gets there, because the editors cap the length.
+- Fix: compute in u64 and clamp `duration_ms` to the editor's range on replay. One test.
+
+### #173 Server text ends up in the sync status and log; the release-notes parser is fragile
+- Where: `meditate-core/src/sync/webdav.rs:97` (whole error body), `:107` (full redirect Location), `:282` etc. (`into_string()`); stored by `sync/settings.rs:134-138`. `release_notes.rs:24, 63-64, 74-77, 91-93`.
+- Problem: an error page (up to 10 MB) or a Location with user name and host goes into `last_sync_error`, the tooltip and the shared diagnostics log. The About release-notes parser escapes `<em>`/`<code>`, misses `<p class=...>` and treats `type='development'` as stable; latent while the metainfo stays plain.
+- Fix: show the status code only and log a truncated, control-character-stripped excerpt (as `MalformedResponse` does with 512 chars). Parser: a test per markup case when the metainfo next changes.
+
+### #184 Saving an unchanged vibration pattern overwrites another device's edit
+- Where: `meditate-core/src/db/vibration_patterns.rs:266-312` (`update_vibration_pattern` always writes and emits).
+- Problem: the same as #103 for the other kinds: the phone edits a pattern, the laptop opens the editor on the old version and saves without changing anything; after sync both show the laptop's old version.
+- Fix: return early when name, duration, intensities and chart kind equal the stored row. One test.
+
+## X. Release pipeline (build environment: ask first)
+
+### #168 A release APK can build without its reproducibility pins
+- Where: `meditate-android/android/rust-build.sh:41-50, 76`.
+- Problem: a missing platform 34 prints nothing and a missing build-tools 31.0.0 only warns; both exit 0 with a signed APK that F-Droid's check rejects. RUSTFLAGS is a space-joined string, so a repo path with a space breaks the remap flags.
+- Fix: for `PROFILE=release`, fail when either pin is missing (debug keeps the warning); use `CARGO_ENCODED_RUSTFLAGS`. Build environment: ask first, then run the repro probe.
+
+### #169 Release CI: unpinned actions and images, and a light run can be picked
+- Where: `.github/workflows/flatpak.yml:27-165` (`@v5`/`@v6`, image by tag, `tonistiigi/binfmt` untagged and privileged at 137); `build-aux/attach-flatpaks.sh:24-26`.
+- Problem: whoever controls those tags can change what Linux users install. attach-flatpaks takes any successful run for the commit, including a `scope=light` run with no bundles (`flatpak.yml:107, 131`), and then fails at the download without saying why.
+- Fix: pin each `uses:` to a commit SHA and each image to `@sha256:`; in attach-flatpaks, pick a run that has both artifacts.
+
+### #174 build.sh fails for Android on a machine without rustup
+- Where: `build.sh:167` runs `build-aux/setup-android.sh` before `ensure_rust` (`:171`); `setup-android.sh:300-303` exits when rustup is missing.
+- Problem: README promises that build.sh installs missing dependencies, but a fresh machine stops with a rustup error on `./build.sh android`.
+- Fix: call `ensure_rust` before the Android bootstrap. README/BUILDING say "install rustup first" until then.
+
+## Later
+
+Ideas and larger improvements, not bugs; the maintainer decides if and when.
+
+### #177 Applying a preset is not atomic
+- Where: `meditate-core/src/preset_config.rs:485-` (each write in its own transaction, `db/settings.rs:25`); callers gtk `timer/imp.rs:3498`, android `ui.rs:1288`.
+- Problem: a write failing partway (busy database, full disk) leaves settings, interval bells and box-breath phases out of step with the preset.
+- Fix: a savepoint helper (`SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, keeps `&self`) and `db.run_in_transaction(|db| apply(...))`.
+
+### #178 GTK: the Done note field should grow instead of scrolling in 180 px
+- Where: `meditate-gtk/data/ui/timer_view.blp:836-841`.
+- Fix: drop the inner ScrolledWindow and `height-request`, keep `note_view` (the page already scrolls), and check that `log-note-editor` still draws its background. Android already grows.
+
+### #179 Bundled Box Breath voice cues
+- Where: `meditate-gtk/data/sounds/` + gresource, `meditate-android/assets/sounds/` + `src/sounds.rs`, `meditate-core/src/db/seeds.rs`.
+- Idea: four short CC0/CC-BY cues ("Inhale", "Hold", "Exhale", "Hold") as box-breath seeds, so the phase chooser isn't empty. The seed is one-shot (`seeds.rs:27-29`), so existing installs need a seed-version step.
+
+### #180 Warn about a missing bell sound before Start
+- Where: rows already say "Missing" (`meditate-core/src/bells.rs:304`, gtk `bells.rs:384`, android `ui.rs:3224`).
+- Idea: a core check over the active bells; a warning style on the row, a Setup banner, and block or confirm Start, so a bell isn't silent mid-session. Both apps; vibration patterns the same.
+
+### #181 Daily goal history
+- Idea: a `goal_history(effective_from, minutes)` table instead of the `daily_goal_mins` setting; on change, ask "from today" or "retroactively"; the heatmap and goal ring look up the value per day. Synced through events; needs a migration seeded from the current setting. Both apps.
+
+### #182 Mindfulness bell during the day
+- Idea (tentative): a tab that rings at intervals during set hours. Prototype background scheduling first (Android exact alarms; Linux notifications or feedbackd).
+
+### #183 Nextcloud with a self-signed or private-CA certificate can't connect
+- Where: `meditate-core/Cargo.toml:20` (`ureq = "2"`, built-in roots only), `sync/webdav.rs:176`.
+- Idea: also trust the system store or a user-pinned certificate. A new dependency changes Cargo.lock: ask first.
+
 ## Deferred refactors
 
 Only together with other work in the same area; none has a bug behind it.
@@ -768,4 +874,4 @@ So these aren't proposed again:
 - Moving the Log edit build into core: low value; reconsider when fixing #5/#6.
 - Splitting `ui.rs` per screen or the big core files: cosmetic.
 - A `Divider` component, a page stack model, caching JNI classes, moving the CAN_DUCK policy to Rust, a typed `SettingKey` enum, a core pending-Undo queue.
-- Left out of the bug audit on purpose: configChanges / activity recreate and the import-labels transaction (both in TODO.md); Back on the Done screen discarding the session (decided behaviour).
+- Back on the Done screen discarding the session (decided behaviour).

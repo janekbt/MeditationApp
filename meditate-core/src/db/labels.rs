@@ -15,8 +15,8 @@ pub struct Label {
     pub uuid: LabelUuid,
 }
 
-/// A same-name label collision materialised by sync (see the
-/// name-collision retry in `apply_event` below): `suffixed` is the
+/// A same-name label collision materialised by sync (see
+/// `claim_name` in events.rs): `suffixed` is the
 /// row that got the `(conflict-<uuid8>)` name, `base` the row that
 /// kept the original. Surfaced to the shells so the user can merge
 /// or deliberately keep both.

@@ -49,9 +49,9 @@ object MeditateHaptics {
 
     // Whether the device's vibrator can render graded amplitude.
     // When false, createWaveform(timings, amplitudes, …) rounds
-    // every non-zero amplitude up to 100% (on/off only) — the
-    // Rust side then PWM-emulates amplitude instead. Device-
-    // constant; Rust caches the first answer.
+    // every non-zero amplitude up to 100% (on/off only), so the
+    // pattern editor offers only Bar and binarizes the pattern.
+    // Device-constant; Rust caches the first answer.
     @JvmStatic
     fun hasAmplitudeControl(context: Context): Boolean {
         val v = resolveVibrator(context) ?: return false

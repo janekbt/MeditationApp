@@ -34,8 +34,7 @@ read that file and follow it the same way.
 - Commits: `<area>: <change>`, short, the body says why. One logical
   change per commit. `Fixes #N` only for real GitHub issues, never for
   the numbers in OPEN-ISSUES.md.
-- Open work, bugs and ideas: `OPEN-ISSUES.md`. `TODO.md` still holds
-  a few live items until it is merged in.
+- Open work, bugs and ideas: `OPEN-ISSUES.md`, one list.
 
 ## Commands
 
@@ -148,7 +147,5 @@ change (`/spec` step 5).
 | A bug fixed or found | `OPEN-ISSUES.md` |
 
 Also: `CONTRIBUTING.md` (for people), `meditate-core/README.md` (the
-core crate). Some older files (`ANDROID_PORT.md`, `Nextcloud-Sync.md`,
-`VIBRATION_ARCHITECTURE.md`, `PONYTAIL-REPORT.md`, `baseline/`) are
-plans and reports from the past; trust the code and the files above
-over them.
+core crate). Finished plans and reports are not kept as files; git
+history has them.

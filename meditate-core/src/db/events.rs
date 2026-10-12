@@ -516,7 +516,7 @@ impl Database {
     /// is recomputed from MAX-lamport queries against the events table,
     /// not from incremental application of just-this-event's payload.
     ///
-    /// Conflict-resolution rules (per Nextcloud-Sync.md):
+    /// Conflict-resolution rules (see "Conflict resolution" in EVENTS.md):
     /// - Same event observed twice → idempotent.
     /// - Two devices update same target → higher `lamport_ts` wins;
     ///   tie breaks on lex-larger `device_id`.
@@ -1586,12 +1586,11 @@ mod tests {
 
     // ── Lamport observation rule on apply_event (regression) ────────────────
     //
-    // Per Nextcloud-Sync.md: "on remote event observation: lamport =
-    // max(lamport, remote.lamport) + 1". apply_event must advance the
-    // local clock for fresh remote events so a follow-up local write
-    // strictly orders after what we just observed. Skipped for our own
-    // device's events (idempotency) and for duplicates (only first
-    // observation counts).
+    // Lamport observation rule (see "Implementation pointers" in
+    // EVENTS.md): lamport = max(lamport, remote.lamport) + 1.
+    // apply_event must advance the local clock for fresh events so a
+    // follow-up local write strictly orders after what we just
+    // observed. Skipped for duplicates (only first observation counts).
 
     #[test]
     fn apply_event_advances_local_lamport_when_observing_a_higher_remote_event() {

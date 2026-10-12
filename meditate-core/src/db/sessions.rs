@@ -3414,7 +3414,7 @@ mod tests {
         assert_eq!(get_median_duration_secs_from_db(&db).unwrap(), Some(600));
     }
 
-    // ── UUIDs on sessions and labels (Nextcloud-Sync phase A1) ───────────────
+    // ── UUIDs on sessions and labels ─────────────────────────────────────────
     //
     // Every session and label row must carry a stable cross-device UUID.
     // The DB generates it at insert time — the value the caller puts in
