@@ -1206,12 +1206,7 @@ fn local_save<T, E: std::fmt::Debug>(
         Ok(v) => Some(v),
         Err(e) => {
             meditate_core::log("guided.local", &format!("{what} FAILED: {e}"));
-            LOCAL_FOLDER.with(|l| {
-                let mut l = l.borrow_mut();
-                if l.busy() {
-                    l.progress.write_failed();
-                }
-            });
+            LOCAL_FOLDER.with(|l| l.borrow_mut().progress.write_failed());
             show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
             None
         }
@@ -1258,9 +1253,9 @@ fn local_scan() {
 }
 
 /// Ask Kotlin to read these files' lengths (skipping ones already
-/// being read).
-fn read_local_lengths(root: &str, files: Vec<(i64, String)>) {
-    let Some(app) = android_app() else { return };
+/// being read). False when the reading couldn't start; the user was
+/// told.
+fn read_local_lengths(ui: &MainWindow, root: &str, files: Vec<(i64, String)>) -> bool {
     let files: Vec<_> = LOCAL_FOLDER.with(|l| {
         let mut l = l.borrow_mut();
         for (id, _) in &files {
@@ -1268,15 +1263,21 @@ fn read_local_lengths(root: &str, files: Vec<(i64, String)>) {
         }
         files.into_iter().filter(|(id, _)| l.reading.insert(*id)).collect()
     });
-    if !files.is_empty() && !guided::read_local_lengths(app, root, &files) {
+    let started = files.is_empty() || android_app().is_some_and(|app| guided::read_local_lengths(app, root, &files));
+    if !started {
         // Never started: let a later scan or pick ask again.
         LOCAL_FOLDER.with(|l| {
             let mut l = l.borrow_mut();
             for (id, _) in &files {
                 l.reading.remove(id);
+                l.progress.finished(*id);
             }
+            l.progress.write_failed();
         });
+        show_notice(ui, ui.global::<Tr>().invoke_couldnt_read_audio(), None, 4);
+        return false;
     }
+    true
 }
 
 /// Make Local Folder file `id` the current Guided file. A missing
@@ -1298,7 +1299,10 @@ fn select_local_file(ui: &MainWindow, guided_sel: &Slot<GuidedSel>, id: i64) {
             l.failed.remove(&id);
             l.reading.remove(&id);
         });
-        read_local_lengths(&file.root, vec![(id, file.rel_path.clone())]);
+        // Not selected when its length can't be read, as when the read fails later.
+        if !read_local_lengths(ui, &file.root, vec![(id, file.rel_path.clone())]) {
+            return;
+        }
     }
     let sel = GuidedSel {
         name: meditate_core::local_folder::file_name(&file.rel_path).to_string(),
@@ -1429,7 +1433,7 @@ fn poll_local_folder(ui: &MainWindow, guided_sel: &Slot<GuidedSel>) {
                 .filter(|f| !f.missing && f.duration_secs.is_none())
                 .map(|f| (f.id, f.rel_path))
                 .collect();
-            read_local_lengths(&root, unread);
+            read_local_lengths(ui, &root, unread);
         }
         changed = true;
     }

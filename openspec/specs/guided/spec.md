@@ -149,10 +149,15 @@ The Local Folder refresh button SHALL spin while the folder or new file lengths 
 - **THEN** the "can't be reached" banner shows and no "Folder refreshed" message
 - **TEST** `meditate-core/src/local_folder.rs::an_unreachable_folder_reports_no_refresh`
 
-#### Scenario: A tapped refresh whose result could not be saved shows no success
-- **WHEN** the user taps refresh and saving the scan or a length fails
-- **THEN** "Save failed" shows and no "Folder refreshed" message
+#### Scenario: A tapped refresh whose result could not be saved or read shows no success
+- **WHEN** the user taps refresh and saving the scan or a length fails, or the length reading can't start
+- **THEN** "Save failed" or "Couldn't read audio file" shows and no "Folder refreshed" message
 - **TEST** `meditate-core/src/local_folder.rs::a_failed_write_reports_no_refresh`
+
+#### Scenario: A failure while no refresh waits doesn't silence a later one
+- **WHEN** a picked file's length can't be read, and later the user taps refresh and it succeeds
+- **THEN** "Folder refreshed" shows
+- **TEST** `meditate-core/src/local_folder.rs::a_failure_with_no_tapped_refresh_is_forgotten`
 
 #### Scenario: The percentage counts only this refresh's files
 - **WHEN** a folder of 400 read files gains 4 new ones and 1 of them has been read

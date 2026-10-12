@@ -73,9 +73,7 @@ pub fn length_failed(id: i64) -> bool {
 pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Database) -> Result<T, E>) -> Option<T> {
     let done = app.with_db(|db| f(db.core())).and_then(Result::ok);
     if done.is_none() {
-        if busy() {
-            PROGRESS.with(|p| p.borrow_mut().write_failed());
-        }
+        PROGRESS.with(|p| p.borrow_mut().write_failed());
         if let Some(window) = app.active_window().and_downcast::<crate::window::MeditateWindow>() {
             window.add_toast(adw::Toast::new(&gettext("Save failed")));
         }

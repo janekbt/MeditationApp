@@ -38,7 +38,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
-| [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184 | one bad file or event blocks sync |
+| [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
 
 ---
@@ -806,6 +806,11 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: the same as #103 for the other kinds: the phone edits a pattern, the laptop opens the editor on the old version and saves without changing anything; after sync both show the laptop's old version.
 - Fix: return early when name, duration, intensities and chart kind equal the stored row. One test.
 
+### #188 A session event that isn't JSON can stop the database from opening
+- Where: `meditate-core/src/db/schema.rs` (`ADDED_COLUMNS` fill for `sessions.guided_file_name`), `db/sessions.rs` (`recompute_session`, the named-event lookup), `db/labels.rs:366`; `append_event` stores payloads unchecked.
+- Problem: `json_extract` fails on a payload that isn't JSON. In the one-time fill that fails `Database::init` on every open (the fill rolls back and retries). No known writer produces such a payload; found by the second review of f4c6b81.
+- Fix: `CASE WHEN json_valid(payload) THEN json_extract(...) END` at all three places; one test with a broken payload in the log.
+
 ## X. Release pipeline (build environment: ask first)
 
 ### #168 A release APK can build without its reproducibility pins
@@ -859,7 +864,7 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 - Problem: seen on the FP5 (Android 15) 2026-10-12: the system's ExternalStorageProvider failed its restricted-path check ("NoSuchFileException: /storage/emulated", "Queried directory ... is hidden") and returned no children. Meditate showed "0 files" and marked all files not found; nothing said that Android, not the folder, was the problem. A phone restart fixed it. Stars and plays were kept.
 - Idea: when a scan of a folder that had files comes back with none, keep the files as they were and show the "Folder not reachable" banner with Choose Again, instead of marking all missing. A really emptied folder then needs one confirmation.
 
- or private-CA certificate can't connect
+### #183 Nextcloud with a self-signed or private-CA certificate can't connect
 - Where: `meditate-core/Cargo.toml:20` (`ureq = "2"`, built-in roots only), `sync/webdav.rs:176`.
 - Idea: also trust the system store or a user-pinned certificate. A new dependency changes Cargo.lock: ask first.
 

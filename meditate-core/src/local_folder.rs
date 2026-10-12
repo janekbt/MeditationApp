@@ -144,9 +144,11 @@ impl RefreshProgress {
         self.done.insert(id);
     }
 
-    /// A scan or length could not be saved; the app said so already.
+    /// A scan or length could not be saved or read; the app said so
+    /// already. Counts only for a tapped refresh waiting for its
+    /// message, so a failed pick can't silence a later refresh.
     pub fn write_failed(&mut self) {
-        self.failed = true;
+        self.failed |= self.tapped;
     }
 
     /// Percent of this run's lengths done; None while there are none
@@ -377,6 +379,16 @@ mod tests {
         assert!(!p.settle(false, false));
         p.tap();
         assert!(p.settle(false, false), "the next run starts clean");
+    }
+
+    #[test]
+    fn a_failure_with_no_tapped_refresh_is_forgotten() {
+        let mut p = RefreshProgress::default();
+        // A picked file's length couldn't be read: no refresh waits.
+        p.queued(7);
+        p.write_failed();
+        p.tap();
+        assert!(p.settle(false, false), "the later refresh still reports");
     }
 
     #[test]
