@@ -22,6 +22,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | E. Audio files | #54, #106, #93, #108, #107, #76 | broken, oversized or orphaned audio files |
 | [x] | F. Sync account and status | #42, #70, #89, #95, #96, #97, #44, #83 | sync that stops silently or leaks the password |
 | [x] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #122, #158 | names that differ per device, saves that fail |
+| [x] | U1. /spec groundwork (before H) | #161 | every later batch leaves specs and gets a review |
 | [ ] | H. Timer engine | #39, #45, #46, #47, #72, #113 | wrong minutes, bells at wrong times |
 | [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
@@ -35,7 +36,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
 | [ ] | S. Cleanup | #58, #61, #85, #87, #157 | dead code, wrong comments |
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
-| [ ] | U. Docs for contributors | #161 | another person's AI breaks rules it can't see |
+| [ ] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 
 ---
@@ -710,22 +711,28 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 ---
 
-## U. Docs for contributors
+## U1. /spec groundwork
 
-### #161 A contributor's AI starts with nothing and trusts stale docs
-- Where: repo root has no AGENTS.md or CLAUDE.md; CONTRIBUTING.md ignores the Android app; finished plans and old reports sit next to the current docs.
-- Problem: many hard rules live only in the maintainer's private Claude memory (F-Droid reproducibility, JDK 17, Android mirrors GTK, Slint overlays declared last, no unusual Unicode on Android, no long dash or cut-off text, nine translations, "Fixes #N" only for real GitHub issues). A contributor's AI breaks them on its first changes, and it treats every .md file as current.
-- Fix (the `/spec` loop in `.claude/skills/spec/` is written and needs these to work):
+### #161 A contributor's AI starts with nothing, and /spec can't run yet
+- Where: repo root has no AGENTS.md or CLAUDE.md; `.claude/skills/spec/` refers to AGENTS.md and `build-aux/check-specs.sh`, neither exists.
+- Problem: many hard rules live only in the maintainer's private Claude memory (F-Droid reproducibility, JDK 17, Android mirrors GTK, Slint overlays declared last, no unusual Unicode on Android, no long dash or cut-off text, nine translations, "Fixes #N" only for real GitHub issues). A contributor's AI breaks them on its first changes.
+- Fix:
   1. AGENTS.md (about 120 lines): what the app is, map of core / GTK / Android and where decisions go, build/test/lint commands for each part (run each before writing it down), the hard rules above plus decisions-in-core, migrations, strict TDD, no warning suppression, device check before commit, the protected Android build-environment list; "every change goes through /spec"; a doc map (which change belongs in which doc, e.g. changed event -> EVENTS.md, new sync-able kind -> ENTITIES.md) that /spec step 5 uses. CLAUDE.md is one line, `@AGENTS.md`. Personal things (test phone, laptop memory limit, reporting style) stay private.
   2. `build-aux/check-specs.sh`: every `**TEST** \`<file>::<fn>\`` line in `openspec/specs/` and in open changes (not the archive) points at a test fn that exists in that file; run from /spec, added to CI once the specs settle. One small self-test.
   3. Seed `openspec/specs/labels/spec.md` from batch G's tests (same-name pair, freed name, healing, merge moves defaults, rename no-op, deleted label saves, Undo position): proves the format before real use.
-  4. CONTRIBUTING.md: add the Android app, replace "test on the Librem 5" with the real rule, point to AGENTS.md and /spec.
-  5. Check README, ARCHITECTURE, BUILDING, DECISIONS, ENTITIES, EVENTS, RELEASE and meditate-core/README against the code (read-only agents in parallel, each claim the code no longer supports with its line), then fix those and cut history.
-  6. Delete finished plans and old reports after moving anything still true into ARCHITECTURE.md or DECISIONS.md: ANDROID_PORT.md, Nextcloud-Sync.md, VIBRATION_ARCHITECTURE.md, baseline/, PONYTAIL-REPORT.md (its still-open findings move here). Update the references to them (ARCHITECTURE.md "See also", comments in `db/events.rs` and `db/sessions.rs`). Open choice: delete (recommended, git keeps them) or move to `docs/history/`.
-  7. TODO.md moves into this file as a "Later" section; one backlog.
-  8. Try /spec against two pressure cases with a fresh agent ("tests are green and the maintainer is away, commit?", "the test passed first time") and tighten the wording where it gives in.
+  4. Try /spec against two pressure cases with a fresh agent ("tests are green and the maintainer is away, commit?", "the test passed first time") and tighten the wording where it gives in.
 - Test: a fresh agent with only the repo answers contributor questions ("where does a new rule go?", "may I bump a crate?", "how do I build the APK?", "I added a toast, what else do I owe?"); the maintainer reads its answers and AGENTS.md.
 - Left out on purpose: the OpenSpec CLI (we use its file formats by hand, so it can be adopted later), Superpowers as a plugin (its worktrees, per-task commits and PR flow fight ours; its gates, review brief and test rules are in /spec), a docs/ folder or site, per-module docs.
+
+## U2. Docs for contributors
+
+### #163 Stale docs and old plans an AI trusts as current
+- Where: CONTRIBUTING.md ignores the Android app; finished plans and old reports sit next to the current docs.
+- Fix:
+  1. CONTRIBUTING.md: add the Android app, replace "test on the Librem 5" with the real rule, point to AGENTS.md and /spec.
+  2. Check README, ARCHITECTURE, BUILDING, DECISIONS, ENTITIES, EVENTS, RELEASE and meditate-core/README against the code (read-only agents in parallel, each claim the code no longer supports with its line), then fix those and cut history.
+  3. Delete finished plans and old reports after moving anything still true into ARCHITECTURE.md or DECISIONS.md: ANDROID_PORT.md, Nextcloud-Sync.md, VIBRATION_ARCHITECTURE.md, baseline/, PONYTAIL-REPORT.md (its still-open findings move here). Update the references to them (ARCHITECTURE.md "See also", comments in `db/events.rs` and `db/sessions.rs`). Open choice: delete (recommended, git keeps them) or move to `docs/history/`.
+  4. TODO.md moves into this file as a "Later" section; one backlog.
 
 ## V. Randomised sync test
 

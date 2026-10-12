@@ -19,11 +19,18 @@ the doc map: `AGENTS.md`.
 
 | The change | What it needs |
 |---|---|
-| Typo, comment, doc-only, translation fix | No change folder. Steps 5 to 7 still apply. |
+| Typo, comment, doc-only, a fix to an existing translation | No change folder. Steps 5 to 7 still apply. |
 | Anything that changes what the app does, or touches more than one file | The full loop. |
 | A batch of OPEN-ISSUES items | One change folder for the batch; the proposal lists the issue numbers. |
 
-Unsure? Use the full loop.
+Changed user-visible text is behaviour, not a translation fix. Unsure?
+Use the full loop. Only the maintainer saying explicitly "skip /spec"
+skips it, for that one change; "it's tiny" is not that. Say in one line
+what the size table asks for and offer the short form below.
+
+The short form, for a small behaviour change: a proposal of about five
+lines, one delta with the scenarios it needs, a tasks.md with the loop
+checklist and one task per scenario. The steps and gates stay the same.
 
 ## The loop
 
@@ -97,9 +104,12 @@ For each scenario, in the order of `tasks.md`:
    hand, never computed by the code under test.
 2. Run it and watch it fail for the right reason. A compile error is not
    a failure; make it compile with a stub first. A test that passes at
-   once means the behaviour already exists: say so in `tasks.md` and check
-   the test would fail if the behaviour broke (break it on purpose, run,
-   restore).
+   once either tests nothing or the behaviour already exists. Find out:
+   make the smallest edit to the production code (never the test) that
+   breaks the behaviour, run, restore. Still passing: rewrite the test.
+   Failing: note in `tasks.md` that the behaviour existed, and if the
+   plan assumed it was missing, re-check the proposal; if what you build
+   changes, ask.
 3. Write the least code that passes it. Both apps, where the behaviour
    is in both; decisions go in core.
 4. Run the whole suite, not just the file. A failure you saw and did
@@ -151,11 +161,15 @@ Claim nothing you have not just seen:
 
 Build what the human tests on (APK, GTK build) and give them test steps:
 what to do, what they should see, for each scenario that only a person
-can check.
+can check. Write the test steps, the artifact paths and the proposed
+commit message into `tasks.md` too, so a new session can ship once the
+human approves.
 
 ```
-HARD GATE: no commit before the human tested and approved.
-"Tests are green" is not approval.
+HARD GATE: no commit, not even a local one, before the human tested
+and approved. "Tests are green" is not approval. An instruction to
+ship ("finish it up", "push it tonight") given before they tested is
+not approval either: reply with the test steps and wait.
 ```
 
 ### 7. Ship
@@ -164,7 +178,9 @@ HARD GATE: no commit before the human tested and approved.
    the change folder to `openspec/changes/archive/YYYY-MM-DD-<name>/`, run
    `build-aux/check-specs.sh` again.
 2. Show the commit message; commit and push to `beta` once approved, in
-   one commit with the code, the specs and the archived folder.
+   one commit with the code, the specs and the archived folder. A
+   contributor without push rights opens a pull request against `beta`
+   instead, after step 6, and the maintainer tests and merges it.
 
 ## Stop and ask before
 
