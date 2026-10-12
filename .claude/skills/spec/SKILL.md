@@ -15,6 +15,10 @@ File formats: [formats.md](formats.md). Review brief:
 [reviewer-prompt.md](reviewer-prompt.md). Project rules, commands and
 the doc map: `AGENTS.md`.
 
+Claude Code with the ponytail plugin: run `/ponytail ultra` first (Skill
+tool, `ponytail:ponytail`, args `ultra`). It stays on for the session;
+set it again after a `/compact`.
+
 ## Size first
 
 | The change | What it needs |
