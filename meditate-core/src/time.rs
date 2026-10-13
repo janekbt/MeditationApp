@@ -47,6 +47,25 @@ pub fn today_local() -> chrono::NaiveDate {
     chrono::Local::now().date_naive()
 }
 
+/// The day a screen was built for. Both apps ask it from a loop
+/// that already runs; a clock stopped by suspend catches up on the
+/// first ask after wake-up, which a midnight timeout would not.
+pub struct DayWatch(chrono::NaiveDate);
+
+impl DayWatch {
+    pub fn new(today: chrono::NaiveDate) -> Self {
+        Self(today)
+    }
+
+    /// True once when `today` differs from the last day seen, in
+    /// either direction (a clock set back is a new day too).
+    pub fn new_day(&mut self, today: chrono::NaiveDate) -> bool {
+        let changed = today != self.0;
+        self.0 = today;
+        changed
+    }
+}
+
 /// Wall-clock nanos as a `u64`, suitable as an xorshift64 seed for
 /// per-session bell jitter. Always returns ≥ 1 (xorshift64 outputs
 /// 0 forever from a 0 seed, so we collapse a clock that somehow
@@ -218,6 +237,16 @@ pub(crate) mod test_zone {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_new_day_is_reported_once() {
+        let day = |d| chrono::NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let mut watch = super::DayWatch::new(day(12));
+        assert!(!watch.new_day(day(12)), "same day");
+        assert!(watch.new_day(day(13)), "midnight passed");
+        assert!(!watch.new_day(day(13)), "reported once");
+        assert!(watch.new_day(day(12)), "clock set back");
+    }
+
     use super::*;
 
     // ── boot_time_now ──────────────────────────────────────────────────

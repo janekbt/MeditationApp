@@ -4744,6 +4744,7 @@ fn build_ui() -> MainWindow {
         let pending_deletes_tick = pending_deletes.clone();
         let label_conflict_tick = label_conflict_slot.clone();
         let mut local_watch = local_change_watch();
+        let mut day_watch = meditate_core::time::DayWatch::new(meditate_core::time::today_local());
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -4819,6 +4820,13 @@ fn build_ui() -> MainWindow {
                 }
                 if let Some(text) = pick_error {
                     show_notice(&ui, text, None, 4);
+                }
+                // Midnight passed (or the phone woke up after it):
+                // "today" on Stats and the Log headers are stale.
+                if day_watch.new_day(meditate_core::time::today_local()) {
+                    refresh_stats(&ui);
+                    // Only the headers changed: keep the loaded pages.
+                    render_log_feed(&ui, &loaded_log_sessions_tick, &pending_deletes_tick);
                 }
                 // A synced write landed since the last tick:
                 // push it (bursts collapse into one sync).

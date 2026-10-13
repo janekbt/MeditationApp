@@ -740,7 +740,7 @@ mod tests {
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
         assert!(stats.contains("meditate_core::insights::input_from_db(db.core(), "));
         assert!(stats.contains("meditate_core::goal::today_from_db(db.core(), "));
-        assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 4);
+        assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 5, "append, prepend (three), delete");
         // The trend compares rolling 30-day windows, and says so.
         assert!(stats.contains("gettext(\"{pct}% vs the 30 days before ({this} vs {last})\")"));
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {

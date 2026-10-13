@@ -28,6 +28,12 @@ pub struct LogView {
     // Filter state
     pub filter_notes_only: Cell<bool>,
     pub filter_label_id:   Cell<Option<i64>>,
+    /// Label ids in the order the filter dropdown shows them, after
+    /// "All labels".
+    pub filter_label_ids:  RefCell<Vec<i64>>,
+    /// True while `refresh_filter_labels` swaps the dropdown's model,
+    /// whose selection notifications are not the user's pick.
+    pub building_filter:   Cell<bool>,
 
     // Pagination: how many rows are currently rendered. Rebuilding 2000+
     // rows upfront makes the whole app sluggish, so we load in pages and
@@ -128,11 +134,16 @@ impl LogView {
         let Some(app) = self.get_app() else { return; };
 
         // Fetch labels first (needed for card rendering)
-        let labels = app
+        let read = app
             .with_db(super::super::db::Database::list_labels)
-            .and_then(std::result::Result::ok)
-            .unwrap_or_default();
-        *self.labels.borrow_mut() = labels;
+            .and_then(std::result::Result::ok);
+        // The filtered label was deleted (a sync, a merge): show everything.
+        if let (Some(labels), Some(id)) = (&read, self.filter_label_id.get()) {
+            if !labels.iter().any(|l| l.id == id) {
+                self.filter_label_id.set(None);
+            }
+        }
+        *self.labels.borrow_mut() = read.unwrap_or_default();
         self.reload_guided_names(&app);
 
         // Reset pagination + DOM + section tracking.
@@ -242,6 +253,7 @@ impl LogView {
         let sections = self.sections_by_key.borrow();
         let sec = sections.get(&key).expect("section populated above");
         let card = build_card(session, label_map, guided_names);
+        card.set_visible(!self.is_pending_delete(session.id));
         sec.cards_box.append(&card);
         self.cards_by_id.borrow_mut().insert(session.id, card);
         sec.count.set(sec.count.get() + 1);
@@ -277,6 +289,7 @@ impl LogView {
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
         let card = build_card(&session, &label_map, &self.guided_names.borrow());
+        card.set_visible(!self.is_pending_delete(session.id));
         drop(labels_ref);
 
         let mut sections = self.sections_by_key.borrow_mut();
@@ -320,13 +333,30 @@ impl LogView {
 
     /// Populate the label combo in the filter popover.
     pub fn refresh_filter_labels(&self, combo: &adw::ComboRow) {
-        let labels = self.labels.borrow();
+        if let Some(fresh) = self.get_app()
+            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
+            .and_then(std::result::Result::ok)
+        {
+            *self.labels.borrow_mut() = fresh;
+        }
+        let labels = self.labels.borrow().clone();
+        // The filtered label was deleted: show everything, as Android does.
+        if let Some(id) = self.filter_label_id.get() {
+            if !labels.iter().any(|l| l.id == id) {
+                self.obj().set_filter_label_id(None);
+                self.obj().refresh();
+            }
+        }
         let all_label = gettext("All labels");
         let names: Vec<&str> = std::iter::once(all_label.as_str())
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
+        let ids: Vec<i64> = labels.iter().map(|l| l.id).collect();
+        self.building_filter.set(true);
         combo.set_model(Some(&gtk::StringList::new(&names)));
-        combo.set_selected(0);
+        combo.set_selected(filter_position(&ids, self.filter_label_id.get()));
+        *self.filter_label_ids.borrow_mut() = ids;
+        self.building_filter.set(false);
     }
 
     pub fn show_add_dialog(&self) {
@@ -720,6 +750,11 @@ impl LogView {
         }
     }
 
+    /// A rebuild during the Undo time must keep the card hidden.
+    fn is_pending_delete(&self, session_id: i64) -> bool {
+        self.pending_deletes.borrow().iter().any(|(id, _)| *id == session_id)
+    }
+
     /// Drain `pending_deletes`, delete each row from the DB, and tear down
     /// the corresponding cards. One STATS invalidate at the end rather
     /// than per-row. Called from the toast's dismissed handler when the
@@ -746,13 +781,14 @@ impl LogView {
 
         // Remove widget from its section + update the section's counter.
         // Cloned out of the borrow so we can mutate the map below.
+        // A rebuild may have left this session off the screen (a filter,
+        // a page not loaded): then no count includes it.
+        let Some(card) = self.cards_by_id.borrow_mut().remove(&session_id) else { return; };
         let section = self.sections_by_key.borrow().get(&key).cloned();
         let section_empty = if let Some(sec) = section.as_ref() {
-            if let Some(card) = self.cards_by_id.borrow().get(&session_id).cloned() {
-                sec.cards_box.remove(&card);
-            }
+            sec.cards_box.remove(&card);
             sec.count.set(sec.count.get().saturating_sub(1));
-            sec.total_secs.set((sec.total_secs.get() - session.duration_secs).max(0));
+            sec.total_secs.set((sec.total_secs.get() - meditate_core::format::log_card_total_secs(session.duration_secs)).max(0));
             sec.caption.set_label(
                 &section_caption_text(sec.count.get(), sec.total_secs.get()),
             );
@@ -771,7 +807,6 @@ impl LogView {
             }
         }
 
-        self.cards_by_id.borrow_mut().remove(&session_id);
         self.sessions.borrow_mut().retain(|s| s.id != session_id);
         self.loaded_count.set(self.loaded_count.get().saturating_sub(1));
 
@@ -810,6 +845,10 @@ impl LogView {
         let original_guided_file_uuid = session
             .and_then(|s| s.guided_file_uuid.clone());
         let original_guided_file_name = session.and_then(|s| s.guided_file_name.clone());
+        // The dialog picks minutes; an edit keeps the seconds (as Android).
+        let original_second = session
+            .and_then(|s| glib::DateTime::from_unix_local(s.start_time).ok())
+            .map_or(0, |d| d.second());
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
@@ -1170,13 +1209,15 @@ impl LogView {
                     return;
                 };
                 let cal_date = calendar.date();
-                let start_time = glib::DateTime::new(
-                    &glib::TimeZone::local(),
-                    cal_date.year(), cal_date.month(), cal_date.day_of_month(),
-                    time_hours_spin.value() as i32,
-                    time_minutes_spin.value() as i32,
-                    0.0,
-                ).ok().map_or_else(meditate_core::time::unix_now, |d| d.to_unix());
+                let start_time = chrono::NaiveDate::from_ymd_opt(
+                    cal_date.year(), cal_date.month() as u32, cal_date.day_of_month() as u32,
+                )
+                .and_then(|date| date.and_hms_opt(
+                    time_hours_spin.value() as u32,
+                    time_minutes_spin.value() as u32,
+                    original_second as u32),
+                )
+                .map_or_else(meditate_core::time::unix_now, meditate_core::time::local_naive_to_unix);
                 let label_id = if label_expander.enables_expansion() {
                     selected_label_id_for_save.get()
                 } else {
@@ -1261,3 +1302,10 @@ fn format_date(unix_secs: i64) -> String {
 }
 
 
+
+/// The filter dropdown's row for the active label: 0 is "All labels".
+pub(super) fn filter_position(ids: &[i64], active: Option<i64>) -> u32 {
+    active
+        .and_then(|id| ids.iter().position(|&i| i == id))
+        .map_or(0, |i| i as u32 + 1)
+}

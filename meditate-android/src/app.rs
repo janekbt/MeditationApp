@@ -3292,6 +3292,22 @@ mod tests {
         assert_eq!(code.matches("meditate_core::time::local_naive_to_unix").count(), 1, "edit/add save");
     }
 
+    /// Left in memory overnight, Stats and the Log kept yesterday as
+    /// today until the tab changed.
+    #[test]
+    fn the_tick_loop_reloads_both_pages_on_a_new_day() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let tick = &code[code.find("timer.start(slint::TimerMode::Repeated, TICK,").expect("tick loop")..];
+        let ask = tick.find("day_watch.new_day(meditate_core::time::today_local())").expect("the tick asks the day watch");
+        let then = &tick[ask..ask + 400];
+        assert!(then.contains("refresh_stats(&ui);"));
+        // Only the headers changed: keep the loaded pages and the scroll.
+        assert!(then.contains("render_log_feed(&ui, &loaded_log_sessions_tick, &pending_deletes_tick);"));
+        assert!(!then[..then.find("render_log_feed").unwrap()].contains("reset_log_feed"));
+    }
+
     // ── TimerMode chip mapping ──────────────────────────────────
 
     #[test]

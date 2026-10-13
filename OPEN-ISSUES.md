@@ -25,7 +25,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | U1. /spec groundwork (before H) | #161 | every later batch leaves specs and gets a review |
 | [x] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166, #185 | wrong minutes, bells at wrong times |
 | [x] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
-| [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
+| [x] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160, #189 | hidden controls, lost edits |
@@ -353,38 +353,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-gtk/src/timer/imp.rs:1142-1160` (`acquire_screen_awake_lock` inhibits only IDLE, and only with "Keep screen awake" on).
 - Problem: automatic suspend can hit in the middle of a session, so bells and the end come late; Android avoids this with a wake lock.
 - Fix: inhibit SUSPEND for every running session, plus IDLE with "Keep screen awake"; release at the end as now.
-
-## J. GTK Log
-
-### #117 GTK: Stats and Log never notice a new day
-- Where: `meditate-gtk/src/stats/mod.rs:16-25`, `log/mod.rs:16-38`; "today" is read at reload (`stats/imp.rs:153-270`) and the Log headers are fixed when built (`log/imp.rs:614-635`).
-- Problem: the app stays open overnight (Librem 5, suspended laptop). The next morning Stats still says "Goal reached · 25m today", the heatmap marks yesterday as today, the Log heads yesterday "Today", and the next save adds a second "Today" section. For sync users #98's rebuild hides it.
-- Fix: store the day each view was built for and count a different day as dirty. Not a GLib midnight timeout (the monotonic clock stops in suspend).
-
-### #118 GTK: saving a session while a Log filter is on adds a non-matching card
-- Where: `meditate-gtk/src/log/mod.rs:31-38`, `log/imp.rs:259-319`.
-- Problem: `prepend_session` ignores the label and notes-only filters and adds 1 to `loaded_count`. Filtered to "Yoga" with 15 of 40 loaded, a saved "Zen" session appears in the list, and Load more skips Yoga #16.
-- Fix: when a filter is set, `invalidate(LOG)` and return.
-
-### #119 GTK: the Log label filter shows "All labels" while it still filters
-- Where: `meditate-gtk/src/log/imp.rs:322-330`; `window/imp.rs:762-777, 804-825`.
-- Problem: entering the Log tab rebuilds the dropdown at "All labels" but keeps the filter, and picking "All labels" again changes nothing. Edit Save, `prepend_session` and the post-sync refresh reload the labels without rebuilding the dropdown, so after renaming "Zen" to "Afternoon", picking "Morning" filters by Afternoon.
-- Fix: `refresh_filter_labels` stores the ids it shows and selects the active filter (clearing it if the label is gone, as Android does); the handler maps through those ids.
-
-### #120 GTK: editing a session in the Log resets its start seconds
-- Where: `meditate-gtk/src/log/imp.rs:1150-1157`.
-- Problem: Save builds the start with 0 seconds, so a note-only edit moves 07:12:45 to 07:12:00 and syncs the change; re-importing an older backup then duplicates the session. Android keeps the seconds.
-- Fix: build the start like Android (`meditate_core::time::local_naive_to_unix` with the original second). One test.
-
-### #121 GTK: deleting a session miscounts the day caption
-- Where: `meditate-gtk/src/log/imp.rs:754`.
-- Problem: cards add rounded minutes but the delete subtracts raw seconds. 10:20 + 5:00 reads "15m"; deleting the 10:20 session leaves "4m" above a "5 min" card.
-- Fix: subtract `log_card_total_secs(session.duration_secs)`.
-
-### #123 GTK: a Log rebuild during a pending delete brings the card back
-- Where: `meditate-gtk/src/log/imp.rs:127-159, 660-666, 726-785`.
-- Problem: delete A, then save another edit (or a sync finishes) within the 5 s Undo: A reappears while the toast still offers Undo. Deleting A again counts it twice ("2 sessions deleted", caption and `loaded_count` off). Nothing is lost.
-- Fix: return early in `commit_delete_in_place` unless `cards_by_id.remove(&id)` finds the card, and hide pending ids when building cards.
 
 ## K. Failed writes and stale pages
 
@@ -834,6 +802,10 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 ### #183 Nextcloud with a self-signed or private-CA certificate can't connect
 - Where: `meditate-core/Cargo.toml:20` (`ureq = "2"`, built-in roots only), `sync/webdav.rs:176`.
 - Idea: also trust the system store or a user-pinned certificate. A new dependency changes Cargo.lock: ask first.
+
+### #190 The day ends at midnight, also for night owls
+- Where: every "today" in core (`time::today_local`, goal, streak, heatmap, Log day groups) counts by calendar day.
+- Idea: a "day starts at" time (for example 3:00), so a 1 a.m. session counts for the day the user lived. It changes counting in both apps (goal, streak, heatmap, Log groups, synced sessions on another device), probably as a setting. Raised during batch J, 2026-10-13.
 
 ## Deferred refactors
 

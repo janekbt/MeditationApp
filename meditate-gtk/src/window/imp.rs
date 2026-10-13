@@ -610,9 +610,13 @@ impl MeditateWindow {
         // above refreshes once on re-show, so the user sees the
         // current state immediately when the window comes back.
         let weak = obj.downgrade();
+        let mut day = meditate_core::time::DayWatch::new(meditate_core::time::today_local());
         glib::timeout_add_seconds_local(2, move || {
             match weak.upgrade() {
                 Some(w) => {
+                    if day.new_day(meditate_core::time::today_local()) {
+                        w.imp().reload_for_new_day();
+                    }
                     if !w.is_mapped() {
                         return glib::ControlFlow::Continue;
                     }
@@ -622,6 +626,19 @@ impl MeditateWindow {
                 None => glib::ControlFlow::Break,
             }
         });
+    }
+
+    /// Log headers and Stats' "today" were built for the old day.
+    fn reload_for_new_day(&self) {
+        let Some(app) = self.obj().application()
+            .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+        else { return; };
+        app.invalidate(crate::application::InvalidateScope::ALL);
+        match self.view_stack.visible_child_name().as_deref() {
+            Some("log") => self.log_view.refresh(),
+            Some("stats") => self.stats_view.refresh(),
+            _ => {}
+        }
     }
 
     /// Recompute and apply the headerbar sync icon's state. Cheap: a
@@ -831,6 +848,17 @@ impl MeditateWindow {
             ),
         );
 
+        // Rebuilt on each open, so renamed labels show their new names.
+        if let Some(popover) = self.log_filter_btn.popover() {
+            popover.connect_show(clone!(
+                #[weak] obj,
+                move |_| {
+                    let imp = obj.imp();
+                    imp.log_view.refresh_filter_labels(&imp.filter_label_row);
+                }
+            ));
+        }
+
         self.filter_label_row.connect_notify_local(
             Some("selected"),
             clone!(
@@ -840,13 +868,19 @@ impl MeditateWindow {
                     if !imp.log_filter_btn.is_active() {
                         return;
                     }
+                    let log = imp.log_view.imp();
+                    if log.building_filter.get() {
+                        return;
+                    }
                     let selected = row.selected() as usize;
                     let label_id = if selected == 0 {
                         None
                     } else {
-                        let labels = imp.log_view.imp().labels.borrow();
-                        labels.get(selected - 1).map(|l| l.id)
+                        log.filter_label_ids.borrow().get(selected - 1).copied()
                     };
+                    if label_id == log.filter_label_id.get() {
+                        return;
+                    }
                     imp.log_view.set_filter_label_id(label_id);
                     imp.log_view.refresh();
                     if let Some(p) = imp.log_filter_btn.popover() { p.popdown(); }
@@ -1009,5 +1043,29 @@ mod sync_status_tests {
         let s = ago(60);  // 60 s in the future
         assert!(s.contains("just now"),
             "future timestamps should clamp to 'just now', got `{s}`");
+    }
+}
+
+#[cfg(test)]
+mod day_tests {
+    fn production() -> String {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/window/imp.rs")).unwrap();
+        src[..src.find("#[cfg(test)]").unwrap()].to_string()
+    }
+
+    /// Left open overnight, Stats and the Log kept yesterday as today.
+    #[test]
+    fn the_window_poll_reloads_both_pages_on_a_new_day() {
+        let src = production();
+        let poll = &src[src.find("glib::timeout_add_seconds_local(2,").expect("the 2 s poll")..];
+        let poll = &poll[..poll.find("\n        });").unwrap()];
+        let ask = poll.find("day.new_day(meditate_core::time::today_local())").expect("the poll asks the day watch");
+        assert!(ask < poll.find("if !w.is_mapped()").unwrap(), "asked even while hidden, so wake-up catches up");
+        assert!(poll[ask..].contains("reload_for_new_day()"));
+        let reload = &src[src.find("fn reload_for_new_day(&self)").expect("reload")..];
+        let reload = &reload[..reload.find("\n    }\n").unwrap()];
+        assert!(reload.contains("InvalidateScope::ALL"), "both pages go stale");
+        assert!(reload.contains("Some(\"log\") => self.log_view.refresh()"));
+        assert!(reload.contains("Some(\"stats\") => self.stats_view.refresh()"));
     }
 }
