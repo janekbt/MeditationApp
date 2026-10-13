@@ -1234,12 +1234,15 @@ impl TimerView {
         let mut installed = Vec::new();
         for (key, row) in rows {
             let view = obj.downgrade();
-            let save = move |volume| {
-                let view = view.upgrade()?;
-                let imp = view.imp();
-                let app = imp.get_app()?;
-                let mode: meditate_core::SessionMode = imp.current_mode().into();
-                let slot = key.slot(mode);
+            let target = {
+                let view = view.clone();
+                move || {
+                    let mode: meditate_core::SessionMode = view.upgrade()?.imp().current_mode().into();
+                    Some((key.slot(mode), mode))
+                }
+            };
+            let save = move |&(slot, mode): &(meditate_core::bell_volume::BellSlot, meditate_core::SessionMode), volume| {
+                let app = view.upgrade()?.imp().get_app()?;
                 let sound = app.with_db(|db| {
                     if let Err(e) = meditate_core::bell_volume::write(db.core(), slot, volume) {
                         meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
@@ -1252,16 +1255,25 @@ impl TimerView {
                 }
                 sound
             };
-            installed.push((key, crate::volume_row::VolumeRow::install(row, save)));
+            installed.push((key, crate::volume_row::VolumeRow::install(row, target, save)));
         }
         *self.volume_rows.borrow_mut() = installed;
         self.refresh_volume_rows();
+    }
+
+    /// Save every level whose slider hasn't rested yet.
+    fn flush_volume_rows(&self) {
+        for (_, row) in self.volume_rows.borrow().iter() {
+            row.flush();
+        }
     }
 
     /// Show every Setup-view bell's stored volume (the end bell's for
     /// the current mode).
     pub(crate) fn refresh_volume_rows(&self) {
         let Some(app) = self.get_app() else { return; };
+        // A level still settling belongs to the bell and mode it was set in.
+        self.flush_volume_rows();
         let mode: meditate_core::SessionMode = self.current_mode().into();
         for (key, row) in self.volume_rows.borrow().iter() {
             let slot = key.slot(mode);
@@ -2100,8 +2112,10 @@ impl TimerView {
 impl TimerView {
     fn on_start(&self) {
         let mode = self.current_mode();
-        // A Volume-row preview doesn't ring into the session.
+        // A Volume-row preview doesn't ring into the session, and a
+        // level still settling is what the session's bells read.
         crate::sound::stop_preview();
+        self.flush_volume_rows();
         // Nor can an Undo change its settings: every toast goes.
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
             window.dismiss_toasts();
@@ -2298,6 +2312,10 @@ impl TimerView {
 
     /// Called by the window when the running page's Pause button is pressed.
     pub fn on_pause(&self) {
+        // Esc reaches here in any state; overtime can't pause (#126).
+        if meditate_core::session::Session::toggle_action(self.ui_state()) != meditate_core::session::ToggleAction::Pause {
+            return;
+        }
         self.cancel_tick();
 
         let now = self.elapsed_since_start();
@@ -3277,10 +3295,8 @@ impl TimerView {
 
         // Rebuild visible starred-preset list for the current mode.
         self.rebuild_starred_presets_list();
-        // Sync the duration row's value label with the current target.
-        self.duration_value_label.set_label(&meditate_core::format::format_hhmm(
-            self.countdown_target_secs.get(),
-        ));
+        // Sync the duration row's value label with the current mode's length.
+        self.refresh_duration_value_label();
 
         // End Bell master toggle is restored by refresh_stopwatch_
         // dependent_ui above (it calls refresh_end_bell_dependent_ui,
@@ -3823,7 +3839,7 @@ impl TimerView {
         self.countdown_target_secs.set(secs);
         let label = meditate_core::format::format_hhmm(secs);
         self.big_time_label.set_label(&label);
-        self.duration_value_label.set_label(&label);
+        self.refresh_duration_value_label();
         if self.timer_populating.get() { return; }
         if let Some(app) = self.get_app() {
             let _ = app.with_db_mut(|db| {
@@ -4119,25 +4135,6 @@ impl TimerView {
         self.end_bell_sound_row.set_subtitle(&name);
     }
 
-    /// Replace the current PatternPlayback handle. Disarms the old
-    /// handle's Drop-cancel — a same-app `Vibrate(...)` already
-    /// supersedes the previous in-flight pattern at feedbackd, so
-    /// the explicit cancel would race behind the new pattern's
-    /// call_future and silently kill it. Stash a None to clear the
-    /// slot WITH cancel (e.g. session stopped manually).
-    pub(crate) fn install_vibration_handle(
-        &self,
-        handle: Option<crate::vibration::PatternPlayback>,
-    ) {
-        let mut slot = self.current_vibration.borrow_mut();
-        if handle.is_some() {
-            if let Some(mut old) = slot.take() {
-                old.disarm();
-            }
-        }
-        *slot = handle;
-    }
-
     /// Cut any in-flight bell sound + vibration pattern. Sole shell-
     /// side implementation of `Effect::StopActiveSignals`; only
     /// called from `dispatch_session_effects` and from `on_save` /
@@ -4146,7 +4143,8 @@ impl TimerView {
     /// Session — see the variant's doc-comment in core.
     fn stop_active_signals(&self) {
         crate::sound::stop_all();
-        self.install_vibration_handle(None);
+        // Dropping the handle cancels the pattern.
+        self.current_vibration.borrow_mut().take();
     }
 
     /// Run portable Session effects through their gtk-shell native
@@ -4220,7 +4218,7 @@ impl TimerView {
                 handle.is_some(),
             ),
         );
-        self.install_vibration_handle(handle);
+        crate::vibration::replace_playback(&mut self.current_vibration.borrow_mut(), handle);
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
@@ -4412,10 +4410,8 @@ impl TimerView {
         self.breathing_session_secs.set(secs);
         self.save_breathing_settings();
         // Duration row label is shared between modes; reflect the new
-        // value here so a Box-Breath edit shows up immediately. H:MM
-        // format matches Timer mode.
-        self.duration_value_label
-            .set_label(&meditate_core::format::format_hhmm(secs));
+        // value here so a Box-Breath edit shows up immediately.
+        self.refresh_duration_value_label();
         if self.current_mode() == TimerMode::Breathing {
             self.refresh_hero_for_idle();
         }
@@ -4467,12 +4463,7 @@ impl TimerView {
         ));
         self.breathing_pattern.set(p);
         self.breathing_session_secs.set(secs);
-        // The shared Duration row reflects whichever Cell the current
-        // mode reads; reflect this load even if the user is currently
-        // viewing Timer mode — switching to Box Breath later will
-        // already have the right value visible.
-        self.duration_value_label
-            .set_label(&meditate_core::format::format_hhmm(secs));
+        self.refresh_duration_value_label();
         self.breathing_populating.set(false);
     }
 

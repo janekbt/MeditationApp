@@ -598,12 +598,12 @@ fn push_edit_page(
 
     // Volume: save-as-you-go like the other fields, then play the
     // bell at the new level. Leaving the page stops that preview.
-    let volume = crate::volume_row::VolumeRow::install(&volume_row, {
+    let volume = crate::volume_row::VolumeRow::install(&volume_row, || Some(()), {
         let snap = snapshot.clone();
         let app = app.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
-        move |volume| {
+        move |(), volume| {
             snap.borrow_mut().volume = volume;
             write_back_bell(&app, &snap, &rebuilder, &on_changed);
             Some(snap.borrow().sound_uuid.to_string())

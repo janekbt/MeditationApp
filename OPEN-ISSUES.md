@@ -24,7 +24,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | G. Labels, names and Undo | #74, #75, #86, #101, #103, #104, #122, #158 | names that differ per device, saves that fail |
 | [x] | U1. /spec groundwork (before H) | #161 | every later batch leaves specs and gets a review |
 | [x] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166, #185 | wrong minutes, bells at wrong times |
-| [ ] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
+| [x] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [ ] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
@@ -353,44 +353,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-gtk/src/timer/imp.rs:1142-1160` (`acquire_screen_awake_lock` inhibits only IDLE, and only with "Keep screen awake" on).
 - Problem: automatic suspend can hit in the middle of a session, so bells and the end come late; Android avoids this with a wake lock.
 - Fix: inhibit SUSPEND for every running session, plus IDLE with "Keep screen awake"; release at the end as now.
-
-## I. GTK timer and bells
-
-### #73 GTK: the Box Breath Duration row shows the Timer duration
-- Where: `meditate-gtk/src/timer/imp.rs:3185-3187` (`refresh_streak`), called on return from Stats (`window/imp.rs:143`) and from `apply_config` (3510).
-- Problem: it always writes `countdown_target_secs`. Box Breath 5 min, Timer 10 min: the row says 0:10, Start runs 5 min.
-- Fix: call `refresh_duration_value_label()` there; drop the redundant write in `load_breathing_settings` (4246-4247).
-
-### #126 GTK: Esc in Overtime pauses, then "Pause" ends the session
-- Where: `meditate-gtk/src/window/imp.rs:547-556`; `timer/imp.rs:2252-2285, 2814, 2880-2905`.
-- Problem: Esc calls `on_pause` in any state. In Overtime it pauses: Add does nothing and Stop is hidden. After Resume the button reads "Pause" but finishes the session, saving the target and dropping the overtime.
-- Fix: `if !matches!(self.ui_state(), UiState::Running | UiState::Preparing) { return; }` at the top of `on_pause` (a check in core alone would still relabel the button).
-
-### #127 GTK: a sound-only bell cuts a running vibration
-- Where: `meditate-gtk/src/timer/imp.rs:3982-3998, 3903-3914`; `vibration.rs:214-242`.
-- Problem: `install_vibration_handle(None)` drops the old handle, and its Drop cancels the vibration. Two bells at 10:00, one Vibration and one Sound: on the Librem 5 the vibration is cut or never starts. Android only cancels when a new vibration starts.
-- Fix: `if handle.is_some() { self.install_vibration_handle(handle); }`.
-
-### #77 GTK: a replaced vibration keeps sending its later chunks
-- Where: `meditate-gtk/src/vibration.rs:206-208` (`disarm`); callers `timer/imp.rs:3910`, `vibrations.rs:319`, `vibration_editor.rs:582`.
-- Problem: `disarm` only skips the drop-cancel and never sets `cancel`, so chunk 1+ timeouts of a long pattern still fire and replace the new pattern. Not tried on the Librem 5.
-- Fix: `self.cancel.store(true, Ordering::Relaxed)` in `disarm`.
-
-### #130 GTK: the laptop can suspend during a session
-- Where: `meditate-gtk/src/timer/imp.rs:1139-1156`.
-- Problem: the only inhibit is IDLE, and only with Keep Screen Awake on (off by default). With GNOME's default 15 min suspend, a 20 min session suspends at 15 min, and the bells wait until wake (then #46's burst).
-- Fix: always inhibit SUSPEND while a session runs (perhaps not while paused, see #63), and add IDLE only with the setting.
-
-### #53 GTK: a volume change is lost if the bell page closes within 400 ms
-- Where: `meditate-gtk/src/volume_row.rs:107-130`.
-- Problem: the settle timeout uses `#[weak] stop`; once the page is popped the whole body, including `save(volume)`, is skipped.
-- Fix: save first, upgrade `stop` only for the preview part.
-- Fix together with #132 (same 400 ms timer).
-
-### #132 GTK: an End Bell volume change can land in the wrong mode
-- Where: `meditate-gtk/src/timer/imp.rs:1197-1233`; `volume_row.rs:90-153`.
-- Problem: the 400 ms settled save reads the mode when it fires. Drag Timer's End Bell volume to 20% and switch to Guided within 0.4 s: Guided gets 20% and Timer keeps its old level.
-- Fix: capture the mode's key when the slider moves. Fix together with #53 (same timer).
 
 ## J. GTK Log
 

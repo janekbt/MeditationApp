@@ -44,6 +44,36 @@ mod tests {
         // contract is verified in the on-device test pass (step 10).
         assert!(!probe_haptic());
     }
+
+    /// A handle that never cancels on drop, so no test reaches DBus,
+    /// and its cancel flag to look at.
+    fn quiet_handle() -> (PatternPlayback, Arc<AtomicBool>) {
+        let cancel = Arc::new(AtomicBool::new(false));
+        (PatternPlayback { cancel: cancel.clone(), cancel_on_drop: false }, cancel)
+    }
+
+    /// Two bells at 10:00, one Vibration, one Sound: the sound-only
+    /// bell dropped the running vibration (#127).
+    #[test]
+    fn a_bell_without_vibration_keeps_the_running_one() {
+        let (running, cancel) = quiet_handle();
+        let mut slot = Some(running);
+        replace_playback(&mut slot, None);
+        assert!(slot.is_some(), "still the running vibration");
+        assert!(!cancel.load(Ordering::Relaxed));
+    }
+
+    /// A replaced long pattern kept sending its later parts over the
+    /// new one (#77).
+    #[test]
+    fn a_replaced_pattern_sends_no_more_parts() {
+        let (old, old_cancel) = quiet_handle();
+        let (new, new_cancel) = quiet_handle();
+        let mut slot = Some(old);
+        replace_playback(&mut slot, Some(new));
+        assert!(old_cancel.load(Ordering::Relaxed), "the old pattern's later parts are skipped");
+        assert!(!new_cancel.load(Ordering::Relaxed));
+    }
 }
 
 pub fn probe_haptic() -> bool {
@@ -202,8 +232,10 @@ impl PatternPlayback {
     /// Skip the Drop cancel. Use when this handle is being replaced
     /// by another `Vibrate(...)` from the same app — feedbackd
     /// already supersedes per-app, so an explicit cancel here would
-    /// race behind the replacement and silently kill it.
-    pub fn disarm(&mut self) {
+    /// race behind the replacement and silently kill it. Its later
+    /// chunks are skipped, so they can't replace the new pattern.
+    fn disarm(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
         self.cancel_on_drop = false;
     }
 
@@ -231,6 +263,16 @@ impl PatternPlayback {
                 )
                 .await;
         });
+    }
+}
+
+/// Put `new` in the slot of the playing vibration. A bell without
+/// vibration (`None`) leaves the running one playing; a new one
+/// supersedes it.
+pub fn replace_playback(slot: &mut Option<PatternPlayback>, new: Option<PatternPlayback>) {
+    let Some(new) = new else { return };
+    if let Some(mut old) = slot.replace(new) {
+        old.disarm();
     }
 }
 

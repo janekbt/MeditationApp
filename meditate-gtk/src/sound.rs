@@ -48,6 +48,19 @@ pub fn play_bell_preview(
     lookup_bell_sound_by_uuid(app, uuid).map(|sound| play_preview(&sound, volume))
 }
 
+/// Play `media` again from the top at `volume`, if it is still the
+/// preview and can play. Returns whether it did.
+pub fn restart_preview(media: &gtk::MediaFile, volume: BellVolume) -> bool {
+    let current = PREVIEW_MEDIA.with(|cell| cell.borrow().as_ref() == Some(media));
+    if !current || media.error().is_some() {
+        return false;
+    }
+    media.set_volume(volume.relative_gain());
+    media.seek(0);
+    media.set_playing(true);
+    true
+}
+
 /// Change the volume of the bell previewing right now, if any — a
 /// Volume row's slider being dragged.
 pub fn set_preview_volume(volume: BellVolume) {
@@ -379,6 +392,19 @@ mod tests {
         let start = src.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("no fn {name}"));
         let end = src[start..].find("\n}\n").map_or(src.len(), |e| start + e);
         &src[start..end]
+    }
+
+    /// A player in the error state never plays again, so restarting it
+    /// would leave the bell silent; one another preview took over is
+    /// no longer this row's to restart.
+    #[test]
+    fn only_a_healthy_player_still_in_the_preview_slot_restarts() {
+        let src = source("src/sound.rs");
+        let body = fn_body(&src, "restart_preview");
+        assert!(body.contains(".error().is_some()"), "a failed player is rebuilt");
+        assert!(body.find("return false").unwrap() < body.find("seek(0)").unwrap());
+        assert!(body.contains("PREVIEW_MEDIA"), "only the player still previewing");
+        assert!(body.find("seek(0)").unwrap() < body.find("set_playing(true)").unwrap());
     }
 
     /// Every bundled bell this build seeds has a built-in file, found by

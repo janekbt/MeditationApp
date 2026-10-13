@@ -576,13 +576,7 @@ pub fn push_pattern_editor(
                     updated_iso: String::new(),
                 };
                 let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
-                {
-                    let mut slot = preview_slot.borrow_mut();
-                    if let Some(mut old) = slot.take() {
-                        old.disarm();
-                    }
-                    *slot = Some(new_handle);
-                }
+                crate::vibration::replace_playback(&mut preview_slot.borrow_mut(), Some(new_handle));
                 btn_for_preview.set_icon_name("media-playback-stop-symbolic");
                 btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
 

@@ -313,13 +313,7 @@ fn add_play_button(
                 // cleanly to feedbackd's per-app supersede; no
                 // cancel race.
                 let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
-                {
-                    let mut slot = play_slot.borrow_mut();
-                    if let Some(mut old) = slot.take() {
-                        old.disarm();
-                    }
-                    *slot = Some(new_handle);
-                }
+                crate::vibration::replace_playback(&mut play_slot.borrow_mut(), Some(new_handle));
                 btn_for_click.set_icon_name("media-playback-stop-symbolic");
                 btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
                 preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());

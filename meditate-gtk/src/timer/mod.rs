@@ -385,4 +385,67 @@ mod tests {
         assert!(lock.contains("if cookie == 0 {"));
         assert!(lock.contains("self.toast(&gettext(\"Couldn't keep the computer awake for the bells\"))"));
     }
+
+    /// One method of an impl block, up to its own closing brace
+    /// (`body_of` runs on past `pub fn` boundaries).
+    fn method<'a>(source: &'a str, signature: &str) -> &'a str {
+        let at = source.find(signature).unwrap_or_else(|| panic!("{signature} not found"));
+        &source[at..at + source[at..].find("\n    }\n").unwrap()]
+    }
+
+    /// Coming back from Stats in Box Breath, the Duration row showed
+    /// the Timer length: several places wrote the shared label.
+    #[test]
+    fn the_duration_row_always_shows_the_selected_modes_length() {
+        let imp = read("src/timer/imp.rs");
+        let squeezed: String = imp.split_whitespace().collect();
+        let refresh: String = method(&imp, "    fn refresh_duration_value_label(&self) {").split_whitespace().collect();
+        assert_eq!(refresh.matches(".duration_value_label").count(), 1);
+        assert_eq!(squeezed.matches(".duration_value_label").count(), 1, "only the refresh writes the row");
+    }
+
+    /// Esc in overtime paused a session that can't pause; "Pause"
+    /// then ended it and dropped the overtime.
+    #[test]
+    fn escape_pauses_only_where_the_pause_button_would() {
+        let imp = read("src/timer/imp.rs");
+        let pause = method(&imp, "    pub fn on_pause(&self) {");
+        let guard = pause
+            .find("if meditate_core::session::Session::toggle_action(self.ui_state()) != meditate_core::session::ToggleAction::Pause {")
+            .expect("on_pause asks core whether this state pauses");
+        assert!(guard < pause.find("self.cancel_tick()").unwrap(), "before anything is stopped");
+    }
+
+    /// A mode switch within 0.4 s of an End Bell drag saved the level
+    /// into the new mode: the mode was read when the save ran.
+    #[test]
+    fn a_volume_change_keeps_the_mode_it_was_made_in() {
+        let imp = read("src/timer/imp.rs");
+        let rows = method(&imp, "    fn setup_volume_rows(&self) {");
+        let target = rows.find("let target =").expect("the bell and mode are taken when the slider moves");
+        let save = rows.find("let save = move |").unwrap();
+        assert!(target < save);
+        assert!(rows[target..save].contains("current_mode()"));
+        assert!(!rows[save..].contains("current_mode()"), "the save uses the captured mode");
+    }
+
+    /// A Starting Bell drag right before a mode switch: the rows
+    /// reloaded the old level before the pending save landed.
+    #[test]
+    fn a_pending_volume_is_saved_before_the_rows_reload() {
+        let imp = read("src/timer/imp.rs");
+        let refresh = method(&imp, "    pub(crate) fn refresh_volume_rows(&self) {");
+        let flush = refresh.find("self.flush_volume_rows()").expect("pending saves are written first");
+        assert!(flush < refresh.find("bell_volume::read").unwrap());
+    }
+
+    /// Start within 0.4 s of a Starting Bell drag rang the bell at
+    /// the old level: the session reads the stored one.
+    #[test]
+    fn start_saves_a_pending_volume_first() {
+        let imp = read("src/timer/imp.rs");
+        let start = method(&imp, "    fn on_start(&self) {");
+        let flush = start.find("self.flush_volume_rows()").expect("pending levels are saved at Start");
+        assert!(flush < start.find("CoreSession::start").unwrap(), "before the session reads them");
+    }
 }
