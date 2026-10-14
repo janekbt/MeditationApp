@@ -521,26 +521,16 @@ fn read_stopwatch_for_mode(mode: meditate_core::SessionMode) -> bool {
     meditate_core::settings_keys::read_bool(&db, key, false)
 }
 
-fn write_stopwatch_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db) = lock_db() else { return; };
+fn write_stopwatch_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, value: bool) {
+    if RELOADING.get() { return; }
     let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode);
-    if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
-        meditate_core::log(
-            "settings.stopwatch",
-            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
-        );
-    }
+    setting_saved(ui, "settings.stopwatch", lock_db().map(|db| db.set_setting(key, meditate_core::format_bool(value))));
 }
 
-fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db) = lock_db() else { return; };
+fn write_keep_awake_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, value: bool) {
+    if RELOADING.get() { return; }
     let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode);
-    if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
-        meditate_core::log(
-            "settings.keep_awake",
-            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
-        );
-    }
+    setting_saved(ui, "settings.keep_awake", lock_db().map(|db| db.set_setting(key, meditate_core::format_bool(value))));
 }
 
 fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core::SignalMode {
@@ -558,16 +548,11 @@ fn read_label_active_for_mode(mode: meditate_core::SessionMode) -> bool {
     meditate_core::labels::label_active_from_db(&db, mode)
 }
 
-fn write_label_active_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db) = lock_db() else { return; };
+fn write_label_active_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, value: bool) {
+    if RELOADING.get() { return; }
     // Core adopts the mode's default label the first time it's turned
     // on, like GTK.
-    if let Err(e) = meditate_core::labels::set_active_for_mode(&db, mode, value) {
-        meditate_core::log(
-            "settings.label_active",
-            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
-        );
-    }
+    setting_saved(ui, "settings.label_active", lock_db().map(|db| meditate_core::labels::set_active_for_mode(&db, mode, value)));
 }
 
 /// Resolves the label name + id for `mode` via core's
@@ -1678,42 +1663,43 @@ fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
 /// is shell-side reactive state (duration / stopwatch / BB
 /// pattern), persisted here like GTK's `set_countdown_target` /
 /// `set_breathing_duration_secs`. Returns `false` on parse or
-/// a failed write — and then the snackbar says so, like GTK.
+/// a failed write, and then the snackbar says so, like GTK; core
+/// saves value by value, so the setup from before is put back.
 fn apply_preset_json(
     ui: &MainWindow,
     json: &str,
     mode: meditate_core::SessionMode,
     timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
 ) -> bool {
-    let applied = apply_preset_config_json(ui, json, mode, timer_session_secs);
-    if !applied {
+    use meditate_core::preset_config::PresetConfig;
+    let Ok(cfg) = PresetConfig::from_json(json) else {
+        meditate_core::log("preset.apply", "config_json parse failed");
         show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+        return false;
+    };
+    let before = snapshot_setup_json(ui, mode, timer_session_secs.get())
+        .and_then(|j| PresetConfig::from_json(&j).ok());
+    if apply_preset_once(ui, &cfg, mode, timer_session_secs) {
+        return true;
     }
-    applied
+    if let Some(before) = before {
+        apply_preset_once(ui, &before, mode, timer_session_secs);
+    }
+    false
 }
 
-fn apply_preset_config_json(
+fn apply_preset_once(
     ui: &MainWindow,
-    json: &str,
+    cfg: &meditate_core::preset_config::PresetConfig,
     mode: meditate_core::SessionMode,
     timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
 ) -> bool {
-    use meditate_core::preset_config::{apply, PresetConfig, PresetTiming};
-    let Ok(cfg) = PresetConfig::from_json(json) else {
-        meditate_core::log("preset.apply", "config_json parse failed");
-        return false;
-    };
-    let outcome = {
-        let Some(db) = lock_db() else { return false; };
-        apply(&db, &cfg, mode)
-    };
+    use meditate_core::preset_config::{apply, PresetTiming};
+    let outcome = lock_db().map(|db| apply(&db, cfg, mode));
     let timing = match outcome {
-        Ok(t) => t,
-        Err(e) => {
-            meditate_core::log(
-                "preset.apply",
-                &format!("apply FAILED: {e:?}"),
-            );
+        Some(Ok(t)) => t,
+        failed => {
+            setting_saved(ui, "preset.apply", failed);
             return false;
         }
     };
@@ -1721,7 +1707,9 @@ fn apply_preset_config_json(
     // re-read everything (settings / bells / box-breath cues / label /
     // cues override / keep-awake).
     match timing {
-        PresetTiming::Timer { duration_secs, .. } => write_timer_session_secs(duration_secs),
+        PresetTiming::Timer { duration_secs, .. } => {
+            if !write_timer_session_secs(ui, duration_secs) { return false; }
+        }
         PresetTiming::BoxBreath {
             inhale_secs,
             hold_full_secs,
@@ -1730,7 +1718,7 @@ fn apply_preset_config_json(
             duration_secs,
             ..
         } => {
-            write_breathing(
+            if !write_breathing(ui,
                 meditate_core::breath::BreathPattern::clamp_from_raw(
                     inhale_secs,
                     hold_full_secs,
@@ -1738,7 +1726,7 @@ fn apply_preset_config_json(
                     hold_empty_secs,
                 ),
                 duration_secs,
-            );
+            ) { return false; }
         }
     }
     load_setup_for_mode(ui, mode, timer_session_secs);
@@ -2477,9 +2465,10 @@ fn read_breathing() -> (meditate_core::breath::BreathPattern, u32) {
     )
 }
 
-fn write_breathing(pattern: meditate_core::breath::BreathPattern, secs: u32) {
-    let Some(db) = lock_db() else { return; };
-    let _ = meditate_core::settings_keys::set_breathing(&db, pattern, secs);
+/// False when it could not be saved (the user was told).
+fn write_breathing(ui: &MainWindow, pattern: meditate_core::breath::BreathPattern, secs: u32) -> bool {
+    if RELOADING.get() { return true; }
+    setting_saved(ui, "settings.breathing", lock_db().map(|db| meditate_core::settings_keys::set_breathing(&db, pattern, secs)))
 }
 
 /// Timer mode's countdown length; every duration commit writes it,
@@ -2490,9 +2479,10 @@ fn read_timer_session_secs() -> u32 {
     })
 }
 
-fn write_timer_session_secs(secs: u32) {
-    let Some(db) = lock_db() else { return; };
-    let _ = meditate_core::settings_keys::set_timer_session_secs(&db, secs);
+/// False when it could not be saved (the user was told).
+fn write_timer_session_secs(ui: &MainWindow, secs: u32) -> bool {
+    if RELOADING.get() { return true; }
+    setting_saved(ui, "settings.timer_secs", lock_db().map(|db| meditate_core::settings_keys::set_timer_session_secs(&db, secs)))
 }
 
 /// Update the Setup view's hours / minutes Slint properties from
@@ -2599,14 +2589,9 @@ fn lookup_label_uuid(id: i64) -> Option<String> {
         .map(|l| l.uuid.0)
 }
 
-fn write_label_uuid_for_mode(mode: meditate_core::SessionMode, uuid: &str) {
-    let Some(db) = lock_db() else { return; };
-    if let Err(e) = meditate_core::labels::persist_uuid_for_mode(&db, mode, uuid) {
-        meditate_core::log(
-            "settings.label_uuid",
-            &format!("write FAILED mode={mode:?} uuid={uuid} err={e:?}"),
-        );
-    }
+fn write_label_uuid_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, uuid: &str) {
+    if RELOADING.get() { return; }
+    setting_saved(ui, "settings.label_uuid", lock_db().map(|db| meditate_core::labels::persist_uuid_for_mode(&db, mode, uuid)));
 }
 
 /// Live name validation for the Create-Label dialog. Trims the
@@ -3486,17 +3471,13 @@ fn create_label_in_db(name: &str) -> Option<(i64, String)> {
 }
 
 fn write_signal_mode_for_mode(
+    ui: &MainWindow,
     mode: meditate_core::SessionMode,
     value: meditate_core::SignalMode,
 ) {
-    let Some(db) = lock_db() else { return; };
+    if RELOADING.get() { return; }
     let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
-    if let Err(e) = db.set_setting(key, value.as_db_str()) {
-        meditate_core::log(
-            "settings.cues",
-            &format!("write FAILED mode={mode:?} value={value:?} err={e:?}"),
-        );
-    }
+    setting_saved(ui, "settings.cues", lock_db().map(|db| db.set_setting(key, value.as_db_str())));
 }
 
 fn finalize_session(
@@ -3647,10 +3628,10 @@ fn read_global_setting(key: &str, default: &str) -> String {
         .unwrap_or_else(|_| default.to_string())
 }
 
-fn write_global_setting(key: &str, value: &str) {
-    if let Some(db) = lock_db() {
-        let _ = db.set_setting(key, value);
-    }
+/// False when it could not be saved (the user was told).
+fn write_global_setting(ui: &MainWindow, key: &str, value: &str) -> bool {
+    if RELOADING.get() { return true; }
+    setting_saved(ui, "settings.global", lock_db().map(|db| db.set_setting(key, value)))
 }
 
 /// Display text for a resolved sound / pattern name: "Missing" when
@@ -3936,13 +3917,26 @@ fn bb_phase_uuids(
 /// GTK's per-field phase writes. Missing row falls back to the
 /// schema defaults (seeded, so this is just defensive).
 fn write_bb_phase(
+    ui: &MainWindow,
     phase: meditate_core::db::BoxBreathPhaseId,
     enabled: Option<bool>,
     signal_mode: Option<meditate_core::bells::SignalMode>,
     sound_uuid: Option<&str>,
     pattern_uuid: Option<&str>,
 ) {
-    let Some(db) = lock_db() else { return; };
+    if RELOADING.get() { return; }
+    let res = lock_db().map(|db| write_bb_phase_locked(&db, phase, enabled, signal_mode, sound_uuid, pattern_uuid));
+    setting_saved(ui, "settings.bb_phase", res);
+}
+
+fn write_bb_phase_locked(
+    db: &meditate_core::db::Database,
+    phase: meditate_core::db::BoxBreathPhaseId,
+    enabled: Option<bool>,
+    signal_mode: Option<meditate_core::bells::SignalMode>,
+    sound_uuid: Option<&str>,
+    pattern_uuid: Option<&str>,
+) -> Result<(), meditate_core::db::DbError> {
     let (ce, csm, csu, cpu, volume) = match db.get_box_breath_phase(phase) {
         Ok(Some(r)) => (
             r.enabled,
@@ -3964,7 +3958,7 @@ fn write_bb_phase(
     let su = sound_uuid.map_or(csu, str::to_string);
     let pu = pattern_uuid.map_or(cpu, str::to_string);
     // The volume has its own row (`meditate_core::bell_volume::write`).
-    let _ = db.set_box_breath_phase(phase, e, sm, &su, &pu, volume);
+    db.set_box_breath_phase(phase, e, sm, &su, &pu, volume)
 }
 
 /// Push every Box-Breath phase's persisted cue state into the
@@ -5282,26 +5276,21 @@ fn build_ui() -> MainWindow {
                 };
                 // Apply the persist action — but read the labels
                 // list inside the same DB lock as the writes.
-                if let Some(db) = lock_db() {
+                let kept = lock_db().map(|db| {
+                    use meditate_core::labels::{persist_active_for_mode, persist_uuid_for_mode, PersistAction};
                     let labels = meditate_core::db::list_labels_from_db(&db)
                         .unwrap_or_default();
                     match meditate_core::labels::resolve_persist_action(picked, &labels) {
-                        meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
-                            let _ = meditate_core::labels::persist_uuid_for_mode(
-                                &db, mode, uuid.as_str(),
-                            );
-                            let _ = meditate_core::labels::persist_active_for_mode(
-                                &db, mode, true,
-                            );
+                        PersistAction::SetUuidAndActivate { uuid } => {
+                            persist_uuid_for_mode(&db, mode, uuid.as_str())
+                                .and_then(|()| persist_active_for_mode(&db, mode, true))
                         }
-                        meditate_core::labels::PersistAction::Deactivate => {
-                            let _ = meditate_core::labels::persist_active_for_mode(
-                                &db, mode, false,
-                            );
-                        }
-                        meditate_core::labels::PersistAction::NoOp => {}
+                        PersistAction::Deactivate => persist_active_for_mode(&db, mode, false),
+                        PersistAction::NoOp => Ok(()),
                     }
-                }
+                });
+                // The session still saves; only next time's label didn't.
+                landed(&ui, "label.default", kept, ui.global::<Tr>().invoke_label_not_kept());
                 // Per-file attribution: only a GUIDED session with a
                 // library selection (starred tap / import) carries a
                 // uuid — Timer / Box Breath must stay None even when
@@ -5380,7 +5369,7 @@ fn build_ui() -> MainWindow {
                 ) as u32;
                 if new_val == *slot { return; }
                 *slot = new_val;
-                write_breathing(pattern, secs);
+                write_breathing(&ui, pattern, secs);
                 refresh_breathing_tiles(&ui, pattern);
             }
         });
@@ -6248,9 +6237,8 @@ fn build_ui() -> MainWindow {
                 let next = meditate_core::db::StarredState::from_flag(
                     !p.is_starred,
                 );
-                {
-                    let Some(db) = lock_db() else { return; };
-                    let _ = db.update_preset_starred(uuid.as_str(), next);
+                if !setting_saved(&ui, "preset.star", lock_db().map(|db| db.update_preset_starred(uuid.as_str(), next))) {
+                    return;
                 }
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
@@ -6392,10 +6380,14 @@ fn build_ui() -> MainWindow {
             let total_secs = (ui.get_setup_hours().max(0) as u32) * 3600
                 + (ui.get_setup_minutes().max(0) as u32) * 60;
             match current_mode.get() {
-                TimerMode::Breathing => write_breathing(read_breathing().0, total_secs),
+                TimerMode::Breathing => {
+                    write_breathing(&ui, read_breathing().0, total_secs);
+                }
                 _ => {
-                    timer_session_secs.set(total_secs);
-                    write_timer_session_secs(total_secs);
+                    // The cell follows only a saved length (`reload_setup`).
+                    if write_timer_session_secs(&ui, total_secs) {
+                        timer_session_secs.set(total_secs);
+                    }
                 }
             }
         });
@@ -6407,8 +6399,10 @@ fn build_ui() -> MainWindow {
     // pick so the eventual WakeLock wiring has a value to read.
     {
         let current_mode = current_mode.clone();
+        let weak = ui.as_weak();
         ui.on_keep_awake_toggled(move |value| {
-            write_keep_awake_for_mode(current_mode.get().into(), value);
+            let Some(ui) = weak.upgrade() else { return; };
+            write_keep_awake_for_mode(&ui, current_mode.get().into(), value);
         });
     }
 
@@ -6421,13 +6415,10 @@ fn build_ui() -> MainWindow {
         let current_mode = current_mode.clone();
         let weak = ui.as_weak();
         ui.on_stopwatch_toggled(move |value| {
-            {
-                write_stopwatch_for_mode(current_mode.get().into(), value);
-                // The End Bell row and the bell count follow it.
-                if let Some(ui) = weak.upgrade() {
-                    refresh_bell_rows(&ui);
-                }
-            }
+            let Some(ui) = weak.upgrade() else { return; };
+            write_stopwatch_for_mode(&ui, current_mode.get().into(), value);
+            // The End Bell row and the bell count follow it.
+            refresh_bell_rows(&ui);
         });
     }
 
@@ -6437,8 +6428,10 @@ fn build_ui() -> MainWindow {
     // slice just keeps the user's pick alive across launches.
     {
         let current_mode = current_mode.clone();
+        let weak = ui.as_weak();
         ui.on_cues_changed(move |idx| {
-            write_signal_mode_for_mode(
+            let Some(ui) = weak.upgrade() else { return; };
+            write_signal_mode_for_mode(&ui,
                 current_mode.get().into(),
                 signal_mode_from_chip_index(idx),
             );
@@ -6450,8 +6443,10 @@ fn build_ui() -> MainWindow {
     // (which writes via `meditate_core::labels::persist_active_for_mode`).
     {
         let current_mode = current_mode.clone();
+        let weak = ui.as_weak();
         ui.on_label_active_toggled(move |value| {
-            write_label_active_for_mode(current_mode.get().into(), value);
+            let Some(ui) = weak.upgrade() else { return; };
+            write_label_active_for_mode(&ui, current_mode.get().into(), value);
         });
     }
 
@@ -6513,8 +6508,10 @@ fn build_ui() -> MainWindow {
     let pattern_chooser_target: Rc<Cell<ChooserTarget>> = Rc::default();
 
     {
+        let weak = ui.as_weak();
         ui.on_starting_bell_toggled(move |value| {
-            write_global_setting(
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
                 "starting_bell_active",
                 if value { "true" } else { "false" },
             );
@@ -6531,7 +6528,7 @@ fn build_ui() -> MainWindow {
                 if !end_bell_row_sensitive(setup_session_mode(&ui)) {
                     return;
                 }
-                write_global_setting(
+                write_global_setting(&ui,
                     meditate_core::settings_keys::end_bell_active_key_for_mode(setup_session_mode(&ui)),
                     if value { "true" } else { "false" },
                 );
@@ -6586,8 +6583,10 @@ fn build_ui() -> MainWindow {
     // Cue firing is already wired (B-6); these only persist the
     // config via boxbreath_cues_active + db.set_box_breath_phase.
     {
+        let weak = ui.as_weak();
         ui.on_boxbreath_cues_toggled(move |v| {
-            write_global_setting(
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
                 "boxbreath_cues_active",
                 if v { "true" } else { "false" },
             );
@@ -6599,14 +6598,18 @@ fn build_ui() -> MainWindow {
         ($tag:literal,
          $on_tog:ident, $on_sm:ident, $on_snd:ident, $on_pat:ident) => {
             {
+                let weak = ui.as_weak();
                 ui.$on_tog(move |v| {
-                    write_bb_phase(bb_phase($tag), Some(v), None, None, None);
+                    let Some(ui) = weak.upgrade() else { return; };
+                    write_bb_phase(&ui, bb_phase($tag), Some(v), None, None, None);
                     let _ = v;
                 });
             }
             {
+                let weak = ui.as_weak();
                 ui.$on_sm(move |i| {
-                    write_bb_phase(
+                    let Some(ui) = weak.upgrade() else { return; };
+                    write_bb_phase(&ui,
                         bb_phase($tag),
                         None,
                         Some(signal_mode_from_chip_index(i)),
@@ -6690,7 +6693,7 @@ fn build_ui() -> MainWindow {
                         );
                     }
                     ChooserTarget::EndBell => {
-                        write_global_setting(
+                        write_global_setting(&ui,
                             meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
@@ -6698,7 +6701,7 @@ fn build_ui() -> MainWindow {
                     }
                     ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase sound (B-7).
-                        write_bb_phase(
+                        write_bb_phase(&ui,
                             phase,
                             None,
                             None,
@@ -6708,7 +6711,7 @@ fn build_ui() -> MainWindow {
                         refresh_bell_rows(&ui);
                     }
                     ChooserTarget::StartingBell => {
-                        write_global_setting(
+                        write_global_setting(&ui,
                             "starting_bell_sound",
                             uuid.as_str(),
                         );
@@ -6836,7 +6839,7 @@ fn build_ui() -> MainWindow {
         ui.on_starting_bell_signal_mode_changed(move |idx| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                write_global_setting(
+                write_global_setting(&ui,
                     "starting_bell_signal_mode",
                     signal_mode_from_chip_index(idx).as_db_str(),
                 );
@@ -6849,7 +6852,7 @@ fn build_ui() -> MainWindow {
         ui.on_end_bell_signal_mode_changed(move |idx| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                write_global_setting(
+                write_global_setting(&ui,
                     meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(setup_session_mode(&ui)),
                     signal_mode_from_chip_index(idx).as_db_str(),
                 );
@@ -6909,7 +6912,7 @@ fn build_ui() -> MainWindow {
                         );
                     }
                     ChooserTarget::EndBell => {
-                        write_global_setting(
+                        write_global_setting(&ui,
                             meditate_core::settings_keys::end_bell_pattern_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
@@ -6917,7 +6920,7 @@ fn build_ui() -> MainWindow {
                     }
                     ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase pattern (B-7).
-                        write_bb_phase(
+                        write_bb_phase(&ui,
                             phase,
                             None,
                             None,
@@ -6927,7 +6930,7 @@ fn build_ui() -> MainWindow {
                         refresh_bell_rows(&ui);
                     }
                     ChooserTarget::StartingBell => {
-                        write_global_setting(
+                        write_global_setting(&ui,
                             "starting_bell_pattern",
                             uuid.as_str(),
                         );
@@ -7729,8 +7732,10 @@ fn build_ui() -> MainWindow {
 
     // Preparation Time (B-5b): enable toggle + seconds modal.
     {
+        let weak = ui.as_weak();
         ui.on_prep_time_toggled(move |value| {
-            write_global_setting(
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
                 "preparation_time_active",
                 if value { "true" } else { "false" },
             );
@@ -7760,7 +7765,7 @@ fn build_ui() -> MainWindow {
                 let v = meditate_core::format::parse_prep_secs(
                     &ui.get_prep_time_secs().to_string(),
                 );
-                write_global_setting(
+                write_global_setting(&ui,
                     "preparation_time_secs",
                     &v.to_string(),
                 );
@@ -7773,8 +7778,10 @@ fn build_ui() -> MainWindow {
     // Interval Bells (B-5c-1): enable toggle + Manage Bells →
     // read-only library page.
     {
+        let weak = ui.as_weak();
         ui.on_interval_bells_toggled(move |value| {
-            write_global_setting(
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
                 "interval_bells_active",
                 if value { "true" } else { "false" },
             );
@@ -8148,7 +8155,7 @@ fn build_ui() -> MainWindow {
                         LabelTarget::Setup => {
                             // Setup flow
                             let mode: meditate_core::SessionMode = current_mode.get().into();
-                            write_label_uuid_for_mode(mode, &uuid);
+                            write_label_uuid_for_mode(&ui, mode, &uuid);
                             refresh_label_state(&ui, mode);
                         }
                     }
@@ -8391,7 +8398,7 @@ fn build_ui() -> MainWindow {
                         // Setup flow (existing behavior)
                         let mode: meditate_core::SessionMode = current_mode.get().into();
                         if let Some(uuid) = lookup_label_uuid(id as i64) {
-                            write_label_uuid_for_mode(mode, &uuid);
+                            write_label_uuid_for_mode(&ui, mode, &uuid);
                         }
                         refresh_setup_label_name(&ui, mode);
                     }
@@ -9265,10 +9272,11 @@ fn build_ui() -> MainWindow {
             let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
             let sound = match app::volume_slot(slot.as_str(), setup_session_mode(&ui)) {
                 Some(bell) => {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = meditate_core::bell_volume::write(&db, bell, volume) {
-                        meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
+                    // No preview of a level that springs back.
+                    if !setting_saved(&ui, "bell_volume.write", lock_db().map(|db| meditate_core::bell_volume::write(&db, bell, volume))) {
+                        return;
                     }
+                    let Some(db) = lock_db() else { return; };
                     meditate_core::bell_volume::sound_uuid(&db, bell)
                 }
                 // The bell editor: saved with the bell on Save.
@@ -9429,11 +9437,11 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 let i = (i.max(0) as usize)
                     .min(theme::ACCENTS.len() - 1);
+                // A failed save springs back without being applied.
+                if !write_global_setting(&ui, "android_accent", &i.to_string()) {
+                    return;
+                }
                 {
-                    write_global_setting(
-                        "android_accent",
-                        &i.to_string(),
-                    );
                     meditate_core::log(
                         "theme.accent",
                         &format!(
@@ -10063,6 +10071,46 @@ fn commit_undo(ui: &MainWindow, undo: app::PendingUndo) {
             let _ = std::fs::remove_file(local_guided_path(file.uuid.as_str()));
         }
         _ => {}
+    }
+}
+
+thread_local! {
+    /// Set while `reload_setup` puts saved values back: the Switch
+    /// reports Rust-made changes, which must not write again.
+    static RELOADING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// #191: a setting that failed to save says so, and the page shows
+/// the saved value again on the next turn (a control is mid-change
+/// inside its handler).
+fn setting_saved<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> bool {
+    if write_ok(ui, tag, res) {
+        return true;
+    }
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        if let Some(ui) = weak.upgrade() {
+            reload_setup(&ui);
+        }
+    });
+    false
+}
+
+/// Show every Setup value and the accent as saved.
+fn reload_setup(ui: &MainWindow) {
+    RELOADING.set(true);
+    // The live length cell only changes after a successful save, so a
+    // scratch cell is enough to put the saved length on screen.
+    load_setup_for_mode(ui, setup_session_mode(ui), &Cell::new(0));
+    refresh_bell_rows(ui);
+    refresh_boxbreath_cues(ui);
+    ui.set_prefs_accent(read_global_setting("android_accent", "0").parse().unwrap_or(0));
+    // Slint runs the Switches' change handlers after this timer, in the
+    // same turn; clear the guard only on the next one.
+    // Without a loop to post to, clearing it now beats blocking every
+    // later save.
+    if slint::invoke_from_event_loop(|| RELOADING.set(false)).is_err() {
+        RELOADING.set(false);
     }
 }
 

@@ -1139,3 +1139,6 @@ msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "Kan de mapkiezer niet openen"
+
+msgid "Label not kept for next time"
+msgstr "Label niet onthouden voor de volgende keer"

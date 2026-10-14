@@ -27,7 +27,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [x] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
 | [x] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
-| [ ] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
+| [x] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
+| [ ] | K3. Presets all or nothing | #193 | a preset that fails halfway |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160, #189 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
@@ -44,12 +45,12 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 ---
 
-## K2. GTK settings that don't stick
+## K3. Presets all or nothing
 
-### #191 GTK: the Timer page drops failed settings writes
-- Where: `meditate-gtk/src/timer/imp.rs`, `let _ =` on a write at 433, 457, 720, 833 (`labels::set_active_for_mode`), 873, 951, 972, 1011, 3845 (`set_timer_session_secs`), 4476 (`set_breathing`), 4503 (`persist_active_for_mode`), 4510 (`persist_uuid_for_mode`); `with_db_mut(|db| db.set_setting(...))` or `set_box_breath_phase(...)` with the result dropped at 771, 802, 907, 932, 1300, 1385, 1425, 1464, 1643, 1713, 1770 (lines as of 9d21c02).
-- Problem: a pick or a slider change during a sync lock (BUSY after 1 s) or on a full disk is shown but not stored, and is gone after a restart or on the other device; nothing tells the user. Split out of #52, which covered writes that show a success toast.
-- Fix: route each through `crate::db::write_ok` (batch K), as #52 did; it shows one failure toast at a time, so a slider failing on every step doesn't queue them.
+### #193 Core: applying a preset is not one transaction
+- Where: `meditate-core/src/preset_config.rs` `apply` (comment above it: core::db has no nestable transactions; `set_interval_bell_enabled` opens its own); the length is written after it by each app (`set_timer_session_secs` / `set_breathing`).
+- Problem: a write that fails partway (sync lock, full disk) leaves part of the preset. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
+- Fix: nestable transactions (savepoints) in core::db, then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
 
 ## L. Android platform (manifest: ask first)
 

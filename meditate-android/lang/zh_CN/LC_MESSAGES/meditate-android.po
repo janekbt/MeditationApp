@@ -1113,3 +1113,6 @@ msgstr "{}%"
 
 msgid "Couldn't open the folder picker"
 msgstr "无法打开文件夹选择器"
+
+msgid "Label not kept for next time"
+msgstr "未能为下次保存标签"

@@ -1139,3 +1139,6 @@ msgstr "{} %"
 
 msgid "Couldn't open the folder picker"
 msgstr "No se pudo abrir el selector de carpetas"
+
+msgid "Label not kept for next time"
+msgstr "No se guardó la etiqueta para la próxima vez"

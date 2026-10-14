@@ -435,12 +435,10 @@ impl TimerView {
                 imp.stopwatch_toggle_on.set(on);
                 if let Some(app) = imp.get_app() {
                     let key = meditate_core::settings_keys::stopwatch_key_for_mode(imp.current_mode().into());
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             key,
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                 }
                 imp.refresh_stopwatch_dependent_ui();
             }
@@ -459,12 +457,10 @@ impl TimerView {
                 let on = row.is_active();
                 if let Some(app) = imp.get_app() {
                     let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(imp.current_mode().into());
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             key,
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                 }
             }
         ));
@@ -726,12 +722,10 @@ impl TimerView {
                 if let Some(app) = imp.get_app() {
                     let mode: meditate_core::SessionMode =
                         imp.current_mode().into();
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             meditate_core::settings_keys::end_bell_active_key_for_mode(mode),
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                     // Re-warm the preload so the next play_end_bell()
                     // either has a MediaFile ready (active=true) or
                     // doesn't waste cycles trying to reuse a stale one.
@@ -778,10 +772,10 @@ impl TimerView {
                     current,
                     volume,
                     move |uuid| {
-                        app_for_pick.with_db_mut(|db| db.set_setting(
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_setting(
                             meditate_core::settings_keys::end_bell_sound_key_for_mode(mode),
                             &uuid,
-                        ));
+                        )));
                         crate::sound::preload_end_bell(&app_for_pick, mode);
                         this_for_pick.imp().refresh_end_bell_sound_subtitle();
                     },
@@ -809,10 +803,10 @@ impl TimerView {
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_vibrations_chooser(&app, current, move |uuid| {
-                    app_for_pick.with_db_mut(|db| db.set_setting(
+                    setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_setting(
                         meditate_core::settings_keys::end_bell_pattern_key_for_mode(mode),
                         &uuid,
-                    ));
+                    )));
                     this_for_pick.imp().refresh_end_bell_pattern_subtitle();
                 });
             }
@@ -839,9 +833,7 @@ impl TimerView {
                 // Core adopts the mode's default label the first time
                 // the toggle flips on.
                 if let Some(app) = imp.get_app() {
-                    app.with_db_mut(|db| {
-                        let _ = meditate_core::labels::set_active_for_mode(db.core(), mode.into(), on);
-                    });
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| meditate_core::labels::set_active_for_mode(db.core(), mode.into(), on)));
                 }
                 imp.refresh_setup_label_chooser_subtitle();
             }
@@ -879,12 +871,10 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             "starting_bell_active",
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                 }
             }
         ));
@@ -914,7 +904,7 @@ impl TimerView {
                     current,
                     volume,
                     move |uuid| {
-                        app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid));
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid)));
                         this_for_pick.imp().refresh_starting_bell_sound_subtitle();
                     },
                 );
@@ -939,7 +929,7 @@ impl TimerView {
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_vibrations_chooser(&app, current, move |uuid| {
-                    app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_pattern", &uuid));
+                    setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_pattern", &uuid)));
                     this_for_pick.imp().refresh_starting_bell_pattern_subtitle();
                 });
             }
@@ -957,12 +947,10 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             "preparation_time_active",
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                 }
             }
         ));
@@ -978,12 +966,10 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
-                    app.with_db_mut(|db| {
-                        let _ = db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                             "interval_bells_active",
                             meditate_core::format_bool(on),
-                        );
-                    });
+                        )));
                 }
             }
         ));
@@ -1017,9 +1003,7 @@ impl TimerView {
                         i64::from(meditate_core::format::PREP_SECS_MAX),
                     );
                     if let Some(app) = imp.get_app() {
-                        app.with_db_mut(|db| {
-                            let _ = db.set_setting("preparation_time_secs", &v.to_string());
-                        });
+                        setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting("preparation_time_secs", &v.to_string())));
                     }
                 }
             ),
@@ -1053,7 +1037,8 @@ impl TimerView {
             clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
-                move || obj.imp().get_app()
+                // Loading the stored value writes nothing back.
+                move || (!obj.imp().bells_loading.get()).then(|| obj.imp().get_app()).flatten()
             ),
         );
     }
@@ -1061,6 +1046,8 @@ impl TimerView {
     /// Apply the saved starting_bell_signal_mode + capability gating.
     pub(crate) fn refresh_starting_bell_signal_mode_state(&self) {
         let Some(app) = self.get_app() else { return; };
+        // Callers may already be loading; put their flag back after.
+        let was = self.bells_loading.replace(true);
         apply_signal_mode_state(
             &self.starting_bell_signal_toggle_host,
             &self.starting_bell_sound_revealer,
@@ -1068,6 +1055,7 @@ impl TimerView {
             &app,
             "starting_bell_signal_mode",
         );
+        self.bells_loading.set(was);
     }
 
     /// Build the End Bell's Sound / Vibration / Both selector at
@@ -1091,7 +1079,8 @@ impl TimerView {
             clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
-                move || obj.imp().get_app()
+                // Loading the stored value writes nothing back.
+                move || (!obj.imp().bells_loading.get()).then(|| obj.imp().get_app()).flatten()
             ),
         );
     }
@@ -1101,6 +1090,8 @@ impl TimerView {
     /// widget is attached and `get_app()` resolves.
     pub(crate) fn refresh_end_bell_signal_mode_state(&self) {
         let Some(app) = self.get_app() else { return; };
+        // Callers may already be loading; put their flag back after.
+        let was = self.bells_loading.replace(true);
         apply_signal_mode_state(
             &self.end_bell_signal_toggle_host,
             &self.end_bell_sound_revealer,
@@ -1108,6 +1099,7 @@ impl TimerView {
             &app,
             meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(self.current_mode().into()),
         );
+        self.bells_loading.set(was);
     }
 
     /// Build the per-mode Cues toggle (Sound / Vibration / Both) at
@@ -1253,12 +1245,12 @@ impl TimerView {
             };
             let save = move |&(slot, mode): &(meditate_core::bell_volume::BellSlot, meditate_core::SessionMode), volume| {
                 let app = view.upgrade()?.imp().get_app()?;
-                let sound = app.with_db(|db| {
-                    if let Err(e) = meditate_core::bell_volume::write(db.core(), slot, volume) {
-                        meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
-                    }
-                    meditate_core::bell_volume::sound_uuid(db.core(), slot)
-                });
+                let this = view.upgrade()?;
+                // No preview of a level that springs back.
+                if !setting_saved(&this, "bell_volume.write", app.with_db_mut(|db| meditate_core::bell_volume::write(db.core(), slot, volume))) {
+                    return None;
+                }
+                let sound = app.with_db(|db| meditate_core::bell_volume::sound_uuid(db.core(), slot));
                 if key == SetupVolume::End {
                     // The end bell is preloaded; reload it at the new level.
                     crate::sound::preload_end_bell(&app, mode);
@@ -1307,10 +1299,10 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
-                    app.with_db_mut(|db| db.set_setting(
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
                         "boxbreath_cues_active",
                         meditate_core::format_bool(on),
-                    ));
+                    )));
                 }
             }
         ));
@@ -1392,10 +1384,10 @@ impl TimerView {
                         .and_then(std::result::Result::ok)
                         .flatten()
                     {
-                        app.with_db_mut(|db| db.set_box_breath_phase(
+                        setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_box_breath_phase(
                             phase, on, p.signal_mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
                             p.volume,
-                        ));
+                        )));
                     }
                 }
             }
@@ -1432,14 +1424,14 @@ impl TimerView {
                     Some(p.sound_uuid.0.clone()),
                     p.volume,
                     move |uuid| {
-                        app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
                             phase_for_sound,
                             p_for_pick.enabled,
                             p_for_pick.signal_mode,
                             &uuid,
                             p_for_pick.pattern_uuid.as_str(),
                             p_for_pick.volume,
-                        ));
+                        )));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_sound);
                     },
                 );
@@ -1471,14 +1463,14 @@ impl TimerView {
                     &app,
                     Some(p.pattern_uuid.0.clone()),
                     move |uuid| {
-                        app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
                             phase_for_pattern,
                             p_for_pick.enabled,
                             p_for_pick.signal_mode,
                             p_for_pick.sound_uuid.as_str(),
                             &uuid,
                             p_for_pick.volume,
-                        ));
+                        )));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_pattern);
                     },
                 );
@@ -1496,7 +1488,8 @@ impl TimerView {
             clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
-                move || obj.imp().get_app()
+                // Loading the stored value writes nothing back.
+                move || (!obj.imp().bells_loading.get()).then(|| obj.imp().get_app()).flatten()
             ),
         );
     }
@@ -1650,7 +1643,7 @@ pub(crate) fn build_signal_mode_toggle_widget(
             .unwrap_or(crate::db::SignalMode::Sound);
         show_no_vibration_note(tg);
         if let Some(app) = get_app() {
-            app.with_db_mut(|db| db.set_setting(key_for_write(), mode.as_db_str()));
+            setting_saved(tg, "timer.setting", app.with_db_mut(|db| db.set_setting(key_for_write(), mode.as_db_str())));
         }
         sound_revealer.set_reveal_child(mode.includes_sound());
         pattern_revealer.set_reveal_child(mode.includes_vibration());
@@ -1720,15 +1713,32 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
                 .and_then(std::result::Result::ok)
                 .flatten()
             {
-                app.with_db_mut(|db| db.set_box_breath_phase(
+                setting_saved(tg, "timer.setting", app.with_db_mut(|db| db.set_box_breath_phase(
                     phase, p.enabled, mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
                     p.volume,
-                ));
+                )));
             }
         }
         sound_revealer.set_reveal_child(mode.includes_sound());
         pattern_revealer.set_reveal_child(mode.includes_vibration());
     });
+}
+
+/// #191: a Timer page setting that failed to save says so, and the
+/// page shows the saved value again on the next turn (a spin row or
+/// toggle is still mid-change inside its handler).
+pub(crate) fn setting_saved<T, E: std::fmt::Debug + 'static>(
+    anchor: &impl IsA<gtk::Widget>,
+    tag: &str,
+    result: Option<std::result::Result<T, E>>,
+) -> bool {
+    if crate::db::write_ok(anchor, tag, result, crate::db::Failed::Save) {
+        return true;
+    }
+    if let Some(view) = anchor.ancestor(super::TimerView::static_type()).and_downcast::<super::TimerView>() {
+        glib::idle_add_local_once(move || view.imp().reload_setup());
+    }
+    false
 }
 
 /// Apply the saved phase-row signal_mode. Called from refresh-on-visit.
@@ -1777,7 +1787,7 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
         show_no_vibration_note(tg);
         let Some(app) = get_app() else { return; };
         let setting_key = meditate_core::settings_keys::signal_mode_key_for_mode(get_mode().into());
-        app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
+        setting_saved(tg, "timer.setting", app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str())));
     });
 }
 
@@ -2520,15 +2530,17 @@ impl TimerView {
             .and_then(|app| app.with_db(super::super::db::Database::list_labels))
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
-        match meditate_core::labels::resolve_persist_action(label_id, &labels) {
-            meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
-                self.persist_label_uuid_for_mode(mode, uuid.as_str());
-                self.persist_label_active_for_mode(mode, true);
-            }
-            meditate_core::labels::PersistAction::Deactivate => {
-                self.persist_label_active_for_mode(mode, false);
-            }
-            meditate_core::labels::PersistAction::NoOp => {}
+        if let Some(app) = self.get_app() {
+            use meditate_core::labels::{persist_active_for_mode, persist_uuid_for_mode, PersistAction};
+            let kept = match meditate_core::labels::resolve_persist_action(label_id, &labels) {
+                PersistAction::SetUuidAndActivate { uuid } => app.with_db_mut(|db| {
+                    persist_uuid_for_mode(db.core(), mode.into(), uuid.as_str())
+                        .and_then(|()| persist_active_for_mode(db.core(), mode.into(), true))
+                }),
+                PersistAction::Deactivate => app.with_db_mut(|db| persist_active_for_mode(db.core(), mode.into(), false)),
+                PersistAction::NoOp => Some(Ok(())),
+            };
+            crate::db::write_ok(&*self.obj(), "label.default", kept, crate::db::Failed::LabelDefault);
         }
 
         // Fire-and-forget DB write on the blocking pool. SQLite fsync on
@@ -3736,7 +3748,18 @@ impl TimerView {
     ///
     /// Returns true iff the apply happened. Returns false on a DB error
     /// (or no DB); callers can decide how to surface that to the user.
+    /// Apply `cfg`; when that fails partway (core saves value by value),
+    /// put the setup from before back. The failure has said so already.
     fn apply_config(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
+        let before = self.snapshot_current_setup();
+        if self.apply_config_once(cfg) {
+            return true;
+        }
+        self.apply_config_once(&before);
+        false
+    }
+
+    fn apply_config_once(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
         use meditate_core::preset_config::{apply, PresetTiming};
         let Some(app) = self.get_app() else { return false; };
         let mode = self.current_mode();
@@ -3744,15 +3767,17 @@ impl TimerView {
         let outcome = app.with_db_mut(|db| apply(db.core(), cfg, mode.into()));
         let timing = match outcome {
             Some(Ok(t)) => t,
-            // DbError, or app/db unavailable.
-            _ => return false,
+            failed => {
+                setting_saved(&*self.obj(), "preset.apply", failed);
+                return false;
+            }
         };
 
         // Apply mode-specific live state from the timing core just
         // wrote. The shell owns the gtk-side reactive plumbing.
         match timing {
             PresetTiming::Timer { stopwatch, duration_secs } => {
-                self.set_countdown_target(duration_secs);
+                if !self.set_countdown_target(duration_secs) { return false; }
                 self.stopwatch_loading.set(true);
                 self.stopwatch_mode_row.set_active(stopwatch);
                 self.stopwatch_toggle_on.set(stopwatch);
@@ -3766,7 +3791,7 @@ impl TimerView {
                 self.breathing_pattern.set(BreathPattern::clamp_from_raw(
                     inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
                 ));
-                self.set_breathing_duration_secs(duration_secs);
+                if !self.set_breathing_duration_secs(duration_secs) { return false; }
                 self.refresh_phase_tiles();
                 self.stopwatch_loading.set(true);
                 self.stopwatch_mode_row.set_active(stopwatch);
@@ -3809,10 +3834,8 @@ impl TimerView {
         }
 
         let snapshot = self.snapshot_current_setup();
-        if !self.apply_config(&cfg) {
-            self.toast(&gettext("Save failed"));
-            return;
-        }
+        // A failure has said so already.
+        if !self.apply_config(&cfg) { return; }
 
         // Toast with Undo. The action callback re-applies the
         // pre-apply snapshot, putting every persistence point back to
@@ -3871,17 +3894,17 @@ impl TimerView {
         }
     }
 
-    fn set_countdown_target(&self, secs: u32) {
+    /// False when the length could not be saved (the user was told).
+    fn set_countdown_target(&self, secs: u32) -> bool {
         self.countdown_target_secs.set(secs);
         let label = meditate_core::format::format_hhmm(secs);
         self.big_time_label.set_label(&label);
         self.refresh_duration_value_label();
-        if self.timer_populating.get() { return; }
-        if let Some(app) = self.get_app() {
-            let _ = app.with_db_mut(|db| {
-                meditate_core::settings_keys::set_timer_session_secs(db.core(), secs)
-            });
-        }
+        if self.timer_populating.get() { return true; }
+        let Some(app) = self.get_app() else { return true; };
+        setting_saved(&*self.obj(), "timer.setting", app.with_db_mut(|db| {
+            meditate_core::settings_keys::set_timer_session_secs(db.core(), secs)
+        }))
     }
 
     /// Restore the persisted Timer-mode countdown target. Falls back
@@ -4468,16 +4491,17 @@ impl TimerView {
     /// dialog. Stored as seconds (future-proof for sub-minute UI);
     /// clamps to 60..=23h59m * 60 — same effective upper bound as
     /// Timer mode for consistency.
-    fn set_breathing_duration_secs(&self, secs: u32) {
+    fn set_breathing_duration_secs(&self, secs: u32) -> bool {
         let secs = clamp_session_secs(secs);
         self.breathing_session_secs.set(secs);
-        self.save_breathing_settings();
+        let saved = self.save_breathing_settings();
         // Duration row label is shared between modes; reflect the new
         // value here so a Box-Breath edit shows up immediately.
         self.refresh_duration_value_label();
         if self.current_mode() == TimerMode::Breathing {
             self.refresh_hero_for_idle();
         }
+        saved
     }
 
     fn adjust_phase(&self, index: u8, delta: i32, min_val: u32) {
@@ -4530,14 +4554,12 @@ impl TimerView {
         self.breathing_populating.set(false);
     }
 
-    fn save_breathing_settings(&self) {
-        if self.breathing_populating.get() { return; }
-        let Some(app) = self.get_app() else { return; };
+    fn save_breathing_settings(&self) -> bool {
+        if self.breathing_populating.get() { return true; }
+        let Some(app) = self.get_app() else { return true; };
         let p = self.breathing_pattern.get();
         let secs = self.breathing_session_secs.get();
-        app.with_db_mut(|db| {
-            let _ = meditate_core::settings_keys::set_breathing(db.core(), p, secs);
-        });
+        setting_saved(&*self.obj(), "timer.setting", app.with_db_mut(|db| meditate_core::settings_keys::set_breathing(db.core(), p, secs)))
     }
 
     /// Apply the user's persisted label state for `mode` to the
@@ -4547,6 +4569,12 @@ impl TimerView {
         // refresh_setup_label_chooser_subtitle does the full
         // resolve-and-update dance from the persisted UUID + active
         // toggle, so this call is the single touchpoint.
+        self.refresh_setup_label_chooser_subtitle();
+    }
+
+    /// Show every Setup value as saved, after a write that failed.
+    fn reload_setup(&self) {
+        self.refresh_streak();
         self.refresh_setup_label_chooser_subtitle();
     }
 
@@ -4560,18 +4588,9 @@ impl TimerView {
             .unwrap_or(mode == TimerMode::Guided)
     }
 
-    fn persist_label_active_for_mode(&self, mode: TimerMode, on: bool) {
-        let Some(app) = self.get_app() else { return; };
-        app.with_db_mut(|db| {
-            let _ = meditate_core::labels::persist_active_for_mode(db.core(), mode.into(), on);
-        });
-    }
-
     fn persist_label_uuid_for_mode(&self, mode: TimerMode, uuid: &str) {
         let Some(app) = self.get_app() else { return; };
-        app.with_db_mut(|db| {
-            let _ = meditate_core::labels::persist_uuid_for_mode(db.core(), mode.into(), uuid);
-        });
+        setting_saved(&*self.obj(), "timer.setting", app.with_db_mut(|db| meditate_core::labels::persist_uuid_for_mode(db.core(), mode.into(), uuid)));
     }
 }
 
@@ -4586,6 +4605,85 @@ mod tests {
         let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
         let end = code[at..].find("\n    }\n").unwrap();
         code[at..at + end].to_string()
+    }
+
+    #[test]
+    fn a_failed_setting_says_so_and_springs_back() {
+        // #191: a Timer page setting that fails to save says "Save
+        // failed", and the page shows the saved value again, on the
+        // next main-loop turn (spin rows are mid-change in the handler).
+        let code = production();
+        let at = code.find("pub(crate) fn setting_saved<").expect("setting_saved");
+        let saved = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        let failed = saved.find("crate::db::write_ok(").expect("the failure message");
+        let reload = saved.find("idle_add_local_once").expect("reload on the next turn");
+        assert!(failed < reload && saved[reload..].contains(".reload_setup()"));
+        assert_eq!(code.matches("crate::db::write_ok(").count(), 2, "every write goes through setting_saved, but the label default");
+        let reload = body(&code, "fn reload_setup(&self)");
+        for f in ["refresh_streak()", "refresh_setup_label_chooser_subtitle()"] {
+            assert!(reload.contains(f), "{f}");
+        }
+        let streak = body(&code, "pub fn refresh_streak(&self)");
+        for f in ["load_timer_settings()", "load_breathing_settings()", "refresh_volume_rows()"] {
+            assert!(streak.contains(f), "{f}");
+        }
+        // A volume that didn't save plays no preview: `save` gives no sound.
+        let volume = body(&code, "let save = move |&(slot, mode)");
+        assert!(volume.contains("setting_saved(") && volume.contains("return None"));
+        // A preset whose length didn't save is a failed apply.
+        let apply = body(&code, "fn apply_config_once(&self");
+        assert!(apply.contains("if !self.set_countdown_target("));
+        assert!(body(&code, "fn set_countdown_target(&self, secs: u32) -> bool").contains("setting_saved("));
+    }
+
+    #[test]
+    fn a_preset_that_fails_halfway_is_put_back() {
+        // #191 review: core saves a preset's values one by one, so a
+        // failure can leave half of it; "Save failed" then puts the
+        // setup from before back (no Undo: nothing was done).
+        let code = production();
+        let apply = body(&code, "fn apply_config(&self");
+        let before = apply.find("self.snapshot_current_setup()").expect("the setup before");
+        let once = apply.find("self.apply_config_once(cfg)").unwrap();
+        let back = apply.find("self.apply_config_once(&before)").expect("put back");
+        assert!(before < once && once < back);
+        assert!(apply.contains("if self.apply_config_once(cfg) {\n            return true;"), "put back only on failure");
+    }
+
+    #[test]
+    fn showing_a_saved_signal_mode_writes_nothing() {
+        // #191 review: the reload after a failed save puts the saved
+        // Sound / Vibration / Both back; that must not write again (it
+        // would wait on the same lock a second time).
+        let code = production();
+        for setup in [
+            "fn setup_starting_bell_signal_mode_toggle(&self)",
+            "fn setup_end_bell_signal_mode_toggle(&self)",
+            "fn setup_cues_signal_mode_toggle(&self)",
+        ] {
+            assert!(body(&code, setup).contains("!obj.imp().bells_loading.get()"), "{setup}");
+        }
+        let phases = &code[code.find("build_phase_signal_mode_toggle_widget(\n").unwrap()..];
+        assert!(phases[..phases.find(");\n").unwrap()].contains("bells_loading.get()"), "phase toggles");
+        for refresh in [
+            "pub(crate) fn refresh_starting_bell_signal_mode_state(&self)",
+            "pub(crate) fn refresh_end_bell_signal_mode_state(&self)",
+        ] {
+            let b = body(&code, refresh);
+            assert!(b.contains("self.bells_loading.replace(true)") && b.contains("self.bells_loading.set(was)"), "{refresh}");
+        }
+    }
+
+    #[test]
+    fn a_label_default_that_was_not_kept_says_so() {
+        // #191: Save keeps the session; when only the label pick for
+        // next time didn't save, the message says just that.
+        let code = production();
+        let save = &code[code.find("// Record the user's pick as the new persisted default").unwrap()..];
+        let save = &save[..save.find("with_db_blocking_mut").unwrap()];
+        assert!(save.contains("crate::db::Failed::LabelDefault"));
+        let db = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/db/mod.rs")).unwrap();
+        assert!(db.contains("Failed::LabelDefault => gettext(\"Label not kept for next time\")"));
     }
 
     #[test]

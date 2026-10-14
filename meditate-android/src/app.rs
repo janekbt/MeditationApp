@@ -2181,11 +2181,14 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
-        let outer = code.find("fn apply_preset_json(").unwrap();
+        let outer = code.find("fn apply_preset_once(").unwrap();
         let outer = &code[outer..outer + code[outer..].find("\n}\n").unwrap()];
-        assert!(outer.contains("apply_preset_config_json("), "one wrapper around the real apply");
-        assert!(outer.contains("show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);"), "every failure says so");
-        assert_eq!(code.matches("apply_preset_config_json(").count(), 2, "only the wrapper calls it");
+        // Every failure says so: a bad config, the apply, the length.
+        let wrapper = &code[code.find("fn apply_preset_json(").unwrap()..];
+        assert!(wrapper[..wrapper.find("\n}\n").unwrap()].contains("show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);"), "a bad config");
+        assert!(outer.contains("setting_saved(ui, \"preset.apply\", failed);"), "the apply");
+        assert!(outer.contains("if !write_timer_session_secs(") && outer.contains("if !write_breathing("), "the length");
+        assert_eq!(outer.matches("return false;").count(), 3, "no failure path stays silent");
 
         // Sync brings rows in order: a missing sound was deleted, and
         // "Wait for sync" never ended.
@@ -4289,6 +4292,91 @@ mod tests {
             assert!(failed.contains(&format!("{preview}.with_borrow_mut(PreviewToggle::stop)")), "{name}");
             assert!(failed.contains("invoke_playback_failed()") && failed.contains("return;"), "{name}");
         }
+    }
+
+    #[test]
+    fn a_failed_setting_says_so_and_springs_back() {
+        // #191: a setting that fails to save says "Save failed" and the
+        // page shows the saved value again, on the next turn.
+        let code = ui_code();
+        let fn_body = |sig: &str| {
+            let at = code.find(sig).unwrap_or_else(|| panic!("missing {sig}"));
+            &code[at..at + code[at..].find("\n}\n").unwrap()]
+        };
+        let saved = fn_body("fn setting_saved<");
+        let failed = saved.find("write_ok(ui, tag, res)").expect("the failure message");
+        let later = saved.find("Timer::single_shot").expect("reload on the next turn");
+        assert!(failed < later && saved[later..].contains("reload_setup("));
+        let reload = fn_body("fn reload_setup(");
+        for f in ["load_setup_for_mode(", "refresh_bell_rows(", "refresh_boxbreath_cues("] {
+            assert!(reload.contains(f), "{f}");
+        }
+        // The Switch reports Rust-made changes, in change handlers that
+        // Slint runs after the timers: the guard stays up until the
+        // event loop's next turn, or the reload writes again.
+        assert!(reload.contains("RELOADING.set(true)"));
+        let posted = reload.find("slint::invoke_from_event_loop(|| RELOADING.set(false))").expect("cleared on the next turn");
+        assert!(!reload[..posted].contains("RELOADING.set(false)"), "cleared too early");
+        for helper in [
+            "fn write_stopwatch_for_mode(", "fn write_keep_awake_for_mode(",
+            "fn write_label_active_for_mode(", "fn write_label_uuid_for_mode(",
+            "fn write_signal_mode_for_mode(", "fn write_breathing(",
+            "fn write_timer_session_secs(", "fn write_global_setting(", "fn write_bb_phase(",
+        ] {
+            let body = fn_body(helper);
+            assert!(body.contains("ui: &MainWindow"), "{helper} has the window");
+            assert!(body.contains("RELOADING"), "{helper} doesn't write during a reload");
+            assert!(body.contains("setting_saved("), "{helper} says so");
+        }
+        assert!(!code.contains("write FAILED"), "a setting failure only logged");
+        for dropped in [
+            "let _ = meditate_core::labels::persist_", "let _ = db.update_preset_starred(",
+            "let _ = db.set_setting(", "let _ = db.set_box_breath_phase(",
+        ] {
+            assert!(!code.contains(dropped), "{dropped}");
+        }
+        // A volume that didn't save plays no preview.
+        let volume = handler(&code, "bell_volume_released");
+        let write = volume.find("bell_volume::write(").unwrap();
+        assert!(volume[..write].contains("setting_saved(") || volume[write..].contains("setting_saved("));
+        assert!(volume.find("setting_saved(").unwrap() < volume.find("play_volume_preview(").unwrap());
+        // A preset whose length didn't save is a failed apply.
+        let apply = fn_body("fn apply_preset_once(");
+        assert!(apply.contains("if !write_timer_session_secs(") && apply.contains("if !write_breathing("));
+        // The accent springs back without being applied.
+        let accent = handler(&code, "accent_picked");
+        let saved = accent.find("if !write_global_setting(&ui, \"android_accent\"").expect("accent checks the save");
+        assert!(saved < accent.find("apply_accent(").unwrap());
+    }
+
+    #[test]
+    fn a_preset_that_fails_halfway_is_put_back() {
+        // #191 review: core saves a preset's values one by one, so a
+        // failure can leave half of it; "Save failed" then puts the
+        // setup from before back (no Undo: nothing was done).
+        let code = ui_code();
+        let at = code.find("fn apply_preset_json(").unwrap();
+        let apply = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        // A config that doesn't parse changed nothing: nothing to put back.
+        let parsed = apply.find("PresetConfig::from_json(json)").expect("parsed first");
+        let before = apply.find("snapshot_setup_json(").expect("the setup before");
+        let once = apply.find("apply_preset_once(ui, &cfg,").unwrap();
+        let back = apply.find("apply_preset_once(ui, &before,").expect("put back");
+        assert!(parsed < before && before < once && once < back);
+        assert!(apply.contains("if apply_preset_once(ui, &cfg, mode, timer_session_secs) {\n        return true;"), "put back only on failure");
+    }
+
+    #[test]
+    fn a_label_default_that_was_not_kept_says_so() {
+        // #191: Save keeps the session; when only the label pick for
+        // next time didn't save, the message says just that.
+        let code = ui_code();
+        let save = handler(&code, "save_tap");
+        let persist = save.find("resolve_persist_action(").unwrap();
+        let shown = save.find("invoke_label_not_kept()").expect("its own message");
+        assert!(persist < shown && shown < save.find("save_ended_session").unwrap_or(save.len()));
+        let slint = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint")).unwrap();
+        assert!(slint.contains("label-not-kept() -> string { return @tr(\"Label not kept for next time\"); }"));
     }
 
     #[test]

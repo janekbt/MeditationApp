@@ -89,6 +89,8 @@ pub type Result<T> = std::result::Result<T, DbError>;
 pub enum Failed {
     Save,
     Delete,
+    /// The session saved, only its label pick for next time didn't.
+    LabelDefault,
 }
 
 /// `true` when the write landed. Otherwise logs it under `tag` and
@@ -136,6 +138,7 @@ fn show_write_failure(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: O
     let text = text.unwrap_or_else(|| match failed {
         Failed::Save => gettext("Save failed"),
         Failed::Delete => gettext("Delete failed"),
+        Failed::LabelDefault => gettext("Label not kept for next time"),
     });
     let toast = adw::Toast::builder().title(text).timeout(4).build();
     // One at a time: a slider step that fails again replaces the last
@@ -1073,6 +1076,11 @@ mod tests {
                 found.push(format!("{file}:{}: {}", n + 1, line.trim()));
             }
             let t = line.trim_start();
+            // #191: a setting write whose error only reaches the log.
+            let settings = ["set_setting(", "bell_volume::write(", "set_box_breath_phase(", "settings_keys::set_", "labels::set_", "labels::persist_"];
+            if t.starts_with("if let Err(") && settings.iter().any(|s| t.contains(s)) {
+                found.push(format!("{file}:{}: {t}", n + 1));
+            }
             let dropped = t.split("let _ =").skip(1).any(|rest| rest.contains("db.") || rest.contains("with_db"));
             if dropped {
                 found.push(format!("{file}:{}: {t}", n + 1));
@@ -1119,11 +1127,12 @@ mod tests {
 
     #[test]
     fn no_write_result_is_dropped() {
-        // #52: a failed write must reach the user, never a success toast.
+        // #52, #191: a failed write must reach the user, never a success
+        // toast or only the log.
         let files = [
             "presets.rs", "labels.rs", "log/imp.rs", "vibrations.rs",
             "bells.rs", "sounds.rs", "guided.rs", "preferences.rs",
-            "vibration_editor.rs",
+            "vibration_editor.rs", "timer/imp.rs",
         ];
         let found: Vec<String> = files.iter().flat_map(|f| dropped_writes(f)).collect();
         assert!(found.is_empty(), "dropped write results:\n{}", found.join("\n"));
