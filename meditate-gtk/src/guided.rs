@@ -35,7 +35,7 @@ use std::sync::Arc;
 use adw::prelude::*;
 
 use crate::application::MeditateApplication;
-use crate::db::GuidedFile;
+use crate::db::{write_ok, Failed, GuidedFile};
 use crate::i18n::gettext;
 use meditate_core::sound::AudioFileError;
 
@@ -336,7 +336,7 @@ pub fn import_picked_file(
                 Ok(Ok((new_uuid, dest_path))) => {
                     let dest_str = dest_path.to_string_lossy().to_string();
                     let mut insert_err: Option<String> = None;
-                    app.with_db_mut(|db| {
+                    let wrote = app.with_db_mut(|db| {
                         if let Err(e) = db.insert_guided_file_with_uuid(
                             &new_uuid,
                             &trimmed_for_done,
@@ -347,6 +347,9 @@ pub fn import_picked_file(
                             insert_err = Some(e.to_string());
                         }
                     });
+                    if wrote.is_none() {
+                        insert_err = Some(gettext("Save failed"));
+                    }
                     if let Some(msg) = insert_err {
                         let _ = std::fs::remove_file(&dest_path);
                         add_toast_to_window(
@@ -766,10 +769,11 @@ fn build_guided_file_row(
     let new_starred = meditate_core::db::StarredState::from_flag(!file.is_starred);
     let rebuilder_for_star = rebuilder.clone();
     let on_changed_for_star = on_changed.clone();
-    star_btn.connect_clicked(move |_| {
-        app_for_star.with_db_mut(|db| {
+    star_btn.connect_clicked(move |btn| {
+        let written = app_for_star.with_db_mut(|db| {
             db.set_guided_file_starred(&uuid_for_star, new_starred)
         });
+        write_ok(btn, "guided.star", written, Failed::Save);
         if let Some(rb) = rebuilder_for_star.borrow().as_ref() {
             rb();
         }
@@ -998,10 +1002,10 @@ fn present_rename_dialog(
         if new_name.is_empty() || new_name == old_name {
             return;
         }
-        if let Some(Err(e)) = app_for_response.with_db_mut(|db| {
+        let renamed = app_for_response.with_db_mut(|db| {
             db.rename_guided_file(&uuid_for_response, &new_name)
-        }) {
-            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+        });
+        if !write_ok(&anchor_for_response, "guided.rename", renamed, Failed::Save) {
             return;
         }
         // Log cards name the file.
@@ -1020,14 +1024,16 @@ fn present_rename_dialog(
         let old_name_for_undo = old_name.clone();
         let on_changed_for_undo = on_changed.clone();
         let rebuilder_for_undo = rebuilder.clone();
+        let overlay_for_failure = toast_overlay_for_response.clone();
         push_undo_toast(
             &toast_overlay_for_response,
             &toast_slot_for_response,
             &gettext("File renamed"),
             move || {
-                app_for_undo.with_db_mut(|db| {
+                let renamed = app_for_undo.with_db_mut(|db| {
                     db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
                 });
+                write_ok(&overlay_for_failure, "guided.rename.undo", renamed, Failed::Save);
                 app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
                 if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
                     rb();
@@ -1094,7 +1100,10 @@ fn present_delete_dialog(
             return;
         };
 
-        app.with_db_mut(|db| db.delete_guided_file(&uuid));
+        let deleted = app.with_db_mut(|db| db.delete_guided_file(&uuid));
+        if !write_ok(&toast_overlay_for_response, "guided.delete", deleted, Failed::Delete) {
+            return;
+        }
         // The on-disk file is NOT removed here — that's deferred to
         // the toast's natural dismissal so Undo can restore the row
         // without needing to re-transcode. If the toast times out
@@ -1105,50 +1114,14 @@ fn present_delete_dialog(
         }
         on_changed.clone()();
 
-        // Undo: re-insert with the same uuid + the captured fields.
-        // emits a fresh guided_file_insert event whose lamport_ts is
-        // strictly later than the prior delete event, so peers replay
-        // both and recompute_guided_file resolves the row as live.
-        let app_for_undo = app.clone();
-        let file_for_undo = file.clone();
-        let rebuilder_for_undo = rebuilder.clone();
-        let on_changed_for_undo = on_changed.clone();
-
-        // On natural dismiss (timeout or replacement, NOT undo): now
-        // safe to delete the on-disk file. Best-effort — failures
-        // (file already gone, permissions) get swallowed; a stale
-        // row in past sessions resolves to a missing file, which
-        // playback will toast about if the user tries to play it.
-        // The local copy, not the row's stored path (another device's
-        // after a sync).
-        let file_path_for_dismiss = meditate_core::audio_files::guided_file_path(
-            &crate::sync_runner::local_guided_dir(),
-            file.uuid.as_str(),
-        );
-        let file_path_for_undo = file_path_for_dismiss.to_string_lossy().into_owned();
-        push_undo_toast(
+        offer_guided_undo(
             &toast_overlay_for_response,
             &toast_slot_for_response,
-            &format!(
-                "{} {}",
-                gettext("Deleted"),
-                ellipsize(&display_name_for_response, 28),
-            ),
-            move || {
-                app_for_undo.with_db_mut(|db| {
-                    let _ = db.core().restore_guided_file(&meditate_core::db::GuidedFile {
-                        file_path: file_path_for_undo.clone(),
-                        ..file_for_undo.clone()
-                    });
-                });
-                if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
-                    rb();
-                }
-                on_changed_for_undo();
-            },
-            move || {
-                let _ = std::fs::remove_file(&file_path_for_dismiss);
-            },
+            &format!("{} {}", gettext("Deleted"), ellipsize(&display_name_for_response, 28)),
+            &app,
+            file,
+            rebuilder.clone(),
+            Rc::new(on_changed.clone()),
         );
     });
 
@@ -1160,6 +1133,65 @@ fn present_delete_dialog(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Offer Undo of a guided file's delete. Undo re-inserts the row with
+/// its uuid (a fresh insert event, later than the delete, so peers
+/// bring it back too). A restore that fails (a sync holding the
+/// database) is offered again; the audio, kept for Undo, goes only
+/// when an offer ends untaken. The local copy, not the row's stored
+/// path (another device's after a sync).
+fn offer_guided_undo(
+    overlay: &adw::ToastOverlay,
+    slot: &ToastSlot,
+    title: &str,
+    app: &MeditateApplication,
+    file: GuidedFile,
+    rebuilder: crate::Rebuilder,
+    on_changed: Rc<dyn Fn()>,
+) {
+    let path = meditate_core::audio_files::guided_file_path(
+        &crate::sync_runner::local_guided_dir(),
+        file.uuid.as_str(),
+    );
+    let path_for_dismiss = path.clone();
+    let (overlay_again, slot_again, app) = (overlay.clone(), slot.clone(), app.clone());
+    push_undo_toast(
+        overlay,
+        slot,
+        title,
+        move || {
+            let restored = app.with_db_mut(|db| {
+                db.core().restore_guided_file(&GuidedFile {
+                    file_path: path.to_string_lossy().into_owned(),
+                    ..file.clone()
+                })
+            });
+            match restored {
+                Some(Ok(_)) => {
+                    if let Some(rb) = rebuilder.borrow().as_ref() {
+                        rb();
+                    }
+                    on_changed();
+                }
+                // Another file took the name meanwhile: Undo can't work,
+                // so say why and let the delete stand.
+                Some(Err(meditate_core::db::DbError::DuplicateGuidedFile(name))) => {
+                    let clash = Some(Err::<(), _>(meditate_core::db::DbError::DuplicateGuidedFile(name)));
+                    write_ok(&overlay_again, "guided.restore", clash, Failed::Save);
+                    let _ = std::fs::remove_file(&path);
+                }
+                Some(Err(_)) | None => {
+                    meditate_core::log("guided.restore", &format!("failed: {restored:?}"));
+                    let title = gettext("Save failed");
+                    offer_guided_undo(&overlay_again, &slot_again, &title, &app, file.clone(), rebuilder.clone(), on_changed.clone());
+                }
+            }
+        },
+        move || {
+            let _ = std::fs::remove_file(&path_for_dismiss);
+        },
+    );
+}
 
 /// Push an undo toast onto the chooser-local overlay. `on_undo` fires
 /// when the user taps the Undo button. `on_dismiss_natural` fires on
@@ -1613,5 +1645,34 @@ mod tests {
             guided_transcode("video_only.mp4"),
             Err(AudioFileError::NoAudioTrack),
         );
+    }
+
+    #[test]
+    fn a_failed_delete_keeps_the_audio_file() {
+        // #52: the audio goes only with its row. A delete that fails
+        // (a sync holding the database) says so and offers no Undo,
+        // whose natural end would remove the file.
+        let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/guided.rs")).unwrap();
+        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let at = code.find("fn present_delete_dialog(").unwrap();
+        let body = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        let gate = body.find("if !write_ok(").expect("the delete result decides");
+        assert!(body[gate..].starts_with("if !write_ok(&") && body[gate..].contains("Failed::Delete"));
+        // The Undo offer is what removes the audio when it ends.
+        let offer = body.find("offer_guided_undo(").expect("Undo is offered");
+        assert!(gate < offer, "no Undo and no file removal before the delete landed");
+        assert!(!body.contains("std::fs::remove_file("));
+        // An Undo whose restore fails is offered again, with the audio
+        // kept until that offer ends.
+        let at = code.find("fn offer_guided_undo(").expect("one place offers the Undo");
+        let offer = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        let failed = offer.find("Some(Err(_)) | None =>").expect("a failed restore");
+        assert!(offer[failed..].contains("offer_guided_undo("), "offered again");
+        let arm = &offer[failed..failed + offer[failed..].find("offer_guided_undo(").unwrap()];
+        assert!(!arm.contains("remove_file("), "the audio stays");
+        assert!(arm.contains("gettext(\"Save failed\")"), "the offer says why");
+        // A name clash never clears up: say so, offer nothing.
+        let clash = offer.find("Some(Err(meditate_core::db::DbError::DuplicateGuidedFile(").expect("a clash arm");
+        assert!(clash < failed && offer[clash..failed].contains("write_ok("));
     }
 }

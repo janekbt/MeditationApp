@@ -12,7 +12,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::application::MeditateApplication;
-use crate::db::{IntervalBell, IntervalBellKind};
+use crate::db::{write_ok, Failed, IntervalBell, IntervalBellKind};
 use crate::i18n::gettext;
 
 /// Push the bell-library page onto the window's nav view.
@@ -38,9 +38,12 @@ where F: Fn() + Clone + 'static,
         .show_back_button(true)
         .build();
 
+    // Its own overlay: a failed save must show on this page.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&prefs_page));
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&prefs_page));
+    toolbar.set_content(Some(&toast_overlay));
 
     let page = adw::NavigationPage::builder()
         .tag("interval-bells")
@@ -74,6 +77,14 @@ where F: Fn() + Clone + 'static,
     if let Some(rb) = rebuilder.borrow().as_ref() {
         rb();
     }
+    // Back from a chooser or the edit page: a sound or pattern may
+    // have been renamed or deleted there.
+    let rebuilder_for_shown = rebuilder.clone();
+    page.connect_shown(move |_| {
+        if let Some(rb) = rebuilder_for_shown.borrow().as_ref() {
+            rb();
+        }
+    });
     nav_view.push(&page);
 }
 
@@ -164,8 +175,8 @@ fn build_create_row(
     let nav_view_for_create = nav_view.clone();
     let rebuilder_for_create = rebuilder.clone();
     let on_changed_for_create = on_changed.clone();
-    row.connect_activated(move |_| {
-        let new_id = app_for_create.with_db_mut(|db| {
+    row.connect_activated(move |row| {
+        let created = app_for_create.with_db_mut(|db| {
             db.insert_interval_bell(
                 meditate_core::bells::DEFAULT_NEW_BELL_KIND,
                 meditate_core::bells::DEFAULT_NEW_BELL_MINUTES,
@@ -174,7 +185,14 @@ fn build_create_row(
                 crate::db::BUNDLED_PATTERN_PULSE_UUID,
                 meditate_core::bells::DEFAULT_NEW_BELL_SIGNAL_MODE,
             )
-        }).and_then(std::result::Result::ok);
+        });
+        let new_id = match created {
+            Some(Ok(id)) => Some(id),
+            failed => {
+                write_ok(row, "bell.add", failed, Failed::Save);
+                None
+            }
+        };
 
         if let Some(rb) = rebuilder_for_create.borrow().as_ref() {
             rb();
@@ -244,9 +262,10 @@ fn build_bell_row(
     let app_for_toggle = app.clone();
     let on_changed_for_toggle = on_changed.clone();
     switch.connect_active_notify(move |s| {
-        app_for_toggle.with_db_mut(|db| {
+        let written = app_for_toggle.with_db_mut(|db| {
             db.set_interval_bell_enabled(&bell_uuid_for_toggle, s.is_active())
         });
+        write_ok(s, "bell.enable", written, Failed::Save);
         on_changed_for_toggle();
     });
     row.add_suffix(&switch);
@@ -322,9 +341,13 @@ fn confirm_and_delete(
     let uuid = bell_uuid.to_string();
     let rebuilder = rebuilder.clone();
     let on_changed = on_changed.clone();
+    let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+        let deleted = app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+        if !write_ok(&anchor_for_failure, "bell.delete", deleted, Failed::Delete) {
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
         on_changed();
     });
@@ -410,13 +433,15 @@ fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
 /// out of `push_edit_page` so each field-handler can call it from
 /// its own captured clones without nesting an item inside a fn body.
 fn write_back_bell(
+    anchor: &impl IsA<gtk::Widget>,
     app: &MeditateApplication,
     snap: &Rc<RefCell<IntervalBell>>,
     rebuilder: &Rebuilder,
     on_changed: &(impl Fn() + Clone + 'static),
 ) {
     let s = snap.borrow();
-    app.with_db_mut(|db| db.update_interval_bell(&s));
+    let written = app.with_db_mut(|db| db.update_interval_bell(&s));
+    write_ok(anchor, "bell.update", written, Failed::Save);
     if let Some(rb) = rebuilder.borrow().as_ref() {
         rb();
     }
@@ -581,7 +606,10 @@ fn push_edit_page(
     let header = adw::HeaderBar::builder().show_back_button(true).build();
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&prefs_page));
+    // Its own overlay: a failed save must show on this page.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&prefs_page));
+    toolbar.set_content(Some(&toast_overlay));
     let page = adw::NavigationPage::builder()
         .tag("interval-bell-edit")
         .title(gettext("Edit Bell"))
@@ -596,6 +624,20 @@ fn push_edit_page(
     let snapshot = Rc::new(RefCell::new(bell));
     let populating = Rc::new(std::cell::Cell::new(false));
 
+    // Back from a chooser: the sound or pattern may have been renamed
+    // or deleted there.
+    {
+        let snap = snapshot.clone();
+        let app = app.clone();
+        let sound_row = sound_row.clone();
+        let pattern_row = pattern_row.clone();
+        page.connect_shown(move |_| {
+            let s = snap.borrow();
+            sound_row.set_subtitle(&sound_name(&app, s.sound_uuid.as_str()));
+            pattern_row.set_subtitle(&pattern_name(&app, s.vibration_pattern_uuid.as_str()));
+        });
+    }
+
     // Volume: save-as-you-go like the other fields, then play the
     // bell at the new level. Leaving the page stops that preview.
     let volume = crate::volume_row::VolumeRow::install(&volume_row, || Some(()), {
@@ -603,9 +645,10 @@ fn push_edit_page(
         let app = app.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
+        let volume_row = volume_row.clone();
         move |(), volume| {
             snap.borrow_mut().volume = volume;
-            write_back_bell(&app, &snap, &rebuilder, &on_changed);
+            write_back_bell(&volume_row, &app, &snap, &rebuilder, &on_changed);
             Some(snap.borrow().sound_uuid.to_string())
         }
     });
@@ -628,7 +671,7 @@ fn push_edit_page(
         };
         snap_for_kind.borrow_mut().kind = new_kind;
         jitter_row_clone.set_visible(new_kind == IntervalBellKind::Interval);
-        write_back_bell(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
+        write_back_bell(row, &app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
     });
 
     let snap_for_min = snapshot.clone();
@@ -642,7 +685,7 @@ fn push_edit_page(
             f64::from(meditate_core::bells::BELL_MINUTES_MIN),
             f64::from(meditate_core::bells::BELL_MINUTES_MAX),
         ) as u32;
-        write_back_bell(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
+        write_back_bell(row, &app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
     });
 
     let snap_for_jitter = snapshot.clone();
@@ -656,7 +699,7 @@ fn push_edit_page(
             f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
             f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
         ) as u32;
-        write_back_bell(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
+        write_back_bell(row, &app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
     });
 
     // Sound activation: walk to window, push chooser, on pick update
@@ -687,7 +730,7 @@ fn push_edit_page(
             move |uuid| {
                 snap.borrow_mut().sound_uuid = uuid.clone().into();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
-                write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
+                write_back_bell(&sound_row, &app_inner, &snap, &rebuilder, &on_changed);
             },
         );
     });
@@ -712,7 +755,7 @@ fn push_edit_page(
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
             snap.borrow_mut().vibration_pattern_uuid = uuid.clone().into();
             pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
-            write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
+            write_back_bell(&pattern_row, &app_inner, &snap, &rebuilder, &on_changed);
         });
     });
 
@@ -739,7 +782,7 @@ fn push_edit_page(
         sound_row_for_sig.set_visible(mode.includes_sound());
         volume_row_for_sig.set_visible(mode.includes_sound());
         pattern_row_for_sig.set_visible(mode.includes_vibration());
-        write_back_bell(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
+        write_back_bell(tg, &app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
 
     // ── Delete ────────────────────────────────────────────────────
@@ -765,10 +808,13 @@ fn push_edit_page(
         let nav_view = nav_view_for_delete.clone();
         let rebuilder = rebuilder_for_delete.clone();
         let on_changed = on_changed_for_delete.clone();
-        let _page_ref = page_for_delete.clone();
+        let prefs_for_failure = prefs_page.clone();
         dialog.connect_response(None, move |_, id| {
             if id != "delete" { return; }
-            app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+            let deleted = app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+            if !write_ok(&prefs_for_failure, "bell.delete", deleted, Failed::Delete) {
+                return;
+            }
             if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
             on_changed();
             nav_view.pop();
@@ -849,5 +895,28 @@ mod tests {
             bell_title(&b(IntervalBellKind::FixedFromEnd, 5, 0, "gong")),
             "5 min before end"
         );
+    }
+
+    fn production_fn(sig: &str) -> String {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bells.rs")).unwrap();
+        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap().to_string();
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+        let end = code[at..].find("\n}\n").unwrap();
+        code[at..at + end].to_string()
+    }
+
+    #[test]
+    fn bell_pages_reread_names_when_shown() {
+        // #84: a sound or pattern renamed or deleted in a chooser
+        // shows its new name (or "Missing") on coming back.
+        let list = production_fn("pub fn push_bells_page<");
+        let shown = list.find("page.connect_shown(").expect("the list re-reads when shown");
+        assert!(list[shown..].contains("rb()"), "by rebuilding its rows");
+        let edit = production_fn("fn push_edit_page(");
+        let shown = edit.find("page.connect_shown(").expect("the edit page re-reads when shown");
+        let after = &edit[shown..];
+        assert!(after.contains("sound_name(") && after.contains("pattern_name("));
+        // A failure on either page must show on that page.
+        assert!(list.contains("adw::ToastOverlay::new()") && edit.contains("adw::ToastOverlay::new()"));
     }
 }

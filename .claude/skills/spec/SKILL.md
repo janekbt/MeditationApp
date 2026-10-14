@@ -93,8 +93,8 @@ Self-review before showing it:
    list, another language), and each one got a scenario or a reason.
 5. No "TBD", no "handle edge cases", no step that says what without how.
 
-For a large change (a new feature, sync or schema work), first give the
-change folder to a fresh agent: "You are a senior Rust developer who
+Then, for every change that has a change folder, give the folder to a
+fresh agent before showing it: "You are a senior Rust developer who
 must build this without talking to its author. List only the questions
 where a wrong guess would matter." Answer what the files already
 answer, decide the minor ones yourself (mark them as your call in

@@ -14,7 +14,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::application::{InvalidateScope, MeditateApplication};
-use crate::db::Label;
+use crate::db::{write_ok, Failed, Label};
 use crate::i18n::{gettext, ngettext};
 use meditate_core::labels::DeleteImpactKey;
 
@@ -45,7 +45,10 @@ pub fn push_labels_chooser(
     let header = adw::HeaderBar::builder().show_back_button(true).build();
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&prefs_page));
+    // Its own overlay: a failed save must show on this page.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&prefs_page));
+    toolbar.set_content(Some(&toast_overlay));
 
     let page = adw::NavigationPage::builder()
         .tag("labels-chooser")
@@ -281,11 +284,11 @@ fn present_create_label_dialog(
                 app.invalidate(InvalidateScope::LOG);
                 on_created(label);
             }
-            // Duplicate raced past the live `is_label_name_taken`
-            // validation — surface as a toast so the user knows
-            // why the action did nothing.
-            Some(Err(e)) => crate::db::surface_duplicate_toast(&anchor_for_response, &e),
-            None => {} // DB unavailable; handled elsewhere.
+            // A name clash that raced past the live validation, or a
+            // failed write: say so, so the action doesn't just vanish.
+            failed => {
+                write_ok(&anchor_for_response, "label.create", failed, Failed::Save);
+            }
         }
     });
 
@@ -345,8 +348,8 @@ fn present_rename_label_dialog(
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        if let Some(Err(e)) = app.with_db_mut(|db| db.update_label(label_id, &new_name)) {
-            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+        let renamed = app.with_db_mut(|db| db.update_label(label_id, &new_name));
+        if !write_ok(&anchor_for_response, "label.rename", renamed, Failed::Save) {
             return;
         }
         // Log chips, its filter and the Stats rows show the name.
@@ -403,9 +406,13 @@ fn present_delete_label_dialog(
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
 
     let app = app.clone();
+    let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| { let _ = db.delete_label(label_id); });
+        let deleted = app.with_db_mut(|db| db.delete_label(label_id));
+        if !write_ok(&anchor_for_failure, "label.delete", deleted, Failed::Delete) {
+            return;
+        }
         app.invalidate(InvalidateScope::ALL);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();

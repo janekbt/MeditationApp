@@ -84,20 +84,74 @@ impl DbError {
 
 pub type Result<T> = std::result::Result<T, DbError>;
 
-/// Push a "«{name}» is already taken" toast onto the main window
-/// for the four `Duplicate*` variants of `DbError`. Non-duplicate
-/// errors are silently ignored — they only fire on a genuine DB
-/// fault and there's no useful user action; the diag log catches
-/// them for post-hoc debugging. Anchored on any widget that lives
-/// inside `MeditateWindow` (entry / button / row).
-pub fn surface_duplicate_toast<W: gtk::glib::object::IsA<gtk::Widget>>(
-    anchor: &W,
-    err: &DbError,
-) {
-    let Some(msg) = err.duplicate_toast_text() else { return; };
-    let Some(root) = anchor.root() else { return; };
-    let Ok(window) = root.downcast::<crate::window::MeditateWindow>() else { return; };
-    window.add_toast(adw::Toast::builder().title(msg).timeout(4).build());
+/// Which message a failed write shows.
+#[derive(Clone, Copy)]
+pub enum Failed {
+    Save,
+    Delete,
+}
+
+/// `true` when the write landed. Otherwise logs it under `tag` and
+/// toasts "Save failed" or "Delete failed" (or "«X» is already taken"
+/// for a name clash) on the toast overlay nearest to `anchor`. No database at
+/// all counts as a failure.
+pub fn write_ok<T, E: std::fmt::Debug + 'static>(
+    anchor: &impl gtk::glib::object::IsA<gtk::Widget>,
+    tag: &str,
+    result: Option<std::result::Result<T, E>>,
+    failed: Failed,
+) -> bool {
+    let err = match result {
+        Some(Ok(_)) => return true,
+        Some(Err(e)) => e,
+        None => {
+            meditate_core::log(tag, "failed: no database");
+            show_write_failure(anchor, None, failed);
+            return false;
+        }
+    };
+    meditate_core::log(tag, &format!("failed: {err:?}"));
+    show_write_failure(anchor, clash_text(&err), failed);
+    false
+}
+
+/// "«X» is already taken" when the write failed on a name clash, from
+/// this app's or core's error type.
+fn clash_text(err: &dyn std::any::Any) -> Option<String> {
+    use meditate_core::db::DbError as Core;
+    if let Some(e) = err.downcast_ref::<DbError>() {
+        return e.duplicate_toast_text();
+    }
+    let ours = match err.downcast_ref::<Core>()? {
+        Core::DuplicateLabel(n) => DbError::DuplicateLabel(n.clone()),
+        Core::DuplicatePreset(n) => DbError::DuplicatePreset(n.clone()),
+        Core::DuplicateGuidedFile(n) => DbError::DuplicateGuidedFile(n.clone()),
+        Core::DuplicateVibrationPattern(n) => DbError::DuplicateVibrationPattern(n.clone()),
+        _ => return None,
+    };
+    ours.duplicate_toast_text()
+}
+
+fn show_write_failure(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: Option<String>, failed: Failed) {
+    let text = text.unwrap_or_else(|| match failed {
+        Failed::Save => gettext("Save failed"),
+        Failed::Delete => gettext("Delete failed"),
+    });
+    let toast = adw::Toast::builder().title(text).timeout(4).build();
+    // One at a time: a slider step that fails again replaces the last
+    // one instead of queueing four seconds each.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<adw::Toast>> = const { std::cell::RefCell::new(None) };
+    }
+    if let Some(last) = LAST.replace(Some(toast.clone())) {
+        last.dismiss();
+    }
+    // A pushed page has its own overlay; the window's sits on the root page.
+    if let Some(overlay) = anchor.ancestor(adw::ToastOverlay::static_type()).and_downcast::<adw::ToastOverlay>() {
+        overlay.add_toast(toast);
+    } else if let Some(window) = anchor.root().and_downcast::<crate::window::MeditateWindow>() {
+        window.add_toast(toast);
+    }
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
@@ -1001,5 +1055,87 @@ mod tests {
             matches!(err, DbError::DuplicateVibrationPattern(ref n) if n == "Pulse"),
             "expected DuplicateVibrationPattern(\"Pulse\"), got {err:?}",
         );
+    }
+
+    // ── #52: no write result is thrown away ───────────────────────────────────
+
+    /// The places in `src` where a write's result is dropped: a
+    /// `let _ =` on a database call, a `with_db_mut(..)` statement, or
+    /// one read as nothing. Test modules are not scanned.
+    fn dropped_writes(file: &str) -> Vec<String> {
+        let path = format!("{}/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        let full = std::fs::read_to_string(&path).unwrap();
+        let src = full.split("#[cfg(test)]\nmod").next().unwrap();
+        let mut found = Vec::new();
+        for (n, line) in src.lines().enumerate() {
+            // Says nothing unless the name clashed; write_ok covers both.
+            if line.contains("surface_duplicate_toast(") {
+                found.push(format!("{file}:{}: {}", n + 1, line.trim()));
+            }
+            let t = line.trim_start();
+            let dropped = t.split("let _ =").skip(1).any(|rest| rest.contains("db.") || rest.contains("with_db"));
+            if dropped {
+                found.push(format!("{file}:{}: {t}", n + 1));
+            }
+        }
+        let mut from = 0;
+        while let Some(i) = src[from..].find(".with_db_mut(") {
+            let at = from + i;
+            from = at + 1;
+            let line_start = src[..at].rfind('\n').map_or(0, |p| p + 1);
+            let head = src[line_start..at].trim_start();
+            let open = at + ".with_db_mut".len();
+            let mut depth = 0;
+            let mut close = open;
+            for (j, c) in src[open..].char_indices() {
+                match c {
+                    '(' | '{' | '[' => depth += 1,
+                    ')' | '}' | ']' => {
+                        depth -= 1;
+                        if depth == 0 { close = open + j; break; }
+                    }
+                    _ => {}
+                }
+            }
+            let after = src[close + 1..].trim_start();
+            if after.starts_with(".and_then(") || after.starts_with(".ok()") || after.starts_with(".unwrap_or") {
+                let n = src[..at].lines().count();
+                found.push(format!("{file}:{n}: a failed write read as nothing"));
+                continue;
+            }
+            if !head.chars().all(|c| c.is_alphanumeric() || "_.()".contains(c)) {
+                continue; // the value is used: `let x =`, `if`, `match`, an argument
+            }
+            if !after.starts_with(';') {
+                continue; // a tail expression: the caller gets the result
+            }
+            // Even a closure that handles its own error drops the `None`
+            // of no database at all.
+            let n = src[..at].lines().count();
+            found.push(format!("{file}:{n}: {}", src[line_start..].lines().next().unwrap().trim()));
+        }
+        found
+    }
+
+    #[test]
+    fn no_write_result_is_dropped() {
+        // #52: a failed write must reach the user, never a success toast.
+        let files = [
+            "presets.rs", "labels.rs", "log/imp.rs", "vibrations.rs",
+            "bells.rs", "sounds.rs", "guided.rs", "preferences.rs",
+            "vibration_editor.rs",
+        ];
+        let found: Vec<String> = files.iter().flat_map(|f| dropped_writes(f)).collect();
+        assert!(found.is_empty(), "dropped write results:\n{}", found.join("\n"));
+    }
+
+    #[test]
+    fn a_core_name_clash_keeps_its_text() {
+        // Undo writes go through core and return its error type; a
+        // name clash there still names the name, not "Save failed".
+        let core = meditate_core::db::DbError::DuplicatePreset("Calm".into());
+        assert!(clash_text(&core).is_some_and(|t| t.contains("Calm")));
+        assert!(clash_text(&DbError::DuplicateLabel("Zen".into())).is_some_and(|t| t.contains("Zen")));
+        assert_eq!(clash_text(&meditate_core::db::DbError::DateOutOfRange), None);
     }
 }

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-12 20:46+0200\n"
+"POT-Creation-Date: 2026-10-13 20:20+0200\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -47,7 +47,7 @@ msgstr "Перезаписано: '{name}'"
 msgid "Updated"
 msgstr "Обновлено:"
 
-#: src/announcement.rs:39 src/guided.rs:1134
+#: src/announcement.rs:39 src/guided.rs:1141
 msgid "Deleted"
 msgstr "Удалено:"
 
@@ -92,9 +92,9 @@ msgstr "Выход"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:408 src/guided.rs:1197 src/log/imp.rs:678
-#: src/presets.rs:698 src/timer/imp.rs:3786 src/vibrations.rs:476
-#: src/vibrations.rs:515
+#: src/application.rs:408 src/guided.rs:1205 src/log/imp.rs:708
+#: src/presets.rs:703 src/timer/imp.rs:3802 src/vibrations.rs:470
+#: src/vibrations.rs:511
 msgid "Undo"
 msgstr "Отменить"
 
@@ -106,15 +106,15 @@ msgstr "Интервальные колокола"
 msgid "Create new interval bell…"
 msgstr "Создать новый интервальный колокол…"
 
-#: src/bells.rs:261
+#: src/bells.rs:262
 msgid "Delete bell"
 msgstr "Удалить колокол"
 
-#: src/bells.rs:312 src/bells.rs:754
+#: src/bells.rs:313 src/bells.rs:765
 msgid "Delete Bell?"
 msgstr "Удалить колокол?"
 
-#: src/bells.rs:313 src/bells.rs:755
+#: src/bells.rs:314 src/bells.rs:766
 msgid "This bell will no longer ring during sessions."
 msgstr "Этот колокол больше не будет звучать во время сессий."
 
@@ -122,31 +122,31 @@ msgstr "Этот колокол больше не будет звучать во
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:317 src/bells.rs:759 src/guided.rs:231 src/guided.rs:958
-#: src/guided.rs:1073 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
-#: src/preferences.rs:596 src/preferences.rs:670 src/presets.rs:445
-#: src/presets.rs:507 src/presets.rs:574 src/presets.rs:635
+#: src/bells.rs:318 src/bells.rs:770 src/guided.rs:231 src/guided.rs:959
+#: src/guided.rs:1076 src/labels.rs:245 src/labels.rs:318 src/labels.rs:401
+#: src/preferences.rs:595 src/preferences.rs:669 src/presets.rs:447
+#: src/presets.rs:509 src/presets.rs:576 src/presets.rs:640
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:530
-#: src/sounds.rs:914 src/sounds.rs:980 src/timer/imp.rs:2591
-#: src/timer/imp.rs:3915 src/vibration_editor.rs:129 src/vibrations.rs:548
-#: src/vibrations.rs:638
+#: src/sounds.rs:914 src/sounds.rs:982 src/timer/imp.rs:2609
+#: src/timer/imp.rs:3931 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/vibrations.rs:636
 msgid "Cancel"
 msgstr "Отмена"
 
-#: src/bells.rs:318 src/bells.rs:760 src/guided.rs:1074 src/labels.rs:402
-#: src/presets.rs:575 src/sounds.rs:981 src/vibrations.rs:639
+#: src/bells.rs:319 src/bells.rs:771 src/guided.rs:1077 src/labels.rs:402
+#: src/presets.rs:577 src/sounds.rs:983 src/vibrations.rs:637
 msgid "Delete"
 msgstr "Удалить"
 
-#: src/bells.rs:343
+#: src/bells.rs:348
 msgid "No interval bells configured"
 msgstr "Интервальные колокола не настроены"
 
-#: src/bells.rs:344 src/guided.rs:917
+#: src/bells.rs:349 src/guided.rs:918
 msgid "Tap the row above to add one"
 msgstr "Нажмите на строку выше, чтобы добавить"
 
-#: src/bells.rs:360
+#: src/bells.rs:365
 #, rust-format
 msgid "Every 1 min"
 msgid_plural "Every {n} min"
@@ -154,7 +154,7 @@ msgstr[0] "Каждую {n} мин"
 msgstr[1] "Каждые {n} мин"
 msgstr[2] "Каждые {n} мин"
 
-#: src/bells.rs:363
+#: src/bells.rs:368
 #, rust-format
 msgid "Every 1 min ±{j}%"
 msgid_plural "Every {n} min ±{j}%"
@@ -162,7 +162,7 @@ msgstr[0] "Каждую {n} мин ±{j}%"
 msgstr[1] "Каждые {n} мин ±{j}%"
 msgstr[2] "Каждые {n} мин ±{j}%"
 
-#: src/bells.rs:367
+#: src/bells.rs:372
 #, rust-format
 msgid "At 1 min"
 msgid_plural "At {n} min"
@@ -170,7 +170,7 @@ msgstr[0] "На {n}-й минуте"
 msgstr[1] "На {n}-й минуте"
 msgstr[2] "На {n}-й минуте"
 
-#: src/bells.rs:370
+#: src/bells.rs:375
 #, rust-format
 msgid "1 min before end"
 msgid_plural "{n} min before end"
@@ -178,73 +178,73 @@ msgstr[0] "За {n} мин до конца"
 msgstr[1] "За {n} мин до конца"
 msgstr[2] "За {n} мин до конца"
 
-#: src/bells.rs:384
+#: src/bells.rs:389
 msgid "Missing"
 msgstr "Отсутствует"
 
-#: src/bells.rs:452
+#: src/bells.rs:459
 msgid "Every N minutes"
 msgstr "Каждые N минут"
 
-#: src/bells.rs:453
+#: src/bells.rs:460
 msgid "At time from start"
 msgstr "Через время от начала"
 
-#: src/bells.rs:454
+#: src/bells.rs:461
 msgid "Before end"
 msgstr "До конца"
 
-#: src/bells.rs:458
+#: src/bells.rs:465
 msgid "Kind"
 msgstr "Вид"
 
-#: src/bells.rs:470 src/log/imp.rs:829 src/timer/imp.rs:3889
+#: src/bells.rs:477 src/log/imp.rs:878 src/timer/imp.rs:3905
 msgid "Minutes"
 msgstr "Минуты"
 
-#: src/bells.rs:483
+#: src/bells.rs:490
 msgid "Jitter"
 msgstr "Разброс"
 
-#: src/bells.rs:484
+#: src/bells.rs:491
 msgid "Percent — randomises the next ring"
 msgstr "Процент — случайно сдвигает следующий удар"
 
-#: src/bells.rs:498 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
+#: src/bells.rs:505 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
 #: data/ui/timer_view.blp:623 data/ui/timer_view.blp:671
 #: data/ui/timer_view.blp:719 data/ui/timer_view.blp:767
 msgid "Type"
 msgstr "Тип"
 
-#: src/bells.rs:513 src/bells.rs:533 src/timer/imp.rs:1603
-#: src/timer/imp.rs:1677 src/timer/imp.rs:1742 data/ui/timer_view.blp:636
+#: src/bells.rs:520 src/bells.rs:540 src/timer/imp.rs:1615
+#: src/timer/imp.rs:1689 src/timer/imp.rs:1754 data/ui/timer_view.blp:636
 #: data/ui/timer_view.blp:684 data/ui/timer_view.blp:732
 #: data/ui/timer_view.blp:780
 msgid "Sound"
 msgstr "Звук"
 
-#: src/bells.rs:517 src/timer/imp.rs:1607 src/timer/imp.rs:1679
-#: src/timer/imp.rs:1744
+#: src/bells.rs:524 src/timer/imp.rs:1619 src/timer/imp.rs:1691
+#: src/timer/imp.rs:1756
 msgid "Vibration"
 msgstr "Вибрация"
 
-#: src/bells.rs:521 src/timer/imp.rs:1611 src/timer/imp.rs:1681
-#: src/timer/imp.rs:1746
+#: src/bells.rs:528 src/timer/imp.rs:1623 src/timer/imp.rs:1693
+#: src/timer/imp.rs:1758
 msgid "Both"
 msgstr "Оба"
 
-#: src/bells.rs:551 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
+#: src/bells.rs:558 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
 #: data/ui/timer_view.blp:576 data/ui/timer_view.blp:657
 #: data/ui/timer_view.blp:705 data/ui/timer_view.blp:753
 #: data/ui/timer_view.blp:801
 msgid "Pattern"
 msgstr "Шаблон"
 
-#: src/bells.rs:572
+#: src/bells.rs:579
 msgid "Delete Bell"
 msgstr "Удалить колокол"
 
-#: src/bells.rs:587
+#: src/bells.rs:597
 msgid "Edit Bell"
 msgstr "Изменить колокол"
 
@@ -264,7 +264,7 @@ msgstr "Ошибка разбора"
 msgid "Database error"
 msgstr "Ошибка базы данных"
 
-#: src/data_io.rs:33 src/preferences.rs:440
+#: src/data_io.rs:33 src/preferences.rs:439
 msgid "Database unavailable"
 msgstr "База данных недоступна"
 
@@ -272,6 +272,15 @@ msgstr "База данных недоступна"
 #, rust-format
 msgid "«{name}» is already taken"
 msgstr "Название «{name}» уже занято"
+
+#: src/db/mod.rs:137 src/labels.rs:471 src/local_folder.rs:78
+#: src/preferences.rs:435 src/timer/imp.rs:3777
+msgid "Save failed"
+msgstr "Ошибка сохранения"
+
+#: src/db/mod.rs:138
+msgid "Delete failed"
+msgstr "Не удалось удалить"
 
 #: src/format.rs:21 src/format.rs:28
 #, rust-format
@@ -313,7 +322,7 @@ msgstr "У выбранного файла нет локального пути"
 msgid "This file has no audio track"
 msgstr "В этом файле нет звуковой дорожки"
 
-#: src/guided.rs:164 src/timer/imp.rs:3600
+#: src/guided.rs:164 src/timer/imp.rs:3616
 msgid "Couldn't read audio file"
 msgstr "Не удалось прочитать аудиофайл"
 
@@ -321,11 +330,11 @@ msgstr "Не удалось прочитать аудиофайл"
 msgid "Track name"
 msgstr "Название дорожки"
 
-#: src/guided.rs:193 src/guided.rs:940
+#: src/guided.rs:193 src/guided.rs:941
 msgid "A guided file with this name already exists."
 msgstr "Файл медитации с таким названием уже существует."
 
-#: src/guided.rs:200 src/preferences.rs:134 src/sounds.rs:498
+#: src/guided.rs:200 src/preferences.rs:133 src/sounds.rs:498
 msgid "Import"
 msgstr "Импорт"
 
@@ -371,48 +380,48 @@ msgstr "Убрать из избранного и с главного экран
 msgid "Star — show in home list"
 msgstr "В избранное — показывать на главном экране"
 
-#: src/guided.rs:785 src/guided.rs:959 src/labels.rs:195 src/labels.rs:319
-#: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:341 src/sounds.rs:915
-#: src/vibrations.rs:417 src/vibrations.rs:549
+#: src/guided.rs:786 src/guided.rs:960 src/labels.rs:195 src/labels.rs:319
+#: src/presets.rs:387 src/presets.rs:510 src/sounds.rs:341 src/sounds.rs:915
+#: src/vibrations.rs:411 src/vibrations.rs:547
 msgid "Rename"
 msgstr "Переименовать"
 
-#: src/guided.rs:815
+#: src/guided.rs:816
 msgid "Delete file"
 msgstr "Удалить файл"
 
-#: src/guided.rs:861 src/guided.rs:878 src/guided.rs:903
+#: src/guided.rs:862 src/guided.rs:879 src/guided.rs:904
 #: src/vibration_editor.rs:245 src/vibration_editor.rs:561
-#: src/vibration_editor.rs:599
+#: src/vibration_editor.rs:593
 msgid "Preview"
 msgstr "Предпросмотр"
 
-#: src/guided.rs:887 src/sounds.rs:305 src/vibration_editor.rs:587
-#: src/vibrations.rs:324 src/volume_row.rs:60
+#: src/guided.rs:888 src/sounds.rs:305 src/vibration_editor.rs:581
+#: src/vibrations.rs:318 src/volume_row.rs:78
 msgid "Stop preview"
 msgstr "Остановить предпросмотр"
 
-#: src/guided.rs:916
+#: src/guided.rs:917
 msgid "No guided files imported"
 msgstr "Файлы медитаций не импортированы"
 
-#: src/guided.rs:953
+#: src/guided.rs:954
 msgid "Rename Guided File"
 msgstr "Переименовать файл медитации"
 
-#: src/guided.rs:1026
+#: src/guided.rs:1028
 msgid "File renamed"
 msgstr "Файл переименован"
 
-#: src/guided.rs:1063
+#: src/guided.rs:1066
 msgid "Delete Guided File?"
 msgstr "Удалить файл медитации?"
 
-#: src/guided.rs:1066
+#: src/guided.rs:1069
 msgid "This will permanently remove"
 msgstr "Будет безвозвратно удалён файл"
 
-#: src/guided.rs:1068
+#: src/guided.rs:1071
 msgid "Past sessions logged with this file stay in the log."
 msgstr "Прошлые сессии с этим файлом останутся в журнале."
 
@@ -436,7 +445,7 @@ msgstr "Имя метки"
 msgid "Create Label"
 msgstr "Создать метку"
 
-#: src/labels.rs:246 src/presets.rs:446
+#: src/labels.rs:246 src/presets.rs:448
 msgid "Create"
 msgstr "Создать"
 
@@ -459,7 +468,7 @@ msgstr "Эту метку не использует ни одна сессия."
 msgid "Delete Label?"
 msgstr "Удалить метку?"
 
-#: src/labels.rs:437
+#: src/labels.rs:441
 #, rust-format
 msgid ""
 "'{duplicate}' has the same name as '{label}'. It was created independently "
@@ -468,7 +477,7 @@ msgstr ""
 "'{duplicate}' носит то же имя, что и '{label}'. Метка была создана "
 "независимо на другом устройстве."
 
-#: src/labels.rs:441
+#: src/labels.rs:445
 #, rust-format
 msgid "Merging moves {n} session and deletes the duplicate."
 msgid_plural "Merging moves {n} sessions and deletes the duplicate."
@@ -476,36 +485,31 @@ msgstr[0] "Объединение перенесёт {n} сессию и уда�
 msgstr[1] "Объединение перенесёт {n} сессии и удалит дубликат."
 msgstr[2] "Объединение перенесёт {n} сессий и удалит дубликат."
 
-#: src/labels.rs:448
+#: src/labels.rs:452
 msgid "Duplicate Label"
 msgstr "Дубликат метки"
 
-#: src/labels.rs:453
+#: src/labels.rs:457
 msgid "Keep Both"
 msgstr "Оставить обе"
 
-#: src/labels.rs:454
+#: src/labels.rs:458
 msgid "Merge"
 msgstr "Объединить"
-
-#: src/labels.rs:467 src/local_folder.rs:77 src/preferences.rs:436
-#: src/timer/imp.rs:3761
-msgid "Save failed"
-msgstr "Ошибка сохранения"
 
 #: src/local_folder.rs:53
 msgid "Folder refreshed"
 msgstr "Папка обновлена"
 
-#: src/local_folder.rs:200
+#: src/local_folder.rs:201
 msgid "length not read yet"
 msgstr "длительность ещё не прочитана"
 
-#: src/local_folder.rs:206
+#: src/local_folder.rs:207
 msgid "never played"
 msgstr "ни разу не прослушано"
 
-#: src/local_folder.rs:207
+#: src/local_folder.rs:208
 #, rust-format
 msgid "played once"
 msgid_plural "played {n} times"
@@ -513,7 +517,7 @@ msgstr[0] "прослушано {n} раз"
 msgstr[1] "прослушано {n} раза"
 msgstr[2] "прослушано {n} раз"
 
-#: src/local_folder.rs:212
+#: src/local_folder.rs:213
 #, rust-format
 msgid "1 folder"
 msgid_plural "{n} folders"
@@ -521,7 +525,7 @@ msgstr[0] "{n} папка"
 msgstr[1] "{n} папки"
 msgstr[2] "{n} папок"
 
-#: src/local_folder.rs:213
+#: src/local_folder.rs:214
 #, rust-format
 msgid "1 file"
 msgid_plural "{n} files"
@@ -529,44 +533,44 @@ msgstr[0] "{n} файл"
 msgstr[1] "{n} файла"
 msgstr[2] "{n} файлов"
 
-#: src/local_folder.rs:244
+#: src/local_folder.rs:245
 #, rust-format
 msgid "{n}%"
 msgstr "{n} %"
 
-#: src/local_folder.rs:262 src/timer/imp.rs:3499
+#: src/local_folder.rs:263 src/timer/imp.rs:3515
 msgid "Unstar"
 msgstr "Убрать из избранного"
 
-#: src/local_folder.rs:262
+#: src/local_folder.rs:263
 msgid "Star"
 msgstr "Добавить в избранное"
 
-#: src/local_folder.rs:326 src/local_folder.rs:352 data/ui/timer_view.blp:301
+#: src/local_folder.rs:327 src/local_folder.rs:353 data/ui/timer_view.blp:301
 msgid "Local Folder"
 msgstr "Локальная папка"
 
-#: src/local_folder.rs:333
+#: src/local_folder.rs:334
 msgid "Refresh"
 msgstr "Обновить"
 
-#: src/local_folder.rs:337
+#: src/local_folder.rs:338
 msgid "Folder not reachable"
 msgstr "Папка недоступна"
 
-#: src/local_folder.rs:338
+#: src/local_folder.rs:339
 msgid "Choose Again"
 msgstr "Выбрать снова"
 
-#: src/local_folder.rs:417 src/local_folder.rs:452
+#: src/local_folder.rs:419 src/local_folder.rs:454
 msgid "Choose Folder"
 msgstr "Выбрать папку"
 
-#: src/local_folder.rs:461
+#: src/local_folder.rs:463
 msgid "No Local Folder"
 msgstr "Нет локальной папки"
 
-#: src/local_folder.rs:463
+#: src/local_folder.rs:465
 msgid ""
 "Choose a folder of guided meditations. Meditate plays the files where they "
 "are and doesn't copy them. They stay on this device and don't sync."
@@ -575,73 +579,73 @@ msgstr ""
 "лежат, и не копирует их. Они остаются на этом устройстве и не "
 "синхронизируются."
 
-#: src/local_folder.rs:490
+#: src/local_folder.rs:492
 msgid "Folder"
 msgstr "Папка"
 
-#: src/local_folder.rs:494
+#: src/local_folder.rs:496
 msgid "Change"
 msgstr "Изменить"
 
-#: src/local_folder.rs:507
+#: src/local_folder.rs:509
 msgid "Folders"
 msgstr "Папки"
 
-#: src/local_folder.rs:508
+#: src/local_folder.rs:510
 msgid "List"
 msgstr "Список"
 
-#: src/local_folder.rs:526 src/vibration_editor.rs:154
+#: src/local_folder.rs:528 src/vibration_editor.rs:154
 msgid "Name"
 msgstr "Название"
 
-#: src/local_folder.rs:526
+#: src/local_folder.rs:528
 msgid "Length"
 msgstr "Длительность"
 
-#: src/local_folder.rs:526
+#: src/local_folder.rs:528
 msgid "Most played"
 msgstr "Чаще всего"
 
-#: src/local_folder.rs:526
+#: src/local_folder.rs:528
 msgid "Least played"
 msgstr "Реже всего"
 
-#: src/local_folder.rs:529
+#: src/local_folder.rs:531
 msgid "Sort by"
 msgstr "Сортировка"
 
-#: src/local_folder.rs:589
+#: src/local_folder.rs:591
 msgid "No audio files in this folder"
 msgstr "В этой папке нет аудиофайлов"
 
-#: src/log/imp.rs:324
+#: src/log/imp.rs:350
 msgid "All labels"
 msgstr "Все метки"
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:413
+#: src/log/imp.rs:443
 msgid "min"
 msgstr "мин"
 
-#: src/log/imp.rs:461
+#: src/log/imp.rs:491
 msgid "No note added"
 msgstr "Без заметки"
 
-#: src/log/imp.rs:503
+#: src/log/imp.rs:533
 msgid "Delete Session"
 msgstr "Удалить сессию"
 
-#: src/log/imp.rs:622
+#: src/log/imp.rs:652
 msgid "Today"
 msgstr "Сегодня"
 
-#: src/log/imp.rs:623
+#: src/log/imp.rs:653
 msgid "Yesterday"
 msgstr "Вчера"
 
-#: src/log/imp.rs:645 src/log/imp.rs:647
+#: src/log/imp.rs:675 src/log/imp.rs:677
 #, rust-format
 msgid "1 session"
 msgid_plural "{n} sessions"
@@ -649,82 +653,82 @@ msgstr[0] "{n} сессия"
 msgstr[1] "{n} сессии"
 msgstr[2] "{n} сессий"
 
-#: src/log/imp.rs:816 src/timer/imp.rs:3882
+#: src/log/imp.rs:865 src/timer/imp.rs:3898
 msgid "Hours"
 msgstr "Часы"
 
-#: src/log/imp.rs:849
+#: src/log/imp.rs:898
 msgid "Date"
 msgstr "Дата"
 
-#: src/log/imp.rs:866
+#: src/log/imp.rs:915
 msgid "Pick a Date"
 msgstr "Выбрать дату"
 
-#: src/log/imp.rs:891
+#: src/log/imp.rs:940
 msgid "Hour"
 msgstr "Час"
 
-#: src/log/imp.rs:896
+#: src/log/imp.rs:945
 msgid "Minute"
 msgstr "Минута"
 
-#: src/log/imp.rs:910 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
+#: src/log/imp.rs:959 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
 msgid "Selected"
 msgstr "Выбрано"
 
-#: src/log/imp.rs:925 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
+#: src/log/imp.rs:974 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
 #: data/ui/window.blp:107
 msgid "Label"
 msgstr "Метка"
 
-#: src/log/imp.rs:926 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
+#: src/log/imp.rs:975 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
 msgid "Tag this session"
 msgstr "Отметьте эту сессию"
 
-#: src/log/imp.rs:984 data/ui/timer_view.blp:843
+#: src/log/imp.rs:1033 data/ui/timer_view.blp:843
 msgid "Note (optional)"
 msgstr "Заметка (необязательно)"
 
-#: src/log/imp.rs:1004 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
+#: src/log/imp.rs:1053 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
 #: data/ui/timer_view.blp:492
 msgid "Duration"
 msgstr "Длительность"
 
-#: src/log/imp.rs:1010
+#: src/log/imp.rs:1059
 msgid "Start time"
 msgstr "Время начала"
 
-#: src/log/imp.rs:1039
+#: src/log/imp.rs:1088
 msgid "_Cancel"
 msgstr "_Отмена"
 
-#: src/log/imp.rs:1043 src/preferences.rs:343
+#: src/log/imp.rs:1092 src/preferences.rs:342
 msgid "_Save"
 msgstr "_Сохранить"
 
-#: src/log/imp.rs:1043
+#: src/log/imp.rs:1092
 msgid "_Add"
 msgstr "_Добавить"
 
-#: src/log/imp.rs:1087 src/log/imp.rs:1094
+#: src/log/imp.rs:1136 src/log/imp.rs:1143
 msgid "Edit Session"
 msgstr "Изменить сессию"
 
-#: src/log/imp.rs:1087 src/log/imp.rs:1094 data/ui/log_view.blp:18
+#: src/log/imp.rs:1136 src/log/imp.rs:1143 data/ui/log_view.blp:18
 #: data/ui/window.blp:117
 msgid "Add Session"
 msgstr "Добавить сессию"
 
-#: src/log/imp.rs:1115 src/timer/imp.rs:3971 src/timer/imp.rs:4009
+#: src/log/imp.rs:1164 src/timer/imp.rs:3987 src/timer/imp.rs:4025
 msgid "(none — pick one)"
 msgstr "(нет — выберите)"
 
-#: src/log/imp.rs:1212 src/timer/imp.rs:2535
+#: src/log/imp.rs:1263 src/timer/imp.rs:2553
 msgid "Couldn't save session — storage error"
 msgstr "Не удалось сохранить сессию — ошибка хранилища"
 
-#: src/log/imp.rs:1217 src/timer/imp.rs:2553
+#: src/log/imp.rs:1268 src/timer/imp.rs:2571
 msgid "Couldn't save session — storage unavailable"
 msgstr "Не удалось сохранить сессию — хранилище недоступно"
 
@@ -748,63 +752,63 @@ msgstr "Дневная цель"
 msgid "Minutes per day — drives the ring on the Stats tab"
 msgstr "Минут в день — управляет кольцом на вкладке «Статистика»"
 
-#: src/preferences.rs:101
+#: src/preferences.rs:100
 msgid "Data"
 msgstr "Данные"
 
-#: src/preferences.rs:107
+#: src/preferences.rs:106
 msgid "Backup"
 msgstr "Резервная копия"
 
-#: src/preferences.rs:108
+#: src/preferences.rs:107
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Экспорт журнала сессий в CSV-файл или восстановление из него."
 
-#: src/preferences.rs:112
+#: src/preferences.rs:111
 msgid "Export session log"
 msgstr "Экспортировать журнал"
 
-#: src/preferences.rs:113
+#: src/preferences.rs:112
 msgid "Save every session to a CSV file"
 msgstr "Сохранить все сессии в CSV-файл"
 
-#: src/preferences.rs:119
+#: src/preferences.rs:118
 msgid "Export"
 msgstr "Экспорт"
 
-#: src/preferences.rs:127
+#: src/preferences.rs:126
 msgid "Import from Meditate CSV"
 msgstr "Импорт из CSV Meditate"
 
-#: src/preferences.rs:128
+#: src/preferences.rs:127
 msgid "Restore sessions from a file exported above"
 msgstr "Восстановить сессии из файла, экспортированного выше"
 
-#: src/preferences.rs:144
+#: src/preferences.rs:143
 msgid "Migrate"
 msgstr "Миграция"
 
-#: src/preferences.rs:145
+#: src/preferences.rs:144
 msgid "Import sessions from another meditation app."
 msgstr "Импорт сессий из другого приложения для медитации."
 
-#: src/preferences.rs:149 src/preferences.rs:581
+#: src/preferences.rs:148 src/preferences.rs:580
 msgid "Import from Insight Timer"
 msgstr "Импорт из Insight Timer"
 
-#: src/preferences.rs:150
+#: src/preferences.rs:149
 msgid "Upload an Insight Timer CSV export"
 msgstr "Загрузите CSV-экспорт из Insight Timer"
 
-#: src/preferences.rs:156
+#: src/preferences.rs:155
 msgid "Import Insight Timer CSV"
 msgstr "Импортировать CSV Insight Timer"
 
-#: src/preferences.rs:174
+#: src/preferences.rs:173
 msgid "Nextcloud Sync"
 msgstr "Синхронизация с Nextcloud"
 
-#: src/preferences.rs:176
+#: src/preferences.rs:175
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -812,116 +816,116 @@ msgstr ""
 "Синхронизируйте сессии, метки и настройки между устройствами через "
 "собственный сервер Nextcloud."
 
-#: src/preferences.rs:181
+#: src/preferences.rs:180
 msgid "Server URL"
 msgstr "URL сервера"
 
-#: src/preferences.rs:185
+#: src/preferences.rs:184
 msgid "Username"
 msgstr "Имя пользователя"
 
-#: src/preferences.rs:188
+#: src/preferences.rs:187
 msgid "App password"
 msgstr "Пароль приложения"
 
-#: src/preferences.rs:217
+#: src/preferences.rs:216
 msgid "Test connection"
 msgstr "Проверить соединение"
 
-#: src/preferences.rs:218
+#: src/preferences.rs:217
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Проверить, что URL и учётные данные подходят для вашего Nextcloud."
 
-#: src/preferences.rs:222
+#: src/preferences.rs:221
 msgid "_Test"
 msgstr "_Проверить"
 
-#: src/preferences.rs:267 src/preferences.rs:378
+#: src/preferences.rs:266 src/preferences.rs:377
 msgid "Enter URL and username"
 msgstr "Введите URL и имя пользователя"
 
-#: src/preferences.rs:271 src/preferences.rs:386
+#: src/preferences.rs:270 src/preferences.rs:385
 msgid "Enter a password"
 msgstr "Введите пароль"
 
-#: src/preferences.rs:275 src/preferences.rs:390
+#: src/preferences.rs:274 src/preferences.rs:389
 msgid "Keyring read failed"
 msgstr "Ошибка чтения из связки ключей"
 
-#: src/preferences.rs:281 src/preferences.rs:382
+#: src/preferences.rs:280 src/preferences.rs:381
 msgid "URL must start with https://"
 msgstr "URL должен начинаться с https://"
 
-#: src/preferences.rs:315
+#: src/preferences.rs:314
 msgid "Connection OK"
 msgstr "Соединение установлено"
 
-#: src/preferences.rs:316
+#: src/preferences.rs:315
 msgid "Authentication failed"
 msgstr "Ошибка аутентификации"
 
-#: src/preferences.rs:317
+#: src/preferences.rs:316
 msgid "Not a WebDAV folder"
 msgstr "Это не папка WebDAV"
 
-#: src/preferences.rs:318
+#: src/preferences.rs:317
 msgid "Network error"
 msgstr "Ошибка сети"
 
-#: src/preferences.rs:319
+#: src/preferences.rs:318
 msgid "Server error"
 msgstr "Ошибка сервера"
 
-#: src/preferences.rs:324
+#: src/preferences.rs:323
 msgid "Test failed"
 msgstr "Проверка не удалась"
 
-#: src/preferences.rs:338
+#: src/preferences.rs:337
 msgid "Save sync settings"
 msgstr "Сохранить настройки синхронизации"
 
-#: src/preferences.rs:339
+#: src/preferences.rs:338
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "URL и имя пользователя хранятся локально; пароль сохраняется в связке ключей."
 
-#: src/preferences.rs:417
+#: src/preferences.rs:416
 msgid "Keyring write failed"
 msgstr "Ошибка записи в связку ключей"
 
-#: src/preferences.rs:445
+#: src/preferences.rs:444
 msgid "Sync settings saved"
 msgstr "Настройки синхронизации сохранены"
 
-#: src/preferences.rs:454
+#: src/preferences.rs:453
 msgid "Danger Zone"
 msgstr "Опасная зона"
 
-#: src/preferences.rs:455
+#: src/preferences.rs:454
 msgid "These actions cannot be undone."
 msgstr "Эти действия нельзя отменить."
 
-#: src/preferences.rs:459
+#: src/preferences.rs:458
 msgid "Delete all sessions"
 msgstr "Удалить все сессии"
 
-#: src/preferences.rs:460
+#: src/preferences.rs:459
 msgid "Permanently remove every logged session"
 msgstr "Безвозвратно удаляет все записанные сессии"
 
-#: src/preferences.rs:464
+#: src/preferences.rs:463
 msgid "_Delete All"
 msgstr "_Удалить всё"
 
-#: src/preferences.rs:534
+#: src/preferences.rs:533
 msgid "Export Session Log"
 msgstr "Экспортировать журнал сессий"
 
-#: src/preferences.rs:538
+#: src/preferences.rs:537
 msgid "CSV files"
 msgstr "Файлы CSV"
 
-#: src/preferences.rs:554
+#: src/preferences.rs:553
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
@@ -929,20 +933,20 @@ msgstr[0] "Экспортирована {n} сессия"
 msgstr[1] "Экспортированы {n} сессии"
 msgstr[2] "Экспортировано {n} сессий"
 
-#: src/preferences.rs:558
+#: src/preferences.rs:557
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Не удалось экспортировать: {error}"
 
-#: src/preferences.rs:572
+#: src/preferences.rs:571
 msgid "Import Session Log"
 msgstr "Импортировать журнал сессий"
 
-#: src/preferences.rs:591
+#: src/preferences.rs:590
 msgid "Delete Every Session?"
 msgstr "Удалить все сессии?"
 
-#: src/preferences.rs:592
+#: src/preferences.rs:591
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -950,11 +954,11 @@ msgstr ""
 "Безвозвратно удаляет все сессии из журнала. Сначала экспортируйте резервную "
 "копию, если хотите сохранить историю."
 
-#: src/preferences.rs:597
+#: src/preferences.rs:596
 msgid "Delete All"
 msgstr "Удалить всё"
 
-#: src/preferences.rs:608
+#: src/preferences.rs:607
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
@@ -962,35 +966,35 @@ msgstr[0] "Удалена {n} сессия"
 msgstr[1] "Удалены {n} сессии"
 msgstr[2] "Удалено {n} сессий"
 
-#: src/preferences.rs:615
+#: src/preferences.rs:614
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Не удалось удалить: {error}"
 
-#: src/preferences.rs:655 src/preferences.rs:717
+#: src/preferences.rs:654 src/preferences.rs:716
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Не удалось импортировать: {error}"
 
-#: src/preferences.rs:665
+#: src/preferences.rs:664
 msgid "Some Lines Can't Be Read"
 msgstr "Некоторые строки не удаётся прочитать"
 
-#: src/preferences.rs:671
+#: src/preferences.rs:670
 msgid "Import the Rest"
 msgstr "Импортировать остальное"
 
-#: src/preferences.rs:684
+#: src/preferences.rs:683
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Строка {line}: не удаётся прочитать время начала."
 
-#: src/preferences.rs:685
+#: src/preferences.rs:684
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Строка {line}: не удаётся прочитать длительность."
 
-#: src/preferences.rs:692
+#: src/preferences.rs:691
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
@@ -998,11 +1002,11 @@ msgstr[0] "Ещё {n} строку тоже не удаётся прочитат
 msgstr[1] "Ещё {n} строки тоже не удаётся прочитать."
 msgstr[2] "Ещё {n} строк тоже не удаётся прочитать."
 
-#: src/preferences.rs:701
+#: src/preferences.rs:700
 msgid "Nothing in this file can be imported."
 msgstr "Из этого файла ничего нельзя импортировать."
 
-#: src/preferences.rs:710
+#: src/preferences.rs:709
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1042,51 +1046,51 @@ msgstr "Управлять"
 msgid "Create new preset…"
 msgstr "Создать новый пресет…"
 
-#: src/presets.rs:351
+#: src/presets.rs:354
 msgid "Remove from home list"
 msgstr "Убрать с главного экрана"
 
-#: src/presets.rs:352
+#: src/presets.rs:355
 msgid "Pin to home list"
 msgstr "Закрепить на главном экране"
 
-#: src/presets.rs:412
+#: src/presets.rs:414
 msgid "Delete preset"
 msgstr "Удалить пресет"
 
-#: src/presets.rs:435
+#: src/presets.rs:437
 msgid "Preset name"
 msgstr "Название пресета"
 
-#: src/presets.rs:440
+#: src/presets.rs:442
 msgid "Create Preset"
 msgstr "Создать пресет"
 
-#: src/presets.rs:502
+#: src/presets.rs:504
 msgid "Rename Preset"
 msgstr "Переименовать пресет"
 
-#: src/presets.rs:566
+#: src/presets.rs:568
 #, rust-format
 msgid "'{name}' will be removed from this device and any synced peers."
 msgstr ""
 "'{name}' будет удалён с этого устройства и со всех синхронизированных "
 "устройств."
 
-#: src/presets.rs:569
+#: src/presets.rs:571
 msgid "Delete Preset?"
 msgstr "Удалить пресет?"
 
-#: src/presets.rs:627
+#: src/presets.rs:632
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr "Заменить сохранённую конфигурацию '{name}' текущими настройками?"
 
-#: src/presets.rs:630
+#: src/presets.rs:635
 msgid "Override Preset?"
 msgstr "Перезаписать пресет?"
 
-#: src/presets.rs:636
+#: src/presets.rs:641
 msgid "Override"
 msgstr "Перезаписать"
 
@@ -1136,7 +1140,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr "Стереть локальные данные"
 
-#: src/sound.rs:243
+#: src/sound.rs:256
 msgid "Couldn't play bell sound"
 msgstr "Не удалось воспроизвести звук колокола"
 
@@ -1204,11 +1208,11 @@ msgstr "Ошибка импорта:"
 msgid "Rename Sound"
 msgstr "Переименовать звук"
 
-#: src/sounds.rs:975
+#: src/sounds.rs:977
 msgid "Delete Sound?"
 msgstr "Удалить звук?"
 
-#: src/sounds.rs:976
+#: src/sounds.rs:978
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Колокола, использующие этот звук, останутся без звука."
 
@@ -1391,67 +1395,67 @@ msgstr "Идёт сессия медитации"
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Не удалось удержать компьютер от сна ради колоколов"
 
-#: src/timer/imp.rs:1779
+#: src/timer/imp.rs:1791
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Это устройство не умеет вибрировать, поэтому ничего не прозвучит"
 
-#: src/timer/imp.rs:1780
+#: src/timer/imp.rs:1792
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Это устройство не умеет вибрировать, поэтому прозвучит только звук"
 
-#: src/timer/imp.rs:2000
+#: src/timer/imp.rs:2012
 msgid "Paused"
 msgstr "Пауза"
 
-#: src/timer/imp.rs:2027 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2039 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Часы · Минуты"
 
-#: src/timer/imp.rs:2195
+#: src/timer/imp.rs:2209
 msgid "Couldn't start playback"
 msgstr "Не удалось начать воспроизведение"
 
-#: src/timer/imp.rs:2284 src/window/imp.rs:397
+#: src/timer/imp.rs:2298 src/window/imp.rs:397
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/timer/imp.rs:2285 src/window/imp.rs:399
+#: src/timer/imp.rs:2299 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr "Приостановить таймер"
 
-#: src/timer/imp.rs:2331 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2349 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr "Продолжить"
 
-#: src/timer/imp.rs:2332
+#: src/timer/imp.rs:2350
 msgid "Resume Timer"
 msgstr "Продолжить таймер"
 
-#: src/timer/imp.rs:2582
+#: src/timer/imp.rs:2600
 msgid "Discard Session?"
 msgstr "Удалить сессию?"
 
-#: src/timer/imp.rs:2583
+#: src/timer/imp.rs:2601
 msgid "Your note will be lost."
 msgstr "Заметка будет потеряна."
 
-#: src/timer/imp.rs:2592 data/ui/timer_view.blp:892
+#: src/timer/imp.rs:2610 data/ui/timer_view.blp:892
 msgid "Discard"
 msgstr "Удалить"
 
-#: src/timer/imp.rs:2916
+#: src/timer/imp.rs:2934
 msgid "Finish"
 msgstr "Завершить"
 
-#: src/timer/imp.rs:2918
+#: src/timer/imp.rs:2936
 msgid "End at the planned duration"
 msgstr "Завершить в запланированное время"
 
-#: src/timer/imp.rs:3270
+#: src/timer/imp.rs:3288
 msgid "Start your streak today"
 msgstr "Начните серию сегодня"
 
-#: src/timer/imp.rs:3271 src/timer/imp.rs:3273
+#: src/timer/imp.rs:3289 src/timer/imp.rs:3291
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
@@ -1459,74 +1463,74 @@ msgstr[0] "Серия: {n} день"
 msgstr[1] "Серия: {n} дня"
 msgstr[2] "Серия: {n} дней"
 
-#: src/timer/imp.rs:3329
+#: src/timer/imp.rs:3345
 msgid "Tap Save Settings to create your first preset"
 msgstr "Нажмите «Сохранить», чтобы создать первый пресет"
 
-#: src/timer/imp.rs:3403
+#: src/timer/imp.rs:3419
 msgid "No starred files"
 msgstr "Нет избранных файлов"
 
-#: src/timer/imp.rs:3405
+#: src/timer/imp.rs:3421
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr ""
 "Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в "
 "избранное в разделе «Управление импортом»"
 
-#: src/timer/imp.rs:3477
+#: src/timer/imp.rs:3493
 msgid "not found"
 msgstr "не найден"
 
-#: src/timer/imp.rs:3481
+#: src/timer/imp.rs:3497
 msgid "Local file"
 msgstr "Локальный файл"
 
-#: src/timer/imp.rs:3513
+#: src/timer/imp.rs:3529
 msgid "File not found in the local folder"
 msgstr "Файл не найден в локальной папке"
 
-#: src/timer/imp.rs:3530
+#: src/timer/imp.rs:3546
 msgid "Reading length"
 msgstr "Чтение длительности"
 
-#: src/timer/imp.rs:3536 src/timer/imp.rs:3537
+#: src/timer/imp.rs:3552 src/timer/imp.rs:3553
 msgid "Local folder"
 msgstr "Локальная папка"
 
-#: src/timer/imp.rs:3543 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3559 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "Файл не выбран"
 
-#: src/timer/imp.rs:3545 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3561 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "Нажмите «Открыть файл» или выберите из списка"
 
-#: src/timer/imp.rs:3553
+#: src/timer/imp.rs:3569
 msgid "Open New File"
 msgstr "Открыть новый файл"
 
-#: src/timer/imp.rs:3555 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3571 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "Открыть файл"
 
-#: src/timer/imp.rs:3784
+#: src/timer/imp.rs:3800
 #, rust-format
 msgid "'{name}' applied"
 msgstr "Применено: '{name}'"
 
-#: src/timer/imp.rs:3909
+#: src/timer/imp.rs:3925
 msgid "Custom Time"
 msgstr "Своё время"
 
-#: src/timer/imp.rs:3910
+#: src/timer/imp.rs:3926
 msgid "Hours : Minutes"
 msgstr "Часы : Минуты"
 
-#: src/timer/imp.rs:3916
+#: src/timer/imp.rs:3932
 msgid "Set"
 msgstr "Задать"
 
-#: src/timer/imp.rs:3973 src/timer/imp.rs:4011
+#: src/timer/imp.rs:3989 src/timer/imp.rs:4027
 msgid "Off"
 msgstr "Выкл."
 
@@ -1538,16 +1542,16 @@ msgstr "Выкл."
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4273
+#: src/timer/imp.rs:4271
 #, rust-format
 msgid "Add {time} ?"
 msgstr "Добавить {time} ?"
 
-#: src/timer/imp.rs:4283
+#: src/timer/imp.rs:4281
 msgid "None enabled"
 msgstr "Нет активных"
 
-#: src/timer/imp.rs:4284 src/timer/imp.rs:4285
+#: src/timer/imp.rs:4282 src/timer/imp.rs:4283
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
@@ -1555,27 +1559,27 @@ msgstr[0] "Активно: {n}"
 msgstr[1] "Активно: {n}"
 msgstr[2] "Активно: {n}"
 
-#: src/timer/imp.rs:4309 data/ui/timer_view.blp:618
+#: src/timer/imp.rs:4307 data/ui/timer_view.blp:618
 msgid "Inhale"
 msgstr "Вдох"
 
-#: src/timer/imp.rs:4310
+#: src/timer/imp.rs:4308
 msgid "Hold (full)"
 msgstr "Задержка (на вдохе)"
 
-#: src/timer/imp.rs:4311 data/ui/timer_view.blp:714
+#: src/timer/imp.rs:4309 data/ui/timer_view.blp:714
 msgid "Exhale"
 msgstr "Выдох"
 
-#: src/timer/imp.rs:4312
+#: src/timer/imp.rs:4310
 msgid "Hold (empty)"
 msgstr "Задержка (на выдохе)"
 
-#: src/timer/imp.rs:4374
+#: src/timer/imp.rs:4372
 msgid "Decrease"
 msgstr "Уменьшить"
 
-#: src/timer/imp.rs:4385
+#: src/timer/imp.rs:4383
 msgid "Increase"
 msgstr "Увеличить"
 
@@ -1613,7 +1617,7 @@ msgstr ""
 "Это устройство не поддерживает вибрацию. Шаблоны синхронизируются с "
 "телефонами."
 
-#: src/vibration_editor.rs:320 src/vibrations.rs:360
+#: src/vibration_editor.rs:320 src/vibrations.rs:354
 msgid "Edit pattern"
 msgstr "Изменить шаблон"
 
@@ -1629,23 +1633,23 @@ msgstr "Выбор шаблона вибрации"
 msgid "Create custom pattern…"
 msgstr "Создать свой шаблон…"
 
-#: src/vibrations.rs:287 src/vibrations.rs:303 src/vibrations.rs:338
+#: src/vibrations.rs:287 src/vibrations.rs:303 src/vibrations.rs:332
 msgid "Preview pattern"
 msgstr "Предпросмотр шаблона"
 
-#: src/vibrations.rs:447
+#: src/vibrations.rs:441
 msgid "Delete pattern"
 msgstr "Удалить шаблон"
 
-#: src/vibrations.rs:543
+#: src/vibrations.rs:541
 msgid "Rename Pattern"
 msgstr "Переименовать шаблон"
 
-#: src/vibrations.rs:631
+#: src/vibrations.rs:629
 msgid "Delete Pattern?"
 msgstr "Удалить шаблон?"
 
-#: src/vibrations.rs:633
+#: src/vibrations.rs:631
 msgid ""
 "Bells and Box Breath phases that reference this pattern will lose their "
 "vibration."
@@ -1653,7 +1657,7 @@ msgstr ""
 "Колокола и фазы квадратного дыхания, использующие этот шаблон, останутся без "
 "вибрации."
 
-#: src/volume_row.rs:52 src/volume_row.rs:54 src/volume_row.rs:82
+#: src/volume_row.rs:70 src/volume_row.rs:72 src/volume_row.rs:100
 msgid "Volume"
 msgstr "Громкость"
 
@@ -1681,51 +1685,51 @@ msgstr "Задержка"
 msgid "Breathe out"
 msgstr "Выдох"
 
-#: src/window/imp.rs:662
+#: src/window/imp.rs:679
 msgid "Syncing with Nextcloud…"
 msgstr "Синхронизация с Nextcloud…"
 
-#: src/window/imp.rs:672
+#: src/window/imp.rs:689
 msgid "Last sync failed — click to retry"
 msgstr "Последняя синхронизация не удалась — нажмите, чтобы повторить"
 
-#: src/window/imp.rs:684
+#: src/window/imp.rs:701
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Некоторые файлы не загружены, нажмите, чтобы повторить"
 
-#: src/window/imp.rs:694
+#: src/window/imp.rs:711
 msgid "No password saved, click to enter it"
 msgstr "Пароль не сохранён, нажмите, чтобы ввести его"
 
-#: src/window/imp.rs:709
+#: src/window/imp.rs:726
 msgid "Sync configured (waiting for first run)"
 msgstr "Синхронизация настроена (ожидание первого запуска)"
 
-#: src/window/imp.rs:738
+#: src/window/imp.rs:755
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: слишком большой для синхронизации"
 
-#: src/window/imp.rs:739
+#: src/window/imp.rs:756
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: слишком большой для сервера"
 
-#: src/window/imp.rs:740
+#: src/window/imp.rs:757
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: на сервере нет места"
 
-#: src/window/imp.rs:742
+#: src/window/imp.rs:759
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: сервер отклонил файл ({status})"
 
-#: src/window/imp.rs:753
+#: src/window/imp.rs:770
 msgid "Synced just now"
 msgstr "Синхронизировано только что"
 
-#: src/window/imp.rs:755
+#: src/window/imp.rs:772
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
@@ -1733,7 +1737,7 @@ msgstr[0] "Синхронизировано {n} минуту назад"
 msgstr[1] "Синхронизировано {n} минуты назад"
 msgstr[2] "Синхронизировано {n} минут назад"
 
-#: src/window/imp.rs:758
+#: src/window/imp.rs:775
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
@@ -1741,7 +1745,7 @@ msgstr[0] "Синхронизировано {n} час назад"
 msgstr[1] "Синхронизировано {n} часа назад"
 msgstr[2] "Синхронизировано {n} часов назад"
 
-#: src/window/imp.rs:761
+#: src/window/imp.rs:778
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"

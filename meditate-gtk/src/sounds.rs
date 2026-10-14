@@ -15,7 +15,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::application::MeditateApplication;
-use crate::db::{BellSound, BellSoundCategory};
+use crate::db::{write_ok, Failed, BellSound, BellSoundCategory};
 use crate::i18n::gettext;
 use meditate_core::sound::AudioFileError;
 
@@ -57,7 +57,10 @@ pub fn push_sounds_chooser(
     let header = adw::HeaderBar::builder().show_back_button(true).build();
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&prefs_page));
+    // Its own overlay: a failed save must show on this page.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&prefs_page));
+    toolbar.set_content(Some(&toast_overlay));
 
     let page = adw::NavigationPage::builder()
         .tag("bell-sounds-chooser")
@@ -621,7 +624,7 @@ fn present_import_confirm_dialog(
                 Ok(Ok((new_uuid, dest_path, mime))) => {
                     let dest_str = dest_path.to_string_lossy().to_string();
                     let mut insert_err: Option<String> = None;
-                    app.with_db_mut(|db| {
+                    let wrote = app.with_db_mut(|db| {
                         if let Err(e) = db.insert_bell_sound_with_uuid(
                             &new_uuid,
                             &trimmed_for_done,
@@ -633,6 +636,9 @@ fn present_import_confirm_dialog(
                             insert_err = Some(e.to_string());
                         }
                     });
+                    if wrote.is_none() {
+                        insert_err = Some(gettext("Save failed"));
+                    }
                     if let Some(msg) = insert_err {
                         let _ = std::fs::remove_file(&dest_path);
                         present_import_error_toast(&anchor, &msg);
@@ -869,14 +875,14 @@ pub(crate) fn connect_audio_pads(
             let _ = src_pad.link(&sink_for_pads);
         }
     });
-    decodebin.connect_no_more_pads(move |db| {
+    decodebin.connect_no_more_pads(move |decodebin| {
         if !sink.is_linked() {
             let msg = gst::message::Application::builder(
                 gst::Structure::new_empty(NO_AUDIO_MESSAGE),
             )
-            .src(db)
+            .src(decodebin)
             .build();
-            let _ = db.post_message(msg);
+            let _ = decodebin.post_message(msg);
         }
     });
     Ok(())
@@ -944,6 +950,7 @@ fn present_rename_dialog(
     let app = app.clone();
     let uuid = uuid.to_string();
     let entry_for_response = entry.clone();
+    let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" { return; }
         let new_name = entry_for_response.text().to_string();
@@ -951,7 +958,8 @@ fn present_rename_dialog(
         if trimmed.is_empty() {
             return;
         }
-        app.with_db_mut(|db| db.rename_bell_sound(&uuid, trimmed));
+        let renamed = app.with_db_mut(|db| db.rename_bell_sound(&uuid, trimmed));
+        write_ok(&anchor_for_failure, "sound.rename", renamed, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -983,9 +991,11 @@ fn present_delete_dialog(
 
     let app = app.clone();
     let uuid = uuid.to_string();
+    let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        if let Some(Ok(())) = app.with_db_mut(|db| db.delete_bell_sound(&uuid)) {
+        let deleted = app.with_db_mut(|db| db.delete_bell_sound(&uuid));
+        if write_ok(&anchor_for_failure, "sound.delete", deleted, Failed::Delete) {
             meditate_core::audio_files::remove_sound_files(&crate::sync_runner::local_sounds_dir(), &uuid);
         }
         if let Some(rb) = rebuilder.borrow().as_ref() {

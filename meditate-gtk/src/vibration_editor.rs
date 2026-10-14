@@ -312,7 +312,10 @@ pub fn push_pattern_editor(
         .build();
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&scrolled));
+    // Its own overlay: a failed save must show on this page.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&scrolled));
+    toolbar.set_content(Some(&toast_overlay));
 
     let page = adw::NavigationPage::builder()
         .tag("vibration-pattern-editor")
@@ -525,10 +528,9 @@ pub fn push_pattern_editor(
                 on_saved_for_save(uuid);
                 nav_for_save.pop();
             }
-            Some(Err(e)) => {
-                crate::db::surface_duplicate_toast(&save_btn_for_toast, &e);
+            failed => {
+                crate::db::write_ok(&save_btn_for_toast, "pattern.save", failed, crate::db::Failed::Save);
             }
-            None => {}
         }
     });
 

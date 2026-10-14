@@ -48,3 +48,11 @@ On Linux, the Setup page's Duration row SHALL show the session length of the mod
 - **WHEN** Timer is selected with 10 minutes and Box Breath is set to 5 minutes, and the Setup page reloads its settings
 - **THEN** the Duration row reads 0:10
 - **TEST** `meditate-gtk/src/timer/mod.rs::the_duration_row_always_shows_the_selected_modes_length`
+
+### Requirement: The counter shows the running session's length
+On the phone, the Box Breath counter SHALL show the length of the running session, also after Pause, Resume or a sync that changes Setup.
+
+#### Scenario: Setup changes during a 10-minute session
+- **WHEN** a 10-minute session runs, Setup changes to 20 minutes through a sync, and the user pauses and resumes
+- **THEN** the counter reads ".. / 10:00" and the session ends at 10:00
+- **TEST** `meditate-android/src/app.rs::the_box_breath_counter_reads_the_running_session`

@@ -59,6 +59,7 @@ pub mod db;
 pub mod diag;
 pub mod format;
 pub mod goal;
+pub mod guided;
 pub mod insights;
 pub mod labels;
 pub mod local_folder;

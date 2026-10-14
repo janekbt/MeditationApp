@@ -26,7 +26,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | H. Timer engine | #39, #45, #46, #47, #72, #113, #166, #185 | wrong minutes, bells at wrong times |
 | [x] | I. GTK timer and bells | #73, #126, #127, #77, #130, #53, #132 | GTK controls and bells misbehave |
 | [x] | J. GTK Log | #117, #118, #119, #120, #121, #123 | the Log shows wrong rows and totals |
-| [ ] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
+| [x] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
+| [ ] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160, #189 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
@@ -38,62 +39,17 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
-| [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188 | one bad file or event blocks sync |
+| [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
 
 ---
 
-## K. Failed writes and stale pages
+## K2. GTK settings that don't stick
 
-### #52 GTK: database write errors are thrown away
-- Where: `presets.rs:292, 317, 368, 583, 607`; `labels.rs:402`; `log/imp.rs:733`; `vibrations.rs:481, 520`.
-- Problem: `let _ = db…` or a dropped `with_db_mut` result. "Override preset" during a sync lock fails with BUSY after 1 s, yet the toast says it was overridden. Undo after a preset delete can fail silently on a name clash.
-- Fix: `if let Err(e)`, log, toast. One line per site.
-- More sites (third audit): `bells.rs:247-249, 327, 419, 777`; `sounds.rs:953`; `vibrations.rs:664` (shows "Deleted X · Undo" for a pattern that was not deleted); `guided.rs:745, 1001, 1110`; `preferences.rs:86`. Worst: `guided.rs:1069` ignores the delete result, yet the toast timeout still removes `<uuid>.ogg`, so a BUSY failure loses the audio while the row stays. Schedule the file removal only on success, as `sounds.rs:987` does.
-
-### #80 Android: failed writes look successful
-- Where: `meditate-android/src/ui.rs:5818-5850` (delete), 5770-5776 (rename); Override at 5655-5664 is correct.
-- Problem: a BUSY delete still shows "'X' deleted" with Undo while X stays listed; Undo then fails on the same uuid. Rename closes its dialog with no message on failure. Android side of #52.
-- Fix: in the `Err` branch, `show_notice(delete_failed)` and return, as Override does.
-- More sites (third audit): Override, guided rename, sound rename and sound delete `take()` their uuid (Override also its settings snapshot) before the write and return silently on error, so the dialog does nothing on the next tap (`ui.rs:5643-5664, 5383-5407, 6230-6241, 6270-6283`). Clear them only on success and show `save_failed`. `commit_pending_deletes` (2566-2585) removes every drained Log row even when its delete failed: the row vanishes, comes back on the next reload, and Stats still count it. Remove only the ids that were deleted.
-
-### #78 Android: the Timer streak line does not update after Save
-- Where: `meditate-android/src/ui.rs:1550` (`set_streak_text` only in `refresh_stats`), `on_save_tap` 4770-4859, `on_edit_save_tap` 8199-8330.
-- Problem: after the first session of the day it still says "No streak" until Stats opens, a sync pulls, or a restart.
-- Fix: `refresh_stats(&ui);` after `reset_log_feed` in both handlers.
-- Third site: Recovery Undo (`ui.rs:8014-8019`) reloads only the Log; the streak line and Stats keep the removed session. Add `refresh_stats(&ui);` there too.
-
-### #84 Outdated names after renames (both apps)
-- Where: `meditate-android/src/ui.rs:4329-4334, 781` (widget); 6228-6297 (sound rename/delete).
-- Problem: renaming label "Yoga" to "Zen" leaves the widget subtitle at "Yoga". Renaming or deleting a sound leaves the Interval Bells list showing the old name.
-- Fix: `refresh_widget(&ui);` next to `refresh_preset_chips` at 4333 (then the separate calls after preset actions can go); `populate_interval_bells(&ui);` in both sound handlers.
-- GTK twin: renaming or deleting a sound leaves the bell edit page and the Interval Bells list with the old name, and a deleted sound never shows "Missing" (`bells.rs:216, 539-541, 696`; `sounds.rs:946-957, 985-993`). Refresh both on the NavigationPage `shown` signal.
-- Same for patterns, and for Setup's own rows: deleting a vibration pattern in the chooser and going back leaves Setup's bell pattern row with the deleted name (seen while testing batch C). Setup re-reads its bell rows only on a pick, a mode switch or a preset apply (`timer/imp.rs` `refresh_streak`). Re-read them when a chooser closes.
-
-### #124 A deleted or renamed guided file stays selected; open choosers keep deleted items
-- Where: gtk `timer/imp.rs:610-622, 3289-3398`; android `ui.rs:2475-2493, 5273-5285, 6150-6185, 6374-6412`.
-- Problem: GTK: delete the selected "Body Scan" in Manage Files, and Start fails with the raw "canonicalize … (os error 2)" toast; a rename keeps the old name. Android: the same after a sync pulls another device's delete or rename (local deletes are handled). An Android bell or pattern chooser left open across a resume still lists a sound deleted elsewhere; picking it saves a dead uuid, and the bell is silent.
-- Fix: GTK: in Manage Files' `on_changed`, re-resolve the selected uuid (clear or rename), then `refresh_hero_for_idle()`. Android: re-resolve `guided_sel` in `refresh_after_pull` (not during a session or on Done, because Save reads it), call `refresh_after_pattern_change` and refill an open bell chooser. The test at `app.rs:1573` checks the literal `refresh_bell_rows(`.
-
-### #136 Android: the Box Breath counter shows the Setup target, not the session's
-- Where: `meditate-android/src/ui.rs:4089-4096, 4693-4695, 3889, 2747`; test `app.rs:1280`.
-- Problem: the counter target is rebuilt from Setup on every Pause and Resume, and a sync pull mid-session can change Setup. A 10 min session then reads "03:10 / 20:00" while it still ends at 10:00.
-- Fix: use `session.completion_duration_secs()` (filtered to > 0) in the tick and delete the cached Cell and its plumbing (about -20 lines).
-
-### #140 Android: Back from the interval-bell editor leaves its preview playing
-- Where: `meditate-android/src/ui.rs:9274-9277` (Cancel at 7421-7431).
-- Problem: drag Volume (the bell plays at alarm level), press Back: the bell rings to its end with no Stop button on screen.
-- Fix: `ui.invoke_interval_editor_cancel(); return;` in that branch.
-
-### #141 Android: the bell chooser shows "Stop" when nothing plays
-- Where: `meditate-android/src/ui.rs:7140-7155`; pattern preview 7076-7094.
-- Problem: a sound whose file hasn't arrived fails to play (`play` returns 0), but the row switches to "Stop" in silence.
-- Fix: if the returned duration is 0 or less, stop the preview state and leave the uuid unset.
-
-### #170 CSV export empties the old backup before writing
-- Where: `meditate-core/src/data_io.rs:132` (`File::create(path)`).
-- Problem: exporting over an existing backup truncates it first; a full disk or a kill mid-write leaves neither the old nor a complete new backup.
-- Fix: write `<path>.tmp`, `sync_all`, rename (like `write_whole_file` in the orchestrator).
+### #191 GTK: the Timer page drops failed settings writes
+- Where: `meditate-gtk/src/timer/imp.rs`, `let _ =` on a write at 433, 457, 720, 833 (`labels::set_active_for_mode`), 873, 951, 972, 1011, 3845 (`set_timer_session_secs`), 4476 (`set_breathing`), 4503 (`persist_active_for_mode`), 4510 (`persist_uuid_for_mode`); `with_db_mut(|db| db.set_setting(...))` or `set_box_breath_phase(...)` with the result dropped at 771, 802, 907, 932, 1300, 1385, 1425, 1464, 1643, 1713, 1770 (lines as of 9d21c02).
+- Problem: a pick or a slider change during a sync lock (BUSY after 1 s) or on a full disk is shown but not stored, and is gone after a restart or on the other device; nothing tells the user. Split out of #52, which covered writes that show a success toast.
+- Fix: route each through `crate::db::write_ok` (batch K), as #52 did; it shows one failure toast at a time, so a slider failing on every step doesn't queue them.
 
 ## L. Android platform (manifest: ask first)
 
@@ -411,6 +367,12 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-core/src/db/schema.rs` (`ADDED_COLUMNS` fill for `sessions.guided_file_name`), `db/sessions.rs` (`recompute_session`, the named-event lookup), `db/labels.rs:366`; `append_event` stores payloads unchecked.
 - Problem: `json_extract` fails on a payload that isn't JSON. In the one-time fill that fails `Database::init` on every open (the fill rolls back and retries). No known writer produces such a payload; found by the second review of f4c6b81.
 - Fix: `CASE WHEN json_valid(payload) THEN json_extract(...) END` at all three places; one test with a broken payload in the log.
+
+### #192 GTK: a sync can wait minutes after its push, past the 60 s read limit
+- Seen: laptop, 2026-10-14 11:15:55, during batch K's device test (after deleting a guided file). The log ends at `[sync.push] ok events=1 sounds=0 guided=0` with no `sync.done`; the spinner kept turning. The worker thread sat in `recvfrom` on the Nextcloud TLS connection, which had neither sent nor received anything since the push (`ss`: lastsnd/lastrcv equal, over 3 min), although `webdav.rs` sets `timeout_read(60 s)`. The next step after the push is `maybe_compact_events`. At 11:19:50 it ended on its own without an error: `sync.done ... in 235.95s`, so a read waited about 4 min although each read is capped at 60 s.
+- Problem: while one sync waits, the in-flight flag stays set and no later sync runs; the user sees a spinner for minutes. If the server never answers, it may never end.
+- Fix: first find where it blocks (a body read on a pooled connection, ureq 2's timeouts on reuse); then make every request bounded (`AgentBuilder::timeout` as an overall cap), and test with a fake server that answers the headers and then goes silent.
+- Also seen: every pull skips the server file `00000000021265__7b91feb1-….json.tmp` as unparseable (a leftover from an interrupted upload by some device); nothing removes it.
 
 ## X. Release pipeline (build environment: ask first)
 

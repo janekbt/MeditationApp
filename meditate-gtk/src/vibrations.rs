@@ -20,7 +20,7 @@ use adw::prelude::*;
 use meditate_core::vibration::patterns_equivalent;
 
 use crate::application::MeditateApplication;
-use crate::db::VibrationPattern;
+use crate::db::{write_ok, Failed, VibrationPattern};
 use crate::i18n::gettext;
 
 /// Push the vibration-pattern chooser onto `nav_view` in selection
@@ -471,8 +471,9 @@ fn show_undo_edit_toast(
         .timeout(5)
         .build();
     let app = app.clone();
+    let overlay_for_failure = overlay.clone();
     toast.connect_button_clicked(move |t| {
-        let _ = app.with_db_mut(|db| {
+        let restored = app.with_db_mut(|db| {
             db.update_vibration_pattern(
                 before.uuid.as_str(),
                 &before.name,
@@ -481,6 +482,7 @@ fn show_undo_edit_toast(
                 before.chart_kind,
             )
         });
+        write_ok(&overlay_for_failure, "pattern.edit.undo", restored, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -510,8 +512,10 @@ fn show_undo_delete_toast(
         .timeout(5)
         .build();
     let app = app.clone();
+    let overlay_for_failure = overlay.clone();
     toast.connect_button_clicked(move |t| {
-        let _ = app.with_db_mut(|db| db.core().restore_vibration_pattern(&snapshot));
+        let restored = app.with_db_mut(|db| db.core().restore_vibration_pattern(&snapshot));
+        write_ok(&overlay_for_failure, "pattern.restore", restored, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -591,10 +595,13 @@ fn present_rename_dialog(
         // Core's `rename_vibration_pattern` handles the read-modify-
         // write and returns false on a no-op rename so the shell can
         // skip the undo toast.
-        let changed = app
-            .with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed))
-            .and_then(std::result::Result::ok)
-            .unwrap_or(false);
+        let changed = match app.with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed)) {
+            Some(Ok(changed)) => changed,
+            failed => {
+                write_ok(&toast_overlay, "pattern.rename", failed, Failed::Save);
+                return;
+            }
+        };
         if !changed {
             return;
         }
@@ -646,7 +653,10 @@ fn present_delete_dialog(
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
             .and_then(std::result::Result::ok)
             .flatten();
-        app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
+        let deleted = app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
+        if !write_ok(&toast_overlay, "pattern.delete", deleted, Failed::Delete) {
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }

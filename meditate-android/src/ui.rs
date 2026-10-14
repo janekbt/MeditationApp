@@ -1622,6 +1622,40 @@ fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
     })
 }
 
+thread_local! {
+    /// The selected library file a delete cleared, so its Undo can
+    /// select it again.
+    static GUIDED_CLEARED: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The selected library file was renamed or deleted (Manage Files, or
+/// a sync): show its new name, or clear it. Undo of that delete
+/// selects it again. The caller keeps this off a running session and
+/// the Done page, whose Save reads the selection.
+fn follow_guided_sel(ui: &MainWindow, guided_sel: &RefCell<Option<GuidedSel>>) {
+    use meditate_core::guided::Follow;
+    let selected = guided_sel.borrow().as_ref().and_then(|s| s.uuid.clone());
+    let other_pick = selected.is_none() && guided_sel.borrow().is_some();
+    let cleared = GUIDED_CLEARED.with_borrow(Clone::clone);
+    let exists = |uuid: &str| {
+        lock_db().and_then(|db| meditate_core::db::find_guided_file_by_uuid_from_db(&db, uuid).ok()).map(|f| f.is_some())
+    };
+    match meditate_core::guided::follow_selection(selected.as_deref(), other_pick, cleared.as_deref(), exists) {
+        Follow::Keep => return,
+        Follow::Refresh | Follow::Reselect(_) => {
+            let Some(uuid) = selected.or(cleared) else { return };
+            let Some(sel) = guided_file_by_uuid(&uuid) else { return };
+            *guided_sel.borrow_mut() = Some(sel);
+            GUIDED_CLEARED.set(None);
+        }
+        Follow::Clear => {
+            *guided_sel.borrow_mut() = None;
+            GUIDED_CLEARED.set(selected);
+        }
+    }
+    show_guided_sel(ui, guided_sel.borrow().as_ref());
+}
+
 /// Resolve a preset by uuid to the core row (carries the
 /// `config_json` Apply needs + the `mode` guard). `None` when
 /// the row is gone (raced a peer delete) — caller bails like
@@ -2426,6 +2460,9 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
         LabelTarget::Setup => None,
     };
     refresh_chooser_items(ui, current_id);
+    // Preset subtitles on the chips and the widget name labels.
+    refresh_preset_chips(ui, mode);
+    refresh_widget(ui);
 }
 
 /// Box Breath's pattern and session length (core clamps both and
@@ -2875,8 +2912,9 @@ fn refresh_after_pull(
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
     load_setup_for_mode(ui, mode, timer_session_secs);
-    refresh_preset_chips(ui, mode);
     refresh_bell_rows(ui);
+    // An open pattern chooser drops a pattern deleted elsewhere.
+    refresh_after_pattern_change(ui);
     populate_interval_bells(ui);
     refresh_guided_files(ui);
     refresh_guided_manage(ui);
@@ -2884,7 +2922,6 @@ fn refresh_after_pull(
     refresh_filter_label_items(ui);
     reset_log_feed(ui, loaded, pending);
     refresh_stats(ui);
-    refresh_widget(ui);
 }
 
 /// Resolve the Slint `filter-label-id` property (0 = "All
@@ -2946,35 +2983,32 @@ fn commit_pending_deletes(
         ui.set_snackbar_visible(false);
         return;
     }
-    // Bug-audit #4: acquire the DB BEFORE draining the queue — the
-    // old order drained first, so a lock failure removed the rows
-    // from the UI shadow without deleting them (they ghosted back
-    // on the next feed reset). On failure the queue stays intact
-    // for a later commit, exactly what this fn's contract says.
-    let Some(db) = lock_db() else {
-        meditate_core::log(
-            "log.delete.commit",
-            "db unavailable — batch stays queued",
-        );
-        return;
-    };
     let drained: Vec<(i64, meditate_core::db::Session)> =
         std::mem::take(&mut *pending.borrow_mut());
-    for (id, _) in &drained {
-        if let Err(err) = db.delete_session(*id) {
-            meditate_core::log(
-                "log.delete.commit.failed",
-                &format!("rowid {id}: {err:?}"),
-            );
+    // Only the rows whose delete landed leave the Log; a failed one
+    // (or no database at all) comes back, with "Delete failed".
+    let deleted: std::collections::HashSet<i64> = match lock_db() {
+        Some(db) => drained
+            .iter()
+            .filter(|(id, _)| match db.delete_session(*id) {
+                Ok(()) => true,
+                Err(err) => {
+                    meditate_core::log("log.delete.commit.failed", &format!("rowid {id}: {err:?}"));
+                    false
+                }
+            })
+            .map(|(id, _)| *id)
+            .collect(),
+        None => {
+            meditate_core::log("log.delete.commit.failed", "database unavailable");
+            std::collections::HashSet::new()
         }
+    };
+    // Keeps pagination offsets right for the next "Load more".
+    loaded.borrow_mut().retain(|(id, _)| !deleted.contains(id));
+    if deleted.len() < drained.len() {
+        show_notice_when_free(ui.as_weak(), ui.global::<Tr>().invoke_delete_failed(), Duration::ZERO);
     }
-    drop(db);
-    // Drop the now-deleted rows from the in-memory shadow so
-    // pagination offsets stay consistent on the next "Load
-    // more".
-    let drained_ids: std::collections::HashSet<i64> =
-        drained.iter().map(|(id, _)| *id).collect();
-    loaded.borrow_mut().retain(|(id, _)| !drained_ids.contains(id));
     ui.set_snackbar_visible(false);
     render_log_feed(ui, loaded, pending);
     // Bug-audit #14: stats can be on screen when the timer-driven
@@ -3151,7 +3185,6 @@ fn end_session(
     mode: meditate_core::SessionMode,
     session_start_unix: &Cell<Option<i64>>,
     pending_done: &Cell<Option<(i64, i64)>>,
-    bb_target_secs: &Cell<Option<u32>>,
     snapshot_timer: &slint::Timer,
 ) {
     if let Some(unix_start) = session_start_unix.take() {
@@ -3165,7 +3198,6 @@ fn end_session(
     ui.set_note_text("".into());
     // Mirrors GTK's `show_done` copying the Setup label.
     mirror_setup_label_into_done(ui, mode);
-    bb_target_secs.set(None);
     ui.set_bb_running_active(false);
     ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime("00:00".into()));
 }
@@ -4345,14 +4377,6 @@ fn build_ui() -> MainWindow {
         }
     }));
 
-    // Box Breath target for the in-flight session. Set in
-    // `on_action_tap` when starting a `BoxBreathCountdown` (the
-    // cycle-aligned seconds); `None` for stopwatch shapes or
-    // when no BB session is in flight. Read each tick to feed
-    // `box_breath_counter_label` the right "elapsed / target" vs
-    // "elapsed only" branch.
-    let bb_target_secs: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
-
     // Guided-mode current selection (Phase 6.5 MVP). `None` =
     // nothing picked (Start disabled). Transient: the copied
     // file path + display name + probed duration; the SAF picker
@@ -4480,7 +4504,6 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         let current_mode = current_mode.clone();
         let session_start_unix = session_start_unix.clone();
-        let bb_target_secs = bb_target_secs.clone();
         let guided_sel = guided_sel.clone();
         ui.on_action_tap(move || {
             let now = now_since_epoch();
@@ -4548,17 +4571,6 @@ fn build_ui() -> MainWindow {
             // pauses/resumes — both stay Active, so the session never
             // ends through this path. Only Idle/Finished → Active
             // matters for persistence wiring.
-            // Stash the BB target (if any) before consuming the
-            // shape — the tick loop reads it every frame to feed
-            // `box_breath_counter_label`.
-            {
-                bb_target_secs.set(match &shape {
-                    SessionShape::BoxBreathCountdown { target_secs, .. } => {
-                        Some(*target_secs)
-                    }
-                    _ => None,
-                });
-            }
             let was_active = s.is_active();
             // Guided: start the track first. An unplayable file, or one
             // whose length couldn't be read (0 s, the session would end
@@ -4683,7 +4695,6 @@ fn build_ui() -> MainWindow {
         let current_mode = current_mode.clone();
         let session_start_unix = session_start_unix.clone();
         let pending_done = pending_done.clone();
-        let bb_target_secs = bb_target_secs.clone();
         move || {
             let Some(ui) = weak.upgrade() else { return; };
             let now = now_since_epoch();
@@ -4696,7 +4707,7 @@ fn build_ui() -> MainWindow {
             let is_active = s.is_active();
             let mode = current_mode.get().into();
             if was_active && !is_active {
-                end_session(&ui, secs, mode, &session_start_unix, &pending_done, &bb_target_secs, snapshot_timer);
+                end_session(&ui, secs, mode, &session_start_unix, &pending_done, snapshot_timer);
             }
             on_state_changed(was_active, is_active, mode);
             refresh(&ui, &s, now);
@@ -4730,7 +4741,6 @@ fn build_ui() -> MainWindow {
         let current_mode = current_mode.clone();
         let session_start_unix = session_start_unix.clone();
         let pending_done = pending_done.clone();
-        let bb_target_secs = bb_target_secs.clone();
         let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
         let timer_session_secs = timer_session_secs.clone();
         let guided_sel = guided_sel.clone();
@@ -4859,6 +4869,11 @@ fn build_ui() -> MainWindow {
                         &loaded_log_sessions_tick,
                         &pending_deletes_tick,
                     );
+                    // An open bell chooser drops a sound deleted elsewhere.
+                    repopulate_bell_chooser(&ui, bell_chooser_category_tick.get(), &bell_chooser_current_tick.borrow());
+                    if state.borrow().is_idle() {
+                        follow_guided_sel(&ui, &guided_sel);
+                    }
                 }
                 // Test-connection outcome (SY-3): the worker
                 // thread parked (toast, detail) — log the detail,
@@ -5153,7 +5168,6 @@ fn build_ui() -> MainWindow {
                         current_mode.get().into(),
                         &session_start_unix,
                         &pending_done,
-                        &bb_target_secs,
                         snapshot_timer_ref,
                     );
                 }
@@ -5169,9 +5183,11 @@ fn build_ui() -> MainWindow {
                 if let Some(info) = session.box_breath_phase_info(now) {
                     if let Some(ui) = weak.upgrade() {
                         let elapsed = session.elapsed(now);
-                        let target = bb_target_secs
-                            .get()
-                            .map(|s| Duration::from_secs(u64::from(s)));
+                        // The running session's own length: Setup may
+                        // have changed since (a sync, #136).
+                        let target = Some(session.completion_duration_secs())
+                            .filter(|&secs| secs > 0)
+                            .map(Duration::from_secs);
                         let counter = meditate_core::format::box_breath_counter_label(
                             elapsed, target,
                         );
@@ -5327,6 +5343,7 @@ fn build_ui() -> MainWindow {
                 // Push the freshly-inserted row into the Log feed
                 // so a quick nav-to-Log shows it without restart.
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                refresh_stats(&ui);
             }
             let mut s = state.borrow_mut();
             *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
@@ -5783,30 +5800,18 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         ui.on_guided_manage_star_tap(move |uuid| {
             if let Some(ui) = weak.upgrade() {
-                let cur = {
-                    let Some(db) = lock_db() else { return; };
-                    meditate_core::db::find_guided_file_by_uuid_from_db(
-                        &db, &uuid,
-                    )
-                    .ok()
-                    .flatten()
+                // Already gone (deleted on another device): nothing to do.
+                let Some(row) = lock_db().and_then(|db| {
+                    meditate_core::db::find_guided_file_by_uuid_from_db(&db, &uuid).ok().flatten()
+                }) else {
+                    return;
                 };
-                let Some(row) = cur else { return; };
                 let next =
                     meditate_core::db::StarredState::from_flag(
                         !row.is_starred,
                     );
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) =
-                        db.set_guided_file_starred(&uuid, next)
-                    {
-                        meditate_core::log(
-                            "guided",
-                            &format!("star FAILED: {e:?}"),
-                        );
-                    }
-                }
+                let starred = lock_db().map(|db| db.set_guided_file_starred(&uuid, next));
+                write_ok(&ui, "guided.star", starred);
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
             }
@@ -5838,15 +5843,12 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 // Capture the full row so Undo can resurrect it
                 // identically (GTK's insert_guided_file_with_uuid).
-                let row = {
-                    let Some(db) = lock_db() else { return; };
-                    meditate_core::db::find_guided_file_by_uuid_from_db(
-                        &db, &uuid,
-                    )
-                    .ok()
-                    .flatten()
+                // Already gone (deleted on another device): nothing to do.
+                let Some(row) = lock_db().and_then(|db| {
+                    meditate_core::db::find_guided_file_by_uuid_from_db(&db, &uuid).ok().flatten()
+                }) else {
+                    return;
                 };
-                let Some(row) = row else { return; };
                 // A preview of this file stops with it, as a deleted
                 // bell sound's does.
                 if ui.get_guided_manage_preview_uuid() == uuid {
@@ -5855,27 +5857,13 @@ fn build_ui() -> MainWindow {
                     }
                     ui.set_guided_manage_preview_uuid("".into());
                 }
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.delete_guided_file(&uuid) {
-                        meditate_core::log(
-                            "guided",
-                            &format!("delete FAILED: {e:?}"),
-                        );
-                        return;
-                    }
+                let deleted = lock_db().map(|db| db.delete_guided_file(&uuid));
+                if !delete_ok(&ui, "guided.delete", deleted) {
+                    return;
                 }
-                // If the deleted file was the current selection,
-                // clear it so a stale pick can't be started.
-                if guided_sel
-                    .borrow()
-                    .as_ref()
-                    .and_then(|s| s.uuid.as_deref())
-                    == Some(uuid.as_str())
-                {
-                    *guided_sel.borrow_mut() = None;
-                    show_guided_sel(&ui, None);
-                }
+                // The deleted file was the selection: clear it, so a
+                // stale pick can't be started.
+                follow_guided_sel(&ui, &guided_sel);
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
 
@@ -5970,9 +5958,7 @@ fn build_ui() -> MainWindow {
         let guided_sel = guided_sel.clone();
         ui.on_guided_rename_confirm(move || {
             if let Some(ui) = weak.upgrade() {
-                let Some(uuid) =
-                    guided_rename_uuid.borrow_mut().take()
-                else {
+                let Some(uuid) = guided_rename_uuid.borrow().clone() else {
                     return;
                 };
                 let new_name =
@@ -5985,34 +5971,13 @@ fn build_ui() -> MainWindow {
                 if !v.is_savable() {
                     return;
                 }
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) =
-                        db.rename_guided_file(&uuid, &new_name)
-                    {
-                        meditate_core::log(
-                            "guided",
-                            &format!("rename FAILED: {e:?}"),
-                        );
-                        return;
-                    }
-                }
-                // Keep the live selection's label in sync if it's
-                // the row we just renamed.
-                if guided_sel
-                    .borrow()
-                    .as_ref()
-                    .and_then(|s| s.uuid.as_deref())
-                    == Some(uuid.as_str())
-                {
-                    if let Some(s) =
-                        guided_sel.borrow_mut().as_mut()
-                    {
-                        s.name = new_name.clone();
-                    }
-                    ui.set_guided_name(new_name.clone().into());
-                }
+                let renamed = lock_db().map(|db| db.rename_guided_file(&uuid, &new_name));
                 close_modal(&ui, Modal::GuidedRename);
+                if !write_ok(&ui, "guided.rename", renamed) {
+                    return;
+                }
+                // The renamed file may be the selection.
+                follow_guided_sel(&ui, &guided_sel);
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
             }
@@ -6183,19 +6148,15 @@ fn build_ui() -> MainWindow {
                 if !v.is_savable() {
                     return;
                 }
-                let Some((json, mode)) =
-                    pending_save_snapshot.borrow_mut().take()
-                else {
+                // Kept until the next Save tap replaces it, so a retry works.
+                let Some((json, mode)) = pending_save_snapshot.borrow().clone() else {
                     return;
                 };
                 let starred =
                     meditate_core::preset_config::default_starred_on_save();
-                let res = {
-                    let Some(db) = lock_db() else { return; };
-                    db.insert_preset(&name, mode, starred, &json)
-                };
+                let res = lock_db().map(|db| db.insert_preset(&name, mode, starred, &json));
                 match res {
-                    Ok(_) => {
+                    Some(Ok(_)) => {
                         close_modal(&ui, Modal::CreatePreset);
                         ui.set_preset_chooser_page(false);
                         refresh_preset_chips(&ui, mode);
@@ -6205,16 +6166,11 @@ fn build_ui() -> MainWindow {
                         // the `let res = { … }` scope.
                         refresh_widget(&ui);
                     }
-                    Err(e) => {
+                    failed => {
                         // The name was checked above, so this is a
                         // database error. The dialog stays open for a
-                        // retry, which needs the settings snapshot
-                        // back: it was taken for this insert.
-                        meditate_core::log(
-                            "preset.save",
-                            &format!("insert_preset FAILED: {e:?}"),
-                        );
-                        *pending_save_snapshot.borrow_mut() = Some((json, mode));
+                        // retry.
+                        write_ok(&ui, "preset.save", failed);
                     }
                 }
             }
@@ -6243,34 +6199,23 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 let core_mode: meditate_core::SessionMode =
                     current_mode.get().into();
-                let Some(uuid) =
-                    pending_override_uuid.borrow_mut().take()
-                else {
+                let Some(uuid) = pending_override_uuid.borrow().clone() else {
                     return;
                 };
-                let Some((json, _mode)) =
-                    pending_save_snapshot.borrow_mut().take()
-                else {
+                let Some((json, _mode)) = pending_save_snapshot.borrow().clone() else {
                     return;
                 };
                 // Capture the prior config BEFORE overwriting so
                 // Undo can restore it (GTK's override-Undo).
                 let prior =
                     find_preset_by_uuid(&uuid).map(|p| p.config_json);
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.update_preset_config(&uuid, &json) {
-                        meditate_core::log(
-                            "preset.override",
-                            &format!("update_preset_config FAILED: {e:?}"),
-                        );
-                        // Nothing changed: no "Preset overridden",
-                        // and no Undo that would "restore" it.
-                        close_modal(&ui, Modal::OverridePreset);
-                        return;
-                    }
-                }
+                let written = lock_db().map(|db| db.update_preset_config(&uuid, &json));
                 close_modal(&ui, Modal::OverridePreset);
+                // Nothing changed: no "Preset overridden", and no Undo
+                // that would "restore" it.
+                if !write_ok(&ui, "preset.override", written) {
+                    return;
+                }
                 ui.set_preset_chooser_page(false);
                 refresh_preset_chips(&ui, core_mode);
                 // Overriding a starred preset rewrites its
@@ -6356,9 +6301,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 let core_mode: meditate_core::SessionMode =
                     current_mode.get().into();
-                let Some(uuid) =
-                    rename_preset_uuid.borrow_mut().take()
-                else {
+                let Some(uuid) = rename_preset_uuid.borrow().clone() else {
                     return;
                 };
                 let name =
@@ -6369,16 +6312,11 @@ fn build_ui() -> MainWindow {
                 if !v.is_savable() {
                     return;
                 }
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.update_preset_name(&uuid, &name) {
-                        meditate_core::log(
-                            "preset.rename",
-                            &format!("update_preset_name FAILED: {e:?}"),
-                        );
-                    }
-                }
+                let renamed = lock_db().map(|db| db.update_preset_name(&uuid, &name));
                 close_modal(&ui, Modal::RenamePreset);
+                if !write_ok(&ui, "preset.rename", renamed) {
+                    return;
+                }
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
                 // Renaming a starred preset changes its widget
@@ -6410,9 +6348,8 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 let core_mode: meditate_core::SessionMode =
                     current_mode.get().into();
-                let Some(uuid) =
-                    delete_preset_uuid.borrow_mut().take()
-                else {
+                close_modal(&ui, Modal::DeletePreset);
+                let Some(uuid) = delete_preset_uuid.borrow().clone() else {
                     return;
                 };
                 // Capture the full row so Undo can resurrect it
@@ -6420,16 +6357,10 @@ fn build_ui() -> MainWindow {
                 let Some(row) = find_preset_by_uuid(&uuid) else {
                     return;
                 };
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.delete_preset(&uuid) {
-                        meditate_core::log(
-                            "preset.delete",
-                            &format!("delete_preset FAILED: {e:?}"),
-                        );
-                    }
+                let deleted = lock_db().map(|db| db.delete_preset(&uuid));
+                if !delete_ok(&ui, "preset.delete", deleted) {
+                    return;
                 }
-                close_modal(&ui, Modal::DeletePreset);
                 // Manage Presets stays open (like GTK), so several
                 // presets can go in a row; the snackbar shows above it.
                 populate_preset_chooser(&ui, core_mode);
@@ -6823,23 +6754,21 @@ fn build_ui() -> MainWindow {
         let bell_chooser_current = bell_chooser_current.clone();
         ui.on_bell_rename_confirm(move || {
             if let Some(ui) = weak.upgrade() {
-                let Some(uuid) = bell_edit_uuid.borrow_mut().take() else { return; };
+                let Some(uuid) = bell_edit_uuid.borrow().clone() else { return; };
                 let new_name = ui.get_bell_rename_text().trim().to_string();
                 // Re-validate (defends a stale tap / race).
                 let v = meditate_core::naming::validate(&new_name, |n| bell_sound_name_taken(n, &uuid));
                 if !v.is_savable() {
                     return;
                 }
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.rename_bell_sound(&uuid, &new_name) {
-                        meditate_core::log("bell_sound", &format!("rename FAILED: {e:?}"));
-                        return;
-                    }
-                }
+                let renamed = lock_db().map(|db| db.rename_bell_sound(&uuid, &new_name));
                 close_modal(&ui, Modal::BellRename);
+                if !write_ok(&ui, "bell_sound.rename", renamed) {
+                    return;
+                }
                 repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
                 refresh_bell_rows(&ui);
+                populate_interval_bells(&ui);
                 ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
             }
             let _ = weak.clone();
@@ -6863,7 +6792,7 @@ fn build_ui() -> MainWindow {
         let bell_chooser_current = bell_chooser_current.clone();
         ui.on_bell_delete_confirm(move || {
             if let Some(ui) = weak.upgrade() {
-                let Some(uuid) = bell_edit_uuid.borrow_mut().take() else { return; };
+                let Some(uuid) = bell_edit_uuid.borrow().clone() else { return; };
                 // A preview of the sound being deleted stops with it.
                 if ui.get_bell_preview_uuid().as_str() == uuid {
                     let _ = BELL_PREVIEW.with_borrow_mut(PreviewToggle::stop);
@@ -6872,19 +6801,17 @@ fn build_ui() -> MainWindow {
                     }
                     ui.set_bell_preview_uuid(slint::SharedString::new());
                 }
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.delete_bell_sound(&uuid) {
-                        meditate_core::log("bell_sound", &format!("delete FAILED: {e:?}"));
-                        return;
-                    }
+                let deleted = lock_db().map(|db| db.delete_bell_sound(&uuid));
+                close_modal(&ui, Modal::BellDelete);
+                if !delete_ok(&ui, "bell_sound.delete", deleted) {
+                    return;
                 }
                 if let Some(dir) = meditate_dir() {
                     meditate_core::audio_files::remove_sound_files(&dir.join("sounds"), &uuid);
                 }
-                close_modal(&ui, Modal::BellDelete);
                 repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
                 refresh_bell_rows(&ui);
+                populate_interval_bells(&ui);
                 ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
             }
             let _ = weak.clone();
@@ -7288,18 +7215,19 @@ fn build_ui() -> MainWindow {
         ui.on_pattern_delete_confirm(move || {
             let Some(ui) = weak.upgrade() else { return; };
             close_modal(&ui, Modal::PatternDelete);
-            let Some(uuid) = pattern_delete_uuid.borrow_mut().take() else { return; };
+            let Some(uuid) = pattern_delete_uuid.borrow().clone() else { return; };
             // A preview of the pattern being deleted stops with it.
             stop_all_previews(&ui);
-            let pattern = {
-                let Some(db) = lock_db() else { return; };
-                let Ok(Some(pattern)) = meditate_core::db::find_vibration_pattern_by_uuid_from_db(&db, &uuid) else { return; };
-                if let Err(e) = db.delete_vibration_pattern(&uuid) {
-                    meditate_core::log("pattern", &format!("delete FAILED: {e:?}"));
-                    return;
-                }
-                pattern
+            // Already gone (deleted on another device): nothing to do.
+            let Some(pattern) = lock_db()
+                .and_then(|db| meditate_core::db::find_vibration_pattern_by_uuid_from_db(&db, &uuid).ok().flatten())
+            else {
+                return;
             };
+            let deleted = lock_db().map(|db| db.delete_vibration_pattern(&uuid));
+            if !delete_ok(&ui, "pattern.delete", deleted) {
+                return;
+            }
             refresh_after_pattern_change(&ui);
             show_notice(
                 &ui,
@@ -7563,8 +7491,7 @@ fn build_ui() -> MainWindow {
                     meditate_core::db::ChartKind::Line
                 };
                 let edit = ve_edit_uuid.borrow().clone();
-                let saved: Option<String> = {
-                    let Some(db) = lock_db() else { return; };
+                let saved = lock_db().map(|db| {
                     match &edit {
                         Some(uuid) => db
                             .update_vibration_pattern(
@@ -7574,21 +7501,18 @@ fn build_ui() -> MainWindow {
                                 &intensities,
                                 kind,
                             )
-                            .map(|_| uuid.clone())
-                            .ok(),
-                        None => db
-                            .insert_vibration_pattern(
-                                &name,
-                                duration_ms,
-                                &intensities,
-                                kind,
-                                false,
-                            )
-                            .ok(),
+                            .map(|_| uuid.clone()),
+                        None => db.insert_vibration_pattern(
+                            &name,
+                            duration_ms,
+                            &intensities,
+                            kind,
+                            false,
+                        ),
                     }
-                };
+                });
                 match saved {
-                    Some(uuid) => {
+                    Some(Ok(uuid)) => {
                         ve_stop_preview(&ui);
                         ui.set_vibration_editor_page(false);
                         // Rebuild the chooser underneath with the tick
@@ -7606,10 +7530,10 @@ fn build_ui() -> MainWindow {
                 // Setup bell row currently shows — re-read subtitles.
                 refresh_bell_rows(&ui);
                     }
-                    None => meditate_core::log(
-                        "vibration.editor",
-                        "save FAILED (kept open)",
-                    ),
+                    // Kept open for a retry.
+                    failed => {
+                        write_ok(&ui, "vibration.editor", failed);
+                    }
                 }
             }
             let _ = weak.clone();
@@ -7687,6 +7611,14 @@ fn build_ui() -> MainWindow {
                                 }
                             }
                         }
+                        // The pattern is gone (deleted by a sync): no
+                        // silent Stop.
+                        if dur_ms == 0 {
+                            let _ = PATTERN_PREVIEW.with_borrow_mut(PreviewToggle::stop);
+                            ui.set_pattern_preview_uuid(slint::SharedString::new());
+                            show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
+                            return;
+                        }
                         ui.set_pattern_preview_uuid(id.into());
 
                         // The waveform is finite — nothing tells the
@@ -7747,6 +7679,14 @@ fn build_ui() -> MainWindow {
                             // At the volume of the bell being chosen for.
                             let volume = chooser_bell_volume(&ui, bell_chooser_target.get());
                             dur_ms = audio::play(app, &path, alarm_volume::gain(volume));
+                        }
+                        // Nothing plays (its file hasn't arrived, say):
+                        // no silent Stop.
+                        if dur_ms == 0 {
+                            let _ = BELL_PREVIEW.with_borrow_mut(PreviewToggle::stop);
+                            ui.set_bell_preview_uuid(slint::SharedString::new());
+                            show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
+                            return;
                         }
                         ui.set_bell_preview_uuid(id.into());
 
@@ -7848,15 +7788,8 @@ fn build_ui() -> MainWindow {
         ui.on_interval_bell_toggled(move |uuid, on| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                {
-                    let Some(db) = lock_db() else { return; };
-                    if let Err(e) = db.set_interval_bell_enabled(uuid.as_str(), on) {
-                        meditate_core::log(
-                            "interval_bell.toggle",
-                            &format!("FAILED: {e:?}"),
-                        );
-                    }
-                }
+                let written = lock_db().map(|db| db.set_interval_bell_enabled(uuid.as_str(), on));
+                write_ok(&ui, "interval_bell.toggle", written);
                 populate_interval_bells(&ui);
             }
         });
@@ -7961,16 +7894,8 @@ fn build_ui() -> MainWindow {
         ui.on_interval_bell_delete(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                if let Some(db) = lock_db() {
-                    if let Err(e) =
-                        db.delete_interval_bell(uuid.as_str())
-                    {
-                        meditate_core::log(
-                            "interval_bell.delete.failed",
-                            &format!("{uuid}: {e:?}"),
-                        );
-                    }
-                }
+                let deleted = lock_db().map(|db| db.delete_interval_bell(uuid.as_str()));
+                delete_ok(&ui, "interval_bell.delete", deleted);
                 populate_interval_bells(&ui);
             }
         });
@@ -8599,6 +8524,7 @@ fn build_ui() -> MainWindow {
         let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         let timer_session_secs = timer_session_secs.clone();
+        let guided_sel = guided_sel.clone();
         ui.on_snackbar_undo_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             NOTICE_TIMER.with(slint::Timer::stop);
@@ -8616,6 +8542,7 @@ fn build_ui() -> MainWindow {
                     // too, like GTK's recovery toast Undo.
                     write_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                    refresh_stats(&ui);
                 }
                 U::PresetApply(json) => {
                     apply_preset_json(&ui, &json, core_mode, &timer_session_secs);
@@ -8634,11 +8561,30 @@ fn build_ui() -> MainWindow {
                     refresh_widget(&ui);
                 }
                 // The file was kept for Undo, so the row comes back whole.
-                U::GuidedDelete(f) => {
-                    write_ok(&ui, "guided.undo", lock_db().map(|db| db.restore_guided_file(&f)));
-                    refresh_guided_manage(&ui);
-                    refresh_guided_files(&ui);
-                }
+                U::GuidedDelete(f) => match lock_db().map(|db| db.restore_guided_file(&f)) {
+                    Some(Ok(_)) => {
+                        refresh_guided_manage(&ui);
+                        refresh_guided_files(&ui);
+                        follow_guided_sel(&ui, &guided_sel);
+                    }
+                    // Another file took the name meanwhile: Undo can't
+                    // work, so the delete stands (and its audio goes).
+                    Some(Err(meditate_core::db::DbError::DuplicateGuidedFile(_))) => {
+                        show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+                        commit_undo(&ui, app::PendingUndo::GuidedDelete(f));
+                    }
+                    // A sync holding the database: offer the same Undo
+                    // again; the audio stays until that offer ends.
+                    failed => {
+                        meditate_core::log("guided.undo", &format!("FAILED: {failed:?}"));
+                        show_notice(
+                            &ui,
+                            ui.global::<Tr>().invoke_save_failed(),
+                            Some(app::PendingUndo::GuidedDelete(f)),
+                            5,
+                        );
+                    }
+                },
                 U::PatternDelete(p) => {
                     write_ok(&ui, "pattern.undo", lock_db().map(|db| db.restore_vibration_pattern(&p)));
                     refresh_after_pattern_change(&ui);
@@ -8903,6 +8849,7 @@ fn build_ui() -> MainWindow {
                 *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                refresh_stats(&ui);
             }
             let _ = weak.clone();
         });
@@ -9873,7 +9820,7 @@ fn build_ui() -> MainWindow {
                 return;
             }
             if ui.get_interval_editor_page() {
-                ui.set_interval_editor_page(false);
+                ui.invoke_interval_editor_cancel(); // stops its preview, like Cancel
                 return;
             }
             if ui.get_interval_bells_page() {
@@ -10119,19 +10066,25 @@ fn commit_undo(ui: &MainWindow, undo: app::PendingUndo) {
     }
 }
 
-/// Show `text` in the snackbar for `secs`, with Undo when `undo` is
-/// set. The Undo it replaces is committed, and so is its own when it
-/// times out.
 /// Did the write go through? A failed one is logged and shown, so a
 /// create, edit or Undo never just vanishes (#4).
 fn write_ok<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> bool {
+    landed(ui, tag, res, ui.global::<Tr>().invoke_save_failed())
+}
+
+/// The same for a delete: "Delete failed".
+fn delete_ok<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> bool {
+    landed(ui, tag, res, ui.global::<Tr>().invoke_delete_failed())
+}
+
+fn landed<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>, failed: slint::SharedString) -> bool {
     let err = match res {
         Some(Ok(_)) => return true,
         Some(Err(e)) => format!("{e:?}"),
         None => "database unavailable".to_string(),
     };
     meditate_core::log(tag, &format!("FAILED: {err}"));
-    show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+    show_notice(ui, failed, None, 4);
     false
 }
 
@@ -10147,6 +10100,9 @@ fn session_save_failed_text(
     }
 }
 
+/// Show `text` in the snackbar for `secs`, with Undo when `undo` is
+/// set. The Undo it replaces is committed, and so is its own when it
+/// times out.
 fn show_notice(
     ui: &MainWindow,
     text: slint::SharedString,
@@ -10168,6 +10124,20 @@ fn show_notice(
                 finish_notice(&ui);
             }
         })
+    });
+}
+
+/// Show `text` once no other notice is on screen. A commit runs
+/// while a notice is being replaced or hidden, so showing its failure
+/// at once would take the newer notice's Undo away.
+fn show_notice_when_free(weak: slint::Weak<MainWindow>, text: slint::SharedString, after: Duration) {
+    slint::Timer::single_shot(after, move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if ui.get_snackbar_visible() {
+            show_notice_when_free(weak, text, Duration::from_secs(1));
+        } else {
+            show_notice(&ui, text, None, 4);
+        }
     });
 }
 

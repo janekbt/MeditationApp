@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
-use crate::db::{Label, Session, SessionData, SessionFilter, SessionMode};
+use crate::db::{write_ok, Failed, Label, Session, SessionData, SessionFilter, SessionMode};
 use crate::i18n::{gettext, ngettext};
 use glib::clone;
 
@@ -765,11 +765,21 @@ impl LogView {
         if pending.is_empty() { return; }
 
         if let Some(app) = self.get_app() {
+            let mut failed = false;
             for (id, session) in &pending {
-                app.with_db_mut(|db| db.delete_session(*id));
-                self.commit_delete_in_place(*id, session);
+                let deleted = app.with_db_mut(|db| db.delete_session(*id));
+                if write_ok(&*self.obj(), "log.delete", deleted, Failed::Delete) {
+                    self.commit_delete_in_place(*id, session);
+                } else {
+                    failed = true;
+                }
             }
             app.invalidate(crate::application::InvalidateScope::STATS);
+            if failed {
+                // The hidden card's row is still there: reload to show it.
+                app.invalidate(crate::application::InvalidateScope::LOG);
+                self.obj().refresh();
+            }
         }
     }
 

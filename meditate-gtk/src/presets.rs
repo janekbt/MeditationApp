@@ -23,7 +23,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::application::MeditateApplication;
-use crate::db::{Preset, SessionMode};
+use crate::db::{write_ok, Failed, Preset, SessionMode};
 use crate::i18n::gettext;
 use meditate_core::preset_config::PresetConfig;
 
@@ -188,15 +188,9 @@ fn rebuild_chooser_rows(
                     let result = app.with_db_mut(
                         |db| db.insert_preset(&name, mode, starred, &json),
                     );
-                    match result {
-                        Some(Ok(_)) => {
-                            on_changed();
-                            nav_view.pop();
-                        }
-                        Some(Err(e)) => {
-                            crate::db::surface_duplicate_toast(&row_for_toast, &e);
-                        }
-                        None => {}
+                    if write_ok(&row_for_toast, "preset.create", result, Failed::Save) {
+                        on_changed();
+                        nav_view.pop();
                     }
                 }),
             );
@@ -283,14 +277,17 @@ fn build_preset_row(
             // it's parented all the way up to the application
             // window, so root() resolves correctly.
             let window = window_from(btn);
+            let row_for_failure = btn.clone();
             present_override_dialog(
                 btn,
                 &dialog_name,
                 Box::new(move || {
                     let json = snapshot.to_json();
-                    app.with_db_mut(|db| {
-                        let _ = db.update_preset_config(&preset_uuid, &json);
-                    });
+                    let written = app.with_db_mut(|db| db.update_preset_config(&preset_uuid, &json));
+                    // Failed: stay on the page, so Override can be pressed again.
+                    if !write_ok(&row_for_failure, "preset.override", written, Failed::Save) {
+                        return;
+                    }
                     on_changed();
                     nav_view.pop();
 
@@ -308,16 +305,16 @@ fn build_preset_row(
                                 name: preset_name.clone(),
                             },
                         );
+                        let window_undo = window.clone();
                         push_undo_toast_window(
                             window,
                             &toast_slot,
                             &title,
                             move || {
-                                app_undo.with_db_mut(|db| {
-                                    let _ = db.update_preset_config(
-                                        &preset_uuid_undo, &prior_undo,
-                                    );
+                                let written = app_undo.with_db_mut(|db| {
+                                    db.update_preset_config(&preset_uuid_undo, &prior_undo)
                                 });
+                                write_ok(&window_undo, "preset.override.undo", written, Failed::Save);
                                 on_changed_undo();
                             },
                         );
@@ -363,10 +360,9 @@ fn build_star_button(
     let app = app.clone();
     let preset_uuid = preset.uuid.0.clone();
     let new_starred = meditate_core::db::StarredState::from_flag(!preset.is_starred);
-    btn.connect_clicked(move |_| {
-        app.with_db_mut(|db| {
-            let _ = db.update_preset_starred(&preset_uuid, new_starred);
-        });
+    btn.connect_clicked(move |btn| {
+        let written = app.with_db_mut(|db| db.update_preset_starred(&preset_uuid, new_starred));
+        write_ok(btn, "preset.star", written, Failed::Save);
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
     });
@@ -536,10 +532,8 @@ fn present_rename_preset_dialog(
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        if let Some(Err(e)) =
-            app.with_db_mut(|db| db.update_preset_name(&preset_uuid, &new_name))
-        {
-            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+        let renamed = app.with_db_mut(|db| db.update_preset_name(&preset_uuid, &new_name));
+        if !write_ok(&anchor_for_response, "preset.rename", renamed, Failed::Save) {
             return;
         }
         on_changed();
@@ -580,7 +574,10 @@ fn present_delete_preset_dialog(
     let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| { let _ = db.delete_preset(preset_full.uuid.as_str()); });
+        let deleted = app.with_db_mut(|db| db.delete_preset(preset_full.uuid.as_str()));
+        if !write_ok(&toast_overlay, "preset.delete", deleted, Failed::Delete) {
+            return;
+        }
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
 
@@ -598,14 +595,14 @@ fn present_delete_preset_dialog(
                 name: preset_full.name.clone(),
             },
         );
+        let toast_overlay_undo = toast_overlay.clone();
         push_undo_toast(
             &toast_overlay,
             &toast_slot,
             &title,
             move || {
-                app_undo.with_db_mut(|db| {
-                    let _ = db.core().restore_preset(&preset_undo);
-                });
+                let restored = app_undo.with_db_mut(|db| db.core().restore_preset(&preset_undo));
+                write_ok(&toast_overlay_undo, "preset.restore", restored, Failed::Save);
                 on_changed_undo();
                 if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
             },

@@ -194,4 +194,17 @@ mod tests {
             assert!(body(&imp, sig).contains("card.set_visible(!self.is_pending_delete(session.id));"), "{sig}");
         }
     }
+
+    #[test]
+    fn a_failed_delete_brings_the_card_back() {
+        // #52: a delete that fails after the Undo time says so and
+        // reloads the Log, instead of removing a card whose row stays.
+        let imp = production("log/imp.rs");
+        let b = body(&imp, "fn commit_all_pending(");
+        let ok = b.find("if write_ok(").expect("the delete result decides");
+        let gone = b.find("self.commit_delete_in_place(").expect("the card is removed");
+        assert!(ok < gone, "the card goes only after a successful delete");
+        assert!(b.contains("Failed::Delete"));
+        assert!(b.contains("InvalidateScope::LOG"), "a failure reloads the Log");
+    }
 }

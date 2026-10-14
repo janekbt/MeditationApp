@@ -1019,7 +1019,8 @@ mod tests {
             assert!(body(sig).contains("show_notice("), "{sig} reports");
         }
         let undo = body("ui.on_snackbar_undo_tap(");
-        assert_eq!(undo.matches("write_ok(").count(), 5, "every Undo write reports");
+        // The guided one reports by offering its Undo again.
+        assert_eq!(undo.matches("write_ok(").count(), 4, "every Undo write reports");
         assert!(!undo.contains("let _ = db."));
     }
 
@@ -1518,7 +1519,6 @@ mod tests {
         let body = &code[at..at + code[at..].find("\n}\n").unwrap()];
         for step in [
             "hold_ended_session_snapshot(",
-            "bb_target_secs.set(None);",
             "ui.set_bb_running_active(false);",
             "ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime(\"00:00\".into()));",
         ] {
@@ -1809,8 +1809,8 @@ mod tests {
 
         // One re-read list covering every synced surface.
         let refresh = body_of("fn refresh_after_pull(");
+        // Preset chips and the widget come through refresh_after_label_change.
         for call in [
-            "refresh_preset_chips(",
             "refresh_bell_rows(",
             "populate_interval_bells(",
             "refresh_guided_files(",
@@ -1820,7 +1820,6 @@ mod tests {
             "refresh_filter_label_items(",
             "reset_log_feed(",
             "refresh_stats(",
-            "refresh_widget(",
         ] {
             assert!(refresh.contains(call), "refresh_after_pull misses {call}");
         }
@@ -2901,11 +2900,10 @@ mod tests {
         // did nothing on retry.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("update_preset_config FAILED").unwrap();
-        let next = &lib[at..at + 400];
-        assert!(next.contains("return;"));
-        let at = lib.find("insert_preset FAILED").unwrap();
-        assert!(lib[at..at + 200].contains("*pending_save_snapshot.borrow_mut() = Some((json, mode));"));
+        let at = lib.find("if !write_ok(&ui, \"preset.override\", written)").unwrap();
+        assert!(lib[at..at + 120].contains("return;"));
+        assert!(lib.contains("write_ok(&ui, \"preset.save\", failed);"));
+        assert!(!lib.contains("pending_save_snapshot.borrow_mut().take()"), "the snapshot stays for a retry");
     }
 
     #[test]
@@ -2944,8 +2942,8 @@ mod tests {
         // Every place that changes the pick says whether it's a library row.
         assert_eq!(
             lib.matches("ui.set_guided_name(").count(),
-            lib.matches("ui.set_guided_pick_in_library(").count() + 1,
-            "all but the rename (which keeps the pick) update the flag",
+            lib.matches("ui.set_guided_pick_in_library(").count(),
+            "every place that changes the pick updates the flag",
         );
     }
 
@@ -4120,5 +4118,191 @@ mod tests {
         assert_eq!(group_digits(-1000, "."), "-1.000");
         // Empty separator = no grouping (JNI fallback).
         assert_eq!(group_digits(123456, ""), "123456");
+    }
+
+    /// ui.rs without its tests, and one `ui.on_<name>(` handler of it.
+    fn ui_code() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        lib.split("#[cfg(test)]\nmod tests").next().unwrap().to_string()
+    }
+
+    fn handler<'a>(code: &'a str, name: &str) -> &'a str {
+        let sig = format!("ui.on_{name}(");
+        let at = code.find(&sig).unwrap_or_else(|| panic!("missing {sig}"));
+        let end = code[at + 1..].find("ui.on_").map_or(code.len(), |e| at + 1 + e);
+        &code[at..end]
+    }
+
+    #[test]
+    fn failed_dialog_writes_say_so_and_close() {
+        // #80: a write that fails says so, offers no Undo, and leaves
+        // the dialog usable for the next try.
+        let code = ui_code();
+        for (name, check) in [
+            ("override_preset_confirm", "write_ok("),
+            ("rename_preset_confirm", "write_ok("),
+            ("delete_preset_confirm", "delete_ok("),
+            ("guided_rename_confirm", "write_ok("),
+            ("guided_manage_delete_tap", "delete_ok("),
+            ("bell_rename_confirm", "write_ok("),
+            ("bell_delete_confirm", "delete_ok("),
+            ("pattern_delete_confirm", "delete_ok("),
+            ("guided_manage_star_tap", "write_ok("),
+            ("create_preset_confirm", "write_ok("),
+            ("vibration_editor_save", "write_ok("),
+            ("interval_bell_toggled", "write_ok("),
+            ("interval_bell_delete", "delete_ok("),
+        ] {
+            let h = handler(&code, name);
+            let gate = h.find(check).unwrap_or_else(|| panic!("{name}: the result decides"));
+            assert!(!h.contains(".borrow_mut().take()"), "{name}: the dialog's item stays for the next try");
+            assert!(!h.contains("lock_db() else { return; }"), "{name}: no database is a failure too");
+            if ["create_preset_confirm", "vibration_editor_save"].contains(&name) {
+                // These stay open for a retry, under the snackbar.
+                let failed = &h[h.find("failed =>").unwrap_or_else(|| panic!("{name}: a failure arm"))..];
+                let arm = &failed[..failed.find("\n                    }").unwrap()];
+                assert!(!arm.contains("close_modal(") && !arm.contains("_page(false)"), "{name}: stays open on failure");
+            } else if let Some(close) = h.find("close_modal(") {
+                assert!(close < gate, "{name}: the dialog closes on failure too");
+            }
+            if let Some(deleted) = h.find("invoke_deleted(") {
+                assert!(gate < deleted, "{name}: no 'deleted' with Undo before the delete landed");
+            }
+        }
+        // A preset deleted meanwhile by a sync still closes its dialog.
+        let h = handler(&code, "delete_preset_confirm");
+        assert!(h.find("close_modal(").unwrap() < h.find("find_preset_by_uuid(").unwrap());
+    }
+
+    #[test]
+    fn a_failed_log_delete_keeps_its_row() {
+        // #80: a session whose delete failed (or found no database)
+        // stays in the Log and in Stats, and "Delete failed" shows
+        // once the snackbar is free, so a newer notice keeps its Undo.
+        let code = ui_code();
+        let at = code.find("fn commit_pending_deletes(").unwrap();
+        let commit = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(!commit.contains("batch stays queued"), "no database counts as a failure");
+        assert!(commit.contains("deleted.contains(id)"), "only deleted rows leave the Log");
+        assert!(commit.contains("show_notice_when_free(") && commit.contains("invoke_delete_failed()"));
+        let at = code.find("fn show_notice_when_free(").expect("a deferred notice");
+        let when_free = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(when_free.contains("get_snackbar_visible()"), "waits while another notice shows");
+    }
+
+    #[test]
+    fn saving_or_undoing_a_session_refreshes_the_streak() {
+        // #78: the Timer page's streak line (set by refresh_stats)
+        // follows a saved, edited or undone session at once.
+        let code = ui_code();
+        let reset = "reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);";
+        let follows = |part: &str, what: &str| {
+            let at = part.find(reset).unwrap_or_else(|| panic!("{what}: no Log reset"));
+            assert!(part[at + reset.len()..].trim_start().starts_with("refresh_stats(&ui);"), "{what}");
+        };
+        follows(handler(&code, "save_tap"), "Save");
+        follows(handler(&code, "edit_save_tap"), "Edit");
+        let undo = handler(&code, "snackbar_undo_tap");
+        let recovery = &undo[undo.find("U::Recovery(").unwrap()..];
+        follows(&recovery[..recovery[1..].find("U::").unwrap()], "Recovery Undo");
+    }
+
+    #[test]
+    fn label_and_sound_renames_reach_widget_and_bell_list() {
+        // #84: a renamed label shows its new name in the preset chips
+        // and on the widget; a renamed or deleted sound in the
+        // Interval Bells list.
+        let code = ui_code();
+        let at = code.find("fn refresh_after_label_change(").unwrap();
+        let labels = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(labels.contains("refresh_preset_chips(ui, mode);") && labels.contains("refresh_widget(ui);"));
+        for name in ["bell_rename_confirm", "bell_delete_confirm"] {
+            assert!(handler(&code, name).contains("populate_interval_bells(&ui);"), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_pull_follows_the_guided_file_and_refills_choosers() {
+        // #124: after a sync, the selected guided file is renamed or
+        // cleared (only on Setup: Save reads it on Done), and an open
+        // bell or pattern chooser drops what another device deleted.
+        let code = ui_code();
+        let tick = &code[code.find("timer.start(slint::TimerMode::Repeated, TICK,").expect("tick loop")..];
+        let pull = &tick[tick.find("refresh_after_pull(").unwrap()..];
+        let pull = &pull[..pull.find("// Test-connection outcome").unwrap()];
+        assert!(pull.contains("if state.borrow().is_idle()") && pull.contains("follow_guided_sel(&ui, &guided_sel)"));
+        assert!(pull.contains("repopulate_bell_chooser("));
+        let at = code.find("fn refresh_after_pull(").unwrap();
+        let after = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(after.contains("refresh_after_pattern_change(ui);"), "the pattern chooser refills");
+        let at = code.find("fn follow_guided_sel(").expect("one rule for rename and delete");
+        let follow = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(follow.contains("show_guided_sel(ui"));
+        assert!(follow.contains("meditate_core::guided::follow_selection("), "the rule lives in core");
+        // Manage Files' own rename and delete use the same rule.
+        assert!(handler(&code, "guided_manage_delete_tap").contains("follow_guided_sel(&ui, &guided_sel)"));
+        assert!(handler(&code, "guided_rename_confirm").contains("follow_guided_sel(&ui, &guided_sel)"));
+    }
+
+    #[test]
+    fn undo_of_a_deleted_guided_file_reselects_it() {
+        let code = ui_code();
+        let at = code.find("fn follow_guided_sel(").unwrap();
+        let follow = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(follow.contains("GUIDED_CLEARED"), "a cleared selection is remembered");
+        let undo = handler(&code, "snackbar_undo_tap");
+        let branch = &undo[undo.find("U::GuidedDelete(").unwrap()..];
+        assert!(branch[..branch[1..].find("U::").unwrap()].contains("follow_guided_sel(&ui, &guided_sel)"));
+    }
+
+    #[test]
+    fn the_box_breath_counter_reads_the_running_session() {
+        // #136: Pause and Resume rebuilt the counter's target from
+        // Setup, which a sync may have changed mid-session.
+        let code = ui_code();
+        assert!(!code.contains("bb_target_secs"), "no copy of the target outside the session");
+        let at = code.find("session.box_breath_phase_info(now)").unwrap();
+        assert!(code[at..at + 600].contains("session.completion_duration_secs()"));
+    }
+
+    #[test]
+    fn back_from_the_interval_editor_cancels_it() {
+        // #140: Back left a volume preview ringing with no Stop on screen.
+        let code = ui_code();
+        let back = handler(&code, "back_pressed");
+        let at = back.find("if ui.get_interval_editor_page() {").unwrap();
+        assert!(back[at..at + 120].contains("ui.invoke_interval_editor_cancel();"));
+    }
+
+    #[test]
+    fn a_preview_that_cannot_play_says_so() {
+        // #141: a sound whose file hasn't arrived showed "Stop" in silence.
+        let code = ui_code();
+        for (name, preview, set) in [
+            ("bell_preview_toggle", "BELL_PREVIEW", "ui.set_bell_preview_uuid(id.into());"),
+            ("pattern_preview_toggle", "PATTERN_PREVIEW", "ui.set_pattern_preview_uuid(id.into());"),
+        ] {
+            let h = handler(&code, name);
+            let gate = h.find("if dur_ms == 0 {").unwrap_or_else(|| panic!("{name}: checks that it plays"));
+            let failed = &h[gate..h.find(set).unwrap()];
+            assert!(failed.contains(&format!("{preview}.with_borrow_mut(PreviewToggle::stop)")), "{name}");
+            assert!(failed.contains("invoke_playback_failed()") && failed.contains("return;"), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_failed_guided_undo_is_offered_again() {
+        // The audio stays until that offer ends, so the file isn't lost
+        // to a sync holding the database.
+        let code = ui_code();
+        let undo = handler(&code, "snackbar_undo_tap");
+        let branch = &undo[undo.find("U::GuidedDelete(").unwrap()..];
+        let branch = &branch[..branch[1..].find("U::").unwrap()];
+        assert!(branch.contains("Some(app::PendingUndo::GuidedDelete(f))"), "the same Undo again");
+        assert!(branch.contains("invoke_save_failed()"));
+        // A name clash never clears up: no second offer.
+        let clash = branch.find("DuplicateGuidedFile(").expect("a clash arm");
+        assert!(clash < branch.find("Some(app::PendingUndo::GuidedDelete(f))").unwrap());
     }
 }

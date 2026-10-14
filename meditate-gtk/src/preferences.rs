@@ -83,9 +83,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                app.with_db_mut(|db| {
-                    let _ = write_daily_goal_mins(db.core(), val);
-                });
+                let written = app.with_db_mut(|db| write_daily_goal_mins(db.core(), val));
+                crate::db::write_ok(row, "goal.write", written, crate::db::Failed::Save);
                 app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),

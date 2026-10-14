@@ -121,6 +121,25 @@ fn csv_unguard(s: &str) -> &str {
     }
 }
 
+/// Write `path` through `<path>.tmp` and a rename, so a failed write
+/// leaves the old file whole.
+fn replace_file<T>(path: &Path, write: impl FnOnce(&mut File) -> Result<T, DataIoError>) -> Result<T, DataIoError> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    let result = File::create(&tmp).map_err(DataIoError::from).and_then(|mut file| {
+        let value = write(&mut file)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        Ok(value)
+    });
+    if result.is_err() {
+        // Best effort: the error being returned is the one that matters.
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
@@ -130,7 +149,14 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
             .map(|l| (l.id, (l.name, l.uuid.to_string())))
             .collect();
 
-    let file = File::create(path)?;
+    replace_file(path, |file| write_sessions_csv(db, &labels, file))
+}
+
+fn write_sessions_csv(
+    db: &Database,
+    labels: &std::collections::HashMap<i64, (String, String)>,
+    file: &mut File,
+) -> Result<usize, DataIoError> {
     let mut wtr = csv::Writer::from_writer(file);
     wtr.write_record([
         "start_time_unix", "duration_secs", "mode", "label", "note",
@@ -162,14 +188,8 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
         ])?;
         n += 1;
     }
+    // `replace_file` fsyncs after this, before the rename.
     wtr.flush()?;
-    // Reclaim the underlying File from csv::Writer and fsync it. A
-    // power loss after `flush` returns can otherwise leave a
-    // truncated or zero-byte CSV — the buffered pages reach the
-    // kernel but not the disk. `sync_all` blocks until the data +
-    // metadata are durable, the standard exported-file contract.
-    let file = wtr.into_inner().map_err(csv::IntoInnerError::into_error)?;
-    file.sync_all()?;
     Ok(n)
 }
 
@@ -851,5 +871,41 @@ mod tests {
         assert_eq!(import_file(&db, f.path()), 0,
             "re-import of an unmodified export must be a no-op");
         assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_failed_export_keeps_the_old_backup() {
+        // #170: a write that fails halfway must not have emptied the
+        // backup it was replacing, nor leave its temporary file.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("backup.csv");
+        std::fs::write(&path, "old").unwrap();
+        let r: Result<(), DataIoError> = replace_file(&path, |f| {
+            f.write_all(b"half")?;
+            Err(std::io::Error::other("disk full").into())
+        });
+        assert!(r.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left");
+
+        // And the export itself never opens the backup for writing:
+        // with its temporary file blocked it fails, the old one whole.
+        let db = fresh_db();
+        import_parsed(&db, &parsed(&[], vec![row(1_700_000_000, 600, SessionMode::Timer, None, None)])).unwrap();
+        std::fs::create_dir(dir.path().join("backup.csv.tmp")).unwrap();
+        assert!(export_csv(&db, &path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+    }
+
+    #[test]
+    fn an_export_replaces_the_backup_and_leaves_no_temp_file() {
+        let db = fresh_db();
+        import_parsed(&db, &parsed(&[], vec![row(1_700_000_000, 600, SessionMode::Timer, None, None)])).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("backup.csv");
+        std::fs::write(&path, "old").unwrap();
+        assert_eq!(export_csv(&db, &path).unwrap(), 1);
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with("start_time_unix,"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left");
     }
 }

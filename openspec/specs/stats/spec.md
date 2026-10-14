@@ -28,3 +28,11 @@ Stats SHALL show the new day as today within a few seconds of midnight, or of wa
 - **WHEN** the maintainer leaves both apps open on Stats over midnight (or sets the clock forward)
 - **THEN** "today" and the heatmap's today move to the new day within a few seconds
 - **MANUAL** needs a real clock change and a screen
+
+### Requirement: A daily goal that fails to save says so
+A failed save of the daily goal on the laptop SHALL show "Save failed".
+
+#### Scenario: Goal changed during a sync
+- **WHEN** the user changes the daily goal and the write fails
+- **THEN** "Save failed" shows
+- **TEST** `meditate-gtk/src/db/mod.rs::no_write_result_is_dropped`

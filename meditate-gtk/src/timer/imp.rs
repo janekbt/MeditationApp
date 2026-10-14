@@ -286,6 +286,9 @@ pub struct TimerView {
     /// AND for the empty state. The session-save path reads this so
     /// per-file stats can resolve later.
     guided_selected_uuid: RefCell<Option<String>>,
+    /// The selected library file a delete cleared, so its Undo can
+    /// select it again.
+    guided_cleared_uuid: RefCell<Option<String>>,
     /// Starred guided-file rows currently attached to the home-list
     /// group. Same shape as `starred_preset_rows` so the rebuild path
     /// can drain and re-add cleanly without leaking rows.
@@ -363,6 +366,9 @@ impl ObjectImpl for TimerView {
         });
         self.breathing_session_secs.set(meditate_core::session::BREATHING_DEFAULT_SECS);
         self.setup_buttons();
+        // Back from a chooser (a NavigationView pop maps this page
+        // again): the bells' sound or pattern may be renamed or gone.
+        self.obj().connect_map(|view| view.imp().refresh_bell_row_names());
         // A changed setting can make another preset active: re-mark the
         // starred list after every local change. The watch starts once
         // the app (and its database) is there.
@@ -623,7 +629,11 @@ impl TimerView {
                 let this_for_changed = this.clone();
                 window.push_guided_files_chooser(
                     &app,
-                    move || this_for_changed.imp().rebuild_starred_guided_list(),
+                    move || {
+                        let imp = this_for_changed.imp();
+                        imp.rebuild_starred_guided_list();
+                        imp.follow_selected_guided_file();
+                    },
                 );
             },
         ));
@@ -3178,6 +3188,8 @@ impl TimerView {
         self.load_timer_settings();
         self.load_breathing_settings();
         self.refresh_phase_tiles();
+        // A sync may have renamed or deleted the selected guided file.
+        self.follow_selected_guided_file();
 
         // Batch every DB read this visit needs into a single borrow:
         // one get_app() walk, one RefCell lock, four SQL queries instead
@@ -3457,23 +3469,13 @@ impl TimerView {
         row.add_prefix(&star);
 
         let uuid = f.uuid.0.clone();
-        let path = meditate_core::audio_files::guided_file_path(
-            &crate::sync_runner::local_guided_dir(),
-            f.uuid.as_str(),
-        );
         let obj = self.obj().clone();
         row.connect_activated(move |_| {
             let imp = obj.imp();
             // Promote this starred row into the Selected slot and
             // record its uuid for the session-save path.
             *imp.guided_selected_uuid.borrow_mut() = Some(uuid.clone());
-            *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
-                display_name: f.name.clone(),
-                source_path: path.clone(),
-                duration_secs: f.duration_secs,
-                local_file_id: None,
-                folder: None,
-            });
+            *imp.guided_pick.borrow_mut() = Some(library_pick(&f));
             imp.refresh_guided_selected_row();
             imp.refresh_hero_for_idle();
         });
@@ -3585,6 +3587,40 @@ impl TimerView {
         let reading = mode == TimerMode::Guided
             && self.guided_pick.borrow().as_ref().is_some_and(|p| p.reading_length());
         self.start_btn.set_sensitive(!reading);
+    }
+
+    /// The selected library file was renamed or deleted (Manage Files,
+    /// or a sync): show its new name, or clear it. Undo of that delete
+    /// selects it again. Never during a session or on Done, whose Save
+    /// reads the selection.
+    fn follow_selected_guided_file(&self) {
+        if self.ui_state() != UiState::Idle {
+            return;
+        }
+        let Some(app) = self.get_app() else { return };
+        let find = |uuid: &str| app.with_db(|db| db.find_guided_file_by_uuid(uuid)).and_then(Result::ok);
+        let selected = self.guided_selected_uuid.borrow().clone();
+        let cleared = self.guided_cleared_uuid.borrow().clone();
+        let other_pick = selected.is_none() && self.guided_pick.borrow().is_some();
+        use meditate_core::guided::Follow;
+        match meditate_core::guided::follow_selection(selected.as_deref(), other_pick, cleared.as_deref(), |uuid| {
+            find(uuid).map(|f| f.is_some())
+        }) {
+            Follow::Keep => return,
+            Follow::Refresh | Follow::Reselect(_) => {
+                let Some(uuid) = selected.or(cleared) else { return };
+                let Some(Some(f)) = find(&uuid) else { return };
+                *self.guided_pick.borrow_mut() = Some(library_pick(&f));
+                *self.guided_selected_uuid.borrow_mut() = Some(uuid);
+                *self.guided_cleared_uuid.borrow_mut() = None;
+            }
+            Follow::Clear => {
+                *self.guided_pick.borrow_mut() = None;
+                *self.guided_cleared_uuid.borrow_mut() = self.guided_selected_uuid.borrow_mut().take();
+            }
+        }
+        self.refresh_guided_selected_row();
+        self.refresh_hero_for_idle();
     }
 
     /// Make a Local Folder file the current file.
@@ -4118,6 +4154,19 @@ impl TimerView {
         self.interval_bells_row.set_subtitle(&intervals_count_subtitle(count));
     }
 
+    fn refresh_bell_row_names(&self) {
+        if self.get_app().is_none() {
+            return; // Not wired yet; the first refresh_streak fills them.
+        }
+        self.refresh_starting_bell_sound_subtitle();
+        self.refresh_end_bell_sound_subtitle();
+        self.refresh_starting_bell_pattern_subtitle();
+        self.refresh_end_bell_pattern_subtitle();
+        for phase in BoxBreathPhaseId::all() {
+            self.refresh_boxbreath_phase_subtitles(*phase);
+        }
+    }
+
     /// Refresh the subtitle of the Starting Bell sound row to the
     /// human-readable name of whichever bell_sounds row the persisted
     /// uuid points at. Empty if the uuid is stale (post-wipe legacy
@@ -4259,6 +4308,20 @@ impl TimerView {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// A library file as the current pick, played from this device's copy.
+fn library_pick(f: &crate::db::GuidedFile) -> crate::guided::GuidedFilePick {
+    crate::guided::GuidedFilePick {
+        display_name: f.name.clone(),
+        source_path: meditate_core::audio_files::guided_file_path(
+            &crate::sync_runner::local_guided_dir(),
+            f.uuid.as_str(),
+        ),
+        duration_secs: f.duration_secs,
+        local_file_id: None,
+        folder: None,
+    }
+}
 
 /// Subtitle text for the "Manage Bells" row reflecting how many of the
 /// "Add MM:SS ?" running-page button label. `{time}` is the
@@ -4512,3 +4575,62 @@ impl TimerView {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    fn production() -> String {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/timer/imp.rs")).unwrap();
+        src.split("#[cfg(test)]\nmod tests").next().unwrap().to_string()
+    }
+
+    fn body(code: &str, sig: &str) -> String {
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+        let end = code[at..].find("\n    }\n").unwrap();
+        code[at..at + end].to_string()
+    }
+
+    #[test]
+    fn setup_rereads_bell_rows_when_shown_again() {
+        // #84: back from a chooser where the bell's sound or pattern
+        // was renamed or deleted, Setup shows the new name or "Missing".
+        let code = production();
+        let constructed = body(&code, "fn constructed(&self)");
+        let map = constructed.find("connect_map(").expect("Setup re-reads when shown again");
+        assert!(constructed[map..].contains("refresh_bell_row_names()"));
+        let names = body(&code, "fn refresh_bell_row_names(&self)");
+        for f in [
+            "refresh_starting_bell_sound_subtitle()", "refresh_end_bell_sound_subtitle()",
+            "refresh_starting_bell_pattern_subtitle()", "refresh_end_bell_pattern_subtitle()",
+        ] {
+            assert!(names.contains(f), "{f}");
+        }
+        // Box Breath's phase cues name a sound and a pattern too.
+        assert!(names.contains("self.refresh_boxbreath_phase_subtitles(*phase);"));
+    }
+
+    #[test]
+    fn manage_files_changes_follow_the_selected_file() {
+        // #124: a selected file deleted or renamed in Manage Files, or
+        // by a sync pull, is cleared or renamed on Setup, never during
+        // a session or on Done (Save reads the selection).
+        let code = production();
+        let manage = body(&code, "self.manage_guided_files_btn.connect_clicked(");
+        assert!(manage.contains("follow_selected_guided_file()"), "Manage Files changes");
+        let streak = body(&code, "pub fn refresh_streak(&self)");
+        assert!(streak.contains("follow_selected_guided_file()"), "after a sync pull");
+        let follow = body(&code, "fn follow_selected_guided_file(&self)");
+        let guard = follow.find("UiState::Idle").expect("only on Setup");
+        assert!(guard < follow.find("guided_pick").unwrap());
+        assert!(follow.contains("meditate_core::guided::follow_selection("), "the rule lives in core");
+        assert!(follow.contains("refresh_guided_selected_row()") && follow.contains("refresh_hero_for_idle()"));
+    }
+
+    #[test]
+    fn undo_of_a_deleted_guided_file_reselects_it() {
+        // Undo brings the file back; Setup selects it again when
+        // nothing else was picked meanwhile.
+        let code = production();
+        let follow = body(&code, "fn follow_selected_guided_file(&self)");
+        assert!(follow.contains("guided_cleared_uuid"), "a cleared selection is remembered");
+        assert!(follow.contains("library_pick("), "and restored as a library pick");
+    }
+}
