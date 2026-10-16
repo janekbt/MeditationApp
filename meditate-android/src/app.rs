@@ -916,6 +916,46 @@ mod tests {
         assert!(slint.contains("changed text-focused => {\n        if !self.text-focused {\n            root-focus.focus();"));
     }
 
+    #[test]
+    fn editing_a_pattern_loads_its_stored_points_and_kind() {
+        // #139: on a phone without amplitude control, Edit rounded the
+        // stored points to off/full and forced Bar, and Save synced that.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = lib.find("ui.on_pattern_edit(move |uuid| {").unwrap();
+        let edit = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(edit.contains("ui.set_ve_chart_kind(ve_kind_index(p.chart_kind));"));
+        assert!(edit.contains("ve_model.set_vec(p.intensities.clone());"));
+        assert!(!edit.contains("ve_maybe_binarize"), "stored points load unrounded");
+    }
+
+    #[test]
+    fn vibration_save_applies_typed_duration_and_points_first() {
+        // #142: the `changed` handlers run after the click, so Save read
+        // the old curve. Duration first: it clamps Points synchronously.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains(
+            "ve-duration-stepper.commit();\n                    ve-points-stepper.commit();\n                    root.ve-duration-changed(root.ve-duration-tenths);\n                    root.ve-points-changed(root.ve-points);\n                    root.vibration-editor-save();"
+        ));
+    }
+
+    #[test]
+    fn a_cancelled_volume_drag_puts_the_slider_back() {
+        // #144: when the page takes over a drag, the slider got a cancel
+        // it ignored and kept showing a value that was never saved.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component VolumeSlider inherits Rectangle {").unwrap();
+        let slider = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        assert!(slider.contains("root.pressed-value = root.value;"), "down remembers the value");
+        assert!(slider.contains(
+            "if event.kind == PointerEventKind.cancel {\n                root.value = root.pressed-value;\n                root.value-changed(root.value);"
+        ));
+        let cancel = &slider[slider.find("PointerEventKind.cancel").unwrap()..];
+        assert!(!cancel[..cancel.find('}').unwrap()].contains("released"), "a cancel saves nothing");
+    }
+
     /// The Session and Bells rows exist once for all three modes, so
     /// a fix to one can no longer miss the other two (they drifted
     /// before, 01d8b61). Mode-only rows say which mode shows them.
@@ -988,7 +1028,7 @@ mod tests {
         let save = slint.find("clicked => { root.vibration-editor-save(); }");
         assert!(save.is_none(), "Save commits before it saves");
         let at = slint.find("root.vibration-editor-save();").unwrap();
-        let before = &slint[at - 200..at];
+        let before = &slint[at - 300..at];
         assert!(before.contains("ve-duration-stepper.commit();") && before.contains("ve-points-stepper.commit();"));
         let release = slint.find("function release-vibration-editor-inputs() {").expect("one release");
         let release = &slint[release..release + 160];
@@ -1558,7 +1598,7 @@ mod tests {
         let row = &slint[rows..rows + slint[rows..].find("} // Flickable (pc-scroll)").unwrap()];
         assert!(row.contains("if item.deletable : IconButton {"));
         // Empty on bundled rows, so it must not take width from the name.
-        assert!(row.contains("VerticalLayout {\n                                alignment: center;\n                                horizontal-stretch: 0;\n                                if item.deletable"));
+        assert!(row.contains("HorizontalLayout {\n                                spacing: 0px;\n                                alignment: center;\n                                horizontal-stretch: 0;"));
         assert!(row.contains("root.pattern-delete-tap(item.uuid);"));
         let dialog = slint.find("if root.modal == Modal.pattern-delete : ConfirmDialog {").unwrap();
         let dialog = &slint[dialog..dialog + 400];
@@ -3181,10 +3221,8 @@ mod tests {
         let pill = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(pill.contains("width: max(60px, max(play-label.preferred-width, stop-label.preferred-width) + 24px);"));
         assert!(!slint.contains("width: 60px;"), "no fixed-width pill left");
-        // The pattern rows' Edit button grows with its text too
-        // ("Bearbeiten" ran into the pill at a fixed 44px).
-        assert!(slint.contains("width: max(44px, ve-edit-text.preferred-width + 16px);"));
-        assert_eq!(slint.matches("PreviewPill {").count(), 3, "bell + pattern choosers, volume row");
+        // The choosers use play/pause icons since #145; only the volume row's Stop is a pill.
+        assert_eq!(slint.matches("PreviewPill {").count(), 1, "volume row");
     }
 
     #[test]

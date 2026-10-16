@@ -293,6 +293,9 @@ pub struct TimerView {
     /// group. Same shape as `starred_preset_rows` so the rebuild path
     /// can drain and re-add cleanly without leaking rows.
     starred_guided_rows: RefCell<Vec<adw::ActionRow>>,
+    /// The pickable starred rows by key (`<uuid>` or `local:<id>`) with
+    /// their check, so the selected one is marked in place (#189).
+    starred_guided_checks: RefCell<Vec<(String, adw::ActionRow, gtk::Image)>>,
     /// Active gst playbin instance during a Guided session. Set by
     /// `start_session`'s Guided arm, paused/resumed alongside the
     /// hero countdown, and torn down (Drop runs set_state(Null) +
@@ -3426,6 +3429,7 @@ impl TimerView {
         for row in self.starred_guided_rows.borrow_mut().drain(..) {
             self.guided_files_group.remove(&row);
         }
+        self.starred_guided_checks.borrow_mut().clear();
 
         let app_opt = self.get_app();
         let starred = app_opt
@@ -3454,17 +3458,49 @@ impl TimerView {
         }
 
         let mut tracked: Vec<adw::ActionRow> = Vec::with_capacity(starred.len());
+        let mut checks = Vec::with_capacity(starred.len());
         for entry in starred {
-            let row = match entry {
-                meditate_core::local_folder::StarredGuided::Library(f) => self.starred_library_row(f),
+            let (row, key) = match entry {
+                meditate_core::local_folder::StarredGuided::Library(f) => {
+                    let key = f.uuid.0.clone();
+                    (self.starred_library_row(f), Some(key))
+                }
                 meditate_core::local_folder::StarredGuided::Local { file, found } => {
-                    self.starred_local_row(file, found)
+                    let key = found.then(|| format!("local:{}", file.id));
+                    (self.starred_local_row(file, found), key)
                 }
             };
+            if let Some(key) = key {
+                let check = gtk::Image::from_icon_name("object-select-symbolic");
+                check.add_css_class("selected-check");
+                row.add_suffix(&check);
+                checks.push((key, row.clone(), check));
+            }
             self.guided_files_group.add(&row);
             tracked.push(row);
         }
         *self.starred_guided_rows.borrow_mut() = tracked;
+        *self.starred_guided_checks.borrow_mut() = checks;
+        self.mark_selected_starred_row();
+    }
+
+    /// Mark the selected file's starred row as the preset rows mark
+    /// theirs: the check, the accent title and the selected state.
+    fn mark_selected_starred_row(&self) {
+        let key = self.guided_selected_uuid.borrow().clone().or_else(|| {
+            let local = self.guided_pick.borrow().as_ref().and_then(|p| p.local_file_id);
+            local.map(|id| format!("local:{id}"))
+        });
+        for (k, row, check) in self.starred_guided_checks.borrow().iter() {
+            let on = key.as_deref() == Some(k.as_str());
+            check.set_visible(on);
+            if on {
+                row.add_css_class("accent");
+            } else {
+                row.remove_css_class("accent");
+            }
+            row.update_state(&[gtk::accessible::State::Selected(Some(on))]);
+        }
     }
 
     /// A starred library file: tap makes it the current file.
@@ -3592,6 +3628,7 @@ impl TimerView {
         let has_transient = has_pick && self.guided_selected_uuid.borrow().is_none();
         self.import_file_btn.set_sensitive(has_transient && !local);
         self.refresh_start_sensitive(self.current_mode());
+        self.mark_selected_starred_row();
     }
 
     /// Start waits while a Local Folder file's length is being read.

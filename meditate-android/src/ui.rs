@@ -4254,6 +4254,9 @@ impl GuidedSel {
 /// Mirrors GTK's `refresh_guided_selected_row`.
 fn show_guided_sel(ui: &MainWindow, sel: Option<&GuidedSel>) {
     ui.set_guided_name(sel.map(|s| s.name.clone()).unwrap_or_default().into());
+    // Same keys as the Starred Files rows; a transient Open File pick has none.
+    let key = sel.and_then(|s| s.uuid.clone().or_else(|| s.local_id.map(|id| format!("local:{id}"))));
+    ui.set_guided_selected_key(key.unwrap_or_default().into());
     ui.set_guided_duration_secs(sel.map_or(0, |s| s.duration_secs as i32));
     // Import is off for library files and for Local Folder files,
     // which are played in place.
@@ -6988,7 +6991,7 @@ fn build_ui() -> MainWindow {
             raw
         }
     }
-    // Whole-model variant for seed / load / resample.
+    // Whole-model variant for a new pattern's seed and a resample.
     fn ve_maybe_binarize(ui: &MainWindow, v: Vec<f32>) -> Vec<f32> {
         if ui.get_ve_binary() {
             v.into_iter()
@@ -7267,14 +7270,10 @@ fn build_ui() -> MainWindow {
                 ui.set_ve_binary(binary);
                 ui.set_ve_duration_tenths((p.duration_ms / 100) as i32);
                 ui.set_ve_points(p.intensities.len() as i32);
-                ui.set_ve_chart_kind(if binary {
-                    0
-                } else {
-                    ve_kind_index(p.chart_kind)
-                });
-                ve_model.set_vec(
-                    ve_maybe_binarize(&ui, p.intensities.clone()),
-                );
+                // Stored points and kind load unrounded (#139): only a
+                // point the user drags rounds on a binary phone.
+                ui.set_ve_chart_kind(ve_kind_index(p.chart_kind));
+                ve_model.set_vec(p.intensities.clone());
                 ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
                 let except = if p.is_bundled {
                     // Bundled is immutable in core — open a copy

@@ -30,7 +30,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
 | [ ] | K3. Presets all or nothing | #193 | a preset that fails halfway |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
-| [ ] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #147, #148, #160, #189 | hidden controls, lost edits |
+| [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
 | [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
@@ -42,6 +42,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
+| [ ] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
+| [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
 
@@ -89,62 +91,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-android/android/app/src/main/AndroidManifest.xml:56` (`configChanges` lacks `fontScale|locale|smallestScreenSize|keyboard|navigation|layoutDirection`); `service::stop` / `guided::stop` / `audio::stop` run only on an Active-to-inactive transition.
 - Problem: a font size or language change, split screen or a hardware keyboard recreates the NativeActivity. Startup finalizes the live snapshot as "recovered" (up to 60 s lost) and comes back Idle, while the foreground service, its notification, the wake lock and a guided track keep going. Not yet confirmed on the FP5.
 - Fix: add the missing `configChanges`; at startup stop any leftover service and players when no session is active. Manifest: ask first, run the repro probe.
-
-## M. Android layout and editors
-
-### #139 Android: editing a vibration pattern on the FP5 flattens it everywhere
-- Where: `meditate-android/src/ui.rs:6721-6748` (`on_pattern_edit`), 6954-6992 (Save).
-- Problem: on a phone without amplitude control, Edit loads the points rounded to 0 or 100% and forces Bar; Save writes that and syncs it. Renaming "Wave" (Line 0.3, 0.6, 0.9), or saving with no change, stores Bar [0, 1, 1] on every device.
-- Fix: load the stored intensities and chart kind unchanged; only points the user drags still round.
-
-### #142 Android: the vibration editor saves before a typed value reaches the curve
-- Where: `meditate-android/ui/main.slint:6433-6439, 2568-2573`; `src/ui.rs:6954-6963`.
-- Problem: Slint runs `changed` handlers after the click, so Save reads the old curve. Type 12 Points and Save: it is saved with 7. Type 1.0 s Duration on a 20-point pattern: it is saved as 20 points 50 ms apart, below the 100 ms floor, and synced.
-- Fix: after the two `commit()` calls, call `root.ve-duration-changed(...)` and `root.ve-points-changed(...)` directly.
-
-### #143 Android: long row texts push switches off screen
-- Where: `meditate-android/ui/main.slint:595-605, 839-848, 910-919, 1019-1029, 5875-5886, 6844-6848`.
-- Problem: a Slint Text with neither wrap nor elide can't shrink, so the switch is laid out past the clipped list. At 360 dp the Keep Screen Awake switch is hidden in 7 of 9 languages, the German and Russian "Cues during phases" switch too, and long preset subtitles hide the delete button.
-- Fix: `wrap: word-wrap;` (two lines fit) or `overflow: elide;` on those Texts.
-
-### #144 Android: a volume slider change is lost when the page scrolls
-- Where: `meditate-android/ui/main.slint:1505-1574`; saved in `on_bell_volume_released` (`ui.rs:8719-8737`).
-- Problem: the slider sets the value on press but saves on release. When the page takes over a vertical drag, the slider gets a cancel it ignores, and then shows 30% while the bell rings at the stored 80%.
-- Fix: remember the value on press and restore it on cancel (about 3 lines).
-
-### #145 Android: chooser rows leave no room for the name
-- Where: `meditate-android/ui/main.slint:6153-6211, 6315-6391`; PreviewPill 1266-1300.
-- Problem: at 360 dp the "Edit" text button and the Play pill leave a German custom pattern name 29 px and a Russian one nothing.
-- Fix: icon buttons (the edit icon, and the play and pause icons Manage Files already uses), as GTK does; the name then gets about 108 px. Remove the stale comment at 6226-6228.
-
-### #146 Android: the interval-bell and vibration editors can't scroll
-- Where: `meditate-android/ui/main.slint:5935-6055, 6407-6696`.
-- Problem: they need about 600-650 dp, so in landscape or split screen some rows are cut off and can't be reached.
-- Fix: a Flickable around the interval-bell editor body (needs #144); in the vibration editor only above the chart.
-
-### #147 Android: small touch targets
-- Where: `meditate-android/ui/main.slint:641, 701, 1277, 6353, 1782, 1799`.
-- Problem: the mode switch, the Stats period toggle and the Sound/Vibration/Both segments are 32 dp tall and the Box Breath steppers 36 dp; Material asks for 48.
-- Fix: taller controls or taller TouchAreas (the PhaseTile row is already full width at 360 dp, so it can only grow taller).
-
-### #148 Android: the date picker's year grid skips 2030 and starts at 2024
-- Where: `meditate-android/material-1.0/ui/components/date_picker.slint:356`.
-- Problem: the vendored year list is hard-coded, so an imported 2022 session can't be moved by year.
-- Fix: build the list from the current year backwards.
-
-### #160 Android: Slint's text fields misplace the cursor handle and ignore the space-bar slide
-- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.16.1 (`java/SlintAndroidJavaHelper.java`, `javahelper.rs`), not our code. Seen on the FP5 in Preferences (batch F test); batch F made Preferences let go of its fields, which removed the stuck keyboard, handle and copy bar there.
-- Problem:
-  - A cursor at the very start of a field (an empty field) gets its handle at the screen's left edge: `set_imm_data` sends x = -1 when the cursor fails its clip check, and the one-handle path shows the handle there instead of hiding it.
-  - The cut/copy/paste bar covers the field's text instead of sitting above it (cause not found yet; the content rect comes from the same cursor coordinates).
-  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection, and Slint's editable only reports text replacements, never a selection-only change.
-  - Other pages with a Material `TextField` (rename and name dialogs, Log edit) may keep the handle after closing too; check each close path like Preferences.
-- Fix: patch the Java helper (hide the handle at x = -1, report `setSelection` back through `updateText`, then the content rect), which means vendoring the backend like `third_party/i-slint-compiler`: build environment, so ask first, then run the repro probe. Report it upstream either way.
-
-### #189 Android: the selected guided file isn't highlighted in the list
-- Where: `meditate-android/ui/main.slint`, the Guided file lists (library and Local Folder) under the "Current file" row (line 3352-).
-- Problem: seen on the FP5 2026-10-12: after picking a file, nothing in the list shows which one is selected; only the "Current file" row names it. Not checked yet whether GTK marks it.
-- Fix: mark the selected row (a check or a highlighted background), matching GTK if it does so.
 
 ## N. Stats numbers
 
@@ -391,6 +337,30 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `build.sh:167` runs `build-aux/setup-android.sh` before `ensure_rust` (`:171`); `setup-android.sh:300-303` exits when rustup is missing.
 - Problem: README promises that build.sh installs missing dependencies, but a fresh machine stops with a rustup error on `./build.sh android`.
 - Fix: call `ensure_rust` before the Android bootstrap. README/BUILDING say "install rustup first" until then.
+
+## Y. Slint library fixes (build environment: ask first)
+
+### #148 Android: the date picker's year grid skips 2030 and starts at 2024
+- Where: `meditate-android/material-1.0/ui/components/date_picker.slint:356`.
+- Problem: the vendored year list is hard-coded, so an imported 2022 session can't be moved by year.
+- Fix: build the list from the current year backwards.
+
+
+### #160 Android: Slint's text fields misplace the cursor handle and ignore the space-bar slide
+- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.16.1 (`java/SlintAndroidJavaHelper.java`, `javahelper.rs`), not our code. Seen on the FP5 in Preferences (batch F test); batch F made Preferences let go of its fields, which removed the stuck keyboard, handle and copy bar there.
+- Problem:
+  - A cursor at the very start of a field (an empty field) gets its handle at the screen's left edge: `set_imm_data` sends x = -1 when the cursor fails its clip check, and the one-handle path shows the handle there instead of hiding it.
+  - The cut/copy/paste bar covers the field's text instead of sitting above it (cause not found yet; the content rect comes from the same cursor coordinates).
+  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection, and Slint's editable only reports text replacements, never a selection-only change.
+  - Other pages with a Material `TextField` (rename and name dialogs, Log edit) may keep the handle after closing too; check each close path like Preferences.
+- Fix: patch the Java helper (hide the handle at x = -1, report `setSelection` back through `updateText`, then the content rect), which means vendoring the backend like `third_party/i-slint-compiler`: build environment, so ask first, then run the repro probe. Report it upstream either way.
+
+## Z. Android touch targets
+
+### #147 Android: small touch targets
+- Where: `meditate-android/ui/main.slint:641, 701, 1277, 6353, 1782, 1799`.
+- Problem: the mode switch, the Stats period toggle and the Sound/Vibration/Both segments are 32 dp tall and the Box Breath steppers 36 dp; Material asks for 48.
+- Fix: taller controls or taller TouchAreas (the PhaseTile row is already full width at 360 dp, so it can only grow taller).
 
 ## Later
 

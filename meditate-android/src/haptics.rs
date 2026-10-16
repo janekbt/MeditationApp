@@ -25,7 +25,8 @@ const HAPTICS_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateHaptics";
 /// Device-constant amplitude-control flag, cached on first
 /// successful query. `false` ⇒ the vibrator can't grade
 /// amplitude: the platform snaps every non-zero amplitude to 100%,
-/// so the editor offers Bar only and binarizes the pattern (on/off).
+/// so the editor hides the Bar/Line toggle and rounds edited points
+/// to on/off (a stored pattern loads unchanged).
 static AMP_CONTROL: OnceLock<bool> = OnceLock::new();
 
 /// Play a vibration waveform (B-2a). `segments` is the

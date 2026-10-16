@@ -620,10 +620,12 @@ component SwitchRow inherits Rectangle {
     in-out property <bool> checked;
     callback toggled(bool);
 
-    height: 64px;
+    height: max(64px, sr-layout.preferred-height);
     background: transparent;
 
-    HorizontalLayout {
+    sr-layout := HorizontalLayout {
+        padding-top: 8px;
+        padding-bottom: 8px;
         padding-left: 16px;
         padding-right: 16px;
         spacing: 12px;
@@ -635,11 +637,13 @@ component SwitchRow inherits Rectangle {
 
             Text {
                 text: root.title;
+                wrap: word-wrap;
                 font-size: 16px;
                 color: MaterialPalette.on-surface;
             }
             if root.subtitle != "" : Text {
                 text: root.subtitle;
+                wrap: word-wrap;
                 font-size: 12px;
                 color: MaterialPalette.on-surface-variant;
             }
@@ -834,7 +838,8 @@ component CuesRow inherits Rectangle {
 // definition so every one looks + behaves identically:
 // 14 px title / 12 px subtitle / "›" chevron, the
 // `.darker(0.35)` child-grouping fill with a subtle
-// `.darker(0.22)` hover. 56 px fixed — the parent expander
+// `.darker(0.22)` hover. At least 56 px, taller when its text
+// wraps — the parent expander
 // owns the reveal height-animation + clip. (Previously the
 // Starting Bell used a `DurationRow` here, which has 16 px
 // text and a bright `surface-container-high` hover — visibly
@@ -853,7 +858,7 @@ component ChooserRow inherits Rectangle {
     in property <bool> child-shade: true;
     callback tapped;
 
-    height: 56px;
+    height: max(56px, cr-layout.preferred-height);
     background: root.child-shade
         ? (touch.has-hover && root.enabled
             ? MaterialPalette.surface-container.darker(0.22)
@@ -867,7 +872,9 @@ component ChooserRow inherits Rectangle {
         clicked => { root.tapped(); }
     }
 
-    HorizontalLayout {
+    cr-layout := HorizontalLayout {
+        padding-top: 8px;
+        padding-bottom: 8px;
         padding-left: 32px;
         padding-right: 16px;
         spacing: 12px;
@@ -879,11 +886,13 @@ component ChooserRow inherits Rectangle {
 
             Text {
                 text: root.title;
+                wrap: word-wrap;
                 font-size: 14px;
                 color: MaterialPalette.on-surface;
             }
             if root.subtitle != "" : Text {
                 text: root.subtitle;
+                wrap: word-wrap;
                 font-size: 12px;
                 color: MaterialPalette.on-surface-variant;
             }
@@ -935,10 +944,12 @@ component ExpanderRow inherits Rectangle {
 
         // Header row — same metrics as SwitchRow.
         Rectangle {
-            height: 64px;
+            height: max(64px, er-layout.preferred-height);
             background: transparent;
 
-            HorizontalLayout {
+            er-layout := HorizontalLayout {
+                padding-top: 8px;
+                padding-bottom: 8px;
                 padding-left: 16px;
                 padding-right: 16px;
                 spacing: 12px;
@@ -950,11 +961,13 @@ component ExpanderRow inherits Rectangle {
 
                     Text {
                         text: root.title;
+                        wrap: word-wrap;
                         font-size: 16px;
                         color: MaterialPalette.on-surface;
                     }
                     if root.subtitle != "" : Text {
                         text: root.subtitle;
+                        wrap: word-wrap;
                         font-size: 12px;
                         color: MaterialPalette.on-surface-variant;
                     }
@@ -984,17 +997,18 @@ component ExpanderRow inherits Rectangle {
             clip: true;
         }
 
-        // Body — fixed-height `ChooserRow` inside a clipping box
-        // whose height is `reveal * 56px`. The row keeps its
-        // natural 56 px at y=0; as `reveal` eases 1→0 the box
-        // shrinks and clips it from the bottom → the content
-        // slides up. No `animate height` here; the only animated
-        // thing is `reveal`.
+        // Body — `ChooserRow` inside a clipping box whose height is
+        // `reveal * <row height>` (the row grows when its text wraps).
+        // The row keeps its natural height at y=0; as `reveal` eases
+        // 1→0 the box shrinks and clips it from the bottom → the
+        // content slides up. No `animate height` here; the only
+        // animated thing is `reveal`.
         Rectangle {
             clip: true;
-            height: root.reveal * 56px;
+            height: root.reveal * body-row.height;
 
-            ChooserRow {
+            body-row := ChooserRow {
+                y: 0;
                 title: root.body-title;
                 subtitle: root.body-subtitle;
                 enabled: root.active;
@@ -1044,10 +1058,12 @@ component ExpanderGroup inherits Rectangle {
 
         // Header — identical metrics to ExpanderRow's header.
         Rectangle {
-            height: 64px;
+            height: max(64px, eg-layout.preferred-height);
             background: transparent;
 
-            HorizontalLayout {
+            eg-layout := HorizontalLayout {
+                padding-top: 8px;
+                padding-bottom: 8px;
                 padding-left: 16px;
                 padding-right: 16px;
                 spacing: 12px;
@@ -1059,12 +1075,14 @@ component ExpanderGroup inherits Rectangle {
 
                     Text {
                         text: root.title;
+                        wrap: word-wrap;
                         font-size: 16px;
                         color: MaterialPalette.on-surface;
                         opacity: root.enabled ? 1.0 : 0.38;
                     }
                     if root.subtitle != "" : Text {
                         text: root.subtitle;
+                        wrap: word-wrap;
                         font-size: 12px;
                         color: MaterialPalette.on-surface-variant;
                     }
@@ -1130,9 +1148,9 @@ component ExpanderGroup inherits Rectangle {
 // wrapper (so the root Rectangle's preferred-height propagates
 // into a parent ExpanderGroup — a bare Rectangle child does NOT
 // aggregate its children's height, which collapsed the Bells
-// body), a clip box whose height is a plain `reveal * <fixed>px`
-// binding (1 px divider + 56 px row = 57), and an inner column
-// pinned to that fixed height at y=0 so it slides rather than
+// body), a clip box whose height is a plain `reveal * <height>`
+// binding (1 px divider + the row, which grows when its text
+// wraps), and an inner column pinned to that height at y=0 so it slides rather than
 // compresses. The only animated quantity is `reveal`, so nested
 // in an ExpanderGroup the group height stays a pure function of
 // one scalar at a time (no two-phase collapse).
@@ -1156,18 +1174,18 @@ component RevealChooser inherits Rectangle {
 
         Rectangle {
             clip: true;
-            height: root.reveal * 57px;
+            height: root.reveal * (1px + rc-row.height);
 
             VerticalLayout {
                 y: 0;
-                height: 57px;
+                height: 1px + rc-row.height;
                 spacing: 0;
 
                 Rectangle {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                ChooserRow {
+                rc-row := ChooserRow {
                     title: root.title;
                     subtitle: root.subtitle;
                     child-shade: root.child-shade;
@@ -1328,7 +1346,7 @@ component ConfirmDialog inherits Rectangle {
     }
 }
 
-// Play / Stop preview pill (bell + pattern choosers, the volume
+// Play / Stop preview pill (the volume
 // row's Stop). Sized to the longer of the two labels plus side
 // padding, so translations like "Abspielen" fit and the pill keeps
 // its width when the label flips.
@@ -1572,6 +1590,8 @@ component VolumeSlider inherits Rectangle {
     in-out property <float> value: 100;
     callback value-changed(float);
     callback released(float);
+    // The value before the touch: a drag the page takes over puts it back (#144).
+    property <float> pressed-value;
 
     height: 48px;
     accessible-role: slider;
@@ -1623,7 +1643,12 @@ component VolumeSlider inherits Rectangle {
     TouchArea {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
+                root.pressed-value = root.value;
                 root.set-from-x(self.mouse-x);
+            }
+            if event.kind == PointerEventKind.cancel {
+                root.value = root.pressed-value;
+                root.value-changed(root.value);
             }
             if event.kind == PointerEventKind.up {
                 root.released(root.value);
@@ -1698,7 +1723,7 @@ component RevealVolume inherits Rectangle {
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                         }
-                        // Same pill as the bell chooser's Play/Stop.
+                        // Play/Stop pill.
                         if root.previewing: PreviewPill {
                             playing: true;
                             clicked => { root.stop-tap(); }
@@ -1977,6 +2002,8 @@ export component MainWindow inherits Window {
     // the SAF picker; `guided-open-tap` opens it. Mirrors GTK's
     // guided_section Current-Selection row.
     in property <string> guided-name: "";
+    // The Starred Files key ("<uuid>" or "local:<id>") of the selected file; empty when none.
+    in property <string> guided-selected-key: "";
     // The pick is already a library row (starred or just imported),
     // so Import File has nothing to import; GTK greys it the same way.
     in property <bool> guided-pick-in-library: false;
@@ -2629,8 +2656,9 @@ export component MainWindow inherits Window {
     // X-axis time labels (Rust-thinned via core
     // select_xlabel_indices), each with a plot-local px x.
     in property <[VeXLabel]> ve-x-labels: [];
-    // Device has no vibration amplitude control → Bar-only +
-    // binary (0/100%) editing (graceful degradation). Set by
+    // Device has no vibration amplitude control → no Bar/Line
+    // toggle, and drags, new seeds and resamples round to 0/100%
+    // (graceful degradation); a stored pattern loads unchanged. Set by
     // Rust on open from haptics::has_amplitude_control; the
     // Chart toggle hides and drags snap to 0/1.
     in property <bool> ve-binary: false;
@@ -3480,6 +3508,16 @@ export component MainWindow inherits Window {
                                             ? MaterialPalette.on-error-container
                                             : MaterialPalette.on-surface-variant;
                                         wrap: word-wrap;
+                                    }
+                                }
+                                // The selected file, as the choosers mark theirs (#189).
+                                if !item.missing && item.uuid == root.guided-selected-key : VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: Icons.check;
+                                        colorize: MaterialPalette.primary;
+                                        width: 20px;
+                                        height: 20px;
                                     }
                                 }
                                 if item.missing : VerticalLayout {
@@ -5235,7 +5273,7 @@ export component MainWindow inherits Window {
             // Reuses the proven `ExpanderRow` (same component the
             // Setup screen's Label expander uses) rather than a
             // SwitchRow + `if`-gated sub-rows. The body is always
-            // rendered and its height animates 0↔56 px with
+            // rendered and its height animates 0 to the row's height with
             // `clip` — Slint won't reactively re-render an
             // `if`-gated child injected through a sub-component's
             // `@children` (BoxedList), which is why the chooser
@@ -5990,7 +6028,7 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 64px;
+                        height: max(64px, ib-row-layout.preferred-height);
                         background: ib-row-touch.has-hover
                             ? MaterialPalette.surface-container-high
                             : transparent;
@@ -6005,7 +6043,9 @@ export component MainWindow inherits Window {
                             clicked => { root.interval-bell-edit(item.uuid); }
                         }
 
-                        HorizontalLayout {
+                        ib-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 8px;
                             spacing: 12px;
@@ -6017,6 +6057,7 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: item.title;
+                                    wrap: word-wrap;
                                     font-size: 16px;
                                     color: item.sensitive
                                         ? MaterialPalette.on-surface
@@ -6024,6 +6065,7 @@ export component MainWindow inherits Window {
                                 }
                                 if item.sound != "" : Text {
                                     text: item.sound;
+                                    wrap: word-wrap;
                                     font-size: 12px;
                                     color: MaterialPalette.on-surface-variant;
                                 }
@@ -6082,13 +6124,23 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        // A tap anywhere outside the inputs lets go of a typed
-        // number. Declared behind the form so rows keep their taps.
-        TouchArea {
-            clicked => { root.release-interval-editor-inputs(); }
-        }
+        // Swallow taps on empty areas so they never reach the page underneath.
+        TouchArea {}
 
-        VerticalLayout {
+        // Scrolls so every row is reachable in landscape (#146).
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: max(self.height, ie-scroll.preferred-height);
+
+            // A tap anywhere outside the inputs lets go of a typed
+            // number. Declared behind the form so rows keep their taps.
+            TouchArea {
+                width: parent.viewport-width;
+                height: parent.viewport-height;
+                clicked => { root.release-interval-editor-inputs(); }
+            }
+
+        ie-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 16px;
             padding-bottom: root.bottom-bar-inset + 16px;
             padding-left: 16px;
@@ -6195,6 +6247,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (ie-scroll)
     }
 
     // ── Bell-sound chooser (overlay, B-5a) ──────────────────────
@@ -6302,10 +6355,10 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                             }
 
-                            // Fixed check slot before the pill —
+                            // Fixed check slot before the buttons —
                             // same layout as the pattern chooser
                             // (B-4 mirrors B-2b): always present so
-                            // it can't land behind the pill.
+                            // it can't land behind the buttons.
                             VerticalLayout {
                                 alignment: center;
                                 Rectangle {
@@ -6321,23 +6374,20 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Play/Stop pill — previews this bell
-                            // sound. `bell-preview-uuid` is the
-                            // single sounding uuid (PreviewToggle
-                            // keeps it exclusive).
-                            VerticalLayout {
-                                alignment: center;
-                                PreviewPill {
-                                    playing: root.bell-preview-uuid == item.uuid;
-                                    clicked => { root.bell-preview-toggle(item.uuid); }
-                                }
-                            }
-
-                            // Rename / Delete suffix (GTK's rename_btn
-                            // + delete_btn; Delete on custom rows only).
+                            // Play / Rename / Delete suffix, icons in
+                            // GTK's order (#145). `bell-preview-uuid` is
+                            // the single sounding uuid (PreviewToggle
+                            // keeps it exclusive); Delete on custom rows only.
                             HorizontalLayout {
                                 spacing: 0px;
                                 alignment: center;
+                                IconButton {
+                                    icon: root.bell-preview-uuid == item.uuid
+                                        ? @image-url("assets/pause.svg")
+                                        : @image-url("assets/play.svg");
+                                    tooltip: root.bell-preview-uuid == item.uuid ? @tr("Stop") : @tr("Play");
+                                    clicked => { root.bell-preview-toggle(item.uuid); }
+                                }
                                 IconButton {
                                     icon: Icons.edit;
                                     clicked => {
@@ -6362,13 +6412,11 @@ export component MainWindow inherits Window {
 
     // ── Vibration-pattern chooser (overlay, B-2b) ───────────────
     // Same slide-in shape as the bell-sound chooser, but every row
-    // carries a Play/Stop pill that previews the pattern through
+    // carries a Play/Stop button that previews the pattern through
     // the B-2a waveform JNI (`PreviewToggle` arbitrates which one
     // is buzzing). Declared after the bell-sound chooser so it
     // z-stacks above the Setup screen it slides over (declare-
-    // overlays-last z-order rule). ASCII "Play"/"Stop" rather than
-    // a media glyph — the FP5 Android-15 font lacks the symbols
-    // and no play/stop SVG is bundled yet.
+    // overlays-last z-order rule).
     Rectangle {
         x: parent.width - root.pattern-chooser-offset;
         width: parent.width;
@@ -6467,10 +6515,10 @@ export component MainWindow inherits Window {
                             // Check slot — fixed width, always
                             // present (Image just toggles visible)
                             // so it can't be occluded by / land
-                            // behind the pill the way a bare
+                            // behind the buttons the way a bare
                             // `if`-gated element inside this `for`
-                            // did. Declared before the pill so the
-                            // tick sits in front of (left of) it.
+                            // did. Declared before the buttons so the
+                            // tick sits in front of (left of) them.
                             VerticalLayout {
                                 alignment: center;
                                 Rectangle {
@@ -6486,46 +6534,28 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Edit → open the curve editor for
-                            // this pattern (bundled ones open a
-                            // copy; Rust decides).
-                            VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    width: max(44px, ve-edit-text.preferred-width + 16px);
-                                    height: 32px;
-                                    ve-edit-touch := TouchArea {
-                                        clicked => {
-                                            root.pattern-edit(item.uuid);
-                                        }
-                                    }
-                                    ve-edit-text := Text {
-                                        text: @tr("Edit");
-                                        font-size: 13px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        color: ve-edit-touch.has-hover
-                                            ? MaterialPalette.primary
-                                            : MaterialPalette.on-surface-variant;
-                                    }
-                                }
-                            }
-
-                            // Play/Stop pill — toggles this
-                            // pattern's preview. `pattern-preview-
-                            // uuid` is the single buzzing uuid
-                            // (PreviewToggle keeps it exclusive).
-                            VerticalLayout {
-                                alignment: center;
-                                PreviewPill {
-                                    playing: root.pattern-preview-uuid == item.uuid;
-                                    clicked => { root.pattern-preview-toggle(item.uuid); }
-                                }
-                            }
-                            // Delete on your own patterns only (GTK's delete_btn).
-                            VerticalLayout {
+                            // Play / Edit / Delete, icons in GTK's order
+                            // (#145). `pattern-preview-uuid` is the single
+                            // buzzing uuid (PreviewToggle keeps it
+                            // exclusive); Edit opens the curve editor
+                            // (bundled ones open a copy; Rust decides);
+                            // Delete on your own patterns only.
+                            HorizontalLayout {
+                                spacing: 0px;
                                 alignment: center;
                                 horizontal-stretch: 0;
+                                IconButton {
+                                    icon: root.pattern-preview-uuid == item.uuid
+                                        ? @image-url("assets/pause.svg")
+                                        : @image-url("assets/play.svg");
+                                    tooltip: root.pattern-preview-uuid == item.uuid ? @tr("Stop") : @tr("Play");
+                                    clicked => { root.pattern-preview-toggle(item.uuid); }
+                                }
+                                IconButton {
+                                    icon: Icons.edit;
+                                    tooltip: @tr("Edit");
+                                    clicked => { root.pattern-edit(item.uuid); }
+                                }
                                 if item.deletable : IconButton {
                                     icon: @image-url("assets/delete.svg");
                                     has_error: true;
@@ -6566,7 +6596,25 @@ export component MainWindow inherits Window {
             padding-left: 16px;
             padding-right: 16px;
             spacing: 16px;
-            alignment: start;
+
+            // Everything above the chart scrolls when the screen is too
+            // short (#146); the chart keeps its drags. It never grows
+            // past its content: the filler below the chart takes the rest.
+            Flickable {
+                min-height: 0;
+                preferred-height: ve-top.preferred-height;
+                max-height: ve-top.preferred-height;
+                viewport-width: self.width;
+                viewport-height: ve-top.preferred-height;
+
+                TouchArea {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
+                    clicked => { root.release-vibration-editor-inputs(); }
+                }
+
+            ve-top := VerticalLayout {
+            spacing: 16px;
 
             PageHeader {
                 title: root.ve-title;
@@ -6578,6 +6626,8 @@ export component MainWindow inherits Window {
                     // button does not blur the stepper inputs.
                     ve-duration-stepper.commit();
                     ve-points-stepper.commit();
+                    root.ve-duration-changed(root.ve-duration-tenths);
+                    root.ve-points-changed(root.ve-points);
                     root.vibration-editor-save();
                 }
             }
@@ -6637,7 +6687,8 @@ export component MainWindow inherits Window {
                 }
 
                 // Bar / Line toggle — hidden on no-amplitude-
-                // control devices (Bar-only, forced by Rust).
+                // control devices; an edited pattern keeps its stored
+                // kind there, a new one starts as Bar.
                 if !root.ve-binary : Rectangle {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
@@ -6678,6 +6729,9 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+
+            }
+            } // Flickable (ve-top)
 
             // Chart card — interactive curve (V-3). Rust builds
             // the area/line path commands (1000x100 viewbox, same
@@ -6836,6 +6890,9 @@ export component MainWindow inherits Window {
                     y: ve-plot.y + ve-plot.height + 4px;
                 }
             }
+
+            // Takes the space left under the chart, so the list above stays its own height.
+            Rectangle { vertical-stretch: 1; }
         }
     }
 
@@ -6986,6 +7043,7 @@ export component MainWindow inherits Window {
                                 }
                                 if item.subtitle != "" : Text {
                                     text: item.subtitle;
+                                    wrap: word-wrap;
                                     font-size: 12px;
                                     color: MaterialPalette.on-surface-variant;
                                 }
