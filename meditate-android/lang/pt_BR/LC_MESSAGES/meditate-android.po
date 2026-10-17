@@ -109,9 +109,6 @@ msgstr "Sessão mais longa"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "Minutos"
-
 msgid "More"
 msgstr "Mais"
 
@@ -337,9 +334,6 @@ msgstr "Informe a URL e o nome de usuário"
 msgid "Enter a password"
 msgstr "Informe uma senha"
 
-msgid "Every N min"
-msgstr "A cada N min"
-
 msgid "Exhale"
 msgstr "Expirar"
 
@@ -396,9 +390,6 @@ msgstr "Sinos de intervalo"
 
 msgid "Jitter"
 msgstr "Variação"
-
-msgid "Random shift of each ring, in percent"
-msgstr "Deslocamento aleatório de cada toque, em porcentagem"
 
 msgid "Keep Screen Awake"
 msgstr "Manter a tela ligada"
@@ -742,11 +733,6 @@ msgid "Every {n} min"
 msgid_plural "Every {n} min"
 msgstr[0] "A cada {n} min"
 msgstr[1] "A cada {n} min"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "A cada {n} min +/-{0}%"
-msgstr[1] "A cada {n} min +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1142,3 +1128,43 @@ msgstr "Não foi possível abrir o seletor de pastas"
 
 msgid "Label not kept for next time"
 msgstr "Rótulo não guardado para a próxima vez"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "A cada {n} s"
+msgstr[1] "A cada {n} s"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "No segundo {n}"
+msgstr[1] "No segundo {n}"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "{n} s antes do fim"
+msgstr[1] "{n} s antes do fim"
+
+msgid "{0} min"
+msgstr "{0} min"
+
+msgid "{0} s"
+msgstr "{0} s"
+
+msgid "s"
+msgstr "s"
+
+msgid "Repeating"
+msgstr "Repetido"
+
+msgid "Random shift of each ring"
+msgstr "Deslocamento aleatório de cada toque"
+
+msgid "Step"
+msgstr "Passo"
+
+msgid "Added to the gap after each ring"
+msgstr "Somado ao intervalo após cada toque"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Tempo"

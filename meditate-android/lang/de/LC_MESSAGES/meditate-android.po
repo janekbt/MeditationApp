@@ -202,9 +202,6 @@ msgstr "URL und Benutzername eingeben"
 msgid "Enter a password"
 msgstr "Passwort eingeben"
 
-msgid "Every N min"
-msgstr "Alle N Min."
-
 msgid "Exhale"
 msgstr "Ausatmen"
 
@@ -289,9 +286,6 @@ msgstr "Intervallglocken"
 msgid "Jitter"
 msgstr "Streuung"
 
-msgid "Random shift of each ring, in percent"
-msgstr "Zufällige Verschiebung jedes Läutens, in Prozent"
-
 msgid "Keep Screen Awake"
 msgstr "Bildschirm wachhalten"
 
@@ -351,9 +345,6 @@ msgstr "Verwalten"
 
 msgid "Meditate"
 msgstr "Meditate"
-
-msgid "Minutes"
-msgstr "Minuten"
 
 msgid "Minutes ({}–{})"
 msgstr "Minuten ({}–{})"
@@ -749,23 +740,18 @@ msgstr[1] "{n} aktiv"
 
 msgid "Every {n} min"
 msgid_plural "Every {n} min"
-msgstr[0] "Alle {n} Min"
-msgstr[1] "Alle {n} Min"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "Alle {n} Min +/-{0}%"
-msgstr[1] "Alle {n} Min +/-{0}%"
+msgstr[0] "Alle {n} Min."
+msgstr[1] "Alle {n} Min."
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
-msgstr[0] "Bei {n} Min"
-msgstr[1] "Bei {n} Min"
+msgstr[0] "Bei {n} Min."
+msgstr[1] "Bei {n} Min."
 
 msgid "{n} min before end"
 msgid_plural "{n} min before end"
-msgstr[0] "{n} Min vor Ende"
-msgstr[1] "{n} Min vor Ende"
+msgstr[0] "{n} Min. vor Ende"
+msgstr[1] "{n} Min. vor Ende"
 
 msgid "This label is not used by any sessions."
 msgstr "Dieses Label wird von keiner Sitzung verwendet."
@@ -1142,3 +1128,43 @@ msgstr "Ordnerauswahl konnte nicht geöffnet werden"
 
 msgid "Label not kept for next time"
 msgstr "Label für das nächste Mal nicht gemerkt"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "Alle {n} Sek."
+msgstr[1] "Alle {n} Sek."
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "Bei {n} Sek."
+msgstr[1] "Bei {n} Sek."
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "{n} Sek. vor Ende"
+msgstr[1] "{n} Sek. vor Ende"
+
+msgid "{0} min"
+msgstr "{0} Min."
+
+msgid "{0} s"
+msgstr "{0} Sek."
+
+msgid "s"
+msgstr "Sek."
+
+msgid "Repeating"
+msgstr "Wiederholt"
+
+msgid "Random shift of each ring"
+msgstr "Zufällige Verschiebung jedes Läutens"
+
+msgid "Step"
+msgstr "Schritt"
+
+msgid "Added to the gap after each ring"
+msgstr "Wird nach jedem Läuten zum Abstand addiert"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Zeit"

@@ -109,9 +109,6 @@ msgstr "Sessione più lunga"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "Minuti"
-
 msgid "More"
 msgstr "Più"
 
@@ -337,9 +334,6 @@ msgstr "Inserisci URL e nome utente"
 msgid "Enter a password"
 msgstr "Inserisci una password"
 
-msgid "Every N min"
-msgstr "Ogni N min"
-
 msgid "Exhale"
 msgstr "Espira"
 
@@ -396,9 +390,6 @@ msgstr "Campane a intervalli"
 
 msgid "Jitter"
 msgstr "Variazione"
-
-msgid "Random shift of each ring, in percent"
-msgstr "Spostamento casuale di ogni rintocco, in percentuale"
 
 msgid "Keep Screen Awake"
 msgstr "Mantieni lo schermo acceso"
@@ -742,11 +733,6 @@ msgid "Every {n} min"
 msgid_plural "Every {n} min"
 msgstr[0] "Ogni {n} min"
 msgstr[1] "Ogni {n} min"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "Ogni {n} min +/-{0}%"
-msgstr[1] "Ogni {n} min +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1142,3 +1128,43 @@ msgstr "Impossibile aprire il selettore di cartelle"
 
 msgid "Label not kept for next time"
 msgstr "Etichetta non salvata per la prossima volta"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "Ogni {n} s"
+msgstr[1] "Ogni {n} s"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "A {n} s"
+msgstr[1] "A {n} s"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "{n} s prima della fine"
+msgstr[1] "{n} s prima della fine"
+
+msgid "{0} min"
+msgstr "{0} min"
+
+msgid "{0} s"
+msgstr "{0} s"
+
+msgid "s"
+msgstr "s"
+
+msgid "Repeating"
+msgstr "Ripetuta"
+
+msgid "Random shift of each ring"
+msgstr "Spostamento casuale di ogni rintocco"
+
+msgid "Step"
+msgstr "Passo"
+
+msgid "Added to the gap after each ring"
+msgstr "Aggiunto all’intervallo dopo ogni rintocco"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Tempo"

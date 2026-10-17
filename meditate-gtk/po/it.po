@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-14 11:57+0200\n"
+"POT-Creation-Date: 2026-10-16 16:34+0200\n"
 "PO-Revision-Date: 2026-04-20 18:22+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Italian\n"
@@ -91,28 +91,28 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:708
-#: src/presets.rs:695 src/timer/imp.rs:3841 src/vibrations.rs:470
+#: src/presets.rs:695 src/timer/imp.rs:3898 src/vibrations.rs:470
 #: src/vibrations.rs:511
 msgid "Undo"
 msgstr "Annulla"
 
-#: src/bells.rs:50 data/ui/timer_view.blp:505
+#: src/bells.rs:51 data/ui/timer_view.blp:505
 msgid "Interval Bells"
 msgstr "Campane a intervalli"
 
-#: src/bells.rs:167
+#: src/bells.rs:168
 msgid "Create new interval bell…"
 msgstr "Crea nuova campana a intervalli…"
 
-#: src/bells.rs:280
+#: src/bells.rs:282
 msgid "Delete bell"
 msgstr "Elimina campana"
 
-#: src/bells.rs:331 src/bells.rs:797
+#: src/bells.rs:333 src/bells.rs:874
 msgid "Delete Bell?"
 msgstr "Eliminare la campana?"
 
-#: src/bells.rs:332 src/bells.rs:798
+#: src/bells.rs:334 src/bells.rs:875
 msgid "This bell will no longer ring during sessions."
 msgstr "Questa campana non suonerà più durante le sessioni."
 
@@ -120,45 +120,45 @@ msgstr "Questa campana non suonerà più durante le sessioni."
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:336 src/bells.rs:802 src/guided.rs:231 src/guided.rs:962
+#: src/bells.rs:338 src/bells.rs:879 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
 #: src/preferences.rs:595 src/preferences.rs:669 src/presets.rs:441
 #: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
-#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2622
-#: src/timer/imp.rs:3970 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2634
+#: src/timer/imp.rs:4027 src/vibration_editor.rs:129 src/vibrations.rs:546
 #: src/vibrations.rs:639
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/bells.rs:337 src/bells.rs:803 src/guided.rs:1080 src/labels.rs:405
+#: src/bells.rs:339 src/bells.rs:880 src/guided.rs:1080 src/labels.rs:405
 #: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "Elimina"
 
-#: src/bells.rs:366
+#: src/bells.rs:368
 msgid "No interval bells configured"
 msgstr "Nessuna campana a intervalli configurata"
 
-#: src/bells.rs:367 src/guided.rs:921
+#: src/bells.rs:369 src/guided.rs:921
 msgid "Tap the row above to add one"
 msgstr "Tocca la riga qui sopra per aggiungerne una"
 
-#: src/bells.rs:383
+#: src/bells.rs:387
 #, rust-format
 msgid "Every 1 min"
 msgid_plural "Every {n} min"
 msgstr[0] "Ogni minuto"
 msgstr[1] "Ogni {n} min"
 
-#: src/bells.rs:386
+#: src/bells.rs:388
 #, rust-format
-msgid "Every 1 min ±{j}%"
-msgid_plural "Every {n} min ±{j}%"
-msgstr[0] "Ogni minuto ±{j}%"
-msgstr[1] "Ogni {n} min ±{j}%"
+msgid "Every 1 s"
+msgid_plural "Every {n} s"
+msgstr[0] "Ogni secondo"
+msgstr[1] "Ogni {n} s"
 
-#: src/bells.rs:390
+#: src/bells.rs:392
 #, rust-format
 msgid "At 1 min"
 msgid_plural "At {n} min"
@@ -167,78 +167,129 @@ msgstr[1] "A {n} min"
 
 #: src/bells.rs:393
 #, rust-format
+msgid "At 1 s"
+msgid_plural "At {n} s"
+msgstr[0] "A 1 s"
+msgstr[1] "A {n} s"
+
+#: src/bells.rs:397
+#, rust-format
 msgid "1 min before end"
 msgid_plural "{n} min before end"
 msgstr[0] "1 min prima della fine"
 msgstr[1] "{n} min prima della fine"
 
-#: src/bells.rs:407
+#: src/bells.rs:398
+#, rust-format
+msgid "1 s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "1 s prima della fine"
+msgstr[1] "{n} s prima della fine"
+
+#: src/bells.rs:417
+#, rust-format
+msgid "{n} min"
+msgstr "{n} min"
+
+#: src/bells.rs:418
+#, rust-format
+msgid "{n} s"
+msgstr "{n} s"
+
+#: src/bells.rs:432
 msgid "Missing"
 msgstr "Mancante"
 
-#: src/bells.rs:477
-msgid "Every N minutes"
-msgstr "Ogni N minuti"
-
-#: src/bells.rs:478
-msgid "At time from start"
-msgstr "A un tempo dall’inizio"
-
-#: src/bells.rs:479
-msgid "Before end"
-msgstr "Prima della fine"
-
 #: src/bells.rs:483
-msgid "Kind"
-msgstr "Tipo"
+msgid "s"
+msgstr "s"
 
-#: src/bells.rs:495 src/log/imp.rs:878 src/timer/imp.rs:3944
+#: src/bells.rs:483 src/vibration_editor.rs:172 data/ui/timer_view.blp:493
+msgid "Seconds"
+msgstr "Secondi"
+
+#. Lowercase in source; the .log-unit CSS class renders it uppercase
+#. (HIG forbids all-caps in source text).
+#: src/bells.rs:484 src/log/imp.rs:443
+msgid "min"
+msgstr "min"
+
+#: src/bells.rs:484 src/log/imp.rs:878 src/timer/imp.rs:4001
 msgid "Minutes"
 msgstr "Minuti"
 
-#: src/bells.rs:508
+#: src/bells.rs:563
+msgid "Repeating"
+msgstr "Ripetuta"
+
+#: src/bells.rs:564
+msgid "At time from start"
+msgstr "A un tempo dall’inizio"
+
+#: src/bells.rs:565
+msgid "Before end"
+msgstr "Prima della fine"
+
+#: src/bells.rs:569
+msgid "Kind"
+msgstr "Tipo"
+
+#. Time — common to all kinds; its meaning shifts with kind.
+#: src/bells.rs:580
+msgid "Time"
+msgstr "Tempo"
+
+#: src/bells.rs:586
 msgid "Jitter"
 msgstr "Variazione"
 
-#: src/bells.rs:509
-msgid "Percent — randomises the next ring"
-msgstr "Percentuale — rende casuale il prossimo rintocco"
+#: src/bells.rs:587
+msgid "Random shift of each ring"
+msgstr "Spostamento casuale di ogni rintocco"
 
-#: src/bells.rs:523 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
+#: src/bells.rs:594
+msgid "Step"
+msgstr "Passo"
+
+#: src/bells.rs:595
+msgid "Added to the gap after each ring"
+msgstr "Aggiunto all’intervallo dopo ogni rintocco"
+
+#: src/bells.rs:605 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
 #: data/ui/timer_view.blp:623 data/ui/timer_view.blp:671
 #: data/ui/timer_view.blp:719 data/ui/timer_view.blp:767
 msgid "Type"
 msgstr "Tipo"
 
-#: src/bells.rs:538 src/bells.rs:558 src/timer/imp.rs:1609
-#: src/timer/imp.rs:1683 src/timer/imp.rs:1765 data/ui/timer_view.blp:636
+#: src/bells.rs:620 src/bells.rs:640 src/timer/imp.rs:1621
+#: src/timer/imp.rs:1695 src/timer/imp.rs:1777 data/ui/timer_view.blp:636
 #: data/ui/timer_view.blp:684 data/ui/timer_view.blp:732
 #: data/ui/timer_view.blp:780
 msgid "Sound"
 msgstr "Suono"
 
-#: src/bells.rs:542 src/timer/imp.rs:1613 src/timer/imp.rs:1685
-#: src/timer/imp.rs:1767
+#: src/bells.rs:624 src/timer/imp.rs:1625 src/timer/imp.rs:1697
+#: src/timer/imp.rs:1779
 msgid "Vibration"
 msgstr "Vibrazione"
 
-#: src/bells.rs:546 src/timer/imp.rs:1617 src/timer/imp.rs:1687
-#: src/timer/imp.rs:1769
+#: src/bells.rs:628 src/timer/imp.rs:1629 src/timer/imp.rs:1699
+#: src/timer/imp.rs:1781
 msgid "Both"
 msgstr "Entrambi"
 
-#: src/bells.rs:576 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
+#: src/bells.rs:658 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
 #: data/ui/timer_view.blp:576 data/ui/timer_view.blp:657
 #: data/ui/timer_view.blp:705 data/ui/timer_view.blp:753
 #: data/ui/timer_view.blp:801
 msgid "Pattern"
 msgstr "Schema"
 
-#: src/bells.rs:597
+#: src/bells.rs:679
 msgid "Delete Bell"
 msgstr "Elimina campana"
 
-#: src/bells.rs:615
+#: src/bells.rs:697
 msgid "Edit Bell"
 msgstr "Modifica campana"
 
@@ -318,7 +369,7 @@ msgstr "Il file scelto non ha un percorso locale"
 msgid "This file has no audio track"
 msgstr "Questo file non ha una traccia audio"
 
-#: src/guided.rs:164 src/timer/imp.rs:3655
+#: src/guided.rs:164 src/timer/imp.rs:3701
 msgid "Couldn't read audio file"
 msgstr "Impossibile leggere il file audio"
 
@@ -529,7 +580,7 @@ msgstr[1] "{n} file"
 msgid "{n}%"
 msgstr "{n}%"
 
-#: src/local_folder.rs:263 src/timer/imp.rs:3520
+#: src/local_folder.rs:263 src/timer/imp.rs:3565
 msgid "Unstar"
 msgstr "Rimuovi stella"
 
@@ -614,12 +665,6 @@ msgstr "Nessun file audio in questa cartella"
 msgid "All labels"
 msgstr "Tutte le etichette"
 
-#. Lowercase in source; the .log-unit CSS class renders it uppercase
-#. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:443
-msgid "min"
-msgstr "min"
-
 #: src/log/imp.rs:491
 msgid "No note added"
 msgstr "Nessuna nota"
@@ -643,7 +688,7 @@ msgid_plural "{n} sessions"
 msgstr[0] "{n} sessione"
 msgstr[1] "{n} sessioni"
 
-#: src/log/imp.rs:865 src/timer/imp.rs:3937
+#: src/log/imp.rs:865 src/timer/imp.rs:3994
 msgid "Hours"
 msgstr "Ore"
 
@@ -710,15 +755,15 @@ msgstr "Modifica sessione"
 msgid "Add Session"
 msgstr "Aggiungi sessione"
 
-#: src/log/imp.rs:1164 src/timer/imp.rs:4026 src/timer/imp.rs:4064
+#: src/log/imp.rs:1164 src/timer/imp.rs:4083 src/timer/imp.rs:4121
 msgid "(none — pick one)"
 msgstr "(nessuna — scegline una)"
 
-#: src/log/imp.rs:1263 src/timer/imp.rs:2566
+#: src/log/imp.rs:1263 src/timer/imp.rs:2578
 msgid "Couldn't save session — storage error"
 msgstr "Impossibile salvare la sessione — errore di archiviazione"
 
-#: src/log/imp.rs:1268 src/timer/imp.rs:2584
+#: src/log/imp.rs:1268 src/timer/imp.rs:2596
 msgid "Couldn't save session — storage unavailable"
 msgstr "Impossibile salvare la sessione — archiviazione non disponibile"
 
@@ -1370,149 +1415,149 @@ msgstr "{duration} · 1 sessione"
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} sessioni"
 
-#: src/timer/imp.rs:1184
+#: src/timer/imp.rs:1195
 msgid "Meditation session running"
 msgstr "Sessione di meditazione in corso"
 
-#: src/timer/imp.rs:1187
+#: src/timer/imp.rs:1198
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Impossibile tenere il computer attivo per le campane"
 
-#: src/timer/imp.rs:1802
+#: src/timer/imp.rs:1814
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Questo dispositivo non può vibrare, quindi non si sente nulla"
 
-#: src/timer/imp.rs:1803
+#: src/timer/imp.rs:1815
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Questo dispositivo non può vibrare, quindi si sente solo il suono"
 
-#: src/timer/imp.rs:2023
+#: src/timer/imp.rs:2035
 msgid "Paused"
 msgstr "In pausa"
 
-#: src/timer/imp.rs:2050 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2062 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Ore · Minuti"
 
-#: src/timer/imp.rs:2220
+#: src/timer/imp.rs:2232
 msgid "Couldn't start playback"
 msgstr "Impossibile avviare la riproduzione"
 
-#: src/timer/imp.rs:2309 src/window/imp.rs:397
+#: src/timer/imp.rs:2321 src/window/imp.rs:397
 msgid "Pause"
 msgstr "In pausa"
 
-#: src/timer/imp.rs:2310 src/window/imp.rs:399
+#: src/timer/imp.rs:2322 src/window/imp.rs:399
 msgid "Pause Timer"
 msgstr "Metti in pausa il timer"
 
-#: src/timer/imp.rs:2360 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2372 data/ui/timer_view.blp:110
 msgid "Resume"
 msgstr "Riprendi"
 
-#: src/timer/imp.rs:2361
+#: src/timer/imp.rs:2373
 msgid "Resume Timer"
 msgstr "Riprendi il timer"
 
-#: src/timer/imp.rs:2613
+#: src/timer/imp.rs:2625
 msgid "Discard Session?"
 msgstr "Scartare la sessione?"
 
-#: src/timer/imp.rs:2614
+#: src/timer/imp.rs:2626
 msgid "Your note will be lost."
 msgstr "La nota verrà persa."
 
-#: src/timer/imp.rs:2623 data/ui/timer_view.blp:892
+#: src/timer/imp.rs:2635 data/ui/timer_view.blp:892
 msgid "Discard"
 msgstr "Scarta"
 
-#: src/timer/imp.rs:2947
+#: src/timer/imp.rs:2959
 msgid "Finish"
 msgstr "Termina"
 
-#: src/timer/imp.rs:2949
+#: src/timer/imp.rs:2961
 msgid "End at the planned duration"
 msgstr "Termina alla durata prevista"
 
-#: src/timer/imp.rs:3303
+#: src/timer/imp.rs:3315
 msgid "Start your streak today"
 msgstr "Inizia oggi la tua serie"
 
-#: src/timer/imp.rs:3304 src/timer/imp.rs:3306
+#: src/timer/imp.rs:3316 src/timer/imp.rs:3318
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Serie di {n} giorno"
 msgstr[1] "Serie di {n} giorni"
 
-#: src/timer/imp.rs:3360
+#: src/timer/imp.rs:3372
 msgid "Tap Save Settings to create your first preset"
 msgstr "Tocca Salva per creare il tuo primo preset"
 
-#: src/timer/imp.rs:3434
+#: src/timer/imp.rs:3447
 msgid "No starred files"
 msgstr "Nessun file preferito"
 
-#: src/timer/imp.rs:3436
+#: src/timer/imp.rs:3449
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr ""
 "Tocca Apri file e poi Importa file, oppure aggiungi una stella a un file in "
 "Gestisci importazioni"
 
-#: src/timer/imp.rs:3498
+#: src/timer/imp.rs:3543
 msgid "not found"
 msgstr "non trovato"
 
-#: src/timer/imp.rs:3502
+#: src/timer/imp.rs:3547
 msgid "Local file"
 msgstr "File locale"
 
-#: src/timer/imp.rs:3534
+#: src/timer/imp.rs:3579
 msgid "File not found in the local folder"
 msgstr "File non trovato nella cartella locale"
 
-#: src/timer/imp.rs:3551
+#: src/timer/imp.rs:3596
 msgid "Reading length"
 msgstr "Lettura della durata"
 
-#: src/timer/imp.rs:3557 src/timer/imp.rs:3558
+#: src/timer/imp.rs:3602 src/timer/imp.rs:3603
 msgid "Local folder"
 msgstr "Cartella locale"
 
-#: src/timer/imp.rs:3564 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3609 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "Nessun file selezionato"
 
-#: src/timer/imp.rs:3566 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3611 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "Tocca Apri file o scegli dalla lista"
 
-#: src/timer/imp.rs:3574
+#: src/timer/imp.rs:3619
 msgid "Open New File"
 msgstr "Apri nuovo file"
 
-#: src/timer/imp.rs:3576 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3621 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "Apri file"
 
-#: src/timer/imp.rs:3839
+#: src/timer/imp.rs:3896
 #, rust-format
 msgid "'{name}' applied"
 msgstr "«{name}» applicato"
 
-#: src/timer/imp.rs:3964
+#: src/timer/imp.rs:4021
 msgid "Custom Time"
 msgstr "Tempo personalizzato"
 
-#: src/timer/imp.rs:3965
+#: src/timer/imp.rs:4022
 msgid "Hours : Minutes"
 msgstr "Ore : Minuti"
 
-#: src/timer/imp.rs:3971
+#: src/timer/imp.rs:4028
 msgid "Set"
 msgstr "Imposta"
 
-#: src/timer/imp.rs:4028 src/timer/imp.rs:4066
+#: src/timer/imp.rs:4085 src/timer/imp.rs:4123
 msgid "Off"
 msgstr "Disattivata"
 
@@ -1523,43 +1568,43 @@ msgstr "Disattivata"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4337
+#: src/timer/imp.rs:4394
 #, rust-format
 msgid "Add {time} ?"
 msgstr "Aggiungere {time}?"
 
-#: src/timer/imp.rs:4347
+#: src/timer/imp.rs:4404
 msgid "None enabled"
 msgstr "Nessuna attiva"
 
-#: src/timer/imp.rs:4348 src/timer/imp.rs:4349
+#: src/timer/imp.rs:4405 src/timer/imp.rs:4406
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} attiva"
 msgstr[1] "{n} attive"
 
-#: src/timer/imp.rs:4373 data/ui/timer_view.blp:618
+#: src/timer/imp.rs:4430 data/ui/timer_view.blp:618
 msgid "Inhale"
 msgstr "Inspira"
 
-#: src/timer/imp.rs:4374
+#: src/timer/imp.rs:4431
 msgid "Hold (full)"
 msgstr "Trattieni (pieno)"
 
-#: src/timer/imp.rs:4375 data/ui/timer_view.blp:714
+#: src/timer/imp.rs:4432 data/ui/timer_view.blp:714
 msgid "Exhale"
 msgstr "Espira"
 
-#: src/timer/imp.rs:4376
+#: src/timer/imp.rs:4433
 msgid "Hold (empty)"
 msgstr "Trattieni (vuoto)"
 
-#: src/timer/imp.rs:4438
+#: src/timer/imp.rs:4495
 msgid "Decrease"
 msgstr "Diminuisci"
 
-#: src/timer/imp.rs:4449
+#: src/timer/imp.rs:4506
 msgid "Increase"
 msgstr "Aumenta"
 
@@ -1570,10 +1615,6 @@ msgstr "Salva"
 #: src/vibration_editor.rs:167
 msgid "Shape"
 msgstr "Forma"
-
-#: src/vibration_editor.rs:172 data/ui/timer_view.blp:493
-msgid "Seconds"
-msgstr "Secondi"
 
 #: src/vibration_editor.rs:185
 msgid "Points"
@@ -2536,6 +2577,18 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:228
 msgid "Initial release."
 msgstr "Prima versione."
+
+#, rust-format
+#~ msgid "Every 1 min ±{j}%"
+#~ msgid_plural "Every {n} min ±{j}%"
+#~ msgstr[0] "Ogni minuto ±{j}%"
+#~ msgstr[1] "Ogni {n} min ±{j}%"
+
+#~ msgid "Every N minutes"
+#~ msgstr "Ogni N minuti"
+
+#~ msgid "Percent — randomises the next ring"
+#~ msgstr "Percentuale — rende casuale il prossimo rintocco"
 
 #, rust-format
 #~ msgid "reading {read}/{total}"

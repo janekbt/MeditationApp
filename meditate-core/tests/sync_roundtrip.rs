@@ -262,8 +262,8 @@ fn replay_events_covers_every_entity_kind_in_one_batch() {
         .expect("vibration pattern");
     a.insert_interval_bell(
         IntervalBellKind::Interval,
-        5,
-        20,
+        meditate_core::bells::BellTime::new(5, meditate_core::bells::TimeUnit::Min),
+        meditate_core::bells::BellTime::new(60, meditate_core::bells::TimeUnit::Sec), meditate_core::bells::BellTime::ZERO,
         &custom_sound_uuid,
         &pattern_uuid,
         SignalMode::Sound,
@@ -642,8 +642,8 @@ fn fresh_device_recovers_full_state_from_remote_via_sync() {
     .expect("bell sound");
     source.insert_interval_bell(
         IntervalBellKind::Interval,
-        7,
-        10,
+        meditate_core::bells::BellTime::new(7, meditate_core::bells::TimeUnit::Min),
+        meditate_core::bells::BellTime::new(42, meditate_core::bells::TimeUnit::Sec), meditate_core::bells::BellTime::ZERO,
         sound_uuid,
         &pattern_uuid,
         SignalMode::Sound,
@@ -940,7 +940,7 @@ fn every_bells_volume_reaches_the_other_device() {
     a.set_setting(end_bell_volume_key_for_mode(SessionMode::Guided), "80").unwrap();
     let rowid = a
         .insert_interval_bell(
-            IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID,
+            IntervalBellKind::Interval, meditate_core::bells::BellTime::new(5, meditate_core::bells::TimeUnit::Min), meditate_core::bells::BellTime::ZERO, meditate_core::bells::BellTime::ZERO, BUNDLED_BOWL_UUID,
             BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
         )
         .unwrap();

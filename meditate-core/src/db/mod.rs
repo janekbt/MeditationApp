@@ -319,6 +319,7 @@ impl Database {
         conn.set_prepared_statement_cache_capacity(32);
         let db = Self { conn, local_changes: LocalChanges::default() };
         db.maybe_walk_events_for_cache_upgrade()?;
+        db.recompute_interval_bells_from_events()?;
         Ok(db)
     }
 
@@ -404,7 +405,7 @@ mod tests {
         db.insert_preset_with_uuid("b", "B", SessionMode::Timer, false, "{}").unwrap();
         db.insert_preset_with_uuid("a", "A", SessionMode::Timer, false, "{}").unwrap();
         for uuid in ["b", "a"] {
-            db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "", "", SignalMode::Sound).unwrap();
+            db.insert_interval_bell(IntervalBellKind::Interval, crate::bells::BellTime::new(5, crate::bells::TimeUnit::Min), crate::bells::BellTime::ZERO, crate::bells::BellTime::ZERO, "", "", SignalMode::Sound).unwrap();
             db.conn.execute("UPDATE interval_bells SET uuid = ?1 WHERE uuid NOT IN ('a', 'b')", [uuid]).unwrap();
             db.insert_session(&Session {
                 start_iso: "2026-01-01T08:00:00".into(),
@@ -560,6 +561,85 @@ mod tests {
         .unwrap();
         let db = Database::init(conn).unwrap();
         assert_eq!(db.list_interval_bells().unwrap()[0].volume.percent(), 30);
+    }
+
+    #[test]
+    fn a_bell_from_the_last_release_keeps_its_times() {
+        use crate::bells::{BellTime, TimeUnit};
+        let conn = crate::db::test_helpers::release_v26_10_1_database();
+        conn.execute_batch(
+            "INSERT INTO interval_bells (uuid, kind, minutes, jitter_pct, created_iso)
+                 VALUES ('b1', 'interval', 7, 14, '2026-10-01T00:00:00Z');",
+        )
+        .unwrap();
+        let db = Database::init(conn).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(
+            (b.time, b.jitter, b.step),
+            (BellTime::new(7, TimeUnit::Min), BellTime::new(59, TimeUnit::Sec), BellTime::ZERO)
+        );
+    }
+
+    fn bell_event(lamport_ts: i64, step_secs: u32) -> String {
+        serde_json::json!({
+            "uuid": "b1", "kind": "interval", "minutes": 2, "jitter_pct": 33,
+            "secs": 90, "secs_unit": "s", "jitter_secs": 30, "jitter_unit": "s",
+            "step_secs": step_secs, "step_unit": "s",
+            "sound_uuid": crate::seeds::BUNDLED_BOWL_UUID, "enabled": true,
+            "created_iso": "2026-10-01T00:00:00Z", "volume": 50,
+            "lamport": lamport_ts,
+        })
+        .to_string()
+    }
+
+    fn times(db: &Database) -> (crate::bells::BellTime, crate::bells::BellTime, crate::bells::BellTime) {
+        let b = &db.list_interval_bells().unwrap()[0];
+        (b.time, b.jitter, b.step)
+    }
+
+    #[test]
+    fn a_bell_a_newer_device_sent_before_the_update_keeps_its_seconds() {
+        use crate::bells::{BellTime, TimeUnit::Sec};
+        // 26.10.1 applied the newer device's event: it kept the payload
+        // and filled only the columns it knows.
+        let conn = crate::db::test_helpers::release_v26_10_1_database();
+        conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('e1', 7, 'phone', 'interval_bell_insert', 'b1', ?1)",
+            [bell_event(7, 5)],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO interval_bells (uuid, kind, minutes, jitter_pct, created_iso)
+                 VALUES ('b1', 'interval', 2, 33, '2026-10-01T00:00:00Z');",
+        )
+        .unwrap();
+        let db = Database::init(conn).unwrap();
+        assert_eq!(times(&db), (BellTime::new(90, Sec), BellTime::new(30, Sec), BellTime::new(5, Sec)));
+    }
+
+    #[test]
+    fn a_change_received_on_the_older_version_is_kept_after_updating_again() {
+        use crate::bells::{BellTime, TimeUnit::Sec};
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&Event {
+            event_uuid: "e1".into(), lamport_ts: 7, device_id: "phone".into(),
+            kind: "interval_bell_insert".into(), target_id: "b1".into(), payload: bell_event(7, 5),
+        })
+        .unwrap();
+        // Back on 26.10.1, the step changes on the phone: the release
+        // records the event and fills only the columns it knows, which
+        // stay the same (2 min, 33 %).
+        db.conn
+            .execute(
+                "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+                 VALUES ('e2', 8, 'phone', 'interval_bell_update', 'b1', ?1)",
+                [bell_event(8, 10)],
+            )
+            .unwrap();
+        let Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(times(&db).2, BellTime::new(10, Sec));
     }
 
     #[test]

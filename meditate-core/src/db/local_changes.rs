@@ -172,7 +172,7 @@ mod tests {
 
         check("add interval bell", &|db| {
             db.insert_interval_bell(
-                IntervalBellKind::FixedFromStart, 10, 0, BUNDLED_BELL_UUID,
+                IntervalBellKind::FixedFromStart, crate::bells::BellTime::new(10, crate::bells::TimeUnit::Min), crate::bells::BellTime::ZERO, crate::bells::BellTime::ZERO, BUNDLED_BELL_UUID,
                 BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
             ).unwrap();
         });

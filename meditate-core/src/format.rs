@@ -1127,8 +1127,9 @@ mod tests {
     fn preset_subtitle_parts_bells_uses_one_or_many() {
         let one_bell = PresetIntervalBell {
             kind: "interval".into(),
-            minutes: 5,
-            jitter_pct: 0,
+            time: crate::bells::BellTime::new(5, crate::bells::TimeUnit::Min),
+            jitter: crate::bells::BellTime::ZERO,
+            step: crate::bells::BellTime::ZERO,
             sound_uuid: "s".into(),
             enabled: true,
             signal_mode: "sound".into(),

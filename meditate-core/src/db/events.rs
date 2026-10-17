@@ -1141,7 +1141,7 @@ mod tests {
             guided_file_uuid: None,
             guided_file_name: None,
         }).unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, crate::bells::BellTime::new(5, crate::bells::TimeUnit::Min), crate::bells::BellTime::ZERO, crate::bells::BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
         db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();

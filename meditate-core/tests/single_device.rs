@@ -96,8 +96,8 @@ fn wipe_then_replay_reconstructs_every_cache_row_from_the_event_log() {
         .0;
     db.insert_interval_bell(
         IntervalBellKind::Interval,
-        3,
-        15,
+        meditate_core::bells::BellTime::new(3, meditate_core::bells::TimeUnit::Min),
+        meditate_core::bells::BellTime::new(27, meditate_core::bells::TimeUnit::Sec), meditate_core::bells::BellTime::ZERO,
         &bell_sound_uuid,
         &pattern_uuid,
         SignalMode::Sound,
@@ -487,8 +487,8 @@ fn every_entity_table_survives_a_database_close_reopen_cycle() {
 
     db.insert_interval_bell(
         IntervalBellKind::Interval,
-        4,
-        25,
+        meditate_core::bells::BellTime::new(4, meditate_core::bells::TimeUnit::Min),
+        meditate_core::bells::BellTime::new(60, meditate_core::bells::TimeUnit::Sec), meditate_core::bells::BellTime::ZERO,
         &bell_sound_uuid,
         &pattern_uuid,
         SignalMode::Both,

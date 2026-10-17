@@ -120,16 +120,22 @@ pub fn bell_kind_from_index(index: i32) -> meditate_core::db::IntervalBellKind {
     }
 }
 
-/// The editor's minutes, clamped to core's bell range.
-pub fn clamp_bell_minutes(value: i32) -> u32 {
-    use meditate_core::bells::{BELL_MINUTES_MAX, BELL_MINUTES_MIN};
-    u32::try_from(value).unwrap_or(0).clamp(BELL_MINUTES_MIN, BELL_MINUTES_MAX)
+/// The interval editor's number and unit switch (0 s, 1 min) as a
+/// bell time, clamped to core's range for that unit.
+pub fn bell_time_from_editor(
+    field: meditate_core::bells::BellTimeField,
+    value: i32,
+    unit_index: i32,
+) -> meditate_core::bells::BellTime {
+    use meditate_core::bells::TimeUnit;
+    let unit = if unit_index == 1 { TimeUnit::Min } else { TimeUnit::Sec };
+    meditate_core::bells::clamp_bell_time(field, u32::try_from(value).unwrap_or(0), unit)
 }
 
-/// The editor's jitter %, clamped to core's range.
-pub fn clamp_bell_jitter(value: i32) -> u32 {
-    use meditate_core::bells::{BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN};
-    u32::try_from(value).unwrap_or(0).clamp(BELL_JITTER_PCT_MIN, BELL_JITTER_PCT_MAX)
+/// The number and unit switch a stored bell time opens with.
+pub fn bell_time_to_editor(time: meditate_core::bells::BellTime) -> (i32, i32) {
+    let unit = i32::from(time.unit == meditate_core::bells::TimeUnit::Min);
+    (time.number() as i32, unit)
 }
 
 /// Player slot in `MeditateAudio.kt` for a bell on core's channel.
@@ -2371,20 +2377,19 @@ mod tests {
     }
 
     #[test]
-    fn bell_minutes_clamp_to_cores_range() {
-        use meditate_core::bells::{BELL_MINUTES_MAX, BELL_MINUTES_MIN};
-        assert_eq!(clamp_bell_minutes(0), BELL_MINUTES_MIN);
-        assert_eq!(clamp_bell_minutes(-5), BELL_MINUTES_MIN);
-        assert_eq!(clamp_bell_minutes(30), 30);
-        assert_eq!(clamp_bell_minutes(10_000), BELL_MINUTES_MAX);
-    }
-
-    #[test]
-    fn bell_jitter_clamps_to_cores_range() {
-        use meditate_core::bells::{BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN};
-        assert_eq!(clamp_bell_jitter(-1), BELL_JITTER_PCT_MIN);
-        assert_eq!(clamp_bell_jitter(20), 20);
-        assert_eq!(clamp_bell_jitter(99), BELL_JITTER_PCT_MAX);
+    fn an_editor_number_and_unit_become_a_bell_time() {
+        use meditate_core::bells::{BellTime, BellTimeField::*, TimeUnit::*};
+        // Unit switch: 0 is s, 1 is min, as laid out.
+        assert_eq!(bell_time_from_editor(Time, 90, 0), BellTime::new(90, Sec));
+        assert_eq!(bell_time_from_editor(Time, 90, 1), BellTime::new(90, Min));
+        // Clamped to core's range for that unit.
+        assert_eq!(bell_time_from_editor(Time, 200, 1), BellTime::new(120, Min));
+        assert_eq!(bell_time_from_editor(Time, 2, 0), BellTime::new(5, Sec));
+        assert_eq!(bell_time_from_editor(Step, -3, 1), BellTime::new(0, Min));
+        assert_eq!(bell_time_from_editor(Jitter, 9000, 0), BellTime::new(3600, Sec));
+        // And back: the number and switch a stored time opens with.
+        assert_eq!(bell_time_to_editor(BellTime::new(3, Min)), (3, 1));
+        assert_eq!(bell_time_to_editor(BellTime::new(45, Sec)), (45, 0));
     }
 
     /// No defaults or limits are copied by hand: Rust fills the
@@ -2397,23 +2402,20 @@ mod tests {
         let create = code.find("ui.on_create_interval_bell_tap(").unwrap();
         let create = &code[create..create + 2000];
         for want in [
-            "DEFAULT_NEW_BELL_KIND", "DEFAULT_NEW_BELL_MINUTES",
-            "DEFAULT_NEW_BELL_JITTER_PCT", "DEFAULT_NEW_BELL_SIGNAL_MODE",
+            "DEFAULT_NEW_BELL_KIND", "DEFAULT_NEW_BELL_TIME", "DEFAULT_NEW_BELL_SIGNAL_MODE",
         ] {
             assert!(create.contains(want), "new bell uses {want}");
         }
-        for literal in ["set_ie_kind(0)", "set_ie_minutes(5)", "set_ie_jitter(0)", "set_ie_signal_mode(0)"] {
+        for literal in ["set_ie_kind(0)", "set_ie_time(5)", "set_ie_signal_mode(0)"] {
             assert!(!create.contains(literal), "{literal} copies a core default");
         }
         assert!(!code.contains(".min(120)") && !code.contains(".min(50)"), "save clamps through core");
-        assert!(code.contains("app::clamp_bell_minutes(ui.get_ie_minutes())"));
-        assert!(code.contains("app::clamp_bell_jitter(ui.get_ie_jitter())"));
-        for setter in ["set_ie_minutes_min(", "set_ie_minutes_max(", "set_ie_jitter_min(", "set_ie_jitter_max("] {
+        for read in ["ui.get_ie_time(), ui.get_ie_time_unit()", "ui.get_ie_jitter(), ui.get_ie_jitter_unit()", "ui.get_ie_step(), ui.get_ie_step_unit()"] {
+            assert!(code.contains(read), "save reads {read} through core");
+        }
+        for setter in ["set_ie_time_range(", "set_ie_offset_range("] {
             assert!(code.contains(setter), "{setter} from core");
         }
-        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert!(slint.contains("min-value: root.ie-minutes-min;") && slint.contains("max-value: root.ie-minutes-max;"));
-        assert!(slint.contains("min-value: root.ie-jitter-min;") && slint.contains("max-value: root.ie-jitter-max;"));
     }
 
     // ── Log day headers: Today / Yesterday / numbers ────────────
@@ -2548,7 +2550,7 @@ mod tests {
         assert!(!stepper.contains("width: 36px;"), "no fixed button boxes");
         assert!(stepper.contains("height: max(") && stepper.contains("row-layout.preferred-height)"));
         assert!(stepper.contains("alignment: end;"), "stepper flush right");
-        assert_eq!(stepper.matches("root.commit-text();").count(), 4, "commit(), −, + and blur commit typed text");
+        assert_eq!(stepper.matches("root.commit-text();").count(), 5, "commit(), −, +, blur and the unit switch commit typed text");
 
         let reveal = component("RevealStepper");
         assert!(reveal.contains("in property <string> subtitle;"));
@@ -2559,7 +2561,7 @@ mod tests {
         let jitter = slint.find("RevealStepper {\n").unwrap();
         let jitter = &slint[jitter..jitter + 400];
         assert!(jitter.contains("label: @tr(\"Jitter\");"));
-        assert!(jitter.contains("subtitle: @tr(\"Random shift of each ring, in percent\");"));
+        assert!(jitter.contains("subtitle: @tr(\"Random shift of each ring\");"));
 
         // Save flushes typed-but-uncommitted numbers first — tapping a
         // Material button does not blur the input.
@@ -2567,12 +2569,13 @@ mod tests {
         assert!(save, "Save must not call the callback inline without flushing");
         let save = slint.find("root.interval-editor-save();").unwrap();
         let before = &slint[save - 200..save];
-        assert!(before.contains("minutes-stepper.commit();"));
+        assert!(before.contains("time-stepper.commit();"));
         assert!(before.contains("jitter-stepper.commit();"));
+        assert!(before.contains("step-stepper.commit();"));
 
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
             let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
-            for id in ["Jitter", "Random shift of each ring, in percent"] {
+            for id in ["Jitter", "Random shift of each ring"] {
                 let at = po.find(&format!("msgid \"{id}\"\nmsgstr \"")).unwrap_or_else(|| panic!("{lang}: {id}"));
                 let rest = &po[at..];
                 let line = rest.lines().nth(1).unwrap();
@@ -2619,8 +2622,9 @@ mod tests {
         assert!(slint[closed..closed + 200].contains("root.release-interval-editor-inputs();"));
         let helper = slint.find("function release-interval-editor-inputs()").unwrap();
         let body = &slint[helper..helper + 200];
-        assert!(body.contains("minutes-stepper.release();"));
+        assert!(body.contains("time-stepper.release();"));
         assert!(body.contains("jitter-stepper.release();"));
+        assert!(body.contains("step-stepper.release();"));
     }
 
     #[test]

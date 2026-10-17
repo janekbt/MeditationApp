@@ -11,6 +11,7 @@
 //! of ignoring unknown keys.
 
 use serde::{Deserialize, Serialize};
+use crate::bells::{legacy_jitter_pct, legacy_minutes, resolve_bell_times, BellTime, TimeUnit};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetConfig {
@@ -97,10 +98,12 @@ pub struct PresetIntervalBells {
 /// db-string form ("interval", "fixed_from_start", "fixed_from_end")
 /// to keep this file decoupled from `meditate_core::db::IntervalBellKind`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(from = "PresetIntervalBellJson", into = "PresetIntervalBellJson")]
 pub struct PresetIntervalBell {
     pub kind: String,
-    pub minutes: u32,
-    pub jitter_pct: u32,
+    pub time: BellTime,
+    pub jitter: BellTime,
+    pub step: BellTime,
     pub sound_uuid: crate::db::BellSoundUuid,
     pub enabled: bool,
     /// Per-bell sound/vibration/both mode (db-string form).
@@ -109,20 +112,99 @@ pub struct PresetIntervalBell {
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
     /// Bell volume (`crate::bell_volume`). Presets saved before
     /// per-bell volumes carry none and load at the middle.
-    #[serde(default)]
     pub volume: crate::bell_volume::BellVolume,
     /// The library row this is. Presets saved before it carry none;
     /// `apply` then finds the row by its settings.
-    #[serde(default)]
     pub uuid: crate::db::IntervalBellUuid,
+}
+
+/// `PresetIntervalBell` as stored: the seconds fields next to the
+/// `minutes` and `jitter_pct` that versions before seconds read.
+#[derive(Serialize, Deserialize)]
+struct PresetIntervalBellJson {
+    kind: String,
+    minutes: u32,
+    jitter_pct: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secs_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    jitter_secs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    jitter_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    step_secs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    step_unit: Option<String>,
+    sound_uuid: crate::db::BellSoundUuid,
+    enabled: bool,
+    signal_mode: String,
+    vibration_pattern_uuid: crate::db::VibrationPatternUuid,
+    #[serde(default)]
+    volume: crate::bell_volume::BellVolume,
+    #[serde(default)]
+    uuid: crate::db::IntervalBellUuid,
+}
+
+impl From<PresetIntervalBellJson> for PresetIntervalBell {
+    fn from(j: PresetIntervalBellJson) -> Self {
+        let time = |secs: Option<u32>, unit: Option<String>| {
+            Some(BellTime { secs: secs?, unit: TimeUnit::from_db_str(&unit?)? })
+        };
+        let stored = match (
+            time(j.secs, j.secs_unit),
+            time(j.jitter_secs, j.jitter_unit),
+            time(j.step_secs, j.step_unit),
+        ) {
+            (Some(t), Some(ji), Some(st)) => Some((t, ji, st)),
+            _ => None,
+        };
+        let (time, jitter, step) = resolve_bell_times(j.minutes, j.jitter_pct, stored);
+        Self {
+            kind: j.kind,
+            time,
+            jitter,
+            step,
+            sound_uuid: j.sound_uuid,
+            enabled: j.enabled,
+            signal_mode: j.signal_mode,
+            vibration_pattern_uuid: j.vibration_pattern_uuid,
+            volume: j.volume,
+            uuid: j.uuid,
+        }
+    }
+}
+
+impl From<PresetIntervalBell> for PresetIntervalBellJson {
+    fn from(b: PresetIntervalBell) -> Self {
+        Self {
+            kind: b.kind,
+            minutes: legacy_minutes(b.time),
+            jitter_pct: legacy_jitter_pct(b.time, b.jitter),
+            secs: Some(b.time.secs),
+            secs_unit: Some(b.time.unit.as_db_str().to_string()),
+            jitter_secs: Some(b.jitter.secs),
+            jitter_unit: Some(b.jitter.unit.as_db_str().to_string()),
+            step_secs: Some(b.step.secs),
+            step_unit: Some(b.step.unit.as_db_str().to_string()),
+            sound_uuid: b.sound_uuid,
+            enabled: b.enabled,
+            signal_mode: b.signal_mode,
+            vibration_pattern_uuid: b.vibration_pattern_uuid,
+            volume: b.volume,
+            uuid: b.uuid,
+        }
+    }
 }
 
 impl From<IntervalBell> for PresetIntervalBell {
     fn from(b: IntervalBell) -> Self {
         Self {
             kind: b.kind.as_db_str().to_string(),
-            minutes: b.minutes,
-            jitter_pct: b.jitter_pct,
+            time: b.time,
+            jitter: b.jitter,
+            step: b.step,
             sound_uuid: b.sound_uuid,
             enabled: b.enabled,
             signal_mode: b.signal_mode.as_db_str().to_string(),
@@ -579,8 +661,9 @@ pub fn apply(
         };
         let rowid = db.insert_interval_bell(
             kind,
-            s.minutes,
-            s.jitter_pct,
+            s.time,
+            s.jitter,
+            s.step,
             s.sound_uuid.as_str(),
             s.vibration_pattern_uuid.as_str(),
             signal_mode,
@@ -726,8 +809,9 @@ mod tests {
                 bells: vec![
                     PresetIntervalBell {
                         kind: "interval".to_string(),
-                        minutes: 5,
-                        jitter_pct: 10,
+                        time: BellTime::new(5, TimeUnit::Min),
+                        jitter: BellTime::new(30, TimeUnit::Sec),
+                        step: BellTime::ZERO,
                         sound_uuid: "ping-uuid".into(),
                         enabled: true,
                         signal_mode: "vibration".to_string(),
@@ -737,8 +821,9 @@ mod tests {
                     },
                     PresetIntervalBell {
                         kind: "fixed_from_start".to_string(),
-                        minutes: 1,
-                        jitter_pct: 0,
+                        time: BellTime::new(1, TimeUnit::Min),
+                        jitter: BellTime::ZERO,
+                        step: BellTime::ZERO,
                         sound_uuid: "tick-uuid".into(),
                         enabled: false,
                         signal_mode: "sound".to_string(),
@@ -812,8 +897,9 @@ mod tests {
                 enabled: true,
                 bells: vec![PresetIntervalBell {
                     kind: "interval".to_string(),
-                    minutes: 5,
-                    jitter_pct: 10,
+                    time: BellTime::new(5, TimeUnit::Min),
+                    jitter: BellTime::new(30, TimeUnit::Sec),
+                    step: BellTime::ZERO,
                     sound_uuid: sound_uuid.into(),
                     enabled: true,
                     signal_mode: "sound".to_string(),
@@ -987,8 +1073,9 @@ mod tests {
     fn bell(minutes: u32, enabled: bool) -> PresetIntervalBell {
         PresetIntervalBell {
             kind: "interval".to_string(),
-            minutes,
-            jitter_pct: 0,
+            time: BellTime::new(minutes, TimeUnit::Min),
+            jitter: BellTime::ZERO,
+            step: BellTime::ZERO,
             sound_uuid: "s".into(),
             enabled,
             signal_mode: "sound".to_string(),
@@ -1006,7 +1093,7 @@ mod tests {
     }
 
     fn bell_rows(db: &Database) -> Vec<(u32, bool)> {
-        db.list_interval_bells().unwrap().iter().map(|b| (b.minutes, b.enabled)).collect()
+        db.list_interval_bells().unwrap().iter().map(|b| (b.time.number(), b.enabled)).collect()
     }
 
     #[test]
@@ -1027,7 +1114,7 @@ mod tests {
         apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
         let saved = snapshot(&db, SessionMode::Timer, PresetTiming::default());
         let row = db.list_interval_bells().unwrap().remove(0);
-        db.update_interval_bell(&IntervalBell { minutes: 7, enabled: false, ..row }).unwrap();
+        db.update_interval_bell(&IntervalBell { time: BellTime::new(7, TimeUnit::Min), enabled: false, ..row }).unwrap();
         apply(&db, &saved, SessionMode::Timer).unwrap();
         assert_eq!(bell_rows(&db), [(7, true)]);
     }
@@ -1066,8 +1153,8 @@ mod tests {
         saved.interval_bells.bells.reverse();
         db.insert_preset("Two bells", SessionMode::Timer, true, &saved.to_json()).unwrap();
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "saved in another order");
-        db.insert_interval_bell(IntervalBellKind::Interval, 3, 0, "s", "p", SignalMode::Sound).unwrap();
-        let extra = db.list_interval_bells().unwrap().into_iter().find(|b| b.minutes == 3).unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, BellTime::new(3, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, "s", "p", SignalMode::Sound).unwrap();
+        let extra = db.list_interval_bells().unwrap().into_iter().find(|b| b.time == BellTime::new(3, TimeUnit::Min)).unwrap();
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 0, "a third bell rings");
         db.set_interval_bell_enabled(extra.uuid.as_str(), false).unwrap();
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "switched off, it doesn't count");
@@ -1181,8 +1268,9 @@ mod tests {
             .zip(original.interval_bells.bells.iter())
         {
             assert_eq!(got.kind, exp.kind);
-            assert_eq!(got.minutes, exp.minutes);
-            assert_eq!(got.jitter_pct, exp.jitter_pct);
+            assert_eq!(got.time, exp.time);
+            assert_eq!(got.jitter, exp.jitter);
+            assert_eq!(got.step, exp.step);
             assert_eq!(got.sound_uuid, exp.sound_uuid);
             assert_eq!(got.enabled, exp.enabled);
             assert_eq!(got.signal_mode, exp.signal_mode);
@@ -1209,8 +1297,9 @@ mod tests {
         timer.end_bell.volume = pct(85.0);
         let bell = |minutes, volume| PresetIntervalBell {
             kind: "interval".to_string(),
-            minutes,
-            jitter_pct: 0,
+            time: BellTime::new(minutes, TimeUnit::Min),
+            jitter: BellTime::ZERO,
+            step: BellTime::ZERO,
             sound_uuid: sound.into(),
             enabled: true,
             signal_mode: "sound".to_string(),
@@ -1337,13 +1426,45 @@ mod tests {
     }
 
     #[test]
+    fn a_preset_bell_without_seconds_reads_from_minutes() {
+        use crate::bells::{BellTime, TimeUnit};
+        let mut json: serde_json::Value =
+            serde_json::from_str(&with_bells(vec![bell(5, true)]).to_json()).unwrap();
+        let old = &mut json["interval_bells"]["bells"][0];
+        for key in ["secs", "secs_unit", "jitter_secs", "jitter_unit", "step_secs", "step_unit"] {
+            old.as_object_mut().unwrap().remove(key);
+        }
+        old["jitter_pct"] = 20.into();
+        let cfg = PresetConfig::from_json(&json.to_string()).unwrap();
+        let b = &cfg.interval_bells.bells[0];
+        assert_eq!(
+            (b.time, b.jitter, b.step),
+            (BellTime::new(5, TimeUnit::Min), BellTime::new(1, TimeUnit::Min), BellTime::ZERO)
+        );
+
+        // It matches the library bell it was saved from: no second row.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(
+            IntervalBellKind::Interval, b.time, b.jitter, b.step, "s", "p", SignalMode::Sound,
+        )
+        .unwrap();
+        apply(&db, &cfg, SessionMode::Timer).unwrap();
+        assert_eq!(db.list_interval_bells().unwrap().len(), 1);
+
+        // Saved now, it still carries what 26.10.1 reads.
+        let saved: serde_json::Value = serde_json::from_str(&cfg.to_json()).unwrap();
+        let bell = &saved["interval_bells"]["bells"][0];
+        assert_eq!((bell["minutes"].as_u64(), bell["jitter_pct"].as_u64()), (Some(5), Some(20)));
+    }
+
+    #[test]
     fn a_bell_field_this_version_does_not_know_is_ignored() {
         // How 26.10.1 and older read a bell's "uuid": same derives, no
         // deny_unknown_fields, so presets saved here still load there.
         let mut json: serde_json::Value = serde_json::from_str(&with_bells(vec![bell(5, true)]).to_json()).unwrap();
         json["interval_bells"]["bells"][0]["from_the_future"] = "x".into();
         let cfg = PresetConfig::from_json(&json.to_string()).expect("unknown keys are skipped");
-        assert_eq!(cfg.interval_bells.bells[0].minutes, 5);
+        assert_eq!(cfg.interval_bells.bells[0].time, BellTime::new(5, TimeUnit::Min));
     }
 
     #[test]

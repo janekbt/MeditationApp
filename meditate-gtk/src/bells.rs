@@ -13,6 +13,7 @@ use adw::prelude::*;
 
 use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, IntervalBell, IntervalBellKind};
+use meditate_core::bells::{bell_number_range, clamp_bell_time, BellTime, BellTimeField, TimeUnit};
 use crate::i18n::gettext;
 
 /// Push the bell-library page onto the window's nav view.
@@ -179,8 +180,9 @@ fn build_create_row(
         let created = app_for_create.with_db_mut(|db| {
             db.insert_interval_bell(
                 meditate_core::bells::DEFAULT_NEW_BELL_KIND,
-                meditate_core::bells::DEFAULT_NEW_BELL_MINUTES,
-                meditate_core::bells::DEFAULT_NEW_BELL_JITTER_PCT,
+                meditate_core::bells::DEFAULT_NEW_BELL_TIME,
+                BellTime::ZERO,
+                BellTime::ZERO,
                 crate::db::BUNDLED_BOWL_UUID,
                 crate::db::BUNDLED_PATTERN_PULSE_UUID,
                 meditate_core::bells::DEFAULT_NEW_BELL_SIGNAL_MODE,
@@ -378,21 +380,42 @@ fn empty_state_row() -> adw::ActionRow {
 fn bell_title(bell: &IntervalBell) -> String {
     use crate::i18n::ngettext;
     use meditate_core::bells::BellTitleKey;
-    match meditate_core::bells::bell_title_key(bell) {
-        BellTitleKey::EveryNMin { minutes } =>
-            ngettext("Every 1 min", "Every {n} min", minutes)
-                .replace("{n}", &minutes.to_string()),
-        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } =>
-            ngettext("Every 1 min ±{j}%", "Every {n} min ±{j}%", minutes)
-                .replace("{n}", &minutes.to_string())
-                .replace("{j}", &jitter_pct.to_string()),
-        BellTitleKey::AtNMin { minutes } =>
-            ngettext("At 1 min", "At {n} min", minutes)
-                .replace("{n}", &minutes.to_string()),
-        BellTitleKey::NMinBeforeEnd { minutes } =>
-            ngettext("1 min before end", "{n} min before end", minutes)
-                .replace("{n}", &minutes.to_string()),
+    use TimeUnit::{Min, Sec};
+    let key = meditate_core::bells::bell_title_key(bell);
+    let (BellTitleKey::Every { time, .. } | BellTitleKey::At { time } | BellTitleKey::BeforeEnd { time }) = key;
+    let (n, count) = (time.number().to_string(), time.number());
+    let mut title = match (key, time.unit) {
+        (BellTitleKey::Every { .. }, Min) =>
+            ngettext("Every 1 min", "Every {n} min", count).replace("{n}", &n),
+        (BellTitleKey::Every { .. }, Sec) =>
+            ngettext("Every 1 s", "Every {n} s", count).replace("{n}", &n),
+        (BellTitleKey::At { .. }, Min) =>
+            ngettext("At 1 min", "At {n} min", count).replace("{n}", &n),
+        (BellTitleKey::At { .. }, Sec) =>
+            ngettext("At 1 s", "At {n} s", count).replace("{n}", &n),
+        (BellTitleKey::BeforeEnd { .. }, Min) =>
+            ngettext("1 min before end", "{n} min before end", count).replace("{n}", &n),
+        (BellTitleKey::BeforeEnd { .. }, Sec) =>
+            ngettext("1 s before end", "{n} s before end", count).replace("{n}", &n),
+    };
+    if let BellTitleKey::Every { jitter, step, .. } = key {
+        if let Some(j) = jitter {
+            title.push_str(&format!(" ±{}", bell_time_text(j)));
+        }
+        if let Some(s) = step {
+            title.push_str(&format!(", +{}", bell_time_text(s)));
+        }
     }
+    title
+}
+
+/// "5 min" or "30 s".
+fn bell_time_text(t: BellTime) -> String {
+    match t.unit {
+        TimeUnit::Min => gettext("{n} min"),
+        TimeUnit::Sec => gettext("{n} s"),
+    }
+    .replace("{n}", &t.number().to_string())
 }
 
 /// Render a core `ResolvedName` to subtitle text. `Resolved` passes
@@ -424,6 +447,80 @@ fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
         meditate_core::bells::resolve_pattern_name(db.core(), uuid),
     ))
     .unwrap_or_default()
+}
+
+/// A bell time row: a number with an s/min switch beside it.
+#[derive(Clone)]
+struct TimeRow {
+    row: adw::SpinRow,
+    unit: adw::ToggleGroup,
+    field: BellTimeField,
+}
+
+impl TimeRow {
+    fn new(title: &str, subtitle: Option<&str>, field: BellTimeField, initial: BellTime) -> TimeRow {
+        let (lo, hi) = bell_number_range(field, initial.unit);
+        let row = adw::SpinRow::builder()
+            .title(title)
+            .adjustment(&gtk::Adjustment::new(
+                f64::from(initial.number()), f64::from(lo), f64::from(hi), 1.0, 5.0, 0.0,
+            ))
+            .build();
+        if let Some(subtitle) = subtitle {
+            row.set_subtitle(subtitle);
+        }
+        let unit = adw::ToggleGroup::builder()
+            .css_classes(["round"])
+            .homogeneous(true)
+            .valign(gtk::Align::Center)
+            .build();
+        unit.add(adw::Toggle::builder().name("s").label(gettext("s")).tooltip(gettext("Seconds")).build());
+        unit.add(adw::Toggle::builder().name("min").label(gettext("min")).tooltip(gettext("Minutes")).build());
+        unit.set_active_name(Some(initial.unit.as_db_str()));
+        row.add_suffix(&unit);
+        TimeRow { row, unit, field }
+    }
+
+    /// Show `time` without reporting it as a change; callers hold
+    /// their populating guard around this.
+    fn set(&self, time: BellTime) {
+        let (lo, hi) = bell_number_range(self.field, time.unit);
+        self.unit.set_active_name(Some(time.unit.as_db_str()));
+        let adj = self.row.adjustment();
+        adj.set_lower(f64::from(lo));
+        adj.set_upper(f64::from(hi));
+        self.row.set_value(f64::from(time.number()));
+    }
+
+    /// `f` gets the row and its time whenever the number or the unit
+    /// changes. Flipping the unit keeps the number, clamped to the new
+    /// unit's range.
+    fn connect_changed(&self, f: impl Fn(&adw::SpinRow, BellTime) + 'static) {
+        let unit_of = |group: &adw::ToggleGroup| {
+            group.active_name().as_deref().and_then(TimeUnit::from_db_str)
+        };
+        let f = Rc::new(f);
+        let flipping = Rc::new(std::cell::Cell::new(false));
+        let field = self.field;
+        let (f2, flipping2, group) = (f.clone(), flipping.clone(), self.unit.clone());
+        self.row.connect_notify_local(Some("value"), move |row, _| {
+            if flipping2.get() { return; }
+            let Some(unit) = unit_of(&group) else { return };
+            f2(row, clamp_bell_time(field, row.value().round() as u32, unit));
+        });
+        let row = self.row.clone();
+        self.unit.connect_active_name_notify(move |group| {
+            let Some(unit) = unit_of(group) else { return };
+            let (lo, hi) = bell_number_range(field, unit);
+            flipping.set(true);
+            let adj = row.adjustment();
+            adj.set_lower(f64::from(lo));
+            adj.set_upper(f64::from(hi));
+            row.set_value(row.value().clamp(f64::from(lo), f64::from(hi)));
+            flipping.set(false);
+            f(&row, clamp_bell_time(field, row.value().round() as u32, unit));
+        });
+    }
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the
@@ -474,7 +571,7 @@ fn push_edit_page(
     // Kind combo — three entries matching IntervalBellKind. The user-
     // facing strings are gettext'd.
     let kind_choices = [
-        gettext("Every N minutes"),
+        gettext("Repeating"),
         gettext("At time from start"),
         gettext("Before end"),
     ];
@@ -490,32 +587,28 @@ fn push_edit_page(
         .build();
     form.add(&kind_row);
 
-    // Minutes spinner — common to all kinds; semantic shifts with kind.
-    let minutes_row = adw::SpinRow::builder()
-        .title(gettext("Minutes"))
-        .adjustment(&gtk::Adjustment::new(
-            f64::from(bell.minutes),
-            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
-            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
-            1.0, 5.0, 0.0,
-        ))
-        .build();
-    form.add(&minutes_row);
+    // Time — common to all kinds; its meaning shifts with kind.
+    let time_row = TimeRow::new(&gettext("Time"), None, BellTimeField::Time, bell.time);
+    form.add(&time_row.row);
 
-    // Jitter spinner — only meaningful for the Interval kind. Visible
-    // gates on kind below.
-    let jitter_row = adw::SpinRow::builder()
-        .title(gettext("Jitter"))
-        .subtitle(gettext("Percent — randomises the next ring"))
-        .adjustment(&gtk::Adjustment::new(
-            f64::from(bell.jitter_pct),
-            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
-            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
-            5.0, 10.0, 0.0,
-        ))
-        .visible(bell.kind == IntervalBellKind::Interval)
-        .build();
-    form.add(&jitter_row);
+    // Jitter and step only mean something for the Repeating kind.
+    // Visibility gates on kind below.
+    let jitter_row = TimeRow::new(
+        &gettext("Jitter"),
+        Some(&gettext("Random shift of each ring")),
+        BellTimeField::Jitter,
+        bell.jitter,
+    );
+    jitter_row.row.set_visible(bell.kind == IntervalBellKind::Interval);
+    form.add(&jitter_row.row);
+    let step_row = TimeRow::new(
+        &gettext("Step"),
+        Some(&gettext("Added to the gap after each ring")),
+        BellTimeField::Step,
+        bell.step,
+    );
+    step_row.row.set_visible(bell.kind == IntervalBellKind::Interval);
+    form.add(&step_row.row);
 
     // Type — Sound / Vibration / Both AdwToggleGroup. Determines
     // which of Bell Sound / Pattern rows are shown below.
@@ -661,6 +754,7 @@ fn push_edit_page(
     let rebuilder_for_kind = rebuilder.clone();
     let on_changed_for_kind = on_changed.clone();
     let jitter_row_clone = jitter_row.clone();
+    let step_row_clone = step_row.clone();
     let populating_for_kind = populating.clone();
     kind_row.connect_selected_notify(move |row| {
         if populating_for_kind.get() { return; }
@@ -669,38 +763,40 @@ fn push_edit_page(
             2 => IntervalBellKind::FixedFromEnd,
             _ => IntervalBellKind::Interval,
         };
-        snap_for_kind.borrow_mut().kind = new_kind;
-        jitter_row_clone.set_visible(new_kind == IntervalBellKind::Interval);
+        {
+            let mut s = snap_for_kind.borrow_mut();
+            s.kind = new_kind;
+            (s.jitter, s.step) = meditate_core::bells::bell_kind_offsets(new_kind, s.jitter, s.step);
+            populating_for_kind.set(true);
+            jitter_row_clone.set(s.jitter);
+            step_row_clone.set(s.step);
+            populating_for_kind.set(false);
+        }
+        jitter_row_clone.row.set_visible(new_kind == IntervalBellKind::Interval);
+        step_row_clone.row.set_visible(new_kind == IntervalBellKind::Interval);
         write_back_bell(row, &app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
     });
 
-    let snap_for_min = snapshot.clone();
-    let app_for_min = app.clone();
-    let rebuilder_for_min = rebuilder.clone();
-    let on_changed_for_min = on_changed.clone();
-    let populating_for_min = populating.clone();
-    minutes_row.connect_notify_local(Some("value"), move |row, _| {
-        if populating_for_min.get() { return; }
-        snap_for_min.borrow_mut().minutes = row.value().round().clamp(
-            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
-            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
-        ) as u32;
-        write_back_bell(row, &app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
-    });
-
-    let snap_for_jitter = snapshot.clone();
-    let app_for_jitter = app.clone();
-    let rebuilder_for_jitter = rebuilder.clone();
-    let on_changed_for_jitter = on_changed.clone();
-    let populating_for_jitter = populating.clone();
-    jitter_row.connect_notify_local(Some("value"), move |row, _| {
-        if populating_for_jitter.get() { return; }
-        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(
-            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
-            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
-        ) as u32;
-        write_back_bell(row, &app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
-    });
+    for row in [&time_row, &jitter_row, &step_row] {
+        let field = row.field;
+        let snap = snapshot.clone();
+        let app = app.clone();
+        let rebuilder = rebuilder.clone();
+        let on_changed = on_changed.clone();
+        let populating = populating.clone();
+        row.connect_changed(move |row, time| {
+            if populating.get() { return; }
+            {
+                let mut s = snap.borrow_mut();
+                match field {
+                    BellTimeField::Time => s.time = time,
+                    BellTimeField::Jitter => s.jitter = time,
+                    BellTimeField::Step => s.step = time,
+                }
+            }
+            write_back_bell(row, &app, &snap, &rebuilder, &on_changed);
+        });
+    }
 
     // Sound activation: walk to window, push chooser, on pick update
     // the bell + the row subtitle. The chooser handles its own preview
@@ -849,14 +945,15 @@ fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
 mod tests {
     use super::*;
 
-    fn b(kind: IntervalBellKind, minutes: u32, jitter_pct: u32, sound_uuid: &str) -> IntervalBell {
+    fn b(kind: IntervalBellKind, time: BellTime, jitter: BellTime, step: BellTime) -> IntervalBell {
         IntervalBell {
             id: 0,
             uuid: "u".into(),
             kind,
-            minutes,
-            jitter_pct,
-            sound_uuid: sound_uuid.into(),
+            time,
+            jitter,
+            step,
+            sound_uuid: "bowl".into(),
             vibration_pattern_uuid: crate::db::BUNDLED_PATTERN_PULSE_UUID.into(),
             signal_mode: crate::db::SignalMode::Sound,
             enabled: true,
@@ -865,36 +962,35 @@ mod tests {
         }
     }
 
+    fn s(n: u32) -> BellTime { BellTime::new(n, TimeUnit::Sec) }
+    fn m(n: u32) -> BellTime { BellTime::new(n, TimeUnit::Min) }
+    const NONE: BellTime = BellTime::ZERO;
+
     #[test]
     fn bell_title_formats_interval_without_jitter_as_every_n_min() {
-        assert_eq!(
-            bell_title(&b(IntervalBellKind::Interval, 5, 0, "bowl")),
-            "Every 5 min"
-        );
+        assert_eq!(bell_title(&b(IntervalBellKind::Interval, m(5), NONE, NONE)), "Every 5 min");
     }
 
     #[test]
-    fn bell_title_formats_interval_with_jitter_as_every_n_min_plus_minus_pct() {
+    fn bell_title_names_time_jitter_and_step_with_their_units() {
         assert_eq!(
-            bell_title(&b(IntervalBellKind::Interval, 9, 30, "bell")),
-            "Every 9 min ±30%"
+            bell_title(&b(IntervalBellKind::Interval, s(120), m(1), s(5))),
+            "Every 120 s ±1 min, +5 s"
         );
+        assert_eq!(bell_title(&b(IntervalBellKind::Interval, s(45), NONE, NONE)), "Every 45 s");
+        assert_eq!(bell_title(&b(IntervalBellKind::Interval, m(9), s(30), NONE)), "Every 9 min ±30 s");
     }
 
     #[test]
     fn bell_title_formats_fixed_from_start_as_at_n_min() {
-        assert_eq!(
-            bell_title(&b(IntervalBellKind::FixedFromStart, 10, 0, "bowl")),
-            "At 10 min"
-        );
+        assert_eq!(bell_title(&b(IntervalBellKind::FixedFromStart, m(10), NONE, NONE)), "At 10 min");
+        assert_eq!(bell_title(&b(IntervalBellKind::FixedFromStart, s(90), NONE, NONE)), "At 90 s");
     }
 
     #[test]
     fn bell_title_formats_fixed_from_end_as_n_min_before_end() {
-        assert_eq!(
-            bell_title(&b(IntervalBellKind::FixedFromEnd, 5, 0, "gong")),
-            "5 min before end"
-        );
+        assert_eq!(bell_title(&b(IntervalBellKind::FixedFromEnd, m(5), NONE, NONE)), "5 min before end");
+        assert_eq!(bell_title(&b(IntervalBellKind::FixedFromEnd, s(30), NONE, NONE)), "30 s before end");
     }
 
     fn production_fn(sig: &str) -> String {

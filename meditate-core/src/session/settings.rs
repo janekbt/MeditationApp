@@ -206,7 +206,7 @@ mod tests {
             db.set_setting(k, v).unwrap();
         }
         db.insert_interval_bell(
-            IntervalBellKind::Interval, 2, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            IntervalBellKind::Interval, crate::bells::BellTime::new(2, crate::bells::TimeUnit::Min), crate::bells::BellTime::ZERO, crate::bells::BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
         )
         .unwrap();
         db

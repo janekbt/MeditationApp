@@ -10,7 +10,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Countdown, stopwatch, Box Breath, and Guided modes
 - Box Breath: start from the 4-4-4-4 or 4-7-8-0 preset or set each phase yourself, with an optional sound or vibration cue for each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
 - Guided: play your own guided-meditation audio; the end bell rings when the track finishes. Imported files go into a library where you star the ones you use; files that aren't Ogg (WAV, MP3 and so on) are converted on import. Or link a local folder you manage yourself: browse it by folder or as one list sorted by name, length or plays, star files, and play them in place without copying (stays on that device)
-- Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor
+- Bells: an optional starting bell, interval bells (at fixed times, or repeating every so many seconds or minutes, randomised or with gaps that grow on each ring), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor
 - Optional preparation time before the starting bell
 - The computer or phone stays awake during a session so bells ring on time; keeping the screen on too is set per mode
 - Quick presets plus custom durations
@@ -36,6 +36,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 ### Sync
 - Optional sync between all your devices — Linux and Android — via your own Nextcloud (WebDAV, app password)
 - Sessions, labels, presets, preferences and your imported sounds and guided files sync
+- Update every device that syncs together: an older version that changes an interval bell drops what it doesn't know about it, such as a growing gap or a time in seconds
 - Offline-first: everything works without a network; changes merge whenever you're back online, with conflict handling that never loses a session
 
 ### Preferences

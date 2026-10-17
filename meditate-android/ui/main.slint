@@ -150,9 +150,14 @@ export global Tr {
     public pure function none-enabled() -> string { return @tr("None enabled"); }
     public pure function n-enabled(n: int) -> string { return @tr("{n} enabled" | "{n} enabled" % n); }
     public pure function bell-every-n-min(n: int) -> string { return @tr("Every {n} min" | "Every {n} min" % n); }
-    public pure function bell-every-n-min-jitter(n: int, pct: int) -> string { return @tr("Every {n} min +/-{0}%" | "Every {n} min +/-{0}%" % n, pct); }
+    public pure function bell-every-n-s(n: int) -> string { return @tr("Every {n} s" | "Every {n} s" % n); }
     public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
+    public pure function bell-at-n-s(n: int) -> string { return @tr("At {n} s" | "At {n} s" % n); }
     public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
+    public pure function bell-n-s-before-end(n: int) -> string { return @tr("{n} s before end" | "{n} s before end" % n); }
+    // A jitter or step in a bell title: "+/-{0}" and ", +{0}" around it.
+    public pure function bell-n-min(n: int) -> string { return @tr("{0} min", n); }
+    public pure function bell-n-s(n: int) -> string { return @tr("{0} s", n); }
     // Rust-set titles + log-feed strings
     // Units (GTK's msgids, so its translations carry over). The pair
     // keeps both units, as the Edit Session row always showed them.
@@ -320,7 +325,7 @@ export struct LocalRow {
 
 // One row in the Interval Bells library (B-5c). `title` is the
 // rendered `meditate_core::bells::bell_title_key` summary
-// ("Every 9 min +/-30%" / "At 10 min" / "5 min before end");
+// ("Every 120 s +/-1 min, +5 s" / "At 10 min" / "5 min before end");
 // `sound` is the resolved bell-sound name. `uuid` carries the
 // row identity for the edit/delete slices (B-5c-2/3); the
 // list itself is read-only here. Mirrors GTK's `build_bell_row`
@@ -1387,7 +1392,8 @@ component PreviewPill inherits Rectangle {
 // GTK Adw.SpinRow analogue: title (+ optional subtitle) on the
 // left, an inline "−  value  +" stepper on the right, in a boxed-list
 // row (at least 56 px, 72 px with a subtitle, growing as it
-// wraps). Used by the interval-bell editor's Minutes / Jitter rows.
+// wraps). Used by the interval-bell editor's Time / Jitter / Step
+// rows, which add an s / min switch under the stepper.
 //
 // The value between − and + is a live TextInput, like the Duration
 // dialog's VerticalSpinBox: tapping it summons the numeric IME and
@@ -1401,6 +1407,11 @@ component StepperRow inherits Rectangle {
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
+    // An s / min switch under the stepper (0 s, 1 min). Flipping it
+    // keeps the number, clamped to the range the parent binds for
+    // the new unit.
+    in property <bool> has-unit;
+    in-out property <int> unit;
 
     public function commit() {
         root.commit-text();
@@ -1516,14 +1527,28 @@ component StepperRow inherits Rectangle {
                     }
                 }
             }
+            if root.has-unit: HorizontalLayout {
+                alignment: end;
+                padding-top: 8px;
+                // Equal halves, wide enough for the longest unit ("Min.").
+                ModeToggle {
+                    width: 96px;
+                    labels: [@tr("s"), @tr("min")];
+                    current-index <=> root.unit;
+                    changed => {
+                        root.commit-text();
+                        root.value = Math.max(root.min-value, Math.min(root.max-value, root.value));
+                    }
+                }
+            }
         }
     }
 }
 
 // StepperRow with the same boolean reveal+divider scaffold as
 // RevealChooser (single animated scalar, fixed clip, inner column
-// pinned at y=0). The interval-bell editor's Jitter row only
-// applies to the Interval kind; GTK toggles its `visible`, but
+// pinned at y=0). The interval-bell editor's Jitter and Step rows
+// only apply to the Interval kind; GTK toggles its `visible`, but
 // inside a BoxedList an `if`-gated child doesn't reactively
 // re-render, so it collapses via this reveal instead.
 component RevealStepper inherits Rectangle {
@@ -1533,6 +1558,8 @@ component RevealStepper inherits Rectangle {
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
+    in property <bool> has-unit;
+    in-out property <int> unit;
 
     public function commit() {
         stepper.commit();
@@ -1572,6 +1599,8 @@ component RevealStepper inherits Rectangle {
                     value <=> root.value;
                     min-value: root.min-value;
                     max-value: root.max-value;
+                    has-unit: root.has-unit;
+                    unit <=> root.unit;
                 }
             }
         }
@@ -2594,17 +2623,22 @@ export component MainWindow inherits Window {
     callback interval-bell-edit(string);
     callback create-interval-bell-tap();
     in property <bool> interval-editor-page: false;
-    // 0 = Every N min (Interval), 1 = At time from start
+    // 0 = Repeating (Interval), 1 = At time from start
     // (FixedFromStart), 2 = Before end (FixedFromEnd).
     in-out property <int> ie-kind: 0;
     // Filled from Rust when the editor opens (core's defaults), like
-    // the stepper ranges below (core's limits).
-    in-out property <int> ie-minutes;
+    // the stepper ranges below (core's limits). Each number has its
+    // unit switch: 0 s, 1 min.
+    in-out property <int> ie-time;
+    in-out property <int> ie-time-unit;
     in-out property <int> ie-jitter;
-    in property <int> ie-minutes-min;
-    in property <int> ie-minutes-max;
-    in property <int> ie-jitter-min;
-    in property <int> ie-jitter-max;
+    in-out property <int> ie-jitter-unit;
+    in-out property <int> ie-step;
+    in-out property <int> ie-step-unit;
+    // [lowest in s, highest in s, lowest in min, highest in min]; the
+    // offset range is the jitter's and the step's.
+    in property <[int]> ie-time-range;
+    in property <[int]> ie-offset-range;
     in-out property <string> ie-sound-uuid: "";
     in property <string> ie-sound-name: "";
     // Signal Type for this interval bell (B-2c): 0 Sound /
@@ -3084,8 +3118,9 @@ export component MainWindow inherits Window {
     property <length> interval-editor-offset: root.interval-editor-page ? root.width : 0px;
     animate interval-editor-offset { duration: 300ms; easing: ease-out; }
     function release-interval-editor-inputs() {
-        minutes-stepper.release();
+        time-stepper.release();
         jitter-stepper.release();
+        step-stepper.release();
     }
     // Every close path (Save, Cancel, back) lets go of a focused
     // number, or its cut/copy/paste popup floats over the next page.
@@ -6155,8 +6190,9 @@ export component MainWindow inherits Window {
                 action => {
                     // Flush typed numbers first — tapping this
                     // button does not blur the stepper inputs.
-                    minutes-stepper.commit();
+                    time-stepper.commit();
                     jitter-stepper.commit();
+                    step-stepper.commit();
                     root.interval-editor-save();
                 }
             }
@@ -6182,7 +6218,7 @@ export component MainWindow inherits Window {
                     DropDownMenu {
                         label: @tr("Kind");
                         items: [
-                            { text: @tr("Every N min"), enabled: true },
+                            { text: @tr("Repeating"), enabled: true },
                             { text: @tr("From start"), enabled: true },
                             { text: @tr("Before end"), enabled: true },
                         ];
@@ -6194,21 +6230,36 @@ export component MainWindow inherits Window {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                minutes-stepper := StepperRow {
-                    label: @tr("Minutes");
-                    value <=> root.ie-minutes;
-                    min-value: root.ie-minutes-min;
-                    max-value: root.ie-minutes-max;
+                time-stepper := StepperRow {
+                    // The log's "Time" is a time of day; this one is a duration.
+                    label: @tr("Bell time" => "Time");
+                    value <=> root.ie-time;
+                    has-unit: true;
+                    unit <=> root.ie-time-unit;
+                    min-value: root.ie-time-range[root.ie-time-unit * 2];
+                    max-value: root.ie-time-range[root.ie-time-unit * 2 + 1];
                 }
-                // Jitter applies only to the "Every N min" kind
-                // (index 0), mirroring GTK gating its visibility.
+                // Jitter and Step apply only to the Repeating kind
+                // (index 0), mirroring GTK gating their visibility.
                 jitter-stepper := RevealStepper {
                     shown: root.ie-kind == 0;
                     label: @tr("Jitter");
-                    subtitle: @tr("Random shift of each ring, in percent");
+                    subtitle: @tr("Random shift of each ring");
                     value <=> root.ie-jitter;
-                    min-value: root.ie-jitter-min;
-                    max-value: root.ie-jitter-max;
+                    has-unit: true;
+                    unit <=> root.ie-jitter-unit;
+                    min-value: root.ie-offset-range[root.ie-jitter-unit * 2];
+                    max-value: root.ie-offset-range[root.ie-jitter-unit * 2 + 1];
+                }
+                step-stepper := RevealStepper {
+                    shown: root.ie-kind == 0;
+                    label: @tr("Step");
+                    subtitle: @tr("Added to the gap after each ring");
+                    value <=> root.ie-step;
+                    has-unit: true;
+                    unit <=> root.ie-step-unit;
+                    min-value: root.ie-offset-range[root.ie-step-unit * 2];
+                    max-value: root.ie-offset-range[root.ie-step-unit * 2 + 1];
                 }
 
                 Rectangle {

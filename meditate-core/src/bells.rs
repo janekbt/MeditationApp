@@ -95,42 +95,42 @@ impl SignalMode {
 /// interval bell should fire.
 ///
 /// `last_ring_secs` is the elapsed-secs boundary of the previous ring
-/// (use 0 for the first ring of a session). `base_min` and `jitter_pct`
-/// come from the bell row. `random_unit` is a caller-supplied uniform
-/// in `[0, 1)`.
+/// (use 0 for the first ring of a session). `gap_secs` is this gap
+/// (the bell's time plus its step for every gap before it) and
+/// `jitter_secs` the already capped jitter. `random_unit` is a
+/// caller-supplied uniform in `[0, 1)`.
 ///
-/// With `jitter_pct == 0` the offset is exactly `base_min * 60` and
-/// `random_unit` is ignored. With non-zero jitter the offset is in
-/// `[base * (1 - j/100), base * (1 + j/100)]`, picked linearly from
-/// `random_unit`.
+/// With no jitter the offset is exactly `gap_secs` and `random_unit`
+/// is ignored. Otherwise the offset is in `[gap - j, gap + j]`, picked
+/// linearly from `random_unit`, and at least 1 s.
 pub fn next_interval_ring_secs(
     last_ring_secs: u64,
-    base_min: u32,
-    jitter_pct: u32,
+    gap_secs: u64,
+    jitter_secs: u32,
     random_unit: f64,
 ) -> u64 {
-    let base_secs = u64::from(base_min).saturating_mul(60).max(1);
-    if jitter_pct == 0 {
+    let base_secs = gap_secs.max(1);
+    if jitter_secs == 0 {
         return last_ring_secs + base_secs;
     }
-    let span = base_secs as f64 * f64::from(jitter_pct) / 100.0;
+    let span = f64::from(jitter_secs);
     // [0, 1) → [-span, +span). Centre (0.5) lands on zero offset.
     let offset = (random_unit - 0.5) * 2.0 * span;
     let next_secs = ((base_secs as f64) + offset).round().max(1.0) as u64;
     last_ring_secs + next_secs
 }
 
-/// Compute the elapsed-secs boundary for a "T minutes from session
+/// Compute the elapsed-secs boundary for a "T from session
 /// start" bell, or `None` if the bell would overlap the starting bell
 /// (offset==0) or the completion sound (offset>=target).
 ///
 /// In stopwatch mode, `total_target_secs` is `None` — only the
 /// zero-offset overlap rule applies.
 pub fn fixed_from_start_target_secs(
-    offset_min: u32,
+    offset_secs: u32,
     total_target_secs: Option<u64>,
 ) -> Option<u64> {
-    let offset_secs = u64::from(offset_min) * 60;
+    let offset_secs = u64::from(offset_secs);
     if offset_secs == 0 {
         return None;
     }
@@ -140,16 +140,16 @@ pub fn fixed_from_start_target_secs(
     }
 }
 
-/// Compute the elapsed-secs boundary for a "T minutes before session
+/// Compute the elapsed-secs boundary for a "T before session
 /// end" bell. Only meaningful in countdown mode — stopwatch mode has
 /// no end so the shell skips this kind altogether. Returns `None` if
 /// the bell would overlap the completion sound (offset==0) or land
 /// at/before session start (offset>=total).
 pub fn fixed_from_end_target_secs(
-    offset_min: u32,
+    offset_secs: u32,
     total_target_secs: u64,
 ) -> Option<u64> {
-    let offset_secs = u64::from(offset_min) * 60;
+    let offset_secs = u64::from(offset_secs);
     if offset_secs == 0 || offset_secs >= total_target_secs {
         return None;
     }
@@ -161,12 +161,16 @@ pub fn fixed_from_end_target_secs(
 /// `ActiveBell::tick` thereafter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BellSchedule {
-    /// Recurring interval bell — every `base_min` minutes (give or
-    /// take `jitter_pct`%). `next_ring_secs` is the absolute elapsed-
-    /// since-Running mark when the next ring is due.
+    /// Recurring interval bell — every `base_secs`, growing by
+    /// `step_secs` per gap, give or take `jitter_secs` (already capped
+    /// at half the base). `gaps` counts the gaps already scheduled.
+    /// `next_ring_secs` is the absolute elapsed-since-Running mark
+    /// when the next ring is due.
     Interval {
-        base_min: u32,
-        jitter_pct: u32,
+        base_secs: u32,
+        jitter_secs: u32,
+        step_secs: u32,
+        gaps: u32,
         next_ring_secs: u64,
     },
     /// One-shot bell pinned to a known offset from session start
@@ -205,8 +209,10 @@ impl ActiveBell {
     pub fn tick(&mut self, elapsed_secs: u64, rng: &mut impl FnMut() -> f64) -> bool {
         match &mut self.schedule {
             BellSchedule::Interval {
-                base_min,
-                jitter_pct,
+                base_secs,
+                jitter_secs,
+                step_secs,
+                gaps,
                 next_ring_secs,
             } => {
                 if elapsed_secs >= *next_ring_secs {
@@ -214,8 +220,10 @@ impl ActiveBell {
                     // the first due time still ahead.
                     while elapsed_secs >= *next_ring_secs {
                         let r = rng();
+                        let gap = interval_gap_secs(*base_secs, *step_secs, *gaps);
+                        *gaps = gaps.saturating_add(1);
                         *next_ring_secs =
-                            next_interval_ring_secs(*next_ring_secs, *base_min, *jitter_pct, r);
+                            next_interval_ring_secs(*next_ring_secs, gap, *jitter_secs, r);
                     }
                     true
                 } else {
@@ -242,34 +250,177 @@ impl ActiveBell {
 /// match exhaustively on the variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BellTitleKey {
-    /// Recurring bell with no jitter. e.g. "Every 5 min".
-    EveryNMin { minutes: u32 },
-    /// Recurring bell with jitter. e.g. "Every 5 min ±20%".
-    EveryNMinWithJitter { minutes: u32, jitter_pct: u32 },
+    /// Recurring bell, e.g. "Every 60 s ±1 min, +5 s". `jitter` (as it
+    /// rings, capped at half the time) and `step` are `None` when 0.
+    Every { time: BellTime, jitter: Option<BellTime>, step: Option<BellTime> },
     /// One-shot bell at a fixed offset from start. e.g. "At 10 min".
-    AtNMin { minutes: u32 },
+    At { time: BellTime },
     /// One-shot bell at a fixed offset before end. e.g. "5 min before end".
-    NMinBeforeEnd { minutes: u32 },
+    BeforeEnd { time: BellTime },
 }
 
 /// Pick the right typed title key for an interval-bell row.
 /// The shell maps each variant to a translated string at the call
 /// site (see `feedback_meditate_i18n_typed_keys.md`).
 pub fn bell_title_key(bell: &IntervalBell) -> BellTitleKey {
+    let some = |t: BellTime| (t.secs > 0).then_some(t);
     match bell.kind {
-        IntervalBellKind::Interval => {
-            if bell.jitter_pct == 0 {
-                BellTitleKey::EveryNMin { minutes: bell.minutes }
-            } else {
-                BellTitleKey::EveryNMinWithJitter {
-                    minutes: bell.minutes,
-                    jitter_pct: bell.jitter_pct,
-                }
-            }
-        }
-        IntervalBellKind::FixedFromStart => BellTitleKey::AtNMin { minutes: bell.minutes },
-        IntervalBellKind::FixedFromEnd => BellTitleKey::NMinBeforeEnd { minutes: bell.minutes },
+        IntervalBellKind::Interval => BellTitleKey::Every {
+            time: bell.time,
+            jitter: some(ringing_jitter(bell.time, bell.jitter)),
+            step: some(bell.step),
+        },
+        IntervalBellKind::FixedFromStart => BellTitleKey::At { time: bell.time },
+        IntervalBellKind::FixedFromEnd => BellTitleKey::BeforeEnd { time: bell.time },
     }
+}
+
+/// The unit an interval bell's time, jitter or step was set in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TimeUnit {
+    Sec,
+    Min,
+}
+
+impl TimeUnit {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            TimeUnit::Sec => "s",
+            TimeUnit::Min => "min",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "s" => Some(TimeUnit::Sec),
+            "min" => Some(TimeUnit::Min),
+            _ => None,
+        }
+    }
+    fn secs(self) -> u32 {
+        match self {
+            TimeUnit::Sec => 1,
+            TimeUnit::Min => 60,
+        }
+    }
+}
+
+/// A bell time as the user set it: seconds, and the unit it shows in.
+/// In `Min` it is always a whole number of minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BellTime {
+    pub secs: u32,
+    pub unit: TimeUnit,
+}
+
+impl BellTime {
+    pub const ZERO: Self = Self { secs: 0, unit: TimeUnit::Sec };
+
+    /// `number` in `unit`, e.g. `new(5, Min)` is 300 s shown as 5 min.
+    pub fn new(number: u32, unit: TimeUnit) -> Self {
+        Self { secs: number.saturating_mul(unit.secs()), unit }
+    }
+
+    /// The number shown next to the unit.
+    pub fn number(self) -> u32 {
+        self.secs / self.unit.secs()
+    }
+
+    /// Whole minutes show in min, anything else in s.
+    fn from_secs(secs: u32) -> Self {
+        let unit = if secs > 0 && secs % 60 == 0 { TimeUnit::Min } else { TimeUnit::Sec };
+        Self { secs, unit }
+    }
+}
+
+/// Which of a bell's three times a number belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BellTimeField {
+    Time,
+    Jitter,
+    Step,
+}
+
+/// The numbers a bell editor accepts for `field` in `unit`:
+/// time 5 s to 120 min, jitter 0 to 60 min (it rings with at most
+/// half the time), step 0 to 60 min.
+pub fn bell_number_range(field: BellTimeField, unit: TimeUnit) -> (u32, u32) {
+    match (field, unit) {
+        (BellTimeField::Time, TimeUnit::Sec) => (5, 7200),
+        (BellTimeField::Time, TimeUnit::Min) => (1, 120),
+        (BellTimeField::Jitter | BellTimeField::Step, TimeUnit::Sec) => (0, 3600),
+        (BellTimeField::Jitter | BellTimeField::Step, TimeUnit::Min) => (0, 60),
+    }
+}
+
+/// `number` in `unit`, clamped to what the editor accepts for `field`.
+pub fn clamp_bell_time(field: BellTimeField, number: u32, unit: TimeUnit) -> BellTime {
+    let (lo, hi) = bell_number_range(field, unit);
+    BellTime::new(number.clamp(lo, hi), unit)
+}
+
+/// The jitter a bell rings with: at most half its time.
+fn ringing_jitter(time: BellTime, jitter: BellTime) -> BellTime {
+    if jitter.secs <= time.secs / 2 {
+        return jitter;
+    }
+    let half = time.secs / 2;
+    if jitter.unit == TimeUnit::Min && half % 60 == 0 {
+        BellTime { secs: half, unit: TimeUnit::Min }
+    } else {
+        BellTime { secs: half, unit: TimeUnit::Sec }
+    }
+}
+
+/// The jitter and step a bell of `kind` keeps: only a repeating bell
+/// has them.
+pub fn bell_kind_offsets(kind: IntervalBellKind, jitter: BellTime, step: BellTime) -> (BellTime, BellTime) {
+    if kind == IntervalBellKind::Interval {
+        (jitter, step)
+    } else {
+        (BellTime::ZERO, BellTime::ZERO)
+    }
+}
+
+/// Gap number `gaps` (0 for the first) of a bell every `base_secs`
+/// growing by `step_secs`.
+fn interval_gap_secs(base_secs: u32, step_secs: u32, gaps: u32) -> u64 {
+    u64::from(base_secs) + u64::from(step_secs) * u64::from(gaps)
+}
+
+/// The whole minutes a version before seconds reads for `time`:
+/// rounded half up, at least 1.
+pub fn legacy_minutes(time: BellTime) -> u32 {
+    ((time.secs + 30) / 60).max(1)
+}
+
+/// The percent jitter a version before seconds reads: rounded half
+/// up from the real seconds, at most its 50 % cap.
+pub fn legacy_jitter_pct(time: BellTime, jitter: BellTime) -> u32 {
+    if time.secs == 0 {
+        return 0;
+    }
+    let pct = (f64::from(jitter.secs) * 100.0 / f64::from(time.secs)).round() as u32;
+    pct.min(50)
+}
+
+/// A bell's time, jitter and step from its stored fields. `stored` is
+/// the seconds fields when present. They are used only while
+/// `minutes` and `jitter_pct` still match them; otherwise (a bell from
+/// before seconds, or one an older version changed since) the times
+/// come from `minutes` and `jitter_pct`, with no step.
+pub fn resolve_bell_times(
+    minutes: u32,
+    jitter_pct: u32,
+    stored: Option<(BellTime, BellTime, BellTime)>,
+) -> (BellTime, BellTime, BellTime) {
+    if let Some((time, jitter, step)) = stored {
+        if legacy_minutes(time) == minutes && legacy_jitter_pct(time, jitter) == jitter_pct {
+            return (time, jitter, step);
+        }
+    }
+    let time = BellTime::new(minutes, TimeUnit::Min);
+    let jitter_secs = (f64::from(time.secs) * f64::from(jitter_pct) / 100.0).round() as u32;
+    (time, BellTime::from_secs(jitter_secs), BellTime::ZERO)
 }
 
 /// A name looked up in a bell-sound or vibration-pattern library.
@@ -687,29 +838,11 @@ pub fn box_breath_cues_from_db(db: &Database) -> BoxBreathCueConfig {
 
 // ── Bell editor invariants ──────────────────────────────────────────
 
-/// Minimum minutes for an Interval / Fixed-from-start / Fixed-from-
-/// end bell. Below 1 the schedule would either never fire (Interval
-/// 0 → divide by zero on jitter) or fire instantly at start
-/// (Fixed-from-start 0).
-pub const BELL_MINUTES_MIN: u32 = 1;
-
-/// Upper bound for the bell-minutes SpinRow. Two hours is plenty
-/// for the longest meditation in any reasonable session.
-pub const BELL_MINUTES_MAX: u32 = 120;
-
-/// Lower bound for the bell-jitter SpinRow (0 = exact timing).
-pub const BELL_JITTER_PCT_MIN: u32 = 0;
-
-/// Upper bound for the bell-jitter SpinRow. 50% means each
-/// Interval bell's next ring can land in [0.5×base, 1.5×base].
-pub const BELL_JITTER_PCT_MAX: u32 = 50;
-
 /// Defaults for a freshly-created interval bell. Used by every
 /// shell's "Create new bell" affordance so an Android user adding
 /// a bell gets the same starting point a gtk user does.
 pub const DEFAULT_NEW_BELL_KIND: IntervalBellKind = IntervalBellKind::Interval;
-pub const DEFAULT_NEW_BELL_MINUTES: u32 = 5;
-pub const DEFAULT_NEW_BELL_JITTER_PCT: u32 = 0;
+pub const DEFAULT_NEW_BELL_TIME: BellTime = BellTime { secs: 300, unit: TimeUnit::Min };
 pub const DEFAULT_NEW_BELL_SIGNAL_MODE: SignalMode = SignalMode::Sound;
 
 /// Whether a bell of `kind` is inert in a stopwatch session.
@@ -753,23 +886,26 @@ pub(crate) fn build_active_bells(
             IntervalBellKind::Interval => {
                 let (r, next) = xorshift64(state);
                 state = next;
+                let jitter_secs = ringing_jitter(row.time, row.jitter).secs;
                 let next_ring =
-                    next_interval_ring_secs(0, row.minutes, row.jitter_pct, r);
+                    next_interval_ring_secs(0, u64::from(row.time.secs), jitter_secs, r);
                 BellSchedule::Interval {
-                    base_min: row.minutes,
-                    jitter_pct: row.jitter_pct,
+                    base_secs: row.time.secs,
+                    jitter_secs,
+                    step_secs: row.step.secs,
+                    gaps: 1,
                     next_ring_secs: next_ring,
                 }
             }
             IntervalBellKind::FixedFromStart => {
-                match fixed_from_start_target_secs(row.minutes, total_target_secs) {
+                match fixed_from_start_target_secs(row.time.secs, total_target_secs) {
                     Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
                     None => continue,
                 }
             }
             IntervalBellKind::FixedFromEnd => {
                 let Some(total) = total_target_secs else { continue; };
-                match fixed_from_end_target_secs(row.minutes, total) {
+                match fixed_from_end_target_secs(row.time.secs, total) {
                     Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
                     None => continue,
                 }
@@ -825,12 +961,19 @@ mod tests {
         }
     }
 
+    /// An interval bell every `base_min` minutes ± `jitter_pct` % of it.
     fn interval_bell(base_min: u32, jitter_pct: u32, next_ring_secs: u64) -> ActiveBell {
         ActiveBell {
             sound_uuid: "sound-uuid".into(),
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
-            schedule: BellSchedule::Interval { base_min, jitter_pct, next_ring_secs },
+            schedule: BellSchedule::Interval {
+                base_secs: base_min * 60,
+                jitter_secs: base_min * 60 * jitter_pct / 100,
+                step_secs: 0,
+                gaps: 1,
+                next_ring_secs,
+            },
             volume: Default::default(),
         }
     }
@@ -964,8 +1107,9 @@ mod tests {
             id: 0,
             uuid: "row".into(),
             kind,
-            minutes,
-            jitter_pct,
+            time: BellTime::new(minutes, TimeUnit::Min),
+            jitter: BellTime::from_secs(minutes * 60 * jitter_pct / 100),
+            step: BellTime::ZERO,
             sound_uuid: "s".into(),
             vibration_pattern_uuid: "p".into(),
             signal_mode: SignalMode::Sound,
@@ -978,7 +1122,10 @@ mod tests {
     #[test]
     fn bell_title_key_interval_no_jitter() {
         let key = bell_title_key(&interval_row(IntervalBellKind::Interval, 5, 0));
-        assert_eq!(key, BellTitleKey::EveryNMin { minutes: 5 });
+        assert_eq!(
+            key,
+            BellTitleKey::Every { time: BellTime::new(5, TimeUnit::Min), jitter: None, step: None }
+        );
     }
 
     #[test]
@@ -986,20 +1133,24 @@ mod tests {
         let key = bell_title_key(&interval_row(IntervalBellKind::Interval, 10, 20));
         assert_eq!(
             key,
-            BellTitleKey::EveryNMinWithJitter { minutes: 10, jitter_pct: 20 }
+            BellTitleKey::Every {
+                time: BellTime::new(10, TimeUnit::Min),
+                jitter: Some(BellTime::new(2, TimeUnit::Min)),
+                step: None,
+            }
         );
     }
 
     #[test]
     fn bell_title_key_fixed_from_start() {
         let key = bell_title_key(&interval_row(IntervalBellKind::FixedFromStart, 7, 0));
-        assert_eq!(key, BellTitleKey::AtNMin { minutes: 7 });
+        assert_eq!(key, BellTitleKey::At { time: BellTime::new(7, TimeUnit::Min) });
     }
 
     #[test]
     fn bell_title_key_fixed_from_end() {
         let key = bell_title_key(&interval_row(IntervalBellKind::FixedFromEnd, 3, 0));
-        assert_eq!(key, BellTitleKey::NMinBeforeEnd { minutes: 3 });
+        assert_eq!(key, BellTitleKey::BeforeEnd { time: BellTime::new(3, TimeUnit::Min) });
     }
 
     #[test]
@@ -1143,8 +1294,9 @@ mod tests {
             id: 0,
             uuid: "row-uuid".into(),
             kind,
-            minutes,
-            jitter_pct,
+            time: BellTime::new(minutes, TimeUnit::Min),
+            jitter: BellTime::from_secs(minutes * 60 * jitter_pct / 100),
+            step: BellTime::ZERO,
             sound_uuid: "row-sound".into(),
             vibration_pattern_uuid: "row-pattern".into(),
             signal_mode: SignalMode::Sound,
@@ -1164,7 +1316,7 @@ mod tests {
         assert_eq!(bells.len(), 1);
         assert!(matches!(
             bells[0].schedule,
-            BellSchedule::Interval { base_min: 10, .. }
+            BellSchedule::Interval { base_secs: 600, .. }
         ));
     }
 
@@ -1371,7 +1523,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         for kind in [IntervalBellKind::Interval, IntervalBellKind::FixedFromEnd] {
             db.insert_interval_bell(
-                kind, 2, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+                kind, BellTime::new(2, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
             )
             .unwrap();
         }
@@ -1383,7 +1535,7 @@ mod tests {
     fn the_bell_count_skips_disabled_bells() {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(
-            IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            IntervalBellKind::Interval, BellTime::new(5, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
         )
         .unwrap();
         let row = db.list_interval_bells().unwrap().remove(0);
@@ -1492,7 +1644,7 @@ mod tests {
         db.set_setting("interval_bells_active", "true").unwrap();
         for _ in 0..2 {
             db.insert_interval_bell(
-                IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID,
+                IntervalBellKind::Interval, BellTime::new(5, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID,
                 BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
             )
             .unwrap();
@@ -1537,7 +1689,7 @@ mod tests {
         db.set_setting("starting_bell_active", "true").unwrap();
         for kind in EVERY_KIND {
             db.insert_interval_bell(
-                kind, 1, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+                kind, BellTime::new(1, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
             )
             .unwrap();
         }
@@ -1681,36 +1833,180 @@ mod tests {
         }
     }
 
+    // ── Times in seconds, jitter as a time, step ──────────────────
+
+    fn timed_row(kind: IntervalBellKind, time: BellTime, jitter: BellTime, step: BellTime) -> IntervalBell {
+        IntervalBell { time, jitter, step, ..row(kind, 1, 0, true) }
+    }
+
+    fn next_ring(bell: &ActiveBell) -> u64 {
+        match bell.schedule {
+            BellSchedule::Interval { next_ring_secs, .. } => next_ring_secs,
+            BellSchedule::Fixed { .. } => panic!("not an interval bell"),
+        }
+    }
+
+    #[test]
+    fn a_bell_set_in_seconds_rings_at_that_second() {
+        let s = |n| BellTime::new(n, TimeUnit::Sec);
+        let rows = vec![
+            timed_row(IntervalBellKind::FixedFromStart, s(90), BellTime::ZERO, BellTime::ZERO),
+            timed_row(IntervalBellKind::FixedFromEnd, s(30), BellTime::ZERO, BellTime::ZERO),
+        ];
+        let (bells, _) = build_active_bells(&rows, Some(600), DisplayMode::Countdown, 42);
+        let targets: Vec<_> = bells
+            .iter()
+            .map(|b| match b.schedule {
+                BellSchedule::Fixed { target_secs, .. } => target_secs,
+                BellSchedule::Interval { .. } => panic!("fixed bells only"),
+            })
+            .collect();
+        assert_eq!(targets, [90, 570]);
+    }
+
+    #[test]
+    fn a_jitter_in_seconds_bounds_each_gap() {
+        let row = timed_row(
+            IntervalBellKind::Interval,
+            BellTime::new(7, TimeUnit::Min),
+            BellTime::new(1, TimeUnit::Min),
+            BellTime::ZERO,
+        );
+        for (draw, gap) in [(0.0, 360), (0.999_999, 480)] {
+            let (mut bells, _) = build_active_bells(std::slice::from_ref(&row), None, DisplayMode::Stopwatch, 7);
+            let first = next_ring(&bells[0]);
+            assert!((360..=480).contains(&first), "first ring at {first}");
+            let mut rng = CountedRng::new(draw);
+            assert!(bells[0].tick(first, &mut rng.closure()));
+            assert_eq!(next_ring(&bells[0]) - first, gap, "draw {draw}");
+        }
+    }
+
+    #[test]
+    fn a_jitter_is_capped_at_half_the_time() {
+        let row = timed_row(
+            IntervalBellKind::Interval,
+            BellTime::new(60, TimeUnit::Sec),
+            BellTime::new(45, TimeUnit::Sec),
+            BellTime::ZERO,
+        );
+        for (draw, gap) in [(0.0, 30), (0.999_999, 90)] {
+            let (mut bells, _) = build_active_bells(std::slice::from_ref(&row), None, DisplayMode::Stopwatch, 7);
+            let first = next_ring(&bells[0]);
+            let mut rng = CountedRng::new(draw);
+            assert!(bells[0].tick(first, &mut rng.closure()));
+            assert_eq!(next_ring(&bells[0]) - first, gap, "draw {draw}");
+        }
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(
+            IntervalBellKind::Interval, row.time, row.jitter, row.step,
+            BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+        assert_eq!(db.list_interval_bells().unwrap()[0].jitter, BellTime::new(45, TimeUnit::Sec));
+    }
+
+    fn every_60_s_growing_by_5() -> Vec<ActiveBell> {
+        let row = timed_row(
+            IntervalBellKind::Interval,
+            BellTime::new(60, TimeUnit::Sec),
+            BellTime::ZERO,
+            BellTime::new(5, TimeUnit::Sec),
+        );
+        build_active_bells(&[row], None, DisplayMode::Stopwatch, 7).0
+    }
+
+    #[test]
+    fn a_step_grows_each_gap() {
+        let mut bells = every_60_s_growing_by_5();
+        let mut rings = vec![next_ring(&bells[0])];
+        let mut rng = CountedRng::new(0.5);
+        for _ in 0..3 {
+            let due = next_ring(&bells[0]);
+            assert!(bells[0].tick(due, &mut rng.closure()));
+            rings.push(next_ring(&bells[0]));
+        }
+        assert_eq!(rings, [60, 125, 195, 270]);
+    }
+
+    #[test]
+    fn a_step_survives_a_time_jump() {
+        let mut bells = every_60_s_growing_by_5();
+        let mut rng = CountedRng::new(0.5);
+        assert!(!bells[0].tick(59, &mut rng.closure()));
+        assert!(bells[0].tick(200, &mut rng.closure()));
+        assert_eq!(next_ring(&bells[0]), 270);
+        assert!(!bells[0].tick(269, &mut rng.closure()));
+        assert!(bells[0].tick(270, &mut rng.closure()));
+    }
+
+    #[test]
+    fn a_fixed_bell_keeps_no_jitter_or_step() {
+        let (j, st) = (BellTime::new(30, TimeUnit::Sec), BellTime::new(5, TimeUnit::Sec));
+        assert_eq!(bell_kind_offsets(IntervalBellKind::Interval, j, st), (j, st));
+        for kind in [IntervalBellKind::FixedFromStart, IntervalBellKind::FixedFromEnd] {
+            assert_eq!(bell_kind_offsets(kind, j, st), (BellTime::ZERO, BellTime::ZERO));
+        }
+    }
+
+    #[test]
+    fn the_title_key_carries_each_time_with_its_unit() {
+        let row = timed_row(
+            IntervalBellKind::Interval,
+            BellTime::new(120, TimeUnit::Sec),
+            BellTime::new(1, TimeUnit::Min),
+            BellTime::new(5, TimeUnit::Sec),
+        );
+        // A jitter over half the time shows as it rings.
+        let over = IntervalBell { jitter: BellTime::new(3, TimeUnit::Min), ..row.clone() };
+        assert_eq!(
+            bell_title_key(&row),
+            BellTitleKey::Every {
+                time: BellTime::new(120, TimeUnit::Sec),
+                jitter: Some(BellTime::new(1, TimeUnit::Min)),
+                step: Some(BellTime::new(5, TimeUnit::Sec)),
+            }
+        );
+        assert_eq!(
+            bell_title_key(&over),
+            BellTitleKey::Every {
+                time: BellTime::new(120, TimeUnit::Sec),
+                jitter: Some(BellTime::new(1, TimeUnit::Min)),
+                step: Some(BellTime::new(5, TimeUnit::Sec)),
+            }
+        );
+    }
+
     // ── next_interval_ring_secs ────────────────────────────────────
 
     #[test]
     fn next_interval_ring_with_zero_jitter_is_exactly_base_minutes() {
-        // No jitter → next ring is last_ring + base_min*60 regardless
+        // No jitter → next ring is last_ring + the gap regardless
         // of random_unit. random_unit gets ignored entirely.
-        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.0), 300);
-        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.5), 300);
-        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.999), 300);
-        assert_eq!(next_interval_ring_secs(300, 5, 0, 0.5), 600);
+        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.0), 300);
+        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.5), 300);
+        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.999), 300);
+        assert_eq!(next_interval_ring_secs(300, 300, 0, 0.5), 600);
     }
 
     #[test]
     fn next_interval_ring_with_random_unit_at_centre_is_exactly_base() {
-        assert_eq!(next_interval_ring_secs(0, 9, 30, 0.5), 540);
-        assert_eq!(next_interval_ring_secs(540, 9, 30, 0.5), 1080);
+        assert_eq!(next_interval_ring_secs(0, 540, 162, 0.5), 540);
+        assert_eq!(next_interval_ring_secs(540, 540, 162, 0.5), 1080);
     }
 
     #[test]
     fn next_interval_ring_random_unit_at_zero_lands_at_lower_bound() {
         // random_unit=0.0 → -span offset from base. For base=9 ±30%,
         // span = 540 * 0.30 = 162, so 540 - 162 = 378.
-        assert_eq!(next_interval_ring_secs(0, 9, 30, 0.0), 378);
+        assert_eq!(next_interval_ring_secs(0, 540, 162, 0.0), 378);
     }
 
     #[test]
     fn next_interval_ring_random_unit_just_below_one_lands_near_upper_bound() {
         // random_unit just below 1.0 → just below +span. For base=9 ±30%,
         // upper bound is 540 + 162 = 702.
-        let v = next_interval_ring_secs(0, 9, 30, 0.9999);
+        let v = next_interval_ring_secs(0, 540, 162, 0.9999);
         assert!((700..=702).contains(&v), "got {v}");
     }
 
@@ -1723,7 +2019,7 @@ mod tests {
         let hi = (base as f64 + span).round() as u64;
         for i in 0..=10 {
             let u = f64::from(i) / 10.0;
-            let v = next_interval_ring_secs(0, 9, jitter_pct, u);
+            let v = next_interval_ring_secs(0, base, 162, u);
             assert!(v >= lo && v <= hi,
                 "u={u} produced {v} outside [{lo}, {hi}]");
         }
@@ -1741,12 +2037,12 @@ mod tests {
 
     #[test]
     fn fixed_from_start_returns_offset_when_inside_target() {
-        assert_eq!(fixed_from_start_target_secs(10, Some(1800)), Some(600));
+        assert_eq!(fixed_from_start_target_secs(600, Some(1800)), Some(600));
     }
 
     #[test]
     fn fixed_from_start_returns_offset_in_stopwatch_mode() {
-        assert_eq!(fixed_from_start_target_secs(10, None), Some(600));
+        assert_eq!(fixed_from_start_target_secs(600, None), Some(600));
     }
 
     #[test]
@@ -1757,15 +2053,15 @@ mod tests {
 
     #[test]
     fn fixed_from_start_is_none_at_or_beyond_target() {
-        assert_eq!(fixed_from_start_target_secs(30, Some(1800)), None);
-        assert_eq!(fixed_from_start_target_secs(45, Some(1800)), None);
+        assert_eq!(fixed_from_start_target_secs(1800, Some(1800)), None);
+        assert_eq!(fixed_from_start_target_secs(2700, Some(1800)), None);
     }
 
     // ── fixed_from_end_target_secs ────────────────────────────────
 
     #[test]
     fn fixed_from_end_returns_target_minus_offset() {
-        assert_eq!(fixed_from_end_target_secs(5, 1800), Some(1500));
+        assert_eq!(fixed_from_end_target_secs(300, 1800), Some(1500));
     }
 
     #[test]
@@ -1775,8 +2071,8 @@ mod tests {
 
     #[test]
     fn fixed_from_end_is_none_at_or_beyond_total() {
-        assert_eq!(fixed_from_end_target_secs(30, 1800), None);
-        assert_eq!(fixed_from_end_target_secs(45, 1800), None);
+        assert_eq!(fixed_from_end_target_secs(1800, 1800), None);
+        assert_eq!(fixed_from_end_target_secs(2700, 1800), None);
     }
 
     // ── xorshift64 ───────────────────────────────────────────────

@@ -3859,13 +3859,16 @@ fn refresh_bell_rows(ui: &MainWindow) {
     // Interval-bell editor ranges come from core (GTK's SpinRow
     // adjustments use the same constants).
     {
-        use meditate_core::bells::{
-            BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN, BELL_MINUTES_MAX, BELL_MINUTES_MIN,
+        use meditate_core::bells::{bell_number_range, BellTimeField, TimeUnit};
+        let range = |field| {
+            let (s_lo, s_hi) = bell_number_range(field, TimeUnit::Sec);
+            let (m_lo, m_hi) = bell_number_range(field, TimeUnit::Min);
+            let range: Vec<i32> = [s_lo, s_hi, m_lo, m_hi].iter().map(|&n| n as i32).collect();
+            slint::ModelRc::new(slint::VecModel::from(range))
         };
-        ui.set_ie_minutes_min(BELL_MINUTES_MIN as i32);
-        ui.set_ie_minutes_max(BELL_MINUTES_MAX as i32);
-        ui.set_ie_jitter_min(BELL_JITTER_PCT_MIN as i32);
-        ui.set_ie_jitter_max(BELL_JITTER_PCT_MAX as i32);
+        ui.set_ie_time_range(range(BellTimeField::Time));
+        // Jitter and step share one range.
+        ui.set_ie_offset_range(range(BellTimeField::Step));
     }
 
     // Interval Bells enable (B-5c-1) + count subtitle (B-5c-2).
@@ -4045,6 +4048,24 @@ fn interval_bells_summary(
     }
 }
 
+/// Load a bell's three times into the interval editor.
+fn set_ie_times(
+    ui: &MainWindow,
+    time: meditate_core::bells::BellTime,
+    jitter: meditate_core::bells::BellTime,
+    step: meditate_core::bells::BellTime,
+) {
+    let (n, unit) = app::bell_time_to_editor(time);
+    ui.set_ie_time(n);
+    ui.set_ie_time_unit(unit);
+    let (n, unit) = app::bell_time_to_editor(jitter);
+    ui.set_ie_jitter(n);
+    ui.set_ie_jitter_unit(unit);
+    let (n, unit) = app::bell_time_to_editor(step);
+    ui.set_ie_step(n);
+    ui.set_ie_step_unit(unit);
+}
+
 /// Render an interval bell's summary title through the Tr
 /// catalogue. The bucket decision lives in core
 /// (`meditate_core::bells::bell_title_key`); GTK uses "±" but
@@ -4055,26 +4076,32 @@ fn render_bell_title(
     ui: &MainWindow,
     bell: &meditate_core::db::IntervalBell,
 ) -> String {
-    use meditate_core::bells::BellTitleKey;
+    use meditate_core::bells::{BellTitleKey, TimeUnit::Min};
     let tr = ui.global::<Tr>();
-    match meditate_core::bells::bell_title_key(bell) {
-        BellTitleKey::EveryNMin { minutes } => {
-            tr.invoke_bell_every_n_min(minutes as i32).into()
+    let key = meditate_core::bells::bell_title_key(bell);
+    let (BellTitleKey::Every { time, .. } | BellTitleKey::At { time } | BellTitleKey::BeforeEnd { time }) = key;
+    let n = time.number() as i32;
+    let mut title: String = match (key, time.unit == Min) {
+        (BellTitleKey::Every { .. }, true) => tr.invoke_bell_every_n_min(n),
+        (BellTitleKey::Every { .. }, false) => tr.invoke_bell_every_n_s(n),
+        (BellTitleKey::At { .. }, true) => tr.invoke_bell_at_n_min(n),
+        (BellTitleKey::At { .. }, false) => tr.invoke_bell_at_n_s(n),
+        (BellTitleKey::BeforeEnd { .. }, true) => tr.invoke_bell_n_min_before_end(n),
+        (BellTitleKey::BeforeEnd { .. }, false) => tr.invoke_bell_n_s_before_end(n),
+    }
+    .into();
+    let text = |t: meditate_core::bells::BellTime| -> String {
+        if t.unit == Min { tr.invoke_bell_n_min(t.number() as i32) } else { tr.invoke_bell_n_s(t.number() as i32) }.into()
+    };
+    if let BellTitleKey::Every { jitter, step, .. } = key {
+        if let Some(j) = jitter {
+            title.push_str(&format!(" +/-{}", text(j)));
         }
-        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } => {
-            tr.invoke_bell_every_n_min_jitter(
-                minutes as i32,
-                jitter_pct as i32,
-            )
-            .into()
-        }
-        BellTitleKey::AtNMin { minutes } => {
-            tr.invoke_bell_at_n_min(minutes as i32).into()
-        }
-        BellTitleKey::NMinBeforeEnd { minutes } => {
-            tr.invoke_bell_n_min_before_end(minutes as i32).into()
+        if let Some(s) = step {
+            title.push_str(&format!(", +{}", text(s)));
         }
     }
+    title
 }
 
 /// Fill the Interval Bells library list (read-only, B-5c-1).
@@ -7832,12 +7859,11 @@ fn build_ui() -> MainWindow {
                 editing_ib.borrow_mut().take();
                 // Core's new-bell defaults, as GTK uses.
                 use meditate_core::bells::{
-                    DEFAULT_NEW_BELL_JITTER_PCT, DEFAULT_NEW_BELL_KIND,
-                    DEFAULT_NEW_BELL_MINUTES, DEFAULT_NEW_BELL_SIGNAL_MODE,
+                    BellTime, DEFAULT_NEW_BELL_KIND, DEFAULT_NEW_BELL_SIGNAL_MODE,
+                    DEFAULT_NEW_BELL_TIME,
                 };
                 ui.set_ie_kind(app::bell_kind_index(DEFAULT_NEW_BELL_KIND));
-                ui.set_ie_minutes(DEFAULT_NEW_BELL_MINUTES as i32);
-                ui.set_ie_jitter(DEFAULT_NEW_BELL_JITTER_PCT as i32);
+                set_ie_times(&ui, DEFAULT_NEW_BELL_TIME, BellTime::ZERO, BellTime::ZERO);
                 ui.set_ie_sound_uuid(
                     meditate_core::seeds::BUNDLED_BOWL_UUID.into(),
                 );
@@ -7879,8 +7905,7 @@ fn build_ui() -> MainWindow {
                 };
                 let Some(bell) = found else { return; };
                 ui.set_ie_kind(app::bell_kind_index(bell.kind));
-                ui.set_ie_minutes(bell.minutes as i32);
-                ui.set_ie_jitter(bell.jitter_pct as i32);
+                set_ie_times(&ui, bell.time, bell.jitter, bell.step);
                 let su = bell.sound_uuid.to_string();
                 ui.set_ie_sound_name(bell_sound_name(&ui, &su).into());
                 ui.set_ie_sound_uuid(su.into());
@@ -7963,17 +7988,15 @@ fn build_ui() -> MainWindow {
         let editing_ib = editing_ib.clone();
         ui.on_interval_editor_save(move || {
             {
-                use meditate_core::db::IntervalBellKind;
                 let Some(ui) = weak.upgrade() else { return; };
                 let kind = app::bell_kind_from_index(ui.get_ie_kind());
-                let minutes = app::clamp_bell_minutes(ui.get_ie_minutes());
-                // Jitter is only meaningful for the Interval
-                // kind (mirrors GTK gating it on kind).
-                let jitter = if kind == IntervalBellKind::Interval {
-                    app::clamp_bell_jitter(ui.get_ie_jitter())
-                } else {
-                    0
-                };
+                use meditate_core::bells::BellTimeField;
+                let time = app::bell_time_from_editor(BellTimeField::Time, ui.get_ie_time(), ui.get_ie_time_unit());
+                let (jitter, step) = meditate_core::bells::bell_kind_offsets(
+                    kind,
+                    app::bell_time_from_editor(BellTimeField::Jitter, ui.get_ie_jitter(), ui.get_ie_jitter_unit()),
+                    app::bell_time_from_editor(BellTimeField::Step, ui.get_ie_step(), ui.get_ie_step_unit()),
+                );
                 let sound = ui.get_ie_sound_uuid().to_string();
                 let signal_mode =
                     signal_mode_from_chip_index(ui.get_ie_signal_mode());
@@ -7990,8 +8013,9 @@ fn build_ui() -> MainWindow {
                             // every editable field incl.
                             // the B-2c Type + pattern.
                             bell.kind = kind;
-                            bell.minutes = minutes;
-                            bell.jitter_pct = jitter;
+                            bell.time = time;
+                            bell.jitter = jitter;
+                            bell.step = step;
                             bell.sound_uuid = sound.clone().into();
                             bell.signal_mode = signal_mode;
                             bell.vibration_pattern_uuid =
@@ -8005,8 +8029,9 @@ fn build_ui() -> MainWindow {
                             // starts at the default volume.
                             db.insert_interval_bell(
                                 kind,
-                                minutes,
+                                time,
                                 jitter,
+                                step,
                                 &sound,
                                 &pattern,
                                 signal_mode,

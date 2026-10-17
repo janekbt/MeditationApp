@@ -31,6 +31,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: u32 = 2;
 const ADDED_COLUMNS: &[(&str, &str, &str, Option<&str>)] = &[
     ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
     ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
+    // Bell times in seconds, each with the unit it was set in. NULL on
+    // rows from before them: those read from minutes and jitter_pct.
+    ("interval_bells", "secs", "INTEGER", None),
+    ("interval_bells", "secs_unit", "TEXT", None),
+    ("interval_bells", "jitter_secs", "INTEGER", None),
+    ("interval_bells", "jitter_unit", "TEXT", None),
+    ("interval_bells", "step_secs", "INTEGER", None),
+    ("interval_bells", "step_unit", "TEXT", None),
     // A peer's name the older release received is still in its event.
     ("sessions", "guided_file_name", "TEXT", Some(
         "UPDATE sessions SET guided_file_name = (
@@ -125,7 +133,17 @@ pub(super) fn schema() -> String {
         -- Bell volume in percent (meditate_core::bell_volume).
         -- Added after v26.8.5; `add_missing_columns` adds it to older
         -- databases.
-        volume_pct             INTEGER NOT NULL DEFAULT {BELL_VOLUME_DEFAULT}
+        volume_pct             INTEGER NOT NULL DEFAULT {BELL_VOLUME_DEFAULT},
+        -- Time, jitter and step in seconds, each with its unit ('s' or
+        -- 'min'). Added after v26.10.1 like volume_pct; NULL reads
+        -- from minutes and jitter_pct, which are still written for
+        -- older versions (meditate_core::bells::resolve_bell_times).
+        secs                   INTEGER,
+        secs_unit              TEXT,
+        jitter_secs            INTEGER,
+        jitter_unit            TEXT,
+        step_secs              INTEGER,
+        step_unit              TEXT
     );
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

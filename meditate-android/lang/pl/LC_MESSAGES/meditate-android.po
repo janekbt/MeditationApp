@@ -109,9 +109,6 @@ msgstr "Najdłuższa sesja"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "Minuty"
-
 msgid "More"
 msgstr "Więcej"
 
@@ -337,9 +334,6 @@ msgstr "Podaj adres URL i nazwę użytkownika"
 msgid "Enter a password"
 msgstr "Podaj hasło"
 
-msgid "Every N min"
-msgstr "Co N min"
-
 msgid "Exhale"
 msgstr "Wydech"
 
@@ -396,9 +390,6 @@ msgstr "Dzwonki interwałowe"
 
 msgid "Jitter"
 msgstr "Losowość"
-
-msgid "Random shift of each ring, in percent"
-msgstr "Losowe przesunięcie każdego dzwonienia, w procentach"
 
 msgid "Keep Screen Awake"
 msgstr "Nie wygaszaj ekranu"
@@ -753,12 +744,6 @@ msgid_plural "Every {n} min"
 msgstr[0] "Co {n} min"
 msgstr[1] "Co {n} min"
 msgstr[2] "Co {n} min"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "Co {n} min +/-{0}%"
-msgstr[1] "Co {n} min +/-{0}%"
-msgstr[2] "Co {n} min +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1168,3 +1153,46 @@ msgstr "Nie można otworzyć wyboru folderu"
 
 msgid "Label not kept for next time"
 msgstr "Nie zapamiętano etykiety na następny raz"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "Co {n} s"
+msgstr[1] "Co {n} s"
+msgstr[2] "Co {n} s"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "W {n}. sekundzie"
+msgstr[1] "W {n}. sekundzie"
+msgstr[2] "W {n}. sekundzie"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "{n} s przed końcem"
+msgstr[1] "{n} s przed końcem"
+msgstr[2] "{n} s przed końcem"
+
+msgid "{0} min"
+msgstr "{0} min"
+
+msgid "{0} s"
+msgstr "{0} s"
+
+msgid "s"
+msgstr "s"
+
+msgid "Repeating"
+msgstr "Powtarzany"
+
+msgid "Random shift of each ring"
+msgstr "Losowe przesunięcie każdego dzwonka"
+
+msgid "Step"
+msgstr "Krok"
+
+msgid "Added to the gap after each ring"
+msgstr "Dodawany do odstępu po każdym dzwonku"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Czas"

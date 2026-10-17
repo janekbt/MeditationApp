@@ -322,8 +322,14 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
 {
   "uuid":                    "550e8400-e29b-41d4-a716-446655440005",
   "kind":                    "interval",
-  "minutes":                 5,
-  "jitter_pct":              0,
+  "minutes":                 2,
+  "jitter_pct":              33,
+  "secs":                    90,
+  "secs_unit":               "s",
+  "jitter_secs":             30,
+  "jitter_unit":             "s",
+  "step_secs":               0,
+  "step_unit":               "s",
   "sound_uuid":              "550e8400-e29b-41d4-a716-446655440004",
   "vibration_pattern_uuid":  "550e8400-e29b-41d4-a716-446655440006",
   "signal_mode":             "sound",
@@ -335,9 +341,22 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
 
 - `kind`: one of `"interval"`, `"fixed_from_start"`,
   `"fixed_from_end"`. Missing means `interval`.
-- `minutes`: fire cadence (interval) or offset (fixed-from-*).
-- `jitter_pct`: 0-100, jitter applied to interval cadence to
-  reduce predictability of cadence-anchored attention.
+- `secs`: fire cadence (interval) or offset (fixed-from-*), in
+  seconds. `jitter_secs`: an interval ring lands up to this many
+  seconds early or late (capped at half of `secs` when it rings).
+  `step_secs`: each interval gap is the previous one plus this.
+  Each has a `*_unit` (`secs_unit`, `jitter_unit`, `step_unit`),
+  `"s"` or `"min"`, the unit it was set in and shows in; in
+  `"min"` the value is a whole number of minutes.
+- `minutes` and `jitter_pct`: what builds before seconds read,
+  still written for them: `secs` in whole minutes rounded half up
+  (at least 1), and `jitter_secs` as a percent of `secs` rounded
+  half up (at most 50). A payload whose seconds fields are missing,
+  or no longer round to these two (a build before seconds changed
+  the bell), applies from `minutes` and `jitter_pct`, with no step.
+  So a build before seconds that edits a bell, switches it on or
+  off or applies a preset to it resets its step and rounds its
+  time to whole minutes.
 - `sound_uuid`: `bell_sounds.uuid`. Missing or `null` applies as
   the bundled singing bowl.
 - `vibration_pattern_uuid`: `vibration_patterns.uuid`. Missing or

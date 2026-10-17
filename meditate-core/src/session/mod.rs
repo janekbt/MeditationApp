@@ -1036,8 +1036,10 @@ mod tests {
             vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Interval {
-                base_min,
-                jitter_pct: 0,
+                base_secs: base_min * 60,
+                jitter_secs: 0,
+                step_secs: 0,
+                gaps: 1,
                 next_ring_secs: u64::from(base_min) * 60,
             },
             volume: Default::default(),

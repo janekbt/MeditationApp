@@ -109,9 +109,6 @@ msgstr "最长会话"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "分钟"
-
 msgid "More"
 msgstr "更多"
 
@@ -337,9 +334,6 @@ msgstr "请输入 URL 和用户名"
 msgid "Enter a password"
 msgstr "请输入密码"
 
-msgid "Every N min"
-msgstr "每 N 分钟"
-
 msgid "Exhale"
 msgstr "呼气"
 
@@ -396,9 +390,6 @@ msgstr "间隔铃"
 
 msgid "Jitter"
 msgstr "随机幅度"
-
-msgid "Random shift of each ring, in percent"
-msgstr "每次响铃的随机偏移（百分比）"
 
 msgid "Keep Screen Awake"
 msgstr "保持屏幕常亮"
@@ -731,10 +722,6 @@ msgstr[0] "已启用 {n} 个"
 msgid "Every {n} min"
 msgid_plural "Every {n} min"
 msgstr[0] "每 {n} 分钟"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "每 {n} 分钟 +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1116,3 +1103,40 @@ msgstr "无法打开文件夹选择器"
 
 msgid "Label not kept for next time"
 msgstr "未能为下次保存标签"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "每 {n} 秒"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "第 {n} 秒"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "结束前 {n} 秒"
+
+msgid "{0} min"
+msgstr "{0} 分钟"
+
+msgid "{0} s"
+msgstr "{0} 秒"
+
+msgid "s"
+msgstr "秒"
+
+msgid "Repeating"
+msgstr "重复"
+
+msgid "Random shift of each ring"
+msgstr "每次响铃的随机偏移"
+
+msgid "Step"
+msgstr "步长"
+
+msgid "Added to the gap after each ring"
+msgstr "每次响铃后加到间隔上"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "时间"

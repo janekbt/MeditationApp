@@ -109,9 +109,6 @@ msgstr "Самая длинная сессия"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "Минуты"
-
 msgid "More"
 msgstr "Больше"
 
@@ -337,9 +334,6 @@ msgstr "Введите URL и имя пользователя"
 msgid "Enter a password"
 msgstr "Введите пароль"
 
-msgid "Every N min"
-msgstr "Каждые N мин"
-
 msgid "Exhale"
 msgstr "Выдох"
 
@@ -396,9 +390,6 @@ msgstr "Интервальные колокола"
 
 msgid "Jitter"
 msgstr "Разброс"
-
-msgid "Random shift of each ring, in percent"
-msgstr "Случайный сдвиг каждого удара, в процентах"
 
 msgid "Keep Screen Awake"
 msgstr "Не гасить экран"
@@ -753,12 +744,6 @@ msgid_plural "Every {n} min"
 msgstr[0] "Каждую {n} мин"
 msgstr[1] "Каждые {n} мин"
 msgstr[2] "Каждые {n} мин"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "Каждую {n} мин +/-{0}%"
-msgstr[1] "Каждые {n} мин +/-{0}%"
-msgstr[2] "Каждые {n} мин +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1168,3 +1153,46 @@ msgstr "Не удалось открыть выбор папки"
 
 msgid "Label not kept for next time"
 msgstr "Метка не сохранена на следующий раз"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "Каждую {n} с"
+msgstr[1] "Каждые {n} с"
+msgstr[2] "Каждые {n} с"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "На {n}-й секунде"
+msgstr[1] "На {n}-й секунде"
+msgstr[2] "На {n}-й секунде"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "За {n} с до конца"
+msgstr[1] "За {n} с до конца"
+msgstr[2] "За {n} с до конца"
+
+msgid "{0} min"
+msgstr "{0} мин"
+
+msgid "{0} s"
+msgstr "{0} с"
+
+msgid "s"
+msgstr "с"
+
+msgid "Repeating"
+msgstr "Повторяющийся"
+
+msgid "Random shift of each ring"
+msgstr "Случайный сдвиг каждого удара"
+
+msgid "Step"
+msgstr "Шаг"
+
+msgid "Added to the gap after each ring"
+msgstr "Добавляется к интервалу после каждого удара"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Время"

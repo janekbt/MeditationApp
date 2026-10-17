@@ -109,9 +109,6 @@ msgstr "Langste sessie"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes"
-msgstr "Minuten"
-
 msgid "More"
 msgstr "Meer"
 
@@ -337,9 +334,6 @@ msgstr "Voer URL en gebruikersnaam in"
 msgid "Enter a password"
 msgstr "Voer een wachtwoord in"
 
-msgid "Every N min"
-msgstr "Elke N min"
-
 msgid "Exhale"
 msgstr "Uitademen"
 
@@ -396,9 +390,6 @@ msgstr "Intervalbellen"
 
 msgid "Jitter"
 msgstr "Variatie"
-
-msgid "Random shift of each ring, in percent"
-msgstr "Willekeurige verschuiving van elk signaal, in procent"
 
 msgid "Keep Screen Awake"
 msgstr "Scherm aan houden"
@@ -742,11 +733,6 @@ msgid "Every {n} min"
 msgid_plural "Every {n} min"
 msgstr[0] "Elke {n} min"
 msgstr[1] "Elke {n} min"
-
-msgid "Every {n} min +/-{0}%"
-msgid_plural "Every {n} min +/-{0}%"
-msgstr[0] "Elke {n} min +/-{0}%"
-msgstr[1] "Elke {n} min +/-{0}%"
 
 msgid "At {n} min"
 msgid_plural "At {n} min"
@@ -1142,3 +1128,43 @@ msgstr "Kan de mapkiezer niet openen"
 
 msgid "Label not kept for next time"
 msgstr "Label niet onthouden voor de volgende keer"
+
+msgid "Every {n} s"
+msgid_plural "Every {n} s"
+msgstr[0] "Elke {n} s"
+msgstr[1] "Elke {n} s"
+
+msgid "At {n} s"
+msgid_plural "At {n} s"
+msgstr[0] "Na {n} s"
+msgstr[1] "Na {n} s"
+
+msgid "{n} s before end"
+msgid_plural "{n} s before end"
+msgstr[0] "{n} s voor het einde"
+msgstr[1] "{n} s voor het einde"
+
+msgid "{0} min"
+msgstr "{0} min"
+
+msgid "{0} s"
+msgstr "{0} s"
+
+msgid "s"
+msgstr "s"
+
+msgid "Repeating"
+msgstr "Herhalend"
+
+msgid "Random shift of each ring"
+msgstr "Willekeurige verschuiving van elke slag"
+
+msgid "Step"
+msgstr "Stap"
+
+msgid "Added to the gap after each ring"
+msgstr "Na elke slag bij de tussenpoos opgeteld"
+
+msgctxt "Bell time"
+msgid "Time"
+msgstr "Tijd"

@@ -497,15 +497,16 @@ impl Database {
     pub fn insert_interval_bell(
         &self,
         kind: meditate_core::db::IntervalBellKind,
-        minutes: u32,
-        jitter_pct: u32,
+        time: meditate_core::bells::BellTime,
+        jitter: meditate_core::bells::BellTime,
+        step: meditate_core::bells::BellTime,
         sound: &str,
         vibration_pattern_uuid: &str,
         signal_mode: meditate_core::SignalMode,
     ) -> Result<i64> {
         self.inner
             .insert_interval_bell(
-                kind, minutes, jitter_pct, sound,
+                kind, time, jitter, step, sound,
                 vibration_pattern_uuid, signal_mode,
             )
             .map_err(map_core_err)
