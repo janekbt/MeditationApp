@@ -18,7 +18,8 @@ with two fixes, both proposed upstream against Slint's master:
 Everything else is unchanged; `diff -r` against the registry copy shows
 only these two fixes, plus the call to `select_word_on_long_press` in the
 long-press timer (`androidwindowadapter.rs`), which needs the core below.
-Upstream: slint-ui/slint#14205 (keyboard), #14206 (selection bar).
+Upstream: slint-ui/slint#14205 (keyboard), #14206 (selection bar), and
+the long-press call is part of #14208 (see i-slint-core).
 
 The Java helper is compiled into the APK (the crate's `build.rs` runs
 javac and d8), so a change here is a change to the shipped app: run the
