@@ -2618,6 +2618,7 @@ fn load_log_page(
 fn group_log_sessions(
     rows: &[(i64, meditate_core::db::Session)],
     label_name_by_id: &std::collections::HashMap<i64, String>,
+    label_places: &std::collections::HashMap<i64, usize>,
     guided_names: &std::collections::HashMap<String, String>,
     hidden_ids: &std::collections::HashSet<i64>,
 ) -> Vec<LogDaySectionData> {
@@ -2633,11 +2634,11 @@ fn group_log_sessions(
             .label_id
             .and_then(|id| label_name_by_id.get(&id).cloned())
             .unwrap_or_default();
-        let color_index = if label_name.is_empty() {
-            -1
-        } else {
-            meditate_core::format::label_color_class_index(&label_name) as i32
-        };
+        let color_index = s
+            .label_id
+            .filter(|_| !label_name.is_empty())
+            .and_then(|id| label_places.get(&id))
+            .map_or(-1, |p| *p as i32);
         let item = LogCardItemData {
             id: *rowid as i32,
             minutes: meditate_core::format::log_card_minutes(
@@ -2686,6 +2687,16 @@ fn load_label_name_map() -> std::collections::HashMap<i64, String> {
         .into_iter()
         .map(|l| (l.id, l.name))
         .collect()
+}
+
+/// Each label's colour place (creation order, from core), once per
+/// refresh like the label map.
+fn load_label_color_places() -> std::collections::HashMap<i64, usize> {
+    let Some(db) = lock_db() else { return Default::default(); };
+    meditate_core::db::label_color_places_from_db(&db).unwrap_or_else(|e| {
+        meditate_core::log("log.label_places", &format!("{e:?}"));
+        Default::default()
+    })
 }
 
 /// Guided-file names for the Log's file line, once per refresh like
@@ -2994,8 +3005,9 @@ fn render_log_feed(
         .map(|(id, _)| *id)
         .collect();
     let label_map = load_label_name_map();
+    let label_places = load_label_color_places();
     let guided_names = load_guided_file_names();
-    let sections = group_log_sessions(&loaded.borrow(), &label_map, &guided_names, &hidden);
+    let sections = group_log_sessions(&loaded.borrow(), &label_map, &label_places, &guided_names, &hidden);
     push_log_sections_to_ui(ui, sections);
 }
 
@@ -3700,16 +3712,25 @@ fn apply_system_insets(ui: &MainWindow) {
     }
 }
 
-/// Apply the persisted accent to MaterialPalette.schemes (P8).
+/// Apply the persisted accent to MaterialPalette.schemes (P8) and
+/// the Log's label palettes.
 /// Index 0 restores the shipped baseline verbatim; other indices
 /// regenerate the accent families over the baseline neutrals.
 /// `baseline` is the untouched shipped MaterialSchemes captured
 /// once at startup.
 fn apply_accent(ui: &MainWindow, baseline: &MaterialSchemes, idx: usize) {
-    let pal = ui.global::<MaterialPalette>();
+    let schemes = accent_schemes(baseline, idx);
+    let palette = |primary, dark| -> slint::ModelRc<slint::Color> {
+        std::rc::Rc::new(slint::VecModel::from(theme::label_palette(primary, dark).to_vec())).into()
+    };
+    ui.set_label_palette_light(palette(schemes.light.primary, false));
+    ui.set_label_palette_dark(palette(schemes.dark.primary, true));
+    ui.global::<MaterialPalette>().set_schemes(schemes);
+}
+
+fn accent_schemes(baseline: &MaterialSchemes, idx: usize) -> MaterialSchemes {
     if idx == 0 || idx >= theme::ACCENTS.len() {
-        pal.set_schemes(baseline.clone());
-        return;
+        return baseline.clone();
     }
     let hue = theme::ACCENTS[idx].1;
     let mut schemes = baseline.clone();
@@ -3747,7 +3768,7 @@ fn apply_accent(ui: &MainWindow, baseline: &MaterialSchemes, idx: usize) {
         scheme.onTertiaryFixedVariant =
             f.on_tertiary_fixed_variant;
     }
-    pal.set_schemes(schemes);
+    schemes
 }
 
 /// The live Setup mode from the two-way-bound mode chip — the

@@ -79,8 +79,8 @@ impl LogView {
 
 #[cfg(test)]
 mod tests {
-    //! The Log needs a display, which the test host lacks, so these
-    //! read the production source.
+    //! The Log needs a display, which the test host may lack, so
+    //! these read the production source (all but the stylesheet test).
     fn production(file: &str) -> String {
         let src = std::fs::read_to_string(format!("{}/src/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap();
         src[..src.find("#[cfg(test)]").unwrap_or(src.len())].to_string()
@@ -93,6 +93,31 @@ mod tests {
             .chain(src[at + 1..].find("\n    pub(super) fn "))
             .min().map_or(src.len(), |e| at + 1 + e);
         &src[at..end]
+    }
+
+    /// The only test here that needs a display: GTK parses the
+    /// stylesheet, so a colour function it can't read fails here
+    /// instead of leaving the Log's stripes uncoloured.
+    #[test]
+    fn the_label_colours_load_relative_to_the_accent() {
+        adw::init().expect("needs a display");
+        let css = std::fs::read_to_string(format!("{}/data/style.css", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        for n in 0..16 {
+            let line = css.lines().find(|l| l.starts_with(&format!("@define-color log_c{n} ")))
+                .unwrap_or_else(|| panic!("log_c{n} not defined"));
+            assert!(line.contains("@accent_color"), "{line}");
+            for rule in ["log-stripe", "log-label-chip", "log-label-dot"] {
+                assert!(css.contains(&format!(".{rule}.log-c{n} {{")), ".{rule}.log-c{n} missing");
+            }
+        }
+        let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let provider = gtk::CssProvider::new();
+        let sink = errors.clone();
+        provider.connect_parsing_error(move |_, section, err| {
+            sink.borrow_mut().push(format!("{section}: {err}"));
+        });
+        provider.load_from_string(&css);
+        assert_eq!(*errors.borrow(), Vec::<String>::new());
     }
 
     /// Filtered to "Yoga", a saved "Zen" session showed up and Load

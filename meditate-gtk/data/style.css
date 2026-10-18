@@ -218,18 +218,28 @@ button.preset-chip.preset-chip-active:hover {
     opacity: 0.45;
 }
 
-/* Per-label palette (eight HIG-palette accents, rotated through by hash of
-   the label name — see `label_color_class` in src/log/imp.rs). Colours are
-   defined once here as @log_c0..@log_c7 and referenced by stripe / chip /
-   dot rules so there's one source of truth. */
-@define-color log_c0 #3584e4;  /* blue-3 */
-@define-color log_c1 #9141ac;  /* purple-3 */
-@define-color log_c2 #2ec27e;  /* green-4 */
-@define-color log_c3 #e66100;  /* orange-4 */
-@define-color log_c4 #e5a50a;  /* yellow-5 */
-@define-color log_c5 #e01b24;  /* red-3 */
-@define-color log_c6 #986a44;  /* brown-3 */
-@define-color log_c7 #1c71d8;  /* blue-4 */
+/* Per-label palette: sixteen colours from the accent. A label's place
+   is its creation order (core `label_color_places_from_db`). 0..7 turn
+   @accent_color round the wheel in 45 degree steps; 8..15 are the same
+   ring half a step on, mixed toward the text colour (darker in light
+   mode, lighter in dark) so chip text stays readable; "/ 1" keeps it
+   opaque, as the text colour is translucent. */
+@define-color log_c0 oklch(from @accent_color l c h);
+@define-color log_c1 oklch(from @accent_color l c calc(h + 45));
+@define-color log_c2 oklch(from @accent_color l c calc(h + 90));
+@define-color log_c3 oklch(from @accent_color l c calc(h + 135));
+@define-color log_c4 oklch(from @accent_color l c calc(h + 180));
+@define-color log_c5 oklch(from @accent_color l c calc(h + 225));
+@define-color log_c6 oklch(from @accent_color l c calc(h + 270));
+@define-color log_c7 oklch(from @accent_color l c calc(h + 315));
+@define-color log_c8 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 22.5) / 1);
+@define-color log_c9 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 67.5) / 1);
+@define-color log_c10 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 112.5) / 1);
+@define-color log_c11 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 157.5) / 1);
+@define-color log_c12 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 202.5) / 1);
+@define-color log_c13 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 247.5) / 1);
+@define-color log_c14 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 292.5) / 1);
+@define-color log_c15 oklch(from color-mix(in oklab, @accent_color 65%, @window_fg_color) l c calc(h + 337.5) / 1);
 
 .log-stripe.log-c0 { background-color: @log_c0; }
 .log-stripe.log-c1 { background-color: @log_c1; }
@@ -239,6 +249,14 @@ button.preset-chip.preset-chip-active:hover {
 .log-stripe.log-c5 { background-color: @log_c5; }
 .log-stripe.log-c6 { background-color: @log_c6; }
 .log-stripe.log-c7 { background-color: @log_c7; }
+.log-stripe.log-c8 { background-color: @log_c8; }
+.log-stripe.log-c9 { background-color: @log_c9; }
+.log-stripe.log-c10 { background-color: @log_c10; }
+.log-stripe.log-c11 { background-color: @log_c11; }
+.log-stripe.log-c12 { background-color: @log_c12; }
+.log-stripe.log-c13 { background-color: @log_c13; }
+.log-stripe.log-c14 { background-color: @log_c14; }
+.log-stripe.log-c15 { background-color: @log_c15; }
 
 .log-label-chip.log-c0 { background: alpha(@log_c0, 0.14); color: @log_c0; }
 .log-label-chip.log-c1 { background: alpha(@log_c1, 0.14); color: @log_c1; }
@@ -248,6 +266,14 @@ button.preset-chip.preset-chip-active:hover {
 .log-label-chip.log-c5 { background: alpha(@log_c5, 0.14); color: @log_c5; }
 .log-label-chip.log-c6 { background: alpha(@log_c6, 0.14); color: @log_c6; }
 .log-label-chip.log-c7 { background: alpha(@log_c7, 0.14); color: @log_c7; }
+.log-label-chip.log-c8 { background: alpha(@log_c8, 0.14); color: @log_c8; }
+.log-label-chip.log-c9 { background: alpha(@log_c9, 0.14); color: @log_c9; }
+.log-label-chip.log-c10 { background: alpha(@log_c10, 0.14); color: @log_c10; }
+.log-label-chip.log-c11 { background: alpha(@log_c11, 0.14); color: @log_c11; }
+.log-label-chip.log-c12 { background: alpha(@log_c12, 0.14); color: @log_c12; }
+.log-label-chip.log-c13 { background: alpha(@log_c13, 0.14); color: @log_c13; }
+.log-label-chip.log-c14 { background: alpha(@log_c14, 0.14); color: @log_c14; }
+.log-label-chip.log-c15 { background: alpha(@log_c15, 0.14); color: @log_c15; }
 
 .log-label-dot.log-c0 { background: @log_c0; }
 .log-label-dot.log-c1 { background: @log_c1; }
@@ -257,6 +283,14 @@ button.preset-chip.preset-chip-active:hover {
 .log-label-dot.log-c5 { background: @log_c5; }
 .log-label-dot.log-c6 { background: @log_c6; }
 .log-label-dot.log-c7 { background: @log_c7; }
+.log-label-dot.log-c8 { background: @log_c8; }
+.log-label-dot.log-c9 { background: @log_c9; }
+.log-label-dot.log-c10 { background: @log_c10; }
+.log-label-dot.log-c11 { background: @log_c11; }
+.log-label-dot.log-c12 { background: @log_c12; }
+.log-label-dot.log-c13 { background: @log_c13; }
+.log-label-dot.log-c14 { background: @log_c14; }
+.log-label-dot.log-c15 { background: @log_c15; }
 
 /* ── Bottom mini-stat cards ──────────────────────────────────────── */
 .mini-stat {

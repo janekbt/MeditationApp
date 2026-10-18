@@ -83,6 +83,26 @@ pub fn list_labels_from_db(db: &Database) -> Result<Vec<Label>> {
     Ok(rows)
 }
 
+/// How many colours the Log's label palette has; places wrap after it.
+pub const LABEL_COLOR_COUNT: usize = 16;
+
+/// Each label's place (0..16) in the Log's colour palette: labels in
+/// the order they were created, the earliest `label_insert` event per
+/// uuid by (lamport_ts, device_id), so synced devices agree. Labels
+/// with no such event come last, by id.
+pub fn label_color_places_from_db(db: &Database) -> Result<std::collections::HashMap<i64, usize>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT l.id FROM labels l LEFT JOIN events e ON e.event_uuid = (
+             SELECT event_uuid FROM events
+             WHERE target_id = l.uuid AND kind = 'label_insert'
+             ORDER BY lamport_ts, device_id LIMIT 1)
+         ORDER BY e.lamport_ts IS NULL, e.lamport_ts, e.device_id, l.id",
+    )?;
+    let ids = stmt.query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids.into_iter().enumerate().map(|(rank, id)| (id, rank % LABEL_COLOR_COUNT)).collect())
+}
+
 pub fn find_label_by_name_from_db(db: &Database, name: &str) -> Result<Option<i64>> {
     let id = db
         .conn
@@ -384,6 +404,85 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event, Session, SessionMode};
+
+    fn places_by_name(db: &Database) -> Vec<(String, usize)> {
+        let places = label_color_places_from_db(db).unwrap();
+        let mut v: Vec<(String, usize)> = list_labels_from_db(db).unwrap()
+            .into_iter().map(|l| (l.name, places[&l.id])).collect();
+        v.sort_by_key(|(_, p)| *p);
+        v
+    }
+
+    #[test]
+    fn labels_take_colours_in_the_order_they_were_created() {
+        let db = Database::open_in_memory().unwrap();
+        for name in ["Morning", "Walking", "Evening"] {
+            db.insert_label(name).unwrap();
+        }
+        let before = places_by_name(&db);
+        assert_eq!(before, [("Morning".into(), 0), ("Walking".into(), 1), ("Evening".into(), 2)]);
+        db.insert_label("Body Scan").unwrap();
+        assert_eq!(places_by_name(&db)[..3], before[..]);
+        assert_eq!(places_by_name(&db)[3], ("Body Scan".into(), 3));
+        for i in 5..=17 {
+            db.insert_label(&format!("L{i}")).unwrap();
+        }
+        let places = label_color_places_from_db(&db).unwrap();
+        let seventeenth = find_label_by_name_from_db(&db, "L17").unwrap().unwrap();
+        let sixteenth = find_label_by_name_from_db(&db, "L16").unwrap().unwrap();
+        assert_eq!(places[&sixteenth], 15);
+        assert_eq!(places[&seventeenth], 0);
+    }
+
+    #[test]
+    fn a_rename_keeps_a_label_colour_and_a_delete_moves_later_ones_up() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let walking = db.insert_label("Walking").unwrap();
+        db.insert_label("Evening").unwrap();
+        db.update_label(walking, "Walk").unwrap();
+        assert_eq!(places_by_name(&db), [("Morning".into(), 0), ("Walk".into(), 1), ("Evening".into(), 2)]);
+        db.delete_label(morning).unwrap();
+        assert_eq!(places_by_name(&db), [("Walk".into(), 0), ("Evening".into(), 1)]);
+    }
+
+    #[test]
+    fn a_label_made_before_a_device_first_synced_moves_the_others_once() {
+        let laptop = Database::open_in_memory().unwrap();
+        for i in 0..3 {
+            laptop.insert_session(&Session::from_unix(1_700_000_000 + i * 3600, 600, None, None, SessionMode::Timer, None, None))
+                .unwrap();
+        }
+        laptop.insert_label("Morning").unwrap();
+        laptop.insert_label("Evening").unwrap();
+        let phone = Database::open_in_memory().unwrap();
+        phone.insert_label("Walking").unwrap();
+        let from_laptop = laptop.all_events().unwrap();
+        let from_phone = phone.all_events().unwrap();
+        laptop.replay_events(&from_phone).unwrap();
+        phone.replay_events(&from_laptop).unwrap();
+        let want: [(String, usize); 3] = [("Walking".into(), 0), ("Morning".into(), 1), ("Evening".into(), 2)];
+        assert_eq!(places_by_name(&laptop), want);
+        assert_eq!(places_by_name(&phone), want);
+    }
+
+    #[test]
+    fn synced_devices_agree_on_label_colours() {
+        let a = Database::open_in_memory().unwrap();
+        let b = Database::open_in_memory().unwrap();
+        a.insert_label("Morning").unwrap();
+        a.insert_label("Evening").unwrap();
+        b.insert_label("Walking").unwrap();
+        let from_a = a.all_events().unwrap();
+        let from_b = b.all_events().unwrap();
+        a.replay_events(&from_b).unwrap();
+        b.replay_events(&from_a).unwrap();
+        let on_a = places_by_name(&a);
+        let mut seen: Vec<usize> = on_a.iter().map(|(_, p)| *p).collect();
+        seen.sort();
+        assert_eq!(seen, [0, 1, 2]);
+        assert_eq!(on_a, places_by_name(&b));
+    }
 
     #[test]
     fn a_merge_lands_whole_or_not_at_all() {

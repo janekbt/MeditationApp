@@ -42,7 +42,7 @@ Run from the repo root. On a machine with little memory, set
 `CARGO_BUILD_JOBS=4`.
 
 ```sh
-cargo test --workspace                                   # all tests; needs GTK/libadwaita dev packages + blueprint-compiler
+cargo test --workspace                                   # all tests; needs GTK/libadwaita dev packages, blueprint-compiler and a display
 cargo test -p meditate-core -p meditate-android --lib    # without GTK packages (what CI runs)
 cargo clippy -p meditate -p meditate-core --all-targets  # must be warning-free
 cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings   # what CI runs

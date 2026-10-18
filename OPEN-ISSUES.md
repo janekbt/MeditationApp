@@ -389,10 +389,6 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 ### #182 Mindfulness bell during the day
 - Idea (tentative): a tab that rings at intervals during set hours. Prototype background scheduling first (Android exact alarms; Linux notifications or feedbackd).
 
-### #186 Log label colours ignore the accent colour
-- Where: gtk `log/imp.rs:387-400` (`label_color_class`) and the fixed `@log_c0`... colours in the stylesheet (`.log-stripe.log-cN`, line 234-); android `ui/main.slint:4438` (label stripe).
-- Idea: the stripe colours follow the system accent (GTK) and the accent the user picked (Android, `apply_accent`), for example tones of the accent instead of a fixed palette. Labels must still be told apart.
-
 ### #187 Android: a Local Folder the system hides shows as empty, without a word
 - Where: `meditate-android/kotlin/MeditateLocalFolder.kt` (`walk`, an empty children cursor counts as "ok"); `meditate-core/src/db/local_guided_files.rs` (`apply_local_scan` marks every file missing).
 - Problem: seen on the FP5 (Android 15) 2026-10-12: the system's ExternalStorageProvider failed its restricted-path check ("NoSuchFileException: /storage/emulated", "Queried directory ... is hidden") and returned no children. Meditate showed "0 files" and marked all files not found; nothing said that Android, not the folder, was the problem. A phone restart fixed it. Stars and plays were kept.

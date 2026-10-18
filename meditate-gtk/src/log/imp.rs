@@ -24,6 +24,8 @@ pub struct LogView {
     /// Guided-file uuid → name for the cards' file line; core keeps a
     /// deleted library file's last name.
     guided_names:    RefCell<std::collections::HashMap<String, String>>,
+    /// Label id → its place in the colour palette (creation order).
+    label_places:    RefCell<std::collections::HashMap<i64, usize>>,
 
     // Filter state
     pub filter_notes_only: Cell<bool>,
@@ -144,6 +146,7 @@ impl LogView {
             }
         }
         *self.labels.borrow_mut() = read.unwrap_or_default();
+        self.reload_label_places(&app);
         self.reload_guided_names(&app);
 
         // Reset pagination + DOM + section tracking.
@@ -173,6 +176,14 @@ impl LogView {
     pub fn load_more(&self) {
         let Some(app) = self.get_app() else { return; };
         self.load_page(&app);
+    }
+
+    fn reload_label_places(&self, app: &crate::application::MeditateApplication) {
+        let places = app
+            .with_db(|db| meditate_core::db::label_color_places_from_db(db.core()))
+            .and_then(|r| r.map_err(|e| meditate_core::log("log.label_places", &format!("{e:?}"))).ok())
+            .unwrap_or_default();
+        *self.label_places.borrow_mut() = places;
     }
 
     fn reload_guided_names(&self, app: &crate::application::MeditateApplication) {
@@ -252,7 +263,7 @@ impl LogView {
         // bump its counters.
         let sections = self.sections_by_key.borrow();
         let sec = sections.get(&key).expect("section populated above");
-        let card = build_card(session, label_map, guided_names);
+        let card = build_card(session, label_map, &self.label_places.borrow(), guided_names);
         card.set_visible(!self.is_pending_delete(session.id));
         sec.cards_box.append(&card);
         self.cards_by_id.borrow_mut().insert(session.id, card);
@@ -281,6 +292,7 @@ impl LogView {
             {
                 *self.labels.borrow_mut() = fresh;
             }
+            self.reload_label_places(&app);
             // Same for a guided file imported moments before the session.
             self.reload_guided_names(&app);
         }
@@ -288,7 +300,7 @@ impl LogView {
         let labels_ref = self.labels.borrow();
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
-        let card = build_card(&session, &label_map, &self.guided_names.borrow());
+        let card = build_card(&session, &label_map, &self.label_places.borrow(), &self.guided_names.borrow());
         card.set_visible(!self.is_pending_delete(session.id));
         drop(labels_ref);
 
@@ -338,6 +350,9 @@ impl LogView {
             .and_then(std::result::Result::ok)
         {
             *self.labels.borrow_mut() = fresh;
+        }
+        if let Some(app) = self.get_app() {
+            self.reload_label_places(&app);
         }
         let labels = self.labels.borrow().clone();
         // The filtered label was deleted: show everything, as Android does.
@@ -409,16 +424,16 @@ fn build_section_frame(unix_secs: i64) -> (gtk::Box, gtk::Label, gtk::Box) {
 fn build_card(
     session: &Session,
     label_map: &std::collections::HashMap<i64, &str>,
+    label_places: &std::collections::HashMap<i64, usize>,
     guided_names: &std::collections::HashMap<String, String>,
 ) -> gtk::Box {
     let label_name = session.label_id
         .and_then(|id| label_map.get(&id).copied())
         .unwrap_or("");
-    let color_cls = if label_name.is_empty() {
-        "log-c-none"
-    } else {
-        label_color_class(label_name)
-    };
+    let color_cls = session.label_id
+        .filter(|_| !label_name.is_empty())
+        .and_then(|id| label_places.get(&id))
+        .map_or("log-c-none", |p| label_color_class(*p));
 
     // Colored left stripe — 3 px wide, inset from the top + bottom so
     // the card's rounded corners stay free, matching the mockup.
@@ -619,15 +634,14 @@ fn build_label_chip(name: &str, color_cls: &str) -> gtk::Box {
     chip
 }
 
-/// Stable-per-name color class. We cycle through 8 HIG palette accents
-/// (defined in CSS as `.log-c0`..`.log-c7`). The deterministic 0..8
-/// index lives in core; the CSS-class mapping is gtk-side.
-fn label_color_class(name: &str) -> &'static str {
-    const CLASSES: &[&str] = &[
-        "log-c0", "log-c1", "log-c2", "log-c3",
-        "log-c4", "log-c5", "log-c6", "log-c7",
+/// CSS class for a label's palette place (`.log-c0`..`.log-c15`, colours
+/// from the accent in style.css). The place comes from core.
+fn label_color_class(place: usize) -> &'static str {
+    const CLASSES: [&str; meditate_core::db::LABEL_COLOR_COUNT] = [
+        "log-c0", "log-c1", "log-c2", "log-c3", "log-c4", "log-c5", "log-c6", "log-c7",
+        "log-c8", "log-c9", "log-c10", "log-c11", "log-c12", "log-c13", "log-c14", "log-c15",
     ];
-    CLASSES[meditate_core::format::label_color_class_index(name)]
+    CLASSES[place % CLASSES.len()]
 }
 
 /// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the

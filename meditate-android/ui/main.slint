@@ -21,6 +21,7 @@ import {
 // re-exported through `material.slint`; pull it from the source
 // module so the Log-filter label dropdown can be typed.
 import { MenuItem } from "../material-1.0/ui/items/menu_item.slint";
+import { Palette } from "std-widgets.slint";
 // `Date` isn't re-exported through `material.slint` (unlike its
 // sibling `Time`); import it directly from the picker module so
 // `edit-start-date` and the popup's `accepted(date)` callback can
@@ -230,10 +231,9 @@ export struct LogCardItem {
     // a deleted file's last name); empty for every other session.
     guided-name: string,
     note: string,
-    // Stable 0..7 colour-class index for the label name from
-    // `meditate_core::format::label_color_class_index`; -1 when
-    // the session has no label (Slint maps that to a dim grey
-    // stripe, mirroring GTK's `log-c-none` fallback).
+    // The label's 0..15 place in the label palettes (creation
+    // order, from core); -1 when the session has no label (Slint
+    // maps that to a dim grey stripe, mirroring GTK's `log-c-none`).
     color-index: int,
 }
 
@@ -2239,6 +2239,10 @@ export component MainWindow inherits Window {
     // `accent-swatches` are the preview circles; index 0 = the
     // baseline blue.
     in property <[color]> accent-swatches: [];
+    // The Log's sixteen label colours per mode, set by Rust with the
+    // accent (`theme::label_palette`).
+    in property <[color]> label-palette-light: [];
+    in property <[color]> label-palette-dark: [];
     in property <int> prefs-accent: 0;
     callback accent-picked(int);
     in property <string> about-version: "?";
@@ -4418,15 +4422,9 @@ export component MainWindow inherits Window {
                     // dots).
                     for item in section.items : card := Rectangle {
                         property <color> label-color:
-                            item.color-index == 0 ? #3584e4 :
-                            item.color-index == 1 ? #9141ac :
-                            item.color-index == 2 ? #2ec27e :
-                            item.color-index == 3 ? #e66100 :
-                            item.color-index == 4 ? #e5a50a :
-                            item.color-index == 5 ? #e01b24 :
-                            item.color-index == 6 ? #986a44 :
-                            item.color-index == 7 ? #1c71d8 :
-                            MaterialPalette.on-surface.with-alpha(0.15);
+                            item.color-index < 0 ? MaterialPalette.on-surface.with-alpha(0.15) :
+                            Palette.color-scheme == ColorScheme.dark ? root.label-palette-dark[item.color-index] :
+                            root.label-palette-light[item.color-index];
 
                         min-height: 84px;
                         border-radius: 12px;
@@ -4446,7 +4444,7 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalLayout {
-                            padding-left: 0px;
+                            padding-left: 6px; // stripe inset like GTK's margin_start(6)
                             padding-right: 16px;
                             padding-top: 12px;
                             padding-bottom: 12px;
@@ -4455,9 +4453,9 @@ export component MainWindow inherits Window {
 
                             // Colored label stripe — 3 px wide,
                             // colour-matched to the label name
-                            // via `label_color_class_index`
-                            // (palette mirrors GTK's
-                            // `log_c0`..`log_c7`). The dim grey
+                            // from the accent's label palette
+                            // (mirrors GTK's `log_c0`..`log_c15`).
+                            // The dim grey
                             // fallback (in `label-color` above)
                             // matches GTK's `log-c-none` style
                             // for unlabelled sessions.

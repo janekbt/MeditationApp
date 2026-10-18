@@ -151,7 +151,8 @@ build-aux/check-specs.sh                                 # every test named in a
   `libfontconfig1-dev`.
 
 - `cargo test --workspace` needs the GTK/libadwaita development packages and
-  blueprint-compiler, but not meson.
+  blueprint-compiler, but not meson. One GTK test parses the stylesheet under
+  libadwaita, so it also needs a display (Wayland or X11).
 - The GTK shell's cargo package is named **`meditate`**, not `meditate-gtk`.
 - Most of `meditate-android` is compiled only for Android, so host clippy
   doesn't see it. To lint it, run clippy for the Android target with the NDK

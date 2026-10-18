@@ -77,7 +77,7 @@ pub use local_guided_files::{
 pub use crate::bells::SignalMode;
 pub use local_changes::{LocalChangeWatch, LocalChanges};
 pub use labels::{
-    count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,
+    count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db, label_color_places_from_db, LABEL_COLOR_COUNT,
     label_session_count_from_db, list_labels_from_db, Label,
 };
 pub use presets::{

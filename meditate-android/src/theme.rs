@@ -155,9 +155,80 @@ pub fn swatch(idx: usize, baseline_primary: Color) -> Color {
     }
 }
 
+/// The Log's sixteen label colours for one mode, from that mode's
+/// primary: places 0..8 turn its hue in 45 degree steps at its own
+/// saturation and lightness; places 8..16 are turned a further 22.5
+/// degrees and moved away from the card (darker in light mode,
+/// lighter in dark mode) so label text stays readable.
+pub fn label_palette(primary: Color, dark: bool) -> [Color; 16] {
+    let (h, s, l) = to_hsl(primary);
+    let l2 = if dark { l + 0.45 * (1.0 - l) } else { l * 0.7 };
+    std::array::from_fn(|i| match i {
+        0 => primary,
+        1..8 => hsl(h + 45.0 * i as f32, s, l),
+        _ => hsl(h + 22.5 + 45.0 * (i - 8) as f32, s, l2),
+    })
+}
+
+/// Color -> HSL, h in degrees, s/l in 0..=1 (inverse of `hsl`).
+fn to_hsl(c: Color) -> (f32, f32, f32) {
+    let [r, g, b] = [c.red(), c.green(), c.blue()].map(|v| f32::from(v) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let (d, l) = (max - min, (max + min) / 2.0);
+    if d == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let h = if max == r {
+        (g - b) / d
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (60.0 * h, d / (1.0 - (2.0 * l - 1.0).abs()), l)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hue_and_lightness(c: Color) -> (f32, f32) {
+        let (r, g, b) = (c.red() as f32 / 255.0, c.green() as f32 / 255.0, c.blue() as f32 / 255.0);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let d = max - min;
+        let h = if d == 0.0 { 0.0 }
+            else if max == r { 60.0 * ((g - b) / d).rem_euclid(6.0) }
+            else if max == g { 60.0 * ((b - r) / d + 2.0) }
+            else { 60.0 * ((r - g) / d + 4.0) };
+        (h, (max + min) / 2.0)
+    }
+
+    fn assert_hue(c: Color, want: f32) {
+        let (h, _) = hue_and_lightness(c);
+        let off = (h - want).rem_euclid(360.0);
+        assert!(off.min(360.0 - off) < 3.0, "hue {h}, want {want}");
+    }
+
+    #[test]
+    fn label_colours_start_at_the_accent_and_step_round_the_wheel() {
+        let light_primary = accent_fields(140.0, false).primary;
+        let dark_primary = accent_fields(140.0, true).primary;
+        let light = label_palette(light_primary, false);
+        let dark = label_palette(dark_primary, true);
+        assert_eq!(light[0], light_primary);
+        assert_eq!(dark[0], dark_primary);
+        let hues = [140.0, 185.0, 230.0, 275.0, 320.0, 5.0, 50.0, 95.0];
+        for (k, want) in hues.iter().enumerate() {
+            for p in [&light, &dark] {
+                assert_hue(p[k], *want);
+                assert_hue(p[k + 8], want + 22.5);
+            }
+            let l = |c| hue_and_lightness(c).1;
+            assert!(l(light[k + 8]) < l(light[k]) - 0.05, "place {} not darker in light mode", k + 8);
+            assert!(l(dark[k]) > l(light[k]) + 0.05, "place {k} not lighter in dark mode");
+            assert!(l(dark[k + 8]) > l(dark[k]) + 0.03, "place {} not lighter in dark mode", k + 8);
+        }
+    }
 
     #[test]
     fn accent_light_and_dark_use_m3_tone_relationship() {
