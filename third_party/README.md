@@ -31,8 +31,8 @@ A copy of the crates.io release `i-slint-core 1.18.1` with one addition in
 selected the word, but the held finger kept the character drag mode, so
 the slightest move pulled the selection end to the finger. The function
 switches a held press to word drag mode, as a double click does. `diff -r`
-against the registry copy shows only this function. Upstream: proposed
-together with the backend call.
+against the registry copy shows only this function. Upstream:
+slint-ui/slint#14208, together with the backend call.
 
 Both crates are compiled into the APK: run the repro probe after touching
 either.
