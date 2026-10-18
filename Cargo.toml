@@ -28,8 +28,10 @@ strip = "symbols"
 [profile.dev]
 strip = "debuginfo"
 
-# Slint's Android backend with two fixes on top of the crates.io release: the
-# cursor follows moves from the keyboard (Gboard's space bar), and the text
-# selection menu sits next to the selection. See third_party/README.md.
+# Slint's Android backend and core with text field fixes on top of the
+# crates.io release: the cursor follows moves from the keyboard (Gboard's
+# space bar), the text selection menu sits next to the selection, and a
+# long-press selection extends by words. See third_party/README.md.
 [patch.crates-io]
 i-slint-backend-android-activity = { path = "third_party/i-slint-backend-android-activity" }
+i-slint-core = { path = "third_party/i-slint-core" }

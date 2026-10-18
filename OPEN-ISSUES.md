@@ -43,7 +43,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
-| [ ] | Y2. Slint long-press selection | #195 | a selection that shrinks under the finger |
+| [ ] | Y2. Slint long-press selection | #196 | a long press that selects nothing |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -341,10 +341,10 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 ## Y2. Slint long-press selection
 
-### #195 Android: after a long press selects a word, the selection end jumps to the finger
-- Where: Slint core's `TextInput` (`i-slint-core` `items/text.rs`, the pointer handling after a long press), not our code and not the Android Java helper: the FP5 log shows the selection changing on the Rust side only (16,48 -> 16,44 within 130 ms).
-- Problem: a long press selects the word, but the slightest finger movement before lifting moves the selection end to the finger, so the left end stays and the right one jumps. Android's own fields extend by whole words and ignore jitter. Found during batch Y's device test (FP5, 2026-10-18).
-- Fix: upstream in Slint core (extend by word after a long press, like Android); report it there first. Our app needs no change.
+### #196 Android: a long press on a field that has no focus yet selects nothing
+- Where: Slint's Android backend (`long_press_timeout` only acts on the focused item) and core `TextInput` (on Android it takes focus on release, `items/text.rs` Released branch). Not our code.
+- Problem: long-pressing a word in a field you haven't tapped yet selects nothing; you have to tap first. Android's own fields select the word. Found in the review of #195 (2026-10-18).
+- Fix: upstream; the long press would need to focus the pressed field first. Report it there.
 
 ## Z. Android touch targets
 
