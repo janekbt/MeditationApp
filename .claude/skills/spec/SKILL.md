@@ -45,6 +45,12 @@ it is done. A skipped step stays unticked with its reason on the line.
 
 - Read `AGENTS.md`, the living spec of every area the change touches
   (`openspec/specs/<area>/spec.md`), and the OPEN-ISSUES entries.
+- When the change touches the Android UI (`.slint` files under
+  `meditate-android/ui/` or `material-1.0/`, the Rust glue in `src/ui.rs`,
+  or the vendored Slint crates in `third_party/`), load Slint's own skill
+  before reading that code (Claude Code with the slint plugin: Skill tool,
+  `slint:slint`). It stays loaded for the build and review steps; look up
+  Slint API questions with its documentation search instead of guessing.
 - Re-check each issue against the current code: does it still happen,
   are the line numbers right? An issue that is already fixed gets a test
   that proves it and leaves the list.
@@ -96,7 +102,8 @@ Self-review before showing it:
 Then, for every change that has a change folder, give the folder to a
 fresh agent before showing it: "You are a senior Rust developer who
 must build this without talking to its author. List only the questions
-where a wrong guess would matter." Answer what the files already
+where a wrong guess would matter." For an Android UI change, tell it to
+load `slint:slint` first, as in step 1. Answer what the files already
 answer, decide the minor ones yourself (mark them as your call in
 `tasks.md`), and bring the rest to the human once.
 

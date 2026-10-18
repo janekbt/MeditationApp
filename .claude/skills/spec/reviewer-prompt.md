@@ -27,6 +27,11 @@ Read in this order, and stop early if the proposal is already wrong:
 2. The living specs the deltas touch (`openspec/specs/<area>/spec.md`).
 3. The diff, then the code around every changed line.
 
+If the diff touches the Android UI (`.slint` files, `meditate-android/src/ui.rs`
+or the vendored Slint crates in `third_party/`), load Slint's skill before
+step 3 (Claude Code: Skill tool, `slint:slint`) and check Slint API questions
+with its documentation search.
+
 Do not trust the author's notes in `tasks.md`; check the code. A stated
 reason never lowers a finding's severity. The spec is a vision: a
 reasonable person's expectation is a requirement, and a spec's silence
