@@ -49,6 +49,7 @@ cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings   # what 
 build-aux/check-specs.sh                                 # every test named in a spec exists
 ./build.sh gtk --debug                                   # Linux app
 ./build.sh android --debug                               # debug APK; needs JDK 17 (check: echo $JAVA_HOME)
+./build.sh android --debug --mcp                         # emulator APK with Slint's MCP server (BUILDING.md); never on a phone
 ```
 
 Setup, Flatpak builds, Android target clippy and troubleshooting:

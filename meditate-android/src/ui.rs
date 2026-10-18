@@ -9868,6 +9868,14 @@ fn build_ui() -> MainWindow {
 // touchscreen, so we turn them off.
 #[unsafe(no_mangle)]
 fn android_main(android_app: slint::android::AndroidApp) {
+    // `./build.sh android --debug --mcp` bakes in a port for Slint's MCP
+    // server: an APK never sees the environment it was built in. Slint
+    // reads SLINT_MCP_PORT when its Android init runs below.
+    if let Some(port) = option_env!("MEDITATE_MCP_PORT") {
+        // SAFETY: first statement of android_main, before this app starts
+        // any thread that reads the environment.
+        unsafe { std::env::set_var("SLINT_MCP_PORT", port) };
+    }
     // Publish the AndroidApp before slint::android::init consumes
     // it: the AppState transition closures reach the JNI bridges
     // through it later. `set_` (not OnceLock) because android_main

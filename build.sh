@@ -33,13 +33,19 @@ die()  { printf '\033[1;31m[build]\033[0m %s\n' "$*" >&2; exit 1; }
 
 TARGET="${1:-}"; shift || true
 MODE=release
+MCP=0
 for a in "$@"; do case "$a" in
     --debug) MODE=debug ;;
     --release) MODE=release ;;
+    --mcp) MCP=1 ;;
     *) die "unknown flag: $a" ;;
 esac; done
 [[ "$TARGET" == gtk || "$TARGET" == android ]] \
-    || die "usage: ./build.sh {gtk|android} [--debug|--release]"
+    || die "usage: ./build.sh {gtk|android} [--debug|--release] [--mcp]"
+# Slint's MCP server can read and drive the whole app, sync settings
+# included, so it only goes into emulator debug builds (BUILDING.md).
+[[ "$MCP" == 0 || ( "$TARGET" == android && "$MODE" == debug ) ]] \
+    || die "--mcp needs: ./build.sh android --debug --mcp"
 
 # ── Distro detection ─────────────────────────────────────────────────
 PM=""
@@ -173,6 +179,23 @@ build_android() {
         || die "the Android target needs rustup (distro cargo can't add cross targets) — https://rustup.rs"
     rustup target add aarch64-linux-android >/dev/null
     ram_guard
+
+    if [[ "$MCP" == 1 ]]; then
+        # x86_64 only, so the APK can't be installed on an arm64 phone.
+        rustup target add x86_64-linux-android >/dev/null
+        export ABIS=x86_64 MEDITATE_CARGO_FEATURES=slint/mcp \
+            MEDITATE_MCP_PORT=9315 SLINT_EMIT_DEBUG_INFO=1
+        # slint/mcp needs crates the committed Cargo.lock doesn't list;
+        # the build adds them, and the lock is put back afterwards.
+        # The MCP library is removed from jniLibs as well: a later Gradle
+        # build that doesn't go through build.sh (RELEASE.md) would
+        # package it.
+        LOCK_BACKUP="$(mktemp)"
+        cp Cargo.lock "$LOCK_BACKUP"
+        trap 'cp -f "$LOCK_BACKUP" Cargo.lock; rm -f "$LOCK_BACKUP";
+              rm -rf meditate-android/android/app/src/main/jniLibs' EXIT
+        log "MCP: x86_64 emulator build, server on 127.0.0.1:9315 (BUILDING.md)"
+    fi
 
     local task=assembleDebug apk=debug/app-debug.apk
     [[ "$MODE" == release ]] && { task=assembleRelease; apk=release/app-release.apk; }

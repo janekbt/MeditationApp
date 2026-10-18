@@ -80,6 +80,16 @@ export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$TARGET_DIR=/build/target -
 ABIS="${ABIS:-arm64-v8a}"
 cd "$ROOT"
 
+# MEDITATE_CARGO_FEATURES: extra Cargo features for developer builds
+# (`./build.sh android --debug --mcp`). Unset in every release and F-Droid
+# build, which then runs exactly the commands below without it.
+FEATURES=()
+[ -n "${MEDITATE_CARGO_FEATURES:-}" ] && FEATURES=(--features "$MEDITATE_CARGO_FEATURES")
+
+# Only the ABIs built now go into the APK, not a library left over from an
+# earlier build (an emulator x86_64 or MCP build).
+rm -rf "$ROOT/meditate-android/android/app/src/main/jniLibs"
+
 for ABI in $ABIS; do
     case "$ABI" in
         arm64-v8a)   TARGET=aarch64-linux-android; TC=aarch64-linux-android26 ;;
@@ -94,10 +104,10 @@ for ABI in $ABIS; do
     export "AR_$(echo "$TARGET" | tr '-' '_')=$TB/llvm-ar"
 
     if [ "$PROFILE" = "release" ]; then
-        cargo build -p meditate-android --target "$TARGET" --release
+        cargo build -p meditate-android --target "$TARGET" --release ${FEATURES[@]+"${FEATURES[@]}"}
         SO="$TARGET_DIR/$TARGET/release/libmeditate_android.so"
     else
-        cargo build -p meditate-android --target "$TARGET"
+        cargo build -p meditate-android --target "$TARGET" ${FEATURES[@]+"${FEATURES[@]}"}
         SO="$TARGET_DIR/$TARGET/debug/libmeditate_android.so"
     fi
 

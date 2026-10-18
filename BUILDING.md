@@ -177,7 +177,7 @@ The APK is built by the hand-maintained Gradle project in
 compileSdk/targetSdk 34, minSdk 26, arm64-v8a). Its `cargoNdkBuild` task runs
 `rust-build.sh`, which compiles the Rust library with plain
 `cargo build --target aarch64-linux-android` (not cargo-ndk, whose 4.x
-runner breaks slint's build script) and drops it into `jniLibs/`.
+runner breaks slint's build script), clears `jniLibs/` and drops it there.
 
 The Gradle project is written by hand because xbuild, used earlier,
 generated the manifest from a struct that could not express a
@@ -226,6 +226,36 @@ Troubleshooting:
   anything in the protected list above. It builds the commit `REF`
   (default `HEAD`), not the working tree: commit first or pass
   `REF=<hash>`. Run it on JDK 17 (`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`).
+
+### Inspecting the running app (Slint MCP, emulator only)
+
+Slint's embedded MCP server lets an MCP client such as Claude Code read the
+running app's element tree (role, label, position, size), click and drag
+elements, type and take screenshots:
+
+```sh
+./build.sh android --debug --mcp      # x86_64 emulator APK with the server
+adb -s emulator-5554 install -r meditate-android/android/app/build/outputs/apk/debug/app-debug.apk
+adb -s emulator-5554 forward tcp:9315 tcp:9315
+claude mcp add --transport http slint-app http://127.0.0.1:9315/mcp
+```
+
+or without a client, `curl -s -X POST http://127.0.0.1:9315/mcp -H
+"Content-Type: application/json" -H "Accept: application/json,
+text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`.
+
+- The server can read and drive everything in the app, the sync settings
+  included. `--mcp` therefore only builds debug APKs for x86_64, which
+  don't install on an arm64 phone. Never put one on a phone with real data.
+- `slint/mcp` needs crates the committed `Cargo.lock` doesn't list. The
+  build downloads and adds them, and `build.sh` restores the lock when it
+  exits and deletes the MCP library from `jniLibs` (every later build
+  clears `jniLibs` anyway). After a killed build, check `git status` for
+  `Cargo.lock`.
+- The server serves only the first activity of the process. After a
+  font-size or language change (Android recreates the activity), it stops
+  answering: `adb shell am force-stop io.github.janekbt.Meditate` and start
+  the app again.
 
 ## Translations
 
