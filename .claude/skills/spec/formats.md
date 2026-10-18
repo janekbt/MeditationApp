@@ -147,6 +147,8 @@ numbers if any.>
 Base: <commit hash from step 1>; suites on it: <green, or what failed>
 
 ## Loop
+- [ ] 0 Skills loaded, again after every /compact: `/ponytail ultra`;
+      `slint:slint` if the Android UI is touched (else: "no Android UI")
 - [ ] 1 Understand
 - [ ] 2 Propose (approved: <date>)
 - [ ] 3 Build
@@ -167,6 +169,8 @@ Base: <commit hash from step 1>; suites on it: <green, or what failed>
 ```
 
 Only `[x]` counts as done. Every task says how to check it is done.
+After a `/compact`, untick step 0 and load the skills again before any
+other step: a summary carries the tick, not the loaded skill.
 Testing and docs are not a final group; they belong to the task they
 prove or describe.
 

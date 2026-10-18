@@ -15,9 +15,12 @@ File formats: [formats.md](formats.md). Review brief:
 [reviewer-prompt.md](reviewer-prompt.md). Project rules, commands and
 the doc map: `AGENTS.md`.
 
-Claude Code with the ponytail plugin: run `/ponytail ultra` first (Skill
-tool, `ponytail:ponytail`, args `ultra`). It stays on for the session;
-set it again after a `/compact`.
+Step 0, before anything else and again after every `/compact` (a
+summary saying a skill was loaded is not the skill being loaded): with
+the ponytail plugin, run `/ponytail ultra` (Skill tool,
+`ponytail:ponytail`, args `ultra`); when the change touches the Android
+UI (see step 1), load `slint:slint`. It is the first line of the
+checklist in `tasks.md`; untick it after a `/compact`.
 
 ## Size first
 
