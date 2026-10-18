@@ -387,7 +387,7 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             let path = bell_sound_path(route.sound_uuid);
             // Each bell rings on its core channel's own slot, so it
             // doesn't cut off the others (GTK sound.rs).
-            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, alarm_volume::gain(route.volume));
+            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &alarm_volume::level(route.volume));
         }
         if route.signal_mode.includes_vibration() {
             if let Some(db) = lock_db() {
@@ -7707,7 +7707,7 @@ fn build_ui() -> MainWindow {
                             let path = bell_sound_path(&id);
                             // At the volume of the bell being chosen for.
                             let volume = chooser_bell_volume(&ui, bell_chooser_target.get());
-                            dur_ms = audio::play(app, &path, alarm_volume::gain(volume));
+                            dur_ms = audio::play(app, &path, &alarm_volume::level(volume));
                         }
                         // Nothing plays (its file hasn't arrived, say):
                         // no silent Stop.
@@ -9282,7 +9282,7 @@ fn build_ui() -> MainWindow {
             if ui.get_volume_previewing() == slot {
                 if let Some(app) = android_app() {
                     let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
-                    audio::set_volume(app, alarm_volume::gain(volume));
+                    audio::set_volume(app, &alarm_volume::level(volume));
                 }
             }
         }
@@ -9925,12 +9925,12 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // bridges keep targeting the destroyed activity.
     set_android_app(android_app.clone());
     open_database(&android_app);
-    // Bell volumes are absolute: measure this device's alarm range,
+    // Bell volumes are absolute: read this device's alarm steps,
     // and undo a raised alarm volume left behind if the app died
     // mid-bell.
     {
         let app = &android_app;
-        alarm_volume::set_range(audio::alarm_range_db(app));
+        alarm_volume::set_curve(audio::alarm_steps(app));
         audio::recover_alarm_volume(app);
     }
     // Sync whenever the app comes to the foreground — Android reports
@@ -10287,7 +10287,7 @@ fn play_volume_preview(
 ) {
     let Some(app) = android_app() else { return; };
     audio::stop(app);
-    let dur_ms = audio::play(app, &bell_sound_path(sound), alarm_volume::gain(volume));
+    let dur_ms = audio::play(app, &bell_sound_path(sound), &alarm_volume::level(volume));
     let generation = VOLUME_PREVIEW_GEN.with(|g| {
         g.set(g.get() + 1);
         g.get()

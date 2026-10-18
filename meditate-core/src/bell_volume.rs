@@ -10,9 +10,10 @@
 //! - Android plays bells on the alarm stream and can set that
 //!   stream's volume, so a level is absolute: `MAX` is the loudest the
 //!   device plays an alarm, `MIN` the quietest (its lowest alarm
-//!   step), whatever the user's alarm volume is. The shell raises the
-//!   stream to its top step while a bell plays and scales the bell by
-//!   [`BellVolume::absolute_gain`] over the device's [`DeviceRange`].
+//!   step), whatever the user's alarm volume is. While a bell plays
+//!   the shell sets the stream to the step [`BellVolume::alarm_level`]
+//!   picks on the device's [`AlarmCurve`] and trims the bell by that
+//!   level's gain.
 //! - The desktop can't set an absolute level without changing the
 //!   output volume of every app, so a level is relative: `MAX` is the
 //!   system volume and the bell is scaled by
@@ -32,6 +33,9 @@ pub const DEFAULT: u8 = 50;
 /// the system volume and `MIN` about a quarter — a 40 dB span was
 /// inaudible below the middle on laptop speakers.
 const RELATIVE_RANGE_DB: f64 = 20.0;
+
+/// Slack for the device's dB report, which arrives as f32.
+const DB_TOLERANCE: f64 = 1e-3;
 
 /// A valid bell volume: a multiple of `STEP` within `MIN..=MAX`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -87,12 +91,25 @@ impl BellVolume {
         self.gain_over(RELATIVE_RANGE_DB)
     }
 
-    /// Android: linear amplitude factor for a bell played with the
-    /// alarm stream at its top step, so the bell lands at this level's
-    /// share of the device's range: 1.0 at `MAX`, the quietest alarm
-    /// step's loudness at `MIN`.
-    pub fn absolute_gain(self, range: DeviceRange) -> f64 {
-        self.gain_over(range.span_db)
+    /// Android: the alarm step and player gains for this level on the
+    /// device's curve. The step goes by the slider's position, so the
+    /// slider works even where the reported curve is wrong or the
+    /// player gain is ignored; the curve can only raise it, when that
+    /// step plays quieter than the level. The gain trims the rest.
+    pub fn alarm_level(self, curve: &AlarmCurve) -> AlarmLevel {
+        let steps = (curve.db.len() - 1) as i32;
+        let top = curve.db[steps as usize];
+        let target = top - (top - curve.db[0]) * f64::from(MAX - self.0) / f64::from(MAX);
+        let by_position = (i32::from(self.0) * steps + i32::from(MAX) - 1) / i32::from(MAX);
+        let loud_enough = curve.db.iter().position(|&d| d >= target - DB_TOLERANCE);
+        let index = by_position.max(loud_enough.map_or(steps, |i| i as i32));
+        let gains = (0..=curve.first + steps)
+            .map(|s| match usize::try_from(s - curve.first) {
+                Ok(i) => 10f64.powf(((target - curve.db[i]) / 20.0).min(0.0)) as f32,
+                Err(_) => 1.0,
+            })
+            .collect();
+        AlarmLevel { step: curve.first + index, gains }
     }
 
     fn gain_over(self, span_db: f64) -> f64 {
@@ -101,37 +118,54 @@ impl BellVolume {
     }
 }
 
-/// How far the device's quietest alarm step sits below its loudest,
-/// in dB. Measured per device by the Android shell.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DeviceRange {
-    span_db: f64,
+/// The device's alarm steps and how loud each plays on the speaker,
+/// as the Android shell reports them. Step 0 mutes, so the curve
+/// starts at step 1 at the lowest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlarmCurve {
+    first: i32,
+    /// dB of `first..=first + db.len() - 1`, never falling.
+    db: Vec<f64>,
 }
 
-impl DeviceRange {
-    /// Assumed span when the device can't report its steps (Android
-    /// before 9). The Fairphone 5's alarm stream spans 40 dB on its
+/// Where a bell puts the alarm stream and how much its player trims.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlarmLevel {
+    /// The alarm step this bell needs.
+    pub step: i32,
+    /// The player's gain with the stream at step `s`, at index `s`:
+    /// other bells may hold the stream higher.
+    pub gains: Vec<f32>,
+}
+
+impl AlarmCurve {
+    /// Span of the even curve used when the device can't report its
+    /// steps (Android before 9) or reports something that isn't a
+    /// curve. The Fairphone 5's alarm stream spans 40 dB on its
     /// speaker.
     pub const FALLBACK_SPAN_DB: f64 = 40.0;
 
-    /// From the reported loudness of the quietest and loudest alarm
-    /// steps, in dB. A report that isn't a usable span (not finite,
-    /// not quieter at the bottom) falls back.
-    pub fn from_steps_db(quietest_db: f64, loudest_db: f64) -> Self {
-        let span_db = loudest_db - quietest_db;
-        if span_db.is_finite() && span_db > 0.0 {
-            Self { span_db }
+    /// From the stream's `min..=max` steps and the dB of each of them
+    /// (empty when the device can't report).
+    pub fn from_report(min: i32, max: i32, steps_db: &[f32]) -> Self {
+        let first = min.max(1);
+        let count = (max.max(first) - first + 1) as usize;
+        let reported: Vec<f64> = steps_db
+            .iter()
+            .skip((first - min).max(0) as usize)
+            .map(|&d| f64::from(d))
+            .collect();
+        let is_curve = reported.len() == count
+            && reported.iter().all(|d| d.is_finite())
+            && reported.windows(2).all(|w| w[1] >= w[0] - DB_TOLERANCE)
+            && reported[count - 1] - reported[0] > DB_TOLERANCE;
+        let db = if is_curve {
+            reported
         } else {
-            Self::fallback()
-        }
-    }
-
-    pub fn fallback() -> Self {
-        Self { span_db: Self::FALLBACK_SPAN_DB }
-    }
-
-    pub fn span_db(self) -> f64 {
-        self.span_db
+            let step_db = Self::FALLBACK_SPAN_DB / (count.max(2) - 1) as f64;
+            (0..count).map(|i| (i as f64 - (count - 1) as f64) * step_db).collect()
+        };
+        Self { first, db }
     }
 }
 
@@ -203,6 +237,82 @@ mod tests {
         20.0 * gain.log10()
     }
 
+    /// How loud a bell plays alone, in dB below the loudest alarm step:
+    /// its step's loudness plus its gain there.
+    fn alarm_db(v: BellVolume, curve: &AlarmCurve) -> f64 {
+        let level = v.alarm_level(curve);
+        let s = level.step as usize;
+        curve_db(curve, level.step) + db(f64::from(level.gains[s]))
+    }
+
+    fn curve_db(curve: &AlarmCurve, step: i32) -> f64 {
+        curve.db[(step - curve.first) as usize] - curve.db.last().unwrap()
+    }
+
+    fn pct(p: f64) -> BellVolume {
+        BellVolume::from_percent(p)
+    }
+
+    fn gain_db(level: &AlarmLevel, step: usize) -> f64 {
+        db(f64::from(level.gains[step]))
+    }
+
+    #[test]
+    fn the_slider_picks_the_alarm_step_by_its_position() {
+        // Reports only 1.2 dB from the quietest to the loudest step, and
+        // almost all of it below step 2: by the curve alone 50 % would be
+        // step 2.
+        let flat = AlarmCurve::from_report(1, 7, &[-1.2, -0.1, -0.08, -0.06, -0.04, -0.02, 0.0]);
+        let steps: Vec<i32> = [0.0, 50.0, 100.0].map(|p| pct(p).alarm_level(&flat).step).to_vec();
+        assert_eq!(steps, [1, 4, 7]);
+    }
+
+    #[test]
+    fn a_volume_between_two_steps_is_trimmed_by_the_gain() {
+        let curve = AlarmCurve::from_report(1, 5, &[-40.0, -30.0, -20.0, -10.0, 0.0]);
+        let level = pct(40.0).alarm_level(&curve);
+        assert_eq!(level.step, 3);
+        assert!((gain_db(&level, 3) - -4.0).abs() < 1e-4, "{level:?}");
+        assert_eq!(level.gains.len(), 6, "one gain per stream step 0..=5");
+    }
+
+    #[test]
+    fn the_curve_can_only_raise_the_step() {
+        let steep = AlarmCurve::from_report(1, 5, &[-60.0, -55.0, -50.0, -20.0, 0.0]);
+        let level = pct(25.0).alarm_level(&steep);
+        assert_eq!(level.step, 4);
+        assert!((gain_db(&level, 4) - -25.0).abs() < 1e-4, "{level:?}");
+    }
+
+    #[test]
+    fn a_quieter_bell_keeps_its_level_under_a_louder_one() {
+        let curve = AlarmCurve::from_report(1, 5, &[-40.0, -30.0, -20.0, -10.0, 0.0]);
+        let quiet = pct(40.0).alarm_level(&curve);
+        let loud = pct(100.0).alarm_level(&curve);
+        assert_eq!(loud.step, 5);
+        assert!((gain_db(&quiet, 5) - -24.0).abs() < 1e-4, "{quiet:?}");
+        // Below its own step the gain can't make up the difference.
+        assert_eq!(quiet.gains[2], 1.0);
+    }
+
+    #[test]
+    fn a_report_that_is_not_a_curve_falls_back_to_even_steps() {
+        let even = AlarmCurve::from_report(1, 5, &[-40.0, -30.0, -20.0, -10.0, 0.0]);
+        for (min, report) in [
+            (1, vec![]),
+            (1, vec![-40.0, 0.0]),
+            (1, vec![-40.0, f32::NAN, -20.0, -10.0, 0.0]),
+            (1, vec![-40.0, -30.0, -35.0, -10.0, 0.0]),
+            (1, vec![0.0; 5]),
+        ] {
+            assert_eq!(AlarmCurve::from_report(min, 5, &report), even, "{report:?}");
+        }
+        // Step 0 mutes: a curve reported from 0 starts at step 1.
+        let from_zero = AlarmCurve::from_report(0, 5, &[f32::NEG_INFINITY, -40.0, -30.0, -20.0, -10.0, 0.0]);
+        assert_eq!(from_zero, even);
+        assert_eq!(pct(0.0).alarm_level(&from_zero).step, 1);
+    }
+
     #[test]
     fn default_is_the_middle() {
         assert_eq!(BellVolume::default().percent(), 50);
@@ -265,64 +375,30 @@ mod tests {
     }
 
     #[test]
-    fn absolute_gain_spans_the_whole_device_range() {
-        // FP5 speaker: quietest alarm step -40 dB, loudest 0 dB.
-        let range = DeviceRange::from_steps_db(-40.0, 0.0);
-        assert_eq!(BellVolume::from_percent(100.0).absolute_gain(range), 1.0);
-        // MIN is exactly the device's quietest alarm step, never louder.
-        assert!((db(BellVolume::from_percent(0.0).absolute_gain(range)) - -40.0).abs() < 1e-9);
-        assert!((db(BellVolume::from_percent(50.0).absolute_gain(range)) - -20.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn absolute_gain_follows_each_devices_range() {
-        let wide = DeviceRange::from_steps_db(-58.0, -4.0);
-        assert!((wide.span_db() - 54.0).abs() < 1e-9);
-        assert!((db(BellVolume::from_percent(0.0).absolute_gain(wide)) - -54.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn gains_are_evenly_spaced_in_decibels() {
         for gain in [
-            |v: BellVolume| v.relative_gain(),
-            |v: BellVolume| v.absolute_gain(DeviceRange::from_steps_db(-40.0, 0.0)),
+            |v: BellVolume| db(v.relative_gain()),
+            |v: BellVolume| alarm_db(v, &AlarmCurve::from_report(1, 7, &[])),
         ] {
-            let steps: Vec<f64> = all_steps().map(|v| db(gain(v))).collect();
+            let steps: Vec<f64> = all_steps().map(gain).collect();
             let first = steps[1] - steps[0];
             assert!(first > 0.0);
             for pair in steps.windows(2) {
-                assert!((pair[1] - pair[0] - first).abs() < 1e-9, "{pair:?}");
+                assert!((pair[1] - pair[0] - first).abs() < 1e-4, "{pair:?}"); // gains are f32
             }
         }
     }
 
     #[test]
     fn gains_rise_with_every_step_and_stay_in_unit_range() {
-        let range = DeviceRange::fallback();
+        let curve = AlarmCurve::from_report(1, 7, &[]);
         for gains in [
             all_steps().map(BellVolume::relative_gain).collect::<Vec<_>>(),
-            all_steps().map(|v| v.absolute_gain(range)).collect::<Vec<_>>(),
+            all_steps().map(|v| 10f64.powf(alarm_db(v, &curve) / 20.0)).collect::<Vec<_>>(),
         ] {
             assert!(gains.windows(2).all(|w| w[0] < w[1]));
             assert!(gains.iter().all(|g| *g > 0.0 && *g <= 1.0));
         }
-    }
-
-    #[test]
-    fn an_unusable_device_report_falls_back() {
-        for (quietest, loudest) in [
-            (f64::NEG_INFINITY, 0.0),
-            (f64::NAN, 0.0),
-            (0.0, 0.0),
-            (0.0, -40.0),
-        ] {
-            assert_eq!(
-                DeviceRange::from_steps_db(quietest, loudest),
-                DeviceRange::fallback(),
-                "{quietest} {loudest}",
-            );
-        }
-        assert_eq!(DeviceRange::fallback().span_db(), 40.0);
     }
 
     #[test]

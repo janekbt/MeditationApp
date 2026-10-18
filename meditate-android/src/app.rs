@@ -2163,13 +2163,13 @@ mod tests {
         for (name, slot) in [("CHANNEL_STARTING", 0), ("CHANNEL_END", 1), ("CHANNEL_INTERVAL", 2)] {
             assert!(kotlin.contains(&format!("const val {name} = {slot}")), "{name} must match bell_channel_slot");
         }
-        assert!(kotlin.contains("fun playBell(context: Context, channel: Int, path: String, gain: Float)"));
+        assert!(kotlin.contains("fun playBell(context: Context, channel: Int, path: String, step: Int, gains: FloatArray)"));
         assert!(kotlin.contains("private val intervals = mutableListOf<MediaPlayer>()"), "interval bells stack");
-        let preview = kotlin.find("fun play(context: Context, path: String, gain: Float): Long").unwrap();
+        let preview = kotlin.find("fun play(context: Context, path: String, step: Int, gains: FloatArray): Long").unwrap();
         let preview = &kotlin[preview..preview + kotlin[preview..].find("\n    }\n").unwrap()];
         assert!(preview.contains("releasePreviewLocked()") && !preview.contains("releaseAllLocked"),
             "a preview replaces only the preview");
-        let restore = kotlin.find("private fun restoreIfIdleLocked(").expect("restore only when all quiet");
+        let restore = kotlin.find("private fun settleLocked(").expect("restore only when all quiet");
         assert!(kotlin[restore..restore + 200].contains("if (isIdleLocked())"));
         let idle = kotlin.find("private fun isIdleLocked()").unwrap();
         let idle = &kotlin[idle..idle + kotlin[idle..].find("\n\n").unwrap()];
