@@ -1899,7 +1899,7 @@ fn render_hm(ui: &MainWindow, key: meditate_core::format::HmKey) -> String {
 fn refresh_stats(ui: &MainWindow) {
     let Some(db) = lock_db() else { return; };
 
-    let streak = meditate_core::db::get_best_streak_from_db(&db).unwrap_or(0);
+    let streak = meditate_core::db::get_best_streak_from_db(&db, meditate_core::time::today_local()).unwrap_or(0);
     let total = meditate_core::db::total_seconds_from_db(&db).unwrap_or(0);
     let count = meditate_core::db::count_sessions_from_db(&db).unwrap_or(0);
 
@@ -2132,27 +2132,9 @@ fn refresh_chart(ui: &MainWindow) {
     let period = chart_period_from_index(ui.get_stat_chart_period());
     let days = period.days();
     let today = meditate_core::time::today_local();
-    let since = today - chrono::Duration::days(i64::from(days) - 1);
-
-    let sparse: std::collections::HashMap<String, i64> =
-        meditate_core::db::get_daily_totals_since_from_db(&db, since)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
-            .collect();
-
-    let daily: Vec<(String, i64)> = (0..i64::from(days))
-        .map(|i| {
-            let dt = since + chrono::Duration::days(i);
-            let key = dt.format("%Y-%m-%d").to_string();
-            let secs = sparse.get(&key).copied().unwrap_or(0);
-            (key, secs)
-        })
-        .collect();
-
-    let data = meditate_core::date_math::aggregate_for_chart_period(
-        &daily, days,
-    );
+    let totals = meditate_core::db::get_daily_totals_since_from_db(&db, period.window_start(today))
+        .unwrap_or_default();
+    let data = meditate_core::date_math::chart_series(&totals, today, period);
     let series: Vec<i64> = data.iter().map(|(_, d)| *d).collect();
     let ticks = meditate_core::date_math::chart_y_axis_ticks(&series);
     let months: Vec<u32> = data

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 10:14+0200\n"
+"POT-Creation-Date: 2026-10-18 21:39+0200\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -1411,24 +1411,24 @@ msgstr "Пока нет сессий"
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Завершите медитацию, чтобы увидеть здесь аналитику"
 
-#: src/stats/imp.rs:453 data/ui/stats_view.blp:182
+#: src/stats/imp.rs:436 data/ui/stats_view.blp:182
 msgid "Minutes / Day"
 msgstr "Минут в день"
 
-#: src/stats/imp.rs:454
+#: src/stats/imp.rs:437
 msgid "Minutes / Week"
 msgstr "Минуты / неделя"
 
-#: src/stats/imp.rs:455
+#: src/stats/imp.rs:438
 msgid "Minutes / Month"
 msgstr "Минуты / месяц"
 
-#: src/stats/imp.rs:569
+#: src/stats/imp.rs:552
 #, rust-format
 msgid "{duration} · 1 session"
 msgstr "{duration} · 1 сессия"
 
-#: src/stats/imp.rs:572
+#: src/stats/imp.rs:555
 #, rust-format
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · сессий: {count}"
@@ -1832,18 +1832,18 @@ msgid "Bars"
 msgstr "Столбцы"
 
 #: data/ui/stats_view.blp:233
-msgid "Streak"
-msgstr "Серия"
+msgid "Best streak"
+msgstr "Лучшая серия"
 
-#: data/ui/stats_view.blp:254
+#: data/ui/stats_view.blp:256
 msgid "Total"
 msgstr "Всего"
 
-#: data/ui/stats_view.blp:275
+#: data/ui/stats_view.blp:277
 msgid "Sessions"
 msgstr "Сессии"
 
-#: data/ui/stats_view.blp:291
+#: data/ui/stats_view.blp:293
 msgid "By label"
 msgstr "По меткам"
 
@@ -2095,70 +2095,98 @@ msgid ""
 "a long round of fixes for sync, backups and the timer. Please update every "
 "device that syncs together: older versions read interval bells only in whole "
 "minutes."
-msgstr "Новые способы практики, большинство предложил @voidplayer: спасибо! А также много исправлений синхронизации, резервных копий и таймера. Обновите все устройства, которые синхронизируются вместе: старые версии читают интервальные колокола только в целых минутах."
+msgstr ""
+"Новые способы практики, большинство предложил @voidplayer: спасибо! А также "
+"много исправлений синхронизации, резервных копий и таймера. Обновите все "
+"устройства, которые синхронизируются вместе: старые версии читают "
+"интервальные колокола только в целых минутах."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Guided: play files from a folder of your own, browsed by folder or as one "
 "list, without copying them"
-msgstr "С гидом: воспроизводите файлы из своей папки, по папкам или одним списком, без копирования"
+msgstr ""
+"С гидом: воспроизводите файлы из своей папки, по папкам или одним списком, "
+"без копирования"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Interval bells: times in seconds or minutes, the jitter as a time, and a "
 "repeating bell whose gap grows on each ring"
-msgstr "Интервальные колокола: время в секундах или минутах, разброс как время и повторяющийся колокол, пауза которого растёт с каждым ударом"
+msgstr ""
+"Интервальные колокола: время в секундах или минутах, разброс как время и "
+"повторяющийся колокол, пауза которого растёт с каждым ударом"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "One screen from start to end: save, add or discard the session on the "
 "running page, with your note"
-msgstr "Один экран от начала до конца: сохраните, добавьте или удалите сессию прямо на странице таймера, с заметкой"
+msgstr ""
+"Один экран от начала до конца: сохраните, добавьте или удалите сессию прямо "
+"на странице таймера, с заметкой"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "Auto-Finish, per mode: a countdown saves itself when the time is up, with "
 "Undo"
-msgstr "Автозавершение для каждого режима: обратный отсчёт сохраняется сам, когда время вышло, с возможностью отмены"
+msgstr ""
+"Автозавершение для каждого режима: обратный отсчёт сохраняется сам, когда "
+"время вышло, с возможностью отмены"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid ""
 "The Log's label colours follow the accent colour and are the same on every "
 "device"
-msgstr "Цвета меток в журнале следуют акцентному цвету и одинаковы на всех устройствах"
+msgstr ""
+"Цвета меток в журнале следуют акцентному цвету и одинаковы на всех "
+"устройствах"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid "Setup shows which starred preset is in effect"
-msgstr "Настройка показывает, какой отмеченный звёздочкой пресет сейчас действует"
+msgstr ""
+"Настройка показывает, какой отмеченный звёздочкой пресет сейчас действует"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:101
 msgid ""
 "Backups restore without doubling the synced log, and a partly unreadable "
 "file asks before importing the rest"
-msgstr "Резервные копии восстанавливаются без удвоения синхронизированного журнала, а при частично нечитаемом файле приложение спрашивает перед импортом остального"
+msgstr ""
+"Резервные копии восстанавливаются без удвоения синхронизированного журнала, "
+"а при частично нечитаемом файле приложение спрашивает перед импортом "
+"остального"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:102
 msgid ""
 "Sync: data-safety fixes, a clear status when a sync can't start, and a file "
 "the server refuses no longer stops the rest"
-msgstr "Синхронизация: исправления сохранности данных, понятный статус, когда синхронизация не может начаться, а отклонённый сервером файл больше не останавливает остальное"
+msgstr ""
+"Синхронизация: исправления сохранности данных, понятный статус, когда "
+"синхронизация не может начаться, а отклонённый сервером файл больше не "
+"останавливает остальное"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
 "Bells and the timer stay right after a suspend; the trend card compares the "
 "last 30 days with the 30 before"
-msgstr "Колокола и таймер остаются точными после сна; карточка тренда сравнивает последние 30 дней с 30 предыдущими"
+msgstr ""
+"Колокола и таймер остаются точными после сна; карточка тренда сравнивает "
+"последние 30 дней с 30 предыдущими"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:104
 msgid ""
 "Android: each bell's volume sets the phone's alarm step, so bells no longer "
 "ring at full volume on some phones; dates and the week start follow your "
 "language; your own vibration patterns can be deleted"
-msgstr "Android: громкость каждого колокола задаёт шаг громкости будильника телефона, поэтому на некоторых телефонах колокола больше не звучат на полной громкости; даты и начало недели следуют вашему языку; свои шаблоны вибрации можно удалять"
+msgstr ""
+"Android: громкость каждого колокола задаёт шаг громкости будильника "
+"телефона, поэтому на некоторых телефонах колокола больше не звучат на полной "
+"громкости; даты и начало недели следуют вашему языку; свои шаблоны вибрации "
+"можно удалять"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "A failed save now says so instead of looking saved"
-msgstr "Неудачное сохранение теперь сообщает об этом, а не выглядит сохранённым"
+msgstr ""
+"Неудачное сохранение теперь сообщает об этом, а не выглядит сохранённым"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:111
 msgid ""
@@ -2647,6 +2675,9 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "Первый выпуск."
+
+#~ msgid "Streak"
+#~ msgstr "Серия"
 
 #~ msgid "Label not kept for next time"
 #~ msgstr "Метка не сохранена на следующий раз"

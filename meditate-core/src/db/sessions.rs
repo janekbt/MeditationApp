@@ -142,8 +142,8 @@ pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
         .conn
         .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
 }
-pub fn get_best_streak_from_db(db: &Database) -> Result<u32> {
-    db.best_streak()
+pub fn get_best_streak_from_db(db: &Database, today: chrono::NaiveDate) -> Result<u32> {
+    db.best_streak(today)
 }
 /// Lower-median session duration in seconds, or `None` when the
 /// sessions table is empty. The `Option` distinguishes "no data
@@ -704,8 +704,9 @@ impl Database {
 
 
 
-    fn best_streak(&self) -> Result<u32> {
-        let days = self.distinct_session_days_ascending()?;
+    fn best_streak(&self, today: chrono::NaiveDate) -> Result<u32> {
+        let mut days = self.distinct_session_days_ascending()?;
+        days.retain(|d| *d <= today);
         if days.is_empty() {
             return Ok(0);
         }
@@ -3375,7 +3376,7 @@ mod tests {
     #[test]
     fn best_streak_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(get_best_streak_from_db(&db).unwrap(), 0);
+        assert_eq!(get_best_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 0);
     }
 
     #[test]
@@ -3418,7 +3419,17 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(get_streak_from_db(&db, today).unwrap(), 3, "current streak");
-        assert_eq!(get_best_streak_from_db(&db).unwrap(), 6, "best historical streak");
+        assert_eq!(get_best_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 6, "best historical streak");
+    }
+
+    #[test]
+    fn best_streak_ignores_days_after_today() {
+        // A session dated tomorrow made a 5-day run read 6 (#114).
+        let db = Database::open_in_memory().unwrap();
+        for day in ["2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28"] {
+            db.insert_session(&session_on(day)).unwrap();
+        }
+        assert_eq!(get_best_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 5);
     }
 
     #[test]
@@ -3434,7 +3445,7 @@ mod tests {
         db.insert_session(&session_on("2026-04-13")).unwrap();
         // Run of 1: Apr 20
         db.insert_session(&session_on("2026-04-20")).unwrap();
-        assert_eq!(get_best_streak_from_db(&db).unwrap(), 4);
+        assert_eq!(get_best_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 4);
     }
 
     #[test]

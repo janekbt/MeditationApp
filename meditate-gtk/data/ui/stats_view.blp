@@ -230,9 +230,11 @@ template $StatsView : Gtk.Widget {
             }
 
             Gtk.Label {
-              label: _("Streak");
+              label: _("Best streak");
               css-classes: ["caption", "dimmed"];
               halign: center;
+              wrap: true;
+              justify: center;
             }
           }
 

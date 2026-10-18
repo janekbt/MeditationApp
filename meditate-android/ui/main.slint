@@ -5023,7 +5023,7 @@ export component MainWindow inherits Window {
                     spacing: 10px;
 
                     for cell in [
-                        { value: root.stat-streak, caption: @tr("Streak"), accent: true },
+                        { value: root.stat-streak, caption: @tr("Best streak"), accent: true },
                         { value: root.stat-total, caption: @tr("Total"), accent: false },
                         { value: root.stat-sessions, caption: @tr("Sessions"), accent: false },
                     ] : Rectangle {
@@ -5054,6 +5054,7 @@ export component MainWindow inherits Window {
                                 text: cell.caption;
                                 font-size: 12px;
                                 horizontal-alignment: center;
+                                wrap: word-wrap;
                                 color: MaterialPalette.on-surface-variant;
                             }
                         }

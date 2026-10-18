@@ -874,8 +874,8 @@ msgstr "Année"
 msgid "Bars"
 msgstr "Barres"
 
-msgid "Streak"
-msgstr "Série"
+msgid "Best streak"
+msgstr "Meilleure série"
 
 msgid "Total"
 msgstr "Total"

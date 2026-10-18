@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 10:14+0200\n"
+"POT-Creation-Date: 2026-10-18 21:39+0200\n"
 "PO-Revision-Date: 2026-04-20 18:10+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: German\n"
@@ -1386,24 +1386,24 @@ msgstr "Noch keine Sitzungen"
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Meditiere einmal, damit hier Einblicke erscheinen"
 
-#: src/stats/imp.rs:453 data/ui/stats_view.blp:182
+#: src/stats/imp.rs:436 data/ui/stats_view.blp:182
 msgid "Minutes / Day"
 msgstr "Minuten / Tag"
 
-#: src/stats/imp.rs:454
+#: src/stats/imp.rs:437
 msgid "Minutes / Week"
 msgstr "Minuten / Woche"
 
-#: src/stats/imp.rs:455
+#: src/stats/imp.rs:438
 msgid "Minutes / Month"
 msgstr "Minuten / Monat"
 
-#: src/stats/imp.rs:569
+#: src/stats/imp.rs:552
 #, rust-format
 msgid "{duration} · 1 session"
 msgstr "{duration} · 1 Sitzung"
 
-#: src/stats/imp.rs:572
+#: src/stats/imp.rs:555
 #, rust-format
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} Sitzungen"
@@ -1803,18 +1803,18 @@ msgid "Bars"
 msgstr "Balken"
 
 #: data/ui/stats_view.blp:233
-msgid "Streak"
-msgstr "Serie"
+msgid "Best streak"
+msgstr "Beste Serie"
 
-#: data/ui/stats_view.blp:254
+#: data/ui/stats_view.blp:256
 msgid "Total"
 msgstr "Gesamt"
 
-#: data/ui/stats_view.blp:275
+#: data/ui/stats_view.blp:277
 msgid "Sessions"
 msgstr "Sitzungen"
 
-#: data/ui/stats_view.blp:291
+#: data/ui/stats_view.blp:293
 msgid "By label"
 msgstr "Nach Label"
 
@@ -2066,37 +2066,51 @@ msgid ""
 "a long round of fixes for sync, backups and the timer. Please update every "
 "device that syncs together: older versions read interval bells only in whole "
 "minutes."
-msgstr "Neue Möglichkeiten zum Üben, die meisten davon vorgeschlagen von @voidplayer: danke! Dazu viele Korrekturen für Sync, Sicherungen und den Timer. Bitte aktualisiere alle Geräte, die zusammen synchronisieren: ältere Versionen lesen Intervallglocken nur in ganzen Minuten."
+msgstr ""
+"Neue Möglichkeiten zum Üben, die meisten davon vorgeschlagen von "
+"@voidplayer: danke! Dazu viele Korrekturen für Sync, Sicherungen und den "
+"Timer. Bitte aktualisiere alle Geräte, die zusammen synchronisieren: ältere "
+"Versionen lesen Intervallglocken nur in ganzen Minuten."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Guided: play files from a folder of your own, browsed by folder or as one "
 "list, without copying them"
-msgstr "Geführt: Dateien aus einem eigenen Ordner abspielen, nach Ordnern oder als eine Liste, ohne sie zu kopieren"
+msgstr ""
+"Geführt: Dateien aus einem eigenen Ordner abspielen, nach Ordnern oder als "
+"eine Liste, ohne sie zu kopieren"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Interval bells: times in seconds or minutes, the jitter as a time, and a "
 "repeating bell whose gap grows on each ring"
-msgstr "Intervallglocken: Zeiten in Sekunden oder Minuten, die Streuung als Zeit und eine wiederholte Glocke, deren Abstand bei jedem Läuten wächst"
+msgstr ""
+"Intervallglocken: Zeiten in Sekunden oder Minuten, die Streuung als Zeit und "
+"eine wiederholte Glocke, deren Abstand bei jedem Läuten wächst"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "One screen from start to end: save, add or discard the session on the "
 "running page, with your note"
-msgstr "Ein Bildschirm von Anfang bis Ende: die Sitzung auf der laufenden Seite speichern, hinzufügen oder verwerfen, mit deiner Notiz"
+msgstr ""
+"Ein Bildschirm von Anfang bis Ende: die Sitzung auf der laufenden Seite "
+"speichern, hinzufügen oder verwerfen, mit deiner Notiz"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "Auto-Finish, per mode: a countdown saves itself when the time is up, with "
 "Undo"
-msgstr "Automatisch beenden, je Modus: ein Countdown speichert sich selbst, wenn die Zeit um ist, mit Rückgängig"
+msgstr ""
+"Automatisch beenden, je Modus: ein Countdown speichert sich selbst, wenn die "
+"Zeit um ist, mit Rückgängig"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid ""
 "The Log's label colours follow the accent colour and are the same on every "
 "device"
-msgstr "Die Labelfarben im Verlauf folgen der Akzentfarbe und sind auf jedem Gerät gleich"
+msgstr ""
+"Die Labelfarben im Verlauf folgen der Akzentfarbe und sind auf jedem Gerät "
+"gleich"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid "Setup shows which starred preset is in effect"
@@ -2106,30 +2120,43 @@ msgstr "Die Einrichtung zeigt, welche markierte Voreinstellung gerade gilt"
 msgid ""
 "Backups restore without doubling the synced log, and a partly unreadable "
 "file asks before importing the rest"
-msgstr "Sicherungen werden wiederhergestellt, ohne den synchronisierten Verlauf zu verdoppeln, und bei einer teils unlesbaren Datei fragt die App, bevor sie den Rest importiert"
+msgstr ""
+"Sicherungen werden wiederhergestellt, ohne den synchronisierten Verlauf zu "
+"verdoppeln, und bei einer teils unlesbaren Datei fragt die App, bevor sie "
+"den Rest importiert"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:102
 msgid ""
 "Sync: data-safety fixes, a clear status when a sync can't start, and a file "
 "the server refuses no longer stops the rest"
-msgstr "Sync: Korrekturen für die Datensicherheit, ein klarer Status, wenn ein Sync nicht starten kann, und eine vom Server abgelehnte Datei hält den Rest nicht mehr auf"
+msgstr ""
+"Sync: Korrekturen für die Datensicherheit, ein klarer Status, wenn ein Sync "
+"nicht starten kann, und eine vom Server abgelehnte Datei hält den Rest nicht "
+"mehr auf"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
 "Bells and the timer stay right after a suspend; the trend card compares the "
 "last 30 days with the 30 before"
-msgstr "Glocken und Timer bleiben nach dem Ruhezustand richtig; die Trendkarte vergleicht die letzten 30 Tage mit den 30 davor"
+msgstr ""
+"Glocken und Timer bleiben nach dem Ruhezustand richtig; die Trendkarte "
+"vergleicht die letzten 30 Tage mit den 30 davor"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:104
 msgid ""
 "Android: each bell's volume sets the phone's alarm step, so bells no longer "
 "ring at full volume on some phones; dates and the week start follow your "
 "language; your own vibration patterns can be deleted"
-msgstr "Android: die Lautstärke jeder Glocke stellt die Weckerlautstärke des Handys ein, so läuten Glocken auf manchen Handys nicht mehr mit voller Lautstärke; Datum und Wochenbeginn folgen deiner Sprache; eigene Vibrationsmuster lassen sich löschen"
+msgstr ""
+"Android: die Lautstärke jeder Glocke stellt die Weckerlautstärke des Handys "
+"ein, so läuten Glocken auf manchen Handys nicht mehr mit voller Lautstärke; "
+"Datum und Wochenbeginn folgen deiner Sprache; eigene Vibrationsmuster lassen "
+"sich löschen"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "A failed save now says so instead of looking saved"
-msgstr "Ein fehlgeschlagenes Speichern sagt das jetzt, statt gespeichert auszusehen"
+msgstr ""
+"Ein fehlgeschlagenes Speichern sagt das jetzt, statt gespeichert auszusehen"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:111
 msgid ""
@@ -2622,6 +2649,9 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "Erste Veröffentlichung."
+
+#~ msgid "Streak"
+#~ msgstr "Serie"
 
 #~ msgid "Label not kept for next time"
 #~ msgstr "Label für das nächste Mal nicht gemerkt"

@@ -892,8 +892,8 @@ msgstr "Год"
 msgid "Bars"
 msgstr "Столбцы"
 
-msgid "Streak"
-msgstr "Серия"
+msgid "Best streak"
+msgstr "Лучшая серия"
 
 msgid "Total"
 msgstr "Всего"

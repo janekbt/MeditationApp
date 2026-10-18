@@ -892,8 +892,8 @@ msgstr "Rok"
 msgid "Bars"
 msgstr "Słupki"
 
-msgid "Streak"
-msgstr "Passa"
+msgid "Best streak"
+msgstr "Najlepsza passa"
 
 msgid "Total"
 msgstr "Łącznie"

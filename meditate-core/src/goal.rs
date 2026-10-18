@@ -100,7 +100,7 @@ pub fn today_from_db(db: &Database, today: chrono::NaiveDate) -> GoalProgress {
 /// shell's goal setting can't actually reach that state (it falls
 /// back to a positive default), but the math is total either way.
 pub fn compute(today_secs: i64, goal_mins: i64) -> GoalProgress {
-    let today_mins = today_secs.max(0) / 60;
+    let today_mins = (today_secs.max(0) + 30) / 60;
     if goal_mins <= 0 {
         return GoalProgress {
             today_mins,
@@ -134,6 +134,15 @@ pub fn compute(today_secs: i64, goal_mins: i64) -> GoalProgress {
 mod tests {
     use super::*;
     use crate::test_macros::assert_f64_eq;
+
+    #[test]
+    fn a_session_of_19_min_30_reaches_a_20_min_goal() {
+        // The Log shows this session as "20 min" (#55).
+        let g = compute(19 * 60 + 30, 20);
+        assert_eq!(g.today_mins, 20);
+        assert_eq!(g.remaining_mins, 0);
+        assert_eq!(g.status, GoalStatus::Reached);
+    }
 
     #[test]
     fn today_from_db_counts_only_today() {

@@ -856,8 +856,8 @@ msgstr "年"
 msgid "Bars"
 msgstr "柱状图"
 
-msgid "Streak"
-msgstr "连续天数"
+msgid "Best streak"
+msgstr "最长连续天数"
 
 msgid "Total"
 msgstr "总计"

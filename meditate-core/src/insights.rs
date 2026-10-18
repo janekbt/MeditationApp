@@ -62,7 +62,7 @@ pub fn input_from_db(db: &crate::db::Database, today: chrono::NaiveDate) -> Insi
     };
     InsightInput {
         current_streak: d::get_streak_from_db(db, today).unwrap_or(0),
-        best_streak: d::get_best_streak_from_db(db).unwrap_or(0),
+        best_streak: d::get_best_streak_from_db(db, today).unwrap_or(0),
         last_30_secs: sum_since(days_ago(29), today + chrono::Duration::days(1)),
         prev_30_secs: sum_since(days_ago(59), days_ago(29)),
         daily_totals: totals
@@ -267,6 +267,33 @@ mod tests {
 
     fn baseline() -> InsightInput {
         InsightInput::default()
+    }
+
+    #[test]
+    fn the_week_card_waits_on_the_first_morning_of_the_week() {
+        // Monday 2024-04-15 07:00, nothing yet today, 30 min last
+        // Monday: no "-100%" card (#59).
+        use chrono::TimeZone;
+        let Some(now) = chrono::Local.with_ymd_and_hms(2024, 4, 15, 7, 0, 0).single() else {
+            return;
+        };
+        let input = InsightInput {
+            daily_totals: vec![("2024-04-08".into(), 1800)],
+            ..baseline()
+        };
+        let out = compute(&input, now.timestamp(), 1);
+        assert!(!out.iter().any(|k| matches!(k, InsightKey::WeekOverWeek { .. })), "{out:?}");
+
+        // The same on Sunday 2024-04-14 where weeks start on Sunday.
+        let Some(sunday) = chrono::Local.with_ymd_and_hms(2024, 4, 14, 7, 0, 0).single() else {
+            return;
+        };
+        let input = InsightInput {
+            daily_totals: vec![("2024-04-07".into(), 1800)],
+            ..baseline()
+        };
+        let out = compute(&input, sunday.timestamp(), 7);
+        assert!(!out.iter().any(|k| matches!(k, InsightKey::WeekOverWeek { .. })), "{out:?}");
     }
 
     #[test]

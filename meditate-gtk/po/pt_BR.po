@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 10:14+0200\n"
+"POT-Creation-Date: 2026-10-18 21:39+0200\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -1388,24 +1388,24 @@ msgstr "Nenhuma sessão ainda"
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Conclua uma meditação para ver análises aqui"
 
-#: src/stats/imp.rs:453 data/ui/stats_view.blp:182
+#: src/stats/imp.rs:436 data/ui/stats_view.blp:182
 msgid "Minutes / Day"
 msgstr "Minutos / dia"
 
-#: src/stats/imp.rs:454
+#: src/stats/imp.rs:437
 msgid "Minutes / Week"
 msgstr "Minutos / semana"
 
-#: src/stats/imp.rs:455
+#: src/stats/imp.rs:438
 msgid "Minutes / Month"
 msgstr "Minutos / mês"
 
-#: src/stats/imp.rs:569
+#: src/stats/imp.rs:552
 #, rust-format
 msgid "{duration} · 1 session"
 msgstr "{duration} · 1 sessão"
 
-#: src/stats/imp.rs:572
+#: src/stats/imp.rs:555
 #, rust-format
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} sessões"
@@ -1804,18 +1804,18 @@ msgid "Bars"
 msgstr "Barras"
 
 #: data/ui/stats_view.blp:233
-msgid "Streak"
-msgstr "Sequência"
+msgid "Best streak"
+msgstr "Melhor sequência"
 
-#: data/ui/stats_view.blp:254
+#: data/ui/stats_view.blp:256
 msgid "Total"
 msgstr "Total"
 
-#: data/ui/stats_view.blp:275
+#: data/ui/stats_view.blp:277
 msgid "Sessions"
 msgstr "Sessões"
 
-#: data/ui/stats_view.blp:291
+#: data/ui/stats_view.blp:293
 msgid "By label"
 msgstr "Por rótulo"
 
@@ -2067,37 +2067,51 @@ msgid ""
 "a long round of fixes for sync, backups and the timer. Please update every "
 "device that syncs together: older versions read interval bells only in whole "
 "minutes."
-msgstr "Novas formas de praticar, a maioria sugerida por @voidplayer: obrigado! Também muitas correções de sincronização, backups e cronômetro. Atualize todos os dispositivos que sincronizam juntos: versões anteriores leem os sinos de intervalo apenas em minutos inteiros."
+msgstr ""
+"Novas formas de praticar, a maioria sugerida por @voidplayer: obrigado! "
+"Também muitas correções de sincronização, backups e cronômetro. Atualize "
+"todos os dispositivos que sincronizam juntos: versões anteriores leem os "
+"sinos de intervalo apenas em minutos inteiros."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Guided: play files from a folder of your own, browsed by folder or as one "
 "list, without copying them"
-msgstr "Guiada: toque arquivos de uma pasta sua, por pastas ou como uma só lista, sem copiá-los"
+msgstr ""
+"Guiada: toque arquivos de uma pasta sua, por pastas ou como uma só lista, "
+"sem copiá-los"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Interval bells: times in seconds or minutes, the jitter as a time, and a "
 "repeating bell whose gap grows on each ring"
-msgstr "Sinos de intervalo: tempos em segundos ou minutos, a variação como tempo e um sino repetido cujo intervalo cresce a cada toque"
+msgstr ""
+"Sinos de intervalo: tempos em segundos ou minutos, a variação como tempo e "
+"um sino repetido cujo intervalo cresce a cada toque"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "One screen from start to end: save, add or discard the session on the "
 "running page, with your note"
-msgstr "Uma tela do início ao fim: salve, adicione ou descarte a sessão na página em andamento, com sua nota"
+msgstr ""
+"Uma tela do início ao fim: salve, adicione ou descarte a sessão na página em "
+"andamento, com sua nota"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "Auto-Finish, per mode: a countdown saves itself when the time is up, with "
 "Undo"
-msgstr "Concluir automaticamente, por modo: uma contagem regressiva se salva sozinha quando o tempo acaba, com Desfazer"
+msgstr ""
+"Concluir automaticamente, por modo: uma contagem regressiva se salva sozinha "
+"quando o tempo acaba, com Desfazer"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid ""
 "The Log's label colours follow the accent colour and are the same on every "
 "device"
-msgstr "As cores das etiquetas no histórico seguem a cor de destaque e são iguais em todos os dispositivos"
+msgstr ""
+"As cores das etiquetas no histórico seguem a cor de destaque e são iguais em "
+"todos os dispositivos"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid "Setup shows which starred preset is in effect"
@@ -2107,26 +2121,37 @@ msgstr "A configuração mostra qual predefinição com estrela está em uso"
 msgid ""
 "Backups restore without doubling the synced log, and a partly unreadable "
 "file asks before importing the rest"
-msgstr "Backups são restaurados sem duplicar o histórico sincronizado, e um arquivo em parte ilegível pergunta antes de importar o resto"
+msgstr ""
+"Backups são restaurados sem duplicar o histórico sincronizado, e um arquivo "
+"em parte ilegível pergunta antes de importar o resto"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:102
 msgid ""
 "Sync: data-safety fixes, a clear status when a sync can't start, and a file "
 "the server refuses no longer stops the rest"
-msgstr "Sincronização: correções de segurança dos dados, um status claro quando uma sincronização não pode começar, e um arquivo recusado pelo servidor não interrompe mais o resto"
+msgstr ""
+"Sincronização: correções de segurança dos dados, um status claro quando uma "
+"sincronização não pode começar, e um arquivo recusado pelo servidor não "
+"interrompe mais o resto"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
 "Bells and the timer stay right after a suspend; the trend card compares the "
 "last 30 days with the 30 before"
-msgstr "Sinos e cronômetro continuam certos após uma suspensão; o cartão de tendência compara os últimos 30 dias com os 30 anteriores"
+msgstr ""
+"Sinos e cronômetro continuam certos após uma suspensão; o cartão de "
+"tendência compara os últimos 30 dias com os 30 anteriores"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:104
 msgid ""
 "Android: each bell's volume sets the phone's alarm step, so bells no longer "
 "ring at full volume on some phones; dates and the week start follow your "
 "language; your own vibration patterns can be deleted"
-msgstr "Android: o volume de cada sino ajusta o nível de alarme do celular, então os sinos não tocam mais no volume máximo em alguns celulares; datas e início da semana seguem seu idioma; seus próprios padrões de vibração podem ser excluídos"
+msgstr ""
+"Android: o volume de cada sino ajusta o nível de alarme do celular, então os "
+"sinos não tocam mais no volume máximo em alguns celulares; datas e início da "
+"semana seguem seu idioma; seus próprios padrões de vibração podem ser "
+"excluídos"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "A failed save now says so instead of looking saved"
@@ -2621,6 +2646,9 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "Primeira versão."
+
+#~ msgid "Streak"
+#~ msgstr "Sequência"
 
 #~ msgid "Label not kept for next time"
 #~ msgstr "Rótulo não guardado para a próxima vez"

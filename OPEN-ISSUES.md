@@ -31,7 +31,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | K3. Presets all or nothing | #193 | a preset that fails halfway |
 | [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
-| [ ] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
+| [x] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
@@ -94,32 +94,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Fix: add the missing `configChanges`; at startup stop any leftover service and players when no session is active. Manifest: ask first, run the repro probe.
 
 ## N. Stats numbers
-
-### #55 Goal ring and heatmap round down, the Log rounds to nearest
-- Where: `meditate-core/src/goal.rs:103`, `contrib.rs:91` vs `format.rs:389-397`.
-- Problem: a 19:30 session with a 20 min goal: Log says "20 min", ring says "1 min to go". A 40 s session shows "1 min" in the Log but leaves its heatmap cell empty.
-- Fix: use `(secs + 30) / 60` in `goal::compute` and `build_grid`.
-- Same class: `format.rs:154-169` (`hm_secs_key`, used by the by-label rows, insights and chart axis in both apps) and `hm_compact_key` (126-137) round down too. A label with one 40 s session reads "0m · 1 session", a 59 s maximum puts "0m" at the top of the axis, and the Total tile shows "–". Update the test at 1222-1229. Sessions under 30 s still read "0m" after the change.
-
-### #59 Week-over-week compares part of today with a full day
-- Where: `meditate-core/src/date_math.rs:105-117`.
-- Problem: Monday 07:00, nothing yet today, 30 min last Monday: the card shows -100% every morning.
-- Fix: sum through yesterday on both sides; skip the card when that is 0 days.
-
-### #60 Year chart has two partial months, and both shells build the series
-- Where: `meditate-gtk/src/stats/imp.rs:416-444`, `meditate-android/src/ui.rs:1708-1735`.
-- Problem: on 2026-10-09 the year view starts 2025-10-10: 13 bars, first and last October both partial and both labelled "O". Both shells zero-fill the daily series in their own code.
-- Fix: one core `chart_series(totals, today, period)` starting the year window on the 1st of a month; both shells call it.
-
-### #114 The best streak counts future days
-- Where: `meditate-core/src/db/sessions.rs:644-664` (`streak()` filters at 718-721); callers gtk `stats/imp.rs:530` via `db/mod.rs:862`, android `ui.rs:1482`, `insights.rs:65`.
-- Problem: a 5-day streak plus a session dated tomorrow shows "6d" and "5 days · best was 6".
-- Fix: `best_streak(today)` with `days.retain(|d| *d <= today)`; extend the #18 test (`sessions.rs:3014`).
-
-### #115 The Stats "Streak" tile shows the best streak, the Timer the current one
-- Where: gtk `stats/imp.rs:526-539`, `stats_view.blp:225-236`; android `ui.rs:1474-1492`, `main.slint:4873`.
-- Problem: an old 10-day run, a gap, a session today: the Timer says "1 day streak", Stats says "Streak 10d". The insight on the same page already says "best was N".
-- Fix (decide first): show the current streak (about 3 lines, no strings), or caption the tile "Best streak" (new msgid, nine translations, both apps).
 
 ## O. Dates in other languages
 
@@ -271,7 +245,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Seen so far: Android's guided-import dialog title ("Geführte Meditation importi", `main.slint` guided-import card, a 22 px Text with no wrap); GTK's import toast (fixed in batch E with a shorter text); Android's import-question buttons (stacked in batch D); GTK's Type rows squeezing their choices (pinned in batch C).
 - Android: Slint clips a Text that neither wraps nor elides, silently. 142 Text elements, 31 wrap, 10 elide. Check 1, a test: every Text showing translated words wraps (`wrap: word-wrap`) and has room to grow; `overflow: elide` is not allowed for them either. An explicit short list is exempt (numbers, the big timer, single symbols).
 - Both apps, check 2, a test: slots that can't wrap (buttons, toasts, toggle and tab labels, dialog buttons, header titles, GTK row titles that ellipsize) have every translation measured with the real font at its real size against the slot's width at 360 px, and the test lists each one that doesn't fit. The work is the list of fixed slots and their widths; measuring needs nothing new (Pango in the GTK tests, the same font files for Android).
-- Fix what the first run lists: wrap, stack buttons, give the slot room, or shorten the translation; never "…".
+- Fix what the first run lists: wrap, give the slot room, or shorten the translation; never "…". Changing how buttons are arranged (stacking them, moving them) is the last resort and needs Janek's yes each time (2026-10-18).
 
 ---
 

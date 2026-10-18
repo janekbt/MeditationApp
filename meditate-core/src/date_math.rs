@@ -85,7 +85,8 @@ pub fn days_since_week_start(today_dow: i32, week_start_dow: i32) -> i32 {
 /// portion of last week). Weeks start on `week_start_dow`
 /// (1=Mon..7=Sun). The comparison is apples-to-apples: on
 /// Wednesday we compare Mon–Wed of the current week against
-/// Mon–Wed of the previous week.
+/// Mon–Wed of the previous week, or Mon–Tue while today has less
+/// than a rounded minute.
 ///
 /// `daily_totals` is a list of `(YYYY-MM-DD, seconds)` pairs in any
 /// order; this helper maps it internally. `now_unix` is the
@@ -102,10 +103,15 @@ pub fn week_over_week(
         return (0, 0);
     };
     let today_dow = now.weekday().number_from_monday() as i32;
-    let days_elapsed = days_since_week_start(today_dow, week_start_dow) + 1;
     let today = now.date_naive();
+    // Today joins once it has a minute of practice (#59); before that a
+    // full day last week would face an empty morning.
+    let today_key = today.format("%Y-%m-%d").to_string();
+    let today_counts = map.get(today_key.as_str()).copied().unwrap_or(0) >= 30;
+    let first = if today_counts { 0 } else { -1 };
+    let days = days_since_week_start(today_dow, week_start_dow) + 1 + first;
     let sum_range = |start_offset: i32| -> i64 {
-        (0..days_elapsed)
+        (0..days)
             .filter_map(|i| {
                 let offset = i64::from(start_offset - i);
                 let dt = today.checked_add_signed(Duration::days(offset))?;
@@ -114,7 +120,7 @@ pub fn week_over_week(
             })
             .sum()
     };
-    (sum_range(0), sum_range(-7))
+    (sum_range(first), sum_range(first - 7))
 }
 
 /// X-axis label decision for the stats chart at bar `i`. The shell
@@ -188,6 +194,19 @@ impl ChartPeriod {
         }
     }
 
+    /// First day the chart covers. The year starts on the 1st of the
+    /// month 11 months back, so it shows 12 calendar months (#60).
+    pub fn window_start(self, today: chrono::NaiveDate) -> chrono::NaiveDate {
+        use chrono::Datelike;
+        match self {
+            ChartPeriod::OneYear => today
+                .with_day(1)
+                .and_then(|d| d.checked_sub_months(chrono::Months::new(11)))
+                .unwrap_or(today),
+            _ => today - chrono::Duration::days(i64::from(self.days()) - 1),
+        }
+    }
+
     /// Stable string form for persisted settings + toggle-group
     /// active-name values. Order matches the gtk shell's existing
     /// ToggleGroup children so a DB written before this migration
@@ -212,6 +231,25 @@ impl ChartPeriod {
             _ => ChartPeriod::Week,
         }
     }
+}
+
+/// The chart's bars for `period` ending today: every day from the
+/// window start through today (gaps and future days dropped to the
+/// window), rolled up by `aggregate_for_chart_period`. Both apps
+/// draw from this.
+pub fn chart_series(
+    totals: &[(chrono::NaiveDate, i64)],
+    today: chrono::NaiveDate,
+    period: ChartPeriod,
+) -> Vec<(String, i64)> {
+    let map: HashMap<chrono::NaiveDate, i64> = totals.iter().copied().collect();
+    let daily: Vec<(String, i64)> = period
+        .window_start(today)
+        .iter_days()
+        .take_while(|d| *d <= today)
+        .map(|d| (d.format("%Y-%m-%d").to_string(), map.get(&d).copied().unwrap_or(0)))
+        .collect();
+    aggregate_for_chart_period(&daily, period.days())
 }
 
 /// Roll a `(YYYY-MM-DD, secs)` daily series up into the granularity
@@ -429,6 +467,54 @@ mod tests {
         assert_eq!(ChartPeriod::from_db_str("1w"), ChartPeriod::Week);
     }
 
+    // ── chart_series ───────────────────────────────────────────────────
+
+    fn ymd(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn the_year_chart_has_twelve_calendar_months() {
+        // #60: one bar per calendar month, no half month at the start.
+        let totals = [
+            (ymd(2025, 10, 20), 999), // before the window
+            (ymd(2025, 11, 1), 60),
+            (ymd(2025, 11, 30), 40),
+            (ymd(2026, 3, 15), 600),
+            (ymd(2026, 10, 9), 30),
+            (ymd(2026, 10, 12), 999), // after today
+        ];
+        let bars = chart_series(&totals, ymd(2026, 10, 9), ChartPeriod::OneYear);
+        let keys: Vec<&str> = bars.iter().map(|(k, _)| &k[..7]).collect();
+        assert_eq!(keys, [
+            "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04",
+            "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10",
+        ]);
+        assert_eq!(bars[0].0, "2025-11-01");
+        let secs: Vec<i64> = bars.iter().map(|(_, v)| *v).collect();
+        assert_eq!(secs, [100, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 30]);
+
+        let jan = chart_series(&[], ymd(2026, 1, 31), ChartPeriod::OneYear);
+        assert_eq!(jan.len(), 12);
+        assert_eq!(jan[0].0, "2025-02-01");
+        assert_eq!(jan[11].0, "2026-01-01");
+    }
+
+    #[test]
+    fn the_week_chart_has_seven_days_ending_today() {
+        let totals = [(ymd(2026, 10, 2), 7), (ymd(2026, 10, 3), 5), (ymd(2026, 10, 9), 9)];
+        let bars = chart_series(&totals, ymd(2026, 10, 9), ChartPeriod::Week);
+        assert_eq!(bars, vec![
+            ("2026-10-03".to_string(), 5),
+            ("2026-10-04".to_string(), 0),
+            ("2026-10-05".to_string(), 0),
+            ("2026-10-06".to_string(), 0),
+            ("2026-10-07".to_string(), 0),
+            ("2026-10-08".to_string(), 0),
+            ("2026-10-09".to_string(), 9),
+        ]);
+    }
+
     // ── aggregate_for_chart_period ────────────────────────────────────
 
     fn daily(rows: &[(&str, i64)]) -> Vec<(String, i64)> {
@@ -489,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn week_over_week_sums_only_within_current_week_window() {
+    fn week_over_week_counts_today_once_it_has_practice() {
         // Pin a Wednesday: 2024-04-17 12:00 local. Build daily totals
         // for that whole week + the previous one, and check both
         // sides of the comparison.
@@ -515,5 +601,27 @@ mod tests {
         let (this_week, last_week) = week_over_week(&totals, now_unix, 1);
         assert_eq!(this_week, 600);
         assert_eq!(last_week, 60);
+    }
+
+    #[test]
+    fn week_over_week_leaves_out_today_until_it_has_practice() {
+        // Wednesday 2024-04-17, 20 s so far today: it rounds to no
+        // minute, so both weeks run through yesterday (#59).
+        use chrono::TimeZone;
+        let Some(now) = chrono::Local.with_ymd_and_hms(2024, 4, 17, 12, 0, 0).single() else {
+            return;
+        };
+        let totals = vec![
+            ("2024-04-14".into(),  50),   // Sunday this week
+            ("2024-04-15".into(), 100),   // Monday this week
+            ("2024-04-16".into(), 200),   // Tuesday this week
+            ("2024-04-17".into(),  20),   // today, under 30 s
+            ("2024-04-07".into(),   5),   // Sunday last week
+            ("2024-04-08".into(),  10),   // Monday last week
+            ("2024-04-09".into(),  20),   // Tuesday last week
+            ("2024-04-10".into(),  30),   // Wednesday last week: not yet compared
+        ];
+        assert_eq!(week_over_week(&totals, now.timestamp(), 1), (300, 30));
+        assert_eq!(week_over_week(&totals, now.timestamp(), 7), (350, 35));
     }
 }

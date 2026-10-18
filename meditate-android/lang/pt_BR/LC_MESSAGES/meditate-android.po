@@ -874,8 +874,8 @@ msgstr "Ano"
 msgid "Bars"
 msgstr "Barras"
 
-msgid "Streak"
-msgstr "Sequência"
+msgid "Best streak"
+msgstr "Melhor sequência"
 
 msgid "Total"
 msgstr "Total"

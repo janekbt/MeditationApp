@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 10:14+0200\n"
+"POT-Creation-Date: 2026-10-18 21:39+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -1347,24 +1347,24 @@ msgstr "暂无会话"
 msgid "Complete a meditation to start seeing insights here"
 msgstr "完成一次冥想后，这里将显示分析"
 
-#: src/stats/imp.rs:453 data/ui/stats_view.blp:182
+#: src/stats/imp.rs:436 data/ui/stats_view.blp:182
 msgid "Minutes / Day"
 msgstr "分钟 / 天"
 
-#: src/stats/imp.rs:454
+#: src/stats/imp.rs:437
 msgid "Minutes / Week"
 msgstr "分钟 / 周"
 
-#: src/stats/imp.rs:455
+#: src/stats/imp.rs:438
 msgid "Minutes / Month"
 msgstr "分钟 / 月"
 
-#: src/stats/imp.rs:569
+#: src/stats/imp.rs:552
 #, rust-format
 msgid "{duration} · 1 session"
 msgstr "{duration} · 1 个会话"
 
-#: src/stats/imp.rs:572
+#: src/stats/imp.rs:555
 #, rust-format
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} 个会话"
@@ -1751,18 +1751,18 @@ msgid "Bars"
 msgstr "柱状图"
 
 #: data/ui/stats_view.blp:233
-msgid "Streak"
-msgstr "连续天数"
+msgid "Best streak"
+msgstr "最长连续天数"
 
-#: data/ui/stats_view.blp:254
+#: data/ui/stats_view.blp:256
 msgid "Total"
 msgstr "总计"
 
-#: data/ui/stats_view.blp:275
+#: data/ui/stats_view.blp:277
 msgid "Sessions"
 msgstr "会话"
 
-#: data/ui/stats_view.blp:291
+#: data/ui/stats_view.blp:293
 msgid "By label"
 msgstr "按标签"
 
@@ -2013,25 +2013,30 @@ msgid ""
 "a long round of fixes for sync, backups and the timer. Please update every "
 "device that syncs together: older versions read interval bells only in whole "
 "minutes."
-msgstr "新的练习方式，其中大部分由 @voidplayer 提出：谢谢你！另外还有大量同步、备份和计时器方面的修复。请更新所有一起同步的设备：旧版本只能以整分钟读取间隔铃。"
+msgstr ""
+"新的练习方式，其中大部分由 @voidplayer 提出：谢谢你！另外还有大量同步、备份和"
+"计时器方面的修复。请更新所有一起同步的设备：旧版本只能以整分钟读取间隔铃。"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Guided: play files from a folder of your own, browsed by folder or as one "
 "list, without copying them"
-msgstr "引导：直接播放你自己文件夹中的文件，可按文件夹浏览或作为一个列表，无需复制"
+msgstr ""
+"引导：直接播放你自己文件夹中的文件，可按文件夹浏览或作为一个列表，无需复制"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Interval bells: times in seconds or minutes, the jitter as a time, and a "
 "repeating bell whose gap grows on each ring"
-msgstr "间隔铃：时间可用秒或分钟，随机幅度改为时间，重复铃的间隔可在每次响铃后增长"
+msgstr ""
+"间隔铃：时间可用秒或分钟，随机幅度改为时间，重复铃的间隔可在每次响铃后增长"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "One screen from start to end: save, add or discard the session on the "
 "running page, with your note"
-msgstr "从开始到结束只有一个页面：在计时页面直接保存、添加或放弃会话，并附上备注"
+msgstr ""
+"从开始到结束只有一个页面：在计时页面直接保存、添加或放弃会话，并附上备注"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
@@ -2053,13 +2058,16 @@ msgstr "设置页会显示当前生效的是哪个已加星标的预设"
 msgid ""
 "Backups restore without doubling the synced log, and a partly unreadable "
 "file asks before importing the rest"
-msgstr "恢复备份时不再与已同步的记录重复，部分无法读取的文件会先询问是否导入其余内容"
+msgstr ""
+"恢复备份时不再与已同步的记录重复，部分无法读取的文件会先询问是否导入其余内容"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:102
 msgid ""
 "Sync: data-safety fixes, a clear status when a sync can't start, and a file "
 "the server refuses no longer stops the rest"
-msgstr "同步：数据安全修复；同步无法开始时显示清楚的状态；服务器拒绝的文件不再阻止其余内容同步"
+msgstr ""
+"同步：数据安全修复；同步无法开始时显示清楚的状态；服务器拒绝的文件不再阻止其"
+"余内容同步"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
@@ -2072,7 +2080,9 @@ msgid ""
 "Android: each bell's volume sets the phone's alarm step, so bells no longer "
 "ring at full volume on some phones; dates and the week start follow your "
 "language; your own vibration patterns can be deleted"
-msgstr "Android：每个铃声的音量会设置手机的闹钟音量档位，因此在部分手机上铃声不再以最大音量响起；日期和每周起始日跟随你的语言；可以删除自己的振动模式"
+msgstr ""
+"Android：每个铃声的音量会设置手机的闹钟音量档位，因此在部分手机上铃声不再以最"
+"大音量响起；日期和每周起始日跟随你的语言；可以删除自己的振动模式"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "A failed save now says so instead of looking saved"
@@ -2495,6 +2505,9 @@ msgstr "自适应布局最窄支持 360 像素；强调色和无障碍功能符�
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "首个版本。"
+
+#~ msgid "Streak"
+#~ msgstr "连续天数"
 
 #~ msgid "Label not kept for next time"
 #~ msgstr "未能为下次保存标签"

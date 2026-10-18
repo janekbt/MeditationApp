@@ -88,7 +88,7 @@ pub fn build_grid(
             let is_future = date > today;
             let is_today = date == today;
             let secs = totals.get(&date).copied().unwrap_or(0);
-            let mins = if is_future { 0 } else { secs / 60 };
+            let mins = if is_future { 0 } else { (secs + 30) / 60 };
             let level = if is_future {
                 0
             } else {
@@ -112,6 +112,16 @@ mod tests {
 
     fn iso(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn a_40_second_day_colours_its_heatmap_cell() {
+        // The Log shows a 40 s session as "1 min" (#55).
+        let totals = HashMap::from([(iso("2026-05-10"), 40)]);
+        let cells = build_grid(iso("2026-05-11"), 1, &totals, 20);
+        let cell = cells.iter().find(|c| c.date_iso == "2026-05-10").unwrap();
+        assert_eq!(cell.mins, 1);
+        assert_eq!(cell.level, 1);
     }
 
     #[test]

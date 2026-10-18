@@ -2967,7 +2967,7 @@ mod tests {
         for w in ["Week", "Month", "3 Months", "Year", "Bars", "Line"] {
             assert!(!slint.contains(&format!("{{ text: \"{w}\" }}")), "{w}");
         }
-        for w in ["Streak", "Total", "Sessions"] {
+        for w in ["Best streak", "Total", "Sessions"] {
             assert!(!slint.contains(&format!("caption: \"{w}\"")), "{w}");
         }
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();

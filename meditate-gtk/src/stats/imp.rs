@@ -414,34 +414,17 @@ impl StatsView {
     }
 
     fn reload_chart(&self) {
-        let days = self.current_chart_days();
-
-        let today = crate::time::now_local();
-        let since = today
-            .add_days(-(days as i32 - 1))
-            .unwrap()
-            .format("%Y-%m-%d").unwrap()
-            .to_string();
-
-        let sparse = self
+        let period = self.current_chart_period();
+        let days = period.days();
+        let today = meditate_core::time::today_local();
+        let totals = self
             .get_app()
-            .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
+            .and_then(|app| app.with_db(|db| {
+                meditate_core::db::get_daily_totals_since_from_db(db.core(), period.window_start(today))
+            }))
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
-        let sparse_map: std::collections::HashMap<String, i64> =
-            sparse.into_iter().collect();
-
-        let daily: Vec<(String, i64)> = (0..i64::from(days))
-            .map(|i| {
-                let dt = today.add_days(-(days as i32 - 1) + i as i32).unwrap();
-                let date_str = dt.format("%Y-%m-%d").unwrap().to_string();
-                let dur = sparse_map.get(&date_str).copied().unwrap_or(0);
-                (date_str, dur)
-            })
-            .collect();
-
-        // Aggregate (monthly for 1y, weekly for 3m, else daily) lives in core.
-        let data = meditate_core::date_math::aggregate_for_chart_period(&daily, days);
+        let data = meditate_core::date_math::chart_series(&totals, today, period);
 
         // Axis caption tracks the aggregation tier — "/ Day" for
         // the daily views, "/ Week" for 3m, "/ Month" for 1y.
@@ -582,12 +565,9 @@ impl StatsView {
         }
     }
 
-    fn current_chart_days(&self) -> u32 {
+    fn current_chart_period(&self) -> meditate_core::date_math::ChartPeriod {
         let name = self.period_toggle_group.active_name();
-        meditate_core::date_math::ChartPeriod::from_db_str(
-            name.as_deref().unwrap_or(""),
-        )
-        .days()
+        meditate_core::date_math::ChartPeriod::from_db_str(name.as_deref().unwrap_or(""))
     }
 }
 

@@ -125,7 +125,7 @@ pub enum HmKey {
 /// Zero → `Empty` (em-dash). Durations at or above 100 hours
 /// truncate to `HoursOnly(h)` to keep the label compact.
 pub fn hm_compact_key(d: Duration) -> HmKey {
-    let total_mins = d.as_secs() / 60;
+    let total_mins = (d.as_secs() + 30) / 60;
     if total_mins == 0 { return HmKey::Empty; }
     let h = total_mins / 60;
     let m = total_mins % 60;
@@ -141,7 +141,7 @@ pub fn hm_compact_key(d: Duration) -> HmKey {
 /// where `0m` is meaningful data (not "no data"). Zero →
 /// `MinsOnly(0)`, no `≥ 100h` truncation.
 pub fn hm_mins_key(d: Duration) -> HmKey {
-    let total_mins = d.as_secs() / 60;
+    let total_mins = (d.as_secs() + 30) / 60;
     let h = total_mins / 60;
     let m = total_mins % 60;
     match (h, m) {
@@ -151,16 +151,16 @@ pub fn hm_mins_key(d: Duration) -> HmKey {
     }
 }
 
-/// "h/m" picker from a seconds-precision input — drops the sub-
-/// minute remainder. Zero → `Empty` (em-dash). Used by Stats
+/// "h/m" picker from a seconds-precision input, rounded to the
+/// nearest minute like the Log. Zero → `Empty` (em-dash). Used by Stats
 /// insights / longest-session / weekly-comparison renderers
 /// where seconds are noise. Use `format_time` for live session
 /// display where seconds matter.
 pub fn hm_secs_key(d: Duration) -> HmKey {
     let total = d.as_secs();
     if total == 0 { return HmKey::Empty; }
-    let h = total / 3600;
-    let m = (total % 3600) / 60;
+    let total_mins = (total + 30) / 60;
+    let (h, m) = (total_mins / 60, total_mins % 60);
     match (h, m) {
         (0, m) => HmKey::MinsOnly(m),
         (h, 0) => HmKey::HoursOnly(h),
@@ -1243,11 +1243,24 @@ mod tests {
     }
 
     #[test]
-    fn hm_secs_key_drops_sub_minute_and_emits_empty_for_zero() {
+    fn stats_totals_round_to_the_nearest_minute() {
+        // Like the Log's minutes (#55); each key keeps its own zero rule.
+        let s = Duration::from_secs;
+        for key in [hm_compact_key, hm_secs_key, hm_mins_key] {
+            assert_eq!(key(s(40)), HmKey::MinsOnly(1));
+            assert_eq!(key(s(3570)), HmKey::HoursOnly(1));
+        }
+        assert_eq!(hm_compact_key(s(29)), HmKey::Empty);
+        assert_eq!(hm_secs_key(s(29)), HmKey::MinsOnly(0));
+        assert_eq!(hm_mins_key(s(29)), HmKey::MinsOnly(0));
+    }
+
+    #[test]
+    fn hm_secs_key_emits_empty_only_for_zero() {
         // Stats display: seconds are noise; emit Empty (shell renders "–").
         assert_eq!(hm_secs_key(Duration::ZERO), HmKey::Empty);
-        assert_eq!(hm_secs_key(Duration::from_secs(30)), HmKey::MinsOnly(0));
-        assert_eq!(hm_secs_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_secs_key(Duration::from_secs(20)), HmKey::MinsOnly(0));
+        assert_eq!(hm_secs_key(Duration::from_secs(80)), HmKey::MinsOnly(1));
         assert_eq!(hm_secs_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
         assert_eq!(hm_secs_key(Duration::from_secs(3665)), HmKey::HoursMins(1, 1));
     }
@@ -1256,8 +1269,8 @@ mod tests {
     fn hm_mins_key_emits_mins_only_zero_at_zero() {
         // Goal-progress display: 0m is meaningful, not "no data".
         assert_eq!(hm_mins_key(Duration::ZERO), HmKey::MinsOnly(0));
-        assert_eq!(hm_mins_key(Duration::from_secs(30)), HmKey::MinsOnly(0));
-        assert_eq!(hm_mins_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_mins_key(Duration::from_secs(20)), HmKey::MinsOnly(0));
+        assert_eq!(hm_mins_key(Duration::from_secs(80)), HmKey::MinsOnly(1));
         assert_eq!(hm_mins_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
         assert_eq!(hm_mins_key(Duration::from_secs(3661)), HmKey::HoursMins(1, 1));
     }
@@ -1270,7 +1283,7 @@ mod tests {
 
     #[test]
     fn hm_compact_key_truncates_at_100h() {
-        assert_eq!(hm_compact_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_compact_key(Duration::from_secs(80)), HmKey::MinsOnly(1));
         assert_eq!(hm_compact_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
         assert_eq!(hm_compact_key(Duration::from_secs(3661)), HmKey::HoursMins(1, 1));
         // h >= 100 drops the minute component — keeps the heatmap-cell label narrow.
