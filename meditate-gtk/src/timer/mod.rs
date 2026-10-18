@@ -1,6 +1,6 @@
 mod imp;
 
-pub use imp::TimerMode;
+pub use imp::{RunningControls, TimerMode};
 pub(crate) use imp::show_no_vibration_note;
 
 use gtk::glib;
@@ -50,39 +50,25 @@ impl TimerView {
         self.imp().set_running_label(label);
     }
 
-    /// Stash the running-page Pause button so on_pause / on_resume
-    /// can morph its label in place (Pause ↔ Resume) without
-    /// popping the running page back to the setup view. Called by
-    /// both the timer running page and the breathing running page.
-    pub fn set_running_pause_btn(&self, btn: gtk::Button) {
-        self.imp().set_running_pause_btn(btn);
+    /// Hand over the running page's end controls; TimerView sets
+    /// what they show from core's button set.
+    pub fn set_running_controls(&self, controls: RunningControls) {
+        self.imp().set_running_controls(controls);
     }
 
-    /// Timer-mode-only: stash Stop + Add buttons so the Overtime
-    /// transition can hide Stop and reveal the dynamic
-    /// "Add MM:SS ?" button.
-    pub fn set_running_overtime_widgets(
-        &self,
-        stop_btn: gtk::Button,
-        add_btn: gtk::Button,
-    ) {
-        self.imp().set_running_overtime_widgets(stop_btn, add_btn);
+    /// One of the two row buttons (0 left, 1 right) was clicked.
+    pub fn end_button_clicked(&self, index: usize) {
+        self.imp().end_button_clicked(index);
     }
 
-    /// Called by the running-page Add button — records the planned
-    /// duration plus the elapsed overtime as the session length.
-    pub fn add_overtime_and_finish(&self) {
-        self.imp().add_overtime_and_finish();
+    /// The running page's Discard button.
+    pub fn discard(&self) {
+        self.imp().on_discard();
     }
 
     /// Called by the window when the running page's Pause button is pressed.
     pub fn pause(&self) {
         self.imp().on_pause();
-    }
-
-    /// Called by the window when the running page's Stop button is pressed.
-    pub fn stop(&self) {
-        self.imp().on_stop();
     }
 
     /// Toggle playback: Idle→start, Running→pause, Paused→resume, Done→noop.
@@ -286,14 +272,53 @@ mod tests {
 
     /// Going back to Setup before the write succeeded let the next
     /// Start overwrite the only copy of a session whose save failed.
+    /// Only `reset_mode` pops the running page, and Save reaches it
+    /// only once the write landed.
     #[test]
-    fn only_a_successful_save_leaves_done() {
+    fn only_a_successful_save_leaves_the_running_page() {
         let imp = read("src/timer/imp.rs");
-        let body = body_of(&imp, "    fn on_save(&self) {");
+        let code = imp.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let body = body_of(code, "    fn on_save(&self, auto: bool) {");
         let resets: Vec<usize> = body.match_indices("reset_mode(mode, false)").map(|(i, _)| i).collect();
         assert_eq!(resets.len(), 1);
         assert!(resets[0] > body.find("None => {").unwrap(), "reset only once the write succeeded");
         assert!(body.contains("if self.saving.get() {"), "a second tap during the write is ignored");
+        assert_eq!(code.matches("emit_by_name::<()>(\"timer-stopped\"").count(), 1, "one place pops the page");
+        assert!(method(code, "    fn reset_mode(").contains("emit_by_name::<()>(\"timer-stopped\""));
+    }
+
+    /// Two screens and two taps ended a session (#6): the running
+    /// page now saves and discards itself, with the note, drawn from
+    /// core's button set, and the label comes from Setup.
+    #[test]
+    fn the_running_page_is_the_only_end_screen() {
+        let blp = read("data/ui/timer_view.blp");
+        for gone in ["name: \"done\"", "done_label_enabled_row", "Gtk.Button save_btn", "stop_from_pause_btn"] {
+            assert!(!blp.contains(gone), "{gone}");
+        }
+        let imp = read("src/timer/imp.rs");
+        let code = imp.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for gone in ["fn show_done(", "done_selected_label_id", "resolve_persist_action", "Failed::LabelDefault"] {
+            assert!(!code.contains(gone), "{gone}");
+        }
+        assert!(body_of(code, "    fn on_save(&self, auto: bool) {").contains("let label_id = self.setup_selected_label_id();"));
+        let refresh = method(code, "    fn refresh_end_buttons(&self) {");
+        assert!(refresh.contains("CoreSession::end_buttons"), "core decides the buttons");
+        let win = read("src/window/imp.rs");
+        assert!(win.contains("gtk::TextView::builder()"), "the note lives on the running page");
+        assert_eq!(win.matches("fn end_controls(").count(), 1, "one set of controls for both running pages");
+        assert!(!win.contains("timer_view.stop()"));
+    }
+
+    /// One Space press in overtime ended the session through Finish;
+    /// without a Done page that would save at once.
+    #[test]
+    fn space_never_ends_a_session() {
+        use meditate_core::session::{Session, ToggleAction, UiState};
+        assert_eq!(Session::toggle_action(UiState::Overtime), ToggleAction::NoOp);
+        assert_eq!(Session::toggle_action(UiState::Done), ToggleAction::NoOp);
+        let imp = read("src/timer/imp.rs");
+        assert!(!imp.contains("FinishOvertime"));
     }
 
     /// The snapshot emits no event, so writing it must not start a

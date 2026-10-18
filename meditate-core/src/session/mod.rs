@@ -81,16 +81,40 @@ pub struct TickOutcome {
 
 /// What the play/pause-key tap should do given the current `UiState`.
 /// Returned by `Session::toggle_action`. Shell maps each variant to
-/// its `on_start` / `on_pause` / `finish_overtime_session` /
-/// `on_resume` calls; `NoOp` covers the Done-screen state where
-/// neither Play nor Pause have a meaningful target.
+/// its `on_start` / `on_pause` / `on_resume` calls; `NoOp` covers
+/// overtime and an ended session, where only the page's buttons end it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleAction {
     Start,
     Pause,
-    FinishOvertime,
     Resume,
     NoOp,
+}
+
+/// A button on the running page, which also ends the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndButton {
+    Pause,
+    Resume,
+    Save,
+    /// Overtime: save with the overtime added.
+    Add,
+    Discard,
+}
+
+/// What the running page shows: a row of two buttons, optionally a
+/// Discard button under it, and optionally the note field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndButtons {
+    pub row: [EndButton; 2],
+    pub discard_below: bool,
+    pub note: bool,
+}
+
+impl EndButtons {
+    /// A session that ended but is not saved yet (Box Breath's own
+    /// end, or a save that failed).
+    pub const ENDED: Self = Self { row: [EndButton::Save, EndButton::Discard], discard_below: false, note: true };
 }
 
 /// Default Timer-mode countdown in seconds for a fresh user
@@ -421,8 +445,27 @@ impl Session {
         {
             return Vec::new();
         }
-        self.phase = SessionPhase::Overtime;
-        overtime_transition_effects(&self.settings)
+        self.reach_end()
+    }
+
+    /// A Timer or Guided countdown reached its end: overtime, or with
+    /// Auto-Finish a stop at the planned length.
+    fn reach_end(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if matches!(self.settings.shape, SessionShape::Guided { .. }) {
+            effects.push(Effect::StopGuidedAudio);
+        }
+        if self.settings.auto_finish {
+            let duration_secs = self.completion_duration_secs();
+            self.phase = SessionPhase::Stopped;
+            self.final_duration_secs = Some(duration_secs);
+            effects.push(Effect::AutoFinish { duration_secs });
+        } else {
+            self.phase = SessionPhase::Overtime;
+            effects.push(Effect::EnterOvertime);
+        }
+        effects.extend(end_bell_effect(&self.settings));
+        effects
     }
 
     /// Drive the session forward by one tick. Returns the effects
@@ -516,8 +559,7 @@ impl Session {
                     self.settings.signal_mode_override,
                     elapsed,
                 );
-                self.phase = SessionPhase::Overtime;
-                return overtime_transition_effects(&self.settings);
+                return self.reach_end();
             }
         }
 
@@ -577,7 +619,11 @@ impl Session {
                 let duration_secs = u64::from(target_secs);
                 self.phase = SessionPhase::Stopped;
                 self.final_duration_secs = Some(duration_secs);
-                effects.push(Effect::EndBoxBreath { duration_secs });
+                effects.push(if self.settings.auto_finish {
+                    Effect::AutoFinish { duration_secs }
+                } else {
+                    Effect::EndBoxBreath { duration_secs }
+                });
                 if let Some(eff) = end_bell_effect(&self.settings) {
                     effects.push(eff);
                 }
@@ -699,9 +745,24 @@ impl Session {
             UiState::Idle => ToggleAction::Start,
             UiState::Preparing => ToggleAction::Pause,
             UiState::Running => ToggleAction::Pause,
-            UiState::Overtime => ToggleAction::FinishOvertime,
+            // One key never saves: Save and Add are on the page.
+            UiState::Overtime => ToggleAction::NoOp,
             UiState::Paused => ToggleAction::Resume,
             UiState::Done => ToggleAction::NoOp,
+        }
+    }
+
+    /// The running page's buttons for this session right now.
+    pub fn end_buttons(&self) -> EndButtons {
+        use EndButton::{Add, Discard, Pause, Resume, Save};
+        let buttons = |row, discard_below, note| EndButtons { row, discard_below, note };
+        match (self.phase, self.is_paused) {
+            (SessionPhase::Stopped, _) => EndButtons::ENDED,
+            // Preparation seconds are never saved as meditation.
+            (SessionPhase::Prep, true) => buttons([Resume, Discard], false, false),
+            (_, true) => buttons([Resume, Save], true, true),
+            (SessionPhase::Overtime, false) => buttons([Save, Add], true, true),
+            _ => buttons([Pause, Discard], false, false),
         }
     }
 
@@ -843,21 +904,6 @@ fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
 }
 
 /// Mirror of `starting_bell_effect` for the end bell.
-/// Effects of the Running→Overtime transition, shared by the tick
-/// crossing and `enter_overtime`: a guided track stops first, then
-/// the shell's overtime ceremony, then the end bell.
-fn overtime_transition_effects(settings: &SessionSettings) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    if matches!(settings.shape, SessionShape::Guided { .. }) {
-        effects.push(Effect::StopGuidedAudio);
-    }
-    effects.push(Effect::EnterOvertime);
-    if let Some(eff) = end_bell_effect(settings) {
-        effects.push(eff);
-    }
-    effects
-}
-
 fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
     let cue = settings.end_bell.as_ref()?;
     let signal_mode = crate::bells::effective_signal_mode(
@@ -950,6 +996,7 @@ mod tests {
             starting_bell: None,
             end_bell: None,
             box_breath_cues: None,
+            auto_finish: false,
         }
     }
 
@@ -963,6 +1010,7 @@ mod tests {
             starting_bell: None,
             end_bell: None,
             box_breath_cues: None,
+            auto_finish: false,
         }
     }
 
@@ -982,6 +1030,7 @@ mod tests {
             starting_bell: None,
             end_bell: None,
             box_breath_cues: None,
+            auto_finish: false,
         }
     }
 
@@ -1015,6 +1064,7 @@ mod tests {
                 out_phase: Some(cue()),
                 hold_out: Some(cue()),
             }),
+            auto_finish: false,
         }
     }
 
@@ -2032,6 +2082,97 @@ mod tests {
         let effects = s.add_overtime_and_finish(Duration::from_secs(200));
         assert!(effects.is_empty());
         assert_eq!(s.phase(), SessionPhase::Running);
+    }
+
+    // ── End buttons and Auto-Finish ──────────────────────────────────
+
+    #[test]
+    fn the_end_buttons_follow_the_session() {
+        use EndButton::{Add, Discard, Pause, Resume, Save};
+        let t0 = Duration::from_secs(100);
+        let shown = |s: &Session| s.end_buttons();
+        let row = |row: [EndButton; 2], discard_below: bool, note: bool| EndButtons { row, discard_below, note };
+
+        let mut prep = timer_countdown_settings(600);
+        prep.prep_secs = Some(10);
+        let (mut s, _) = Session::start(prep, t0);
+        assert_eq!(shown(&s), row([Pause, Discard], false, false), "preparing");
+        let _ = s.pause(t0 + Duration::from_secs(2));
+        assert_eq!(shown(&s), row([Resume, Discard], false, false), "paused in preparation");
+
+        let mut s = Session::start_running(timer_countdown_settings(60), t0);
+        assert_eq!(shown(&s), row([Pause, Discard], false, false), "running");
+        let _ = s.pause(t0 + Duration::from_secs(5));
+        assert_eq!(shown(&s), row([Resume, Save], true, true), "paused");
+        s.resume(t0 + Duration::from_secs(10));
+        let _ = s.tick(t0 + Duration::from_secs(70));
+        assert_eq!(shown(&s), row([Save, Add], true, true), "overtime");
+
+        let mut s = Session::start_running(box_breath_settings(Some(16)), t0);
+        let _ = s.tick(t0 + Duration::from_millis(500));
+        let _ = s.tick(t0 + Duration::from_secs(16));
+        assert_eq!(shown(&s), row([Save, Discard], false, true), "box breath ended");
+        assert_eq!(EndButtons::ENDED, row([Save, Discard], false, true), "ended, not saved");
+    }
+
+    #[test]
+    fn save_while_paused_keeps_the_time_so_far() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_running(timer_countdown_settings(20 * 60), t0);
+        let _ = s.pause(t0 + Duration::from_secs(7 * 60));
+        let effects = s.stop(t0 + Duration::from_secs(9 * 60));
+        assert_eq!(
+            effects,
+            vec![Effect::StopActiveSignals, Effect::EndSession { duration_secs: 7 * 60 }]
+        );
+    }
+
+    #[test]
+    fn a_countdown_with_auto_finish_ends_at_its_length() {
+        let t0 = Duration::from_secs(100);
+        let settings = SessionSettings {
+            auto_finish: true,
+            end_bell: Some(cue_at(70.0)),
+            ..timer_countdown_settings(600)
+        };
+        let mut s = Session::start_running(settings, t0);
+        let effects = s.tick(t0 + Duration::from_secs(605));
+        assert_eq!(effects.first(), Some(&Effect::AutoFinish { duration_secs: 600 }), "{effects:?}");
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "the end bell rings");
+        assert!(!effects.contains(&Effect::EnterOvertime));
+        assert!(!effects.contains(&Effect::StopActiveSignals), "the end bell is not cut");
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert_eq!(s.final_duration_secs(), Some(600));
+    }
+
+    #[test]
+    fn a_guided_file_with_auto_finish_ends_at_its_length() {
+        let t0 = Duration::from_secs(100);
+        let settings = || SessionSettings { auto_finish: true, ..guided_settings(600, false) };
+        // The length is reached first.
+        let (mut s, _) = Session::start(settings(), t0);
+        let effects = s.tick(t0 + Duration::from_secs(600));
+        assert_eq!(effects[..2], [Effect::StopGuidedAudio, Effect::AutoFinish { duration_secs: 600 }], "{effects:?}");
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+        // The file ends first: the stored length is saved.
+        let (mut s, _) = Session::start(settings(), t0);
+        let _ = s.tick(t0 + Duration::from_secs(590));
+        let effects = s.enter_overtime();
+        assert_eq!(effects[..2], [Effect::StopGuidedAudio, Effect::AutoFinish { duration_secs: 600 }], "{effects:?}");
+        assert_eq!(s.final_duration_secs(), Some(600));
+    }
+
+    #[test]
+    fn a_box_breath_countdown_with_auto_finish_saves_by_itself() {
+        let t0 = Duration::from_secs(100);
+        let settings = SessionSettings { auto_finish: true, ..box_breath_settings(Some(16)) };
+        let mut s = Session::start_running(settings, t0);
+        let _ = s.tick(t0 + Duration::from_millis(500));
+        let effects = s.tick(t0 + Duration::from_secs(16));
+        assert_eq!(effects.first(), Some(&Effect::AutoFinish { duration_secs: 16 }), "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })));
+        assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
     // ── enter_overtime (external force-transition) ───────────────────

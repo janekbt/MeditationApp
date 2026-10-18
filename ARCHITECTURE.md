@@ -203,7 +203,7 @@ clonable, with no Database, clock or shell reference.
 
 ### Session: the in-flight state machine
 
-Exists from Start until Save or Discard. It owns a `SessionPhase`
+Exists from Start until Save or Discard on the running page. It owns a `SessionPhase`
 (Prep, Running, Overtime, Stopped; `Paused` is reserved and
 unreached, pause is a separate flag), a pause-aware `Stopwatch` phase
 clock, the bell schedule with its fired state, and for Box Breath
@@ -220,8 +220,16 @@ Public surface: `Session::start(settings, now)` (returns the session
 plus its start effects, so a starting bell can't be lost), `tick` /
 `tick_summary`, `pause` / `resume`, the terminators `stop`,
 `finish_overtime` and `add_overtime_and_finish`, `enter_overtime`
-(a guided track ended on its own), `ui_state()` and
-`display_secs(now)` for refreshes outside the tick.
+(a guided track ended on its own), `ui_state()`, `end_buttons()`
+(which buttons the running page shows, and whether the note field
+is shown; there is no separate Done page, and `EndButtons::ENDED` is
+what a stopped but unsaved session shows) and `display_secs(now)`
+for refreshes outside the tick.
+
+With `SessionSettings::auto_finish` on, a countdown's end (Timer,
+Guided length or track end, Box Breath target) stops the session at
+its planned length and emits `AutoFinish` in place of
+`EnterOvertime` / `EndBoxBreath`.
 
 ### Effect: the output instruction set
 
@@ -231,8 +239,8 @@ Each variant is one thing the shell should do this tick. All in
 - `UpdateDisplay { secs }`: refresh the big time label; Session has
   already rounded.
 - `EndPrep`: prep silence over, now Running.
-- `EnterOvertime`: target crossed; Pause becomes Finish, Add
-  appears, the hero label freezes.
+- `EnterOvertime`: target crossed; the buttons become Save and Add
+  with Discard below, the hero label freezes.
 - `StopGuidedAudio`: Guided reached its planned length; stop the
   track now, before the end bell. Emitted first in the
   Running-to-Overtime transition.
@@ -248,6 +256,9 @@ Each variant is one thing the shell should do this tick. All in
   crossed and a cue is set for the new phase.
 - `EndBoxBreath { duration_secs }`: Box Breath reached its
   cycle-aligned target.
+- `AutoFinish { duration_secs }`: Auto-Finish ended the countdown;
+  save at once (with the note) and offer Undo. The end bell follows
+  in the same list and is not cut.
 - `EndSession { duration_secs }`: the session is over (any path);
   `duration_secs` is what the saved row records.
 - `StopActiveSignals`: cut any bell or vibration in flight. Emitted

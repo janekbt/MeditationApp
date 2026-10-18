@@ -59,6 +59,10 @@ pub enum Effect {
     /// done view with this duration. Never fired in stopwatch-only
     /// box-breath mode (no target; user must press Stop).
     EndBoxBreath { duration_secs: u64 },
+    /// Auto-Finish: a countdown reached its end and the session
+    /// stopped there. Shell saves it at once (note included) and
+    /// returns to Setup with "Session saved" and Undo.
+    AutoFinish { duration_secs: u64 },
     /// Interval / fixed bell crossed its ring boundary this tick.
     /// `signal_mode` is the *effective* mode (per-bell AND per-mode
     /// override already applied by Session); the shell dispatches

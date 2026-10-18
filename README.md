@@ -15,8 +15,8 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - The computer or phone stays awake during a session so bells ring on time; keeping the screen on too is set per mode
 - Quick presets plus custom durations
 - Per-mode labels: each mode remembers the label you last used for it
-- Optional post-session notes
-- Pause, resume, discard
+- One screen from start to end: pause, resume, save or discard right on the running page, with an optional note
+- Auto-Finish per mode: a countdown saves itself when the time is up, with Undo
 - Daily streak and a system notification when you're away from the app
 
 ### Log

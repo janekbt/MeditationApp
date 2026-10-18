@@ -702,8 +702,8 @@ msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "{n} sessione alla numero {0}"
 msgstr[1] "{n} sessioni alla numero {0}"
 
-msgid "Add {} ?"
-msgstr "Aggiungere {}?"
+msgid "Add {} and Save"
+msgstr "Aggiungi {} e salva"
 
 msgid "Vibration"
 msgstr "Vibrazione"
@@ -781,7 +781,7 @@ msgstr[0] "{n} sessione · {0}"
 msgstr[1] "{n} sessioni · {0}"
 
 msgid "Pause"
-msgstr "In pausa"
+msgstr "Pausa"
 
 msgid "Resume"
 msgstr "Riprendi"
@@ -1126,8 +1126,6 @@ msgstr "{}%"
 msgid "Couldn't open the folder picker"
 msgstr "Impossibile aprire il selettore di cartelle"
 
-msgid "Label not kept for next time"
-msgstr "Etichetta non salvata per la prossima volta"
 
 msgid "Every {n} s"
 msgid_plural "Every {n} s"
@@ -1168,3 +1166,12 @@ msgstr "Aggiunto all’intervallo dopo ogni rintocco"
 msgctxt "Bell time"
 msgid "Time"
 msgstr "Tempo"
+
+msgid "Auto-Finish"
+msgstr "Termina automaticamente"
+
+msgid "Saves the session without asking when the time is up"
+msgstr "Salva la sessione senza chiedere quando il tempo è scaduto"
+
+msgid "Session saved"
+msgstr "Sessione salvata"

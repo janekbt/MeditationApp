@@ -526,12 +526,11 @@ mod tests {
         assert!(read("src/log/imp.rs").contains("dialog.connect_closed("));
     }
 
-    /// A label deleted in the chooser kept its name on the Done page
-    /// and in the Log edit; the rows re-read it when they show again.
+    /// A label deleted in the chooser kept its name on Setup and in
+    /// the Log edit; the rows re-read it when they show again.
     #[test]
     fn label_rows_reread_their_label_when_shown_again() {
         let timer = read("src/timer/imp.rs");
-        assert!(timer.contains("self.done_label_chooser_row.connect_map("));
         assert!(timer.contains("self.setup_label_chooser_row.connect_map("));
         assert!(read("src/log/imp.rs").contains("label_chooser_row.connect_map("));
     }

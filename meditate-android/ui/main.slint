@@ -59,7 +59,6 @@ export global Tr {
     public pure function url-must-be-https() -> string { return @tr("URL must start with https://"); }
     public pure function keystore-write-failed() -> string { return @tr("Keystore write failed"); }
     public pure function save-failed() -> string { return @tr("Save failed"); }
-    public pure function label-not-kept() -> string { return @tr("Label not kept for next time"); }
     public pure function db-unavailable() -> string { return @tr("Database unavailable"); }
     public pure function enter-a-password() -> string { return @tr("Enter a password"); }
     public pure function keystore-read-failed() -> string { return @tr("Keystore read failed"); }
@@ -141,7 +140,7 @@ export global Tr {
     public pure function start-session() -> string { return @tr("Start Session"); }
     public pure function pause() -> string { return @tr("Pause"); }
     public pure function resume() -> string { return @tr("Resume"); }
-    public pure function add-overtime(t: string) -> string { return @tr("Add {} ?", t); }
+    public pure function add-overtime(t: string) -> string { return @tr("Add {} and Save", t); }
     // Preset-chip / widget subtitles (preset_subtitle)
     public pure function stopwatch() -> string { return @tr("Stopwatch"); }
     public pure function n-min(n: int) -> string { return @tr("{n} min" | "{n} min" % n); }
@@ -179,6 +178,7 @@ export global Tr {
     public pure function n-sessions-deleted(n: int) -> string { return @tr("Session deleted" | "{n} sessions deleted" % n); }
     public pure function deleted-all-n(n: int) -> string { return @tr("Deleted {n} session" | "Deleted {n} sessions" % n); }
     public pure function delete-failed() -> string { return @tr("Delete failed"); }
+    public pure function session-saved() -> string { return @tr("Session saved"); }
     // Label-conflict dialog (sync name collisions)
     public pure function conflict-title() -> string { return @tr("Duplicate label"); }
     public pure function conflict-body(suffixed: string, base: string) -> string { return @tr("'{}' has the same name as '{}'. It was created independently on another device.", suffixed, base); }
@@ -411,6 +411,61 @@ export struct ContribCol {
     cells: [ContribCellData],
 }
 
+// A pill button whose text wraps onto a second line where one
+// doesn't fit. The bundled Material buttons clip their text and are
+// build environment, so they can't learn to wrap.
+component WrapButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> outline;
+    in property <length> base-height: 40px;
+    callback clicked;
+
+    min-height: max(root.base-height, label.preferred-height + 16px);
+    horizontal-stretch: 1;
+    border-radius: min(self.height / 2, 28px);
+    border-width: root.outline ? 1px : 0px;
+    border-color: MaterialPalette.outline;
+    background: root.outline
+        ? (touch.pressed ? MaterialPalette.primary.transparentize(0.88) : transparent)
+        : (touch.pressed ? MaterialPalette.primary.darker(0.15) : MaterialPalette.primary);
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        alignment: center;
+        label := Text {
+            text: root.text;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 14px;
+            font-weight: 500;
+            color: root.outline ? MaterialPalette.primary : MaterialPalette.on-primary;
+        }
+    }
+}
+
+// One running-page button by core's code: 0 Pause, 1 Resume,
+// 2 Save, 3 Add, 4 Discard. Discard is the outline one.
+component EndButtonView inherits HorizontalLayout {
+    in property <int> kind;
+    in property <string> add-label;
+    callback tapped(int);
+    WrapButton {
+        text: root.kind == 0 ? Tr.pause() : root.kind == 1 ? Tr.resume() : root.kind == 2 ? @tr("Save") : root.kind == 3 ? root.add-label : @tr("Discard");
+        outline: root.kind == 4;
+        base-height: 56px;
+        clicked => { root.tapped(root.kind); }
+    }
+}
+
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
 // is a 180-px-tall Gtk.TextView with word-wrap. This custom
@@ -623,10 +678,13 @@ component SwitchRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     in-out property <bool> checked;
+    in property <bool> enabled: true;
     callback toggled(bool);
 
     height: max(64px, sr-layout.preferred-height);
     background: transparent;
+    // Greyed out like DurationRow.
+    opacity: root.enabled ? 1.0 : MaterialPalette.disable-opacity;
 
     sr-layout := HorizontalLayout {
         padding-top: 8px;
@@ -669,6 +727,7 @@ component SwitchRow inherits Rectangle {
                     min-width: 52px;
                     min-height: 32px;
                     checked <=> root.checked;
+                    enabled: root.enabled;
                     checked-state-changed(value) => { root.toggled(value); }
                 }
             }
@@ -1947,11 +2006,9 @@ component BoxedList inherits Rectangle {
 }
 
 /// Who opened the label chooser: Setup's label row (picks write the
-/// mode's setting), the Done screen (picks stay on Done until Save,
-/// via `resolve_persist_action`) or Edit Session.
+/// mode's setting) or Edit Session.
 export enum LabelTarget {
     setup,
-    done,
     edit,
 }
 
@@ -1989,17 +2046,14 @@ export component MainWindow inherits Window {
 
     in property <string> remaining-text: "00:10";
     in property <string> duration-text: "00:10";
-    in property <string> action-label: @tr("Start Session");
     in property <bool> running-page: false;
-    in property <bool> stop-visible: false;
-    // Overtime (B-6c): when the countdown crosses zero the
-    // session keeps running, the end bell rings, and the button
-    // row morphs — Pause/Stop hide, "Finish" (record planned
-    // duration) + "Add MM:SS ?" (record incl. overtime) appear.
-    // `overtime-add-label` is rebuilt every overtime tick from
-    // the core `UpdateOvertimeLabel` effect. Mirrors GTK's
-    // `transition_running_to_overtime`.
-    in property <bool> overtime-active: false;
+    // The running page's buttons, from core's `EndButtons`: the row's
+    // two (0 Pause, 1 Resume, 2 Save, 3 Add, 4 Discard), Discard under
+    // them, and the note field. Tapping one sends its code back.
+    in property <int> end-left: 0;
+    in property <int> end-right: 4;
+    in property <bool> end-discard-below: false;
+    in property <bool> end-note: false;
     in property <string> overtime-add-label: Tr.add-overtime("00:00");
     // Streak chip slot above the hero — matches `streak_label` in
     // `meditate-gtk/data/ui/timer_view.blp` (line 32). Empty
@@ -2007,14 +2061,6 @@ export component MainWindow inherits Window {
     // DB. Defined as a property rather than a hard-coded blank
     // Text so the layout doesn't reshape once phase 3 fills it in.
     in property <string> streak-text: "";
-    // Done screen: replaces Setup as the base layer while it's up.
-    // running-page may also be true briefly during the transition
-    // (Done is set first, then running-page is cleared so the
-    // overlay slides off to the right, revealing Done underneath).
-    in property <bool> done-page: false;
-    // Elapsed time the user actually meditated, formatted MM:SS or
-    // HH:MM:SS by the Rust side. Shown big at the top of Done.
-    in property <string> elapsed-text: "00:00";
 
     in-out property <int> setup-hours: 0;
     in-out property <int> setup-minutes: 10;
@@ -2241,6 +2287,8 @@ export component MainWindow inherits Window {
     // toggle. Real WakeLock acquisition lands in platform-edge
     // phase 8 (Android `Window.FLAG_KEEP_SCREEN_ON` / PowerManager).
     in-out property <bool> keep-awake-on: false;
+    // Per-mode Auto-Finish (`settings_keys::auto_finish_key_for_mode`).
+    in-out property <bool> auto-finish-on: false;
 
     // Cues per-mode signal toggle — mirrors the .blp
     // `cues_signal_mode_row` (the toggle group is built in Rust
@@ -2306,16 +2354,6 @@ export component MainWindow inherits Window {
     in-out property <int> delete-label-id: 0;
     in property <string> delete-label-body: "";
 
-    // Per-session label pick that rides with the Done screen —
-    // mirrors GTK's `done_selected_label_id` Cell at
-    // `timer/imp.rs:211`. Initialized from Setup's resolved
-    // label when Done opens, mutable on the Done screen, and
-    // what `Save` ultimately writes as the session row's
-    // `label_id`. The Done choice also persists back to the
-    // mode's default on Save via `resolve_persist_action`.
-    in-out property <bool> done-label-active: false;
-    in property <string> done-label-name: "";
-    in-out property <int> done-label-id: 0;
 
     // Top-level navigation: 0 = Timer page (Setup + Running +
     // Done overlays; the existing single-screen experience),
@@ -2423,14 +2461,14 @@ export component MainWindow inherits Window {
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
 
-    // Note field on the Done screen. Bound to Material's TextField
-    // so the on-screen keyboard / IME show up on focus, and the
-    // Rust side reads this value on Save.
+    // Note field on the running page, shown once the session is
+    // paused or over. The Rust side reads this value on Save.
     in-out property <string> note-text: "";
 
     callback action-tap();
+    callback end-button-tap(int);
     callback stop-tap();
-    callback finish-tap();
+    callback save-end-tap();
     callback add-tap();
     callback duration-tap();
     callback stopwatch-toggled(bool);
@@ -2444,11 +2482,12 @@ export component MainWindow inherits Window {
     callback duration-committed();
     callback save-tap();
     callback discard-tap();
-    // "Discard Session?" when the Done note isn't empty (GTK's
+    // "Discard Session?" when the note isn't empty (GTK's
     // on_discard); Rust opens it from discard-tap.
     callback discard-confirm();
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
+    callback auto-finish-toggled(bool);
     callback cues-changed(int);
 
     // Presets (Phase 6 / P-2). Rust fills `presets-list` with the
@@ -2759,8 +2798,6 @@ export component MainWindow inherits Window {
     callback rename-label-confirm();
     callback delete-label-tap(int);
     callback delete-label-confirm();
-    callback done-label-active-toggled(bool);
-    callback done-label-tap();
     // Per-phase stepper. `index` is 0=In, 1=HoldIn, 2=Out, 3=HoldOut
     // (matches `BreathPattern::phase_min_secs(index)` + the GTK
     // shell's `adjust_phase(index, delta, min_val)` signature).
@@ -3165,28 +3202,14 @@ export component MainWindow inherits Window {
             edit-note.release();
         }
     }
-    changed done-page => {
-        if (!root.done-page) {
-            done-note.release();
+    changed running-page => {
+        if (!root.running-page) {
+            running-note.release();
         }
     }
     property <length> edit-session-offset: root.edit-session-page ? root.width : 0px;
     animate edit-session-offset { duration: 300ms; easing: ease-out; }
 
-    // Slide offset for the Done overlay. Asymmetric duration:
-    // appearing is INSTANT (0 ms) so Done is already at x=0 by the
-    // time Running starts sliding off — the user experiences the
-    // Running overlay sliding right to *reveal* a static Done
-    // underneath, not two layers crisscrossing. Disappearing
-    // animates 300 ms so Save / Discard slides Done off to the
-    // right and reveals Setup. The conditional reads `done-page`
-    // at the moment of the change; transitioning into done-page=true
-    // picks 0 ms, transitioning out picks 300 ms.
-    property <length> done-offset: root.done-page ? root.width : 0px;
-    animate done-offset {
-        duration: root.done-page ? 0ms : 300ms;
-        easing: ease-out;
-    }
 
     // Route initial focus into a FocusScope wrapping every page so
     // the Android back button / predictive-back gesture reaches
@@ -3194,7 +3217,7 @@ export component MainWindow inherits Window {
     // `Key.Back` and bubbles it up through the focused element's
     // parent chain — wrapping everything keeps the key reachable
     // even after focus moves to a TextInput inside the Note field
-    // on the Done screen.
+    // on the running page.
     forward-focus: root-focus;
     // A text field that lets go of focus (confirmed, cleared, or its
     // dialog closed) leaves nothing focused; Back would then reach no
@@ -3597,15 +3620,20 @@ export component MainWindow inherits Window {
                 }
                 // Manage Files — opens the full chooser
                 // (GTK's `manage_guided_files_btn`).
-                // Stacked, not side by side: "Управление файлами" next
-                // to "Локальная папка" doesn't fit 360 px.
-                OutlineButton {
-                    text: @tr("Manage Imports");
-                    clicked => { root.manage-guided-tap(); }
-                }
-                OutlineButton {
-                    text: @tr("Local Folder");
-                    clicked => { root.local-folder-tap(); }
+                // Side by side; "Управление файлами" next to "Локальная
+                // папка" fits 360 px on two lines.
+                HorizontalLayout {
+                    spacing: 8px;
+                    WrapButton {
+                        text: @tr("Manage Imports");
+                        outline: true;
+                        clicked => { root.manage-guided-tap(); }
+                    }
+                    WrapButton {
+                        text: @tr("Local Folder");
+                        outline: true;
+                        clicked => { root.local-folder-tap(); }
+                    }
                 }
             }
             // Box Breath body — Breath Phases heading + 2×2 phase
@@ -3743,6 +3771,21 @@ export component MainWindow inherits Window {
                         active <=> root.label-active;
                         toggled(value) => { root.label-active-toggled(value); }
                         body-tapped => { root.label-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Auto-Finish: greyed out where the session has no end (a
+                    // guided file always has one).
+                    SwitchRow {
+                        title: @tr("Auto-Finish");
+                        subtitle: @tr("Saves the session without asking when the time is up");
+                        enabled: root.setup-mode == 1 || !root.stopwatch-on;
+                        checked <=> root.auto-finish-on;
+                        toggled(value) => { root.auto-finish-toggled(value); }
                     }
 
                     Rectangle {
@@ -4034,135 +4077,6 @@ export component MainWindow inherits Window {
         }       // close Flickable
     }           // close Setup Rectangle
 
-    // ── Done screen (overlay) ───────────────────────────────────
-    // Mirrors `meditate-gtk/data/ui/timer_view.blp`'s `done` stack
-    // page (lines 747-833) — outer Box uses `valign: center` so the
-    // whole stack centers vertically, with `spacing: 18` between
-    // elements and a small horizontal margin.
-    //
-    // Driven by `done-offset`. Appears instantly at x=0 the moment
-    // a session ends (Running overlay then slides off to the right,
-    // revealing this), and slides off to the right itself on
-    // Save / Discard, revealing Setup. (The GTK shell uses an
-    // instant view-stack swap for both edges — we keep the slide
-    // out per Janek's preference for the Android shell.)
-    Rectangle {
-        visible: root.nav-page == 0;
-        x: parent.width - root.done-offset;
-        width: parent.width;
-        height: parent.height;
-        background: MaterialPalette.surface;
-
-        // Swallow taps on empty areas so they never reach the
-        // page underneath (a background colour does not block input).
-        TouchArea {}
-
-        Flickable {
-            width: 100%;
-            height: 100%;
-            viewport-width: self.width;
-            // `max(self.height, content.preferred-height)` keeps
-            // short Done screens vertically centred (content
-            // shorter than viewport → viewport height takes over
-            // and the inner VerticalLayout's `alignment: center`
-            // has slack to centre with); a long note grows the
-            // viewport past Flickable's height and scrolling
-            // kicks in (no more centring then, which is desired).
-            viewport-height: max(self.height, done-stack.preferred-height);
-
-            // A tap on empty space lets go of the note (a tap doesn't
-            // take focus). Behind the content, so rows keep their taps.
-            TouchArea {
-                width: parent.viewport-width;
-                height: parent.viewport-height;
-                clicked => { done-note.release(); }
-            }
-
-            done-stack := VerticalLayout {
-            width: 100%;
-            height: parent.viewport-height;
-            alignment: center;
-            spacing: 18px;
-            padding-left: 24px;
-            padding-right: 24px;
-            padding-top: root.status-bar-inset + 24px;
-            padding-bottom: root.bottom-bar-inset + 24px;
-
-            // Elapsed time — the user's "this is what you did"
-            // readout. GTK uses `halign: center` on the label;
-            // mirrored via horizontal-alignment.
-            Text {
-                text: root.elapsed-text;
-                font-size: 80px;
-                horizontal-alignment: center;
-                color: MaterialPalette.on-surface;
-            }
-
-            // Note label + multi-line input. GTK uses a Gtk.TextView
-            // inside a 180px ScrolledWindow with word-wrap; `NoteField`
-            // above is the Slint equivalent. Caption is start-aligned
-            // with a 12px indent in GTK (`note_caption.margin-start: 12`).
-            VerticalLayout {
-                spacing: 6px;
-                Text {
-                    text: @tr("Note (optional)");
-                    font-size: 12px;
-                    color: MaterialPalette.on-surface-variant;
-                    horizontal-alignment: left;
-                }
-                done-note := NoteField {
-                    label: @tr("Note");
-                    text <=> root.note-text;
-                }
-            }
-
-            // Done-screen Label expander — mirrors the .blp
-            // `done_label_enabled_row` (a sibling of the note +
-            // button rows under the Done stack page). Master
-            // toggle + inner Selected row are wired to the
-            // `done-label-*` properties; `label-target = done`
-            // when this row's inner-row tap opens the chooser
-            // so picks route back to the Done state rather than
-            // the active mode's UUID setting.
-            BoxedList {
-                ExpanderRow {
-                    title: @tr("Label");
-                    subtitle: @tr("Tag this session");
-                    body-title: @tr("Selected");
-                    body-subtitle: root.done-label-name;
-                    active <=> root.done-label-active;
-                    toggled(value) => { root.done-label-active-toggled(value); }
-                    body-tapped => {
-                        done-note.release();
-                        root.done-label-tap();
-                    }
-                }
-            }
-
-            // Centered Discard / Save pill row — mirrors GTK's
-            // `halign: center, homogeneous: true` button row.
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: center;
-
-                // Discard: outline button, the closest Material 3
-                // ships to GTK's `destructive-action` pill.
-                OutlineButton {
-                    text: @tr("Discard");
-                    height: 56px;
-                    clicked => { root.discard-tap(); }
-                }
-
-                // Save: filled / suggested action.
-                FilledButton {
-                    text: @tr("Save");
-                    height: 56px;
-                    clicked => { root.save-tap(); }
-                }
-            }
-            }   // close done-stack VerticalLayout
-        }       // close Flickable
-    }           // close Done Rectangle
 
     // ── Running screen ──────────────────────────────────────────
     // Hero + controls vertically centered on a pure-black canvas.
@@ -4182,177 +4096,202 @@ export component MainWindow inherits Window {
         // page underneath (a background colour does not block input).
         TouchArea {}
 
-        VerticalLayout {
-            alignment: center;
-            // Short viewports (phone landscape): tighter spacing +
-            // smaller hero so the column fits ~360dp heights. The
-            // 220px Box Breath square itself stays fixed — its
-            // perimeter-dot coordinates are Rust-computed for that
-            // exact geometry (see bb-dot-x/y).
-            spacing: root.height < 560px ? 10px : 24px;
-            padding-left: 24px;
-            padding-right: 24px;
-            padding-top: root.status-bar-inset + 24px;
-            padding-bottom: root.bottom-bar-inset + 24px;
-
-            // Timer mode hero — digit countdown.
-            if !root.bb-running-active : Text {
-                text: root.remaining-text;
-                font-size: root.height < 560px ? 56px : 80px;
-                horizontal-alignment: center;
-                color: #ffffff;
+        // Scrolls once the note and the keyboard need the room.
+        Flickable {
+            width: 100%;
+            height: 100%;
+            viewport-width: self.width;
+            viewport-height: max(self.height, running-stack.preferred-height);
+            // A tap on empty space lets go of the note.
+            TouchArea {
+                width: parent.viewport-width;
+                height: parent.viewport-height;
+                clicked => { running-note.release(); }
             }
 
-            // Box Breath visualisation — mirrors GTK's
-            // `push_breathing_running_page` content vbox at
-            // `meditate-gtk/src/window/imp.rs:254-498`. Top strip
-            // (eyebrow + counter) → 220×220 overlay (frame + dot
-            // + phase label + phase seconds) → buttons (the
-            // buttons live in the parent VerticalLayout, shared
-            // with Timer mode).
-            if root.bb-running-active : VerticalLayout {
-                spacing: root.height < 560px ? 10px : 24px;
+            running-stack := VerticalLayout {
+                height: parent.viewport-height;
                 alignment: center;
+                // Short viewports (phone landscape): tighter spacing +
+                // smaller hero so the column fits ~360dp heights. The
+                // 220px Box Breath square itself stays fixed — its
+                // perimeter-dot coordinates are Rust-computed for that
+                // exact geometry (see bb-dot-x/y).
+                spacing: root.height < 560px ? 10px : 24px;
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: root.status-bar-inset + 24px;
+                padding-bottom: root.bottom-bar-inset + 24px;
 
-                // Top strip: "Box Breathing" eyebrow + counter.
-                VerticalLayout {
-                    spacing: 2px;
-                    Text {
-                        text: @tr("Box Breathing");
-                        font-size: 12px;
-                        horizontal-alignment: center;
-                        color: #ffffffaa;
-                    }
-                    Text {
-                        text: root.bb-counter-text;
-                        font-size: 28px;
-                        horizontal-alignment: center;
-                        color: #ffffff;
-                    }
+                // Timer mode hero — digit countdown.
+                if !root.bb-running-active : Text {
+                    text: root.remaining-text;
+                    font-size: root.height < 560px ? 56px : 80px;
+                    horizontal-alignment: center;
+                    color: #ffffff;
                 }
 
-                // Square + dot overlay. The frame is a 196×196
-                // rounded rectangle at (12, 12) inside a 220×220
-                // container — matches GTK's pad=12, side=196
-                // (cairo drawing area is 220px). Halo + dot are
-                // positioned at the perimeter point Rust computes
-                // via `Phase::perimeter_point(t, 12, 196)`; the
-                // -7 / -11 offsets centre them on that coordinate.
-                //
-                // HorizontalLayout { alignment: center } keeps the
-                // 220 px container horizontally centred in the
-                // parent column (default VerticalLayout
-                // packing left-aligns sub-parent-width children).
-                HorizontalLayout {
+                // Box Breath visualisation — mirrors GTK's
+                // `push_breathing_running_page` content vbox at
+                // `meditate-gtk/src/window/imp.rs:254-498`. Top strip
+                // (eyebrow + counter) → 220×220 overlay (frame + dot
+                // + phase label + phase seconds) → buttons (the
+                // buttons live in the parent VerticalLayout, shared
+                // with Timer mode).
+                if root.bb-running-active : VerticalLayout {
+                    spacing: root.height < 560px ? 10px : 24px;
                     alignment: center;
-                Rectangle {
-                    width: 220px;
-                    height: 220px;
 
-                    // Square frame — tinted fill + accent stroke.
-                    Rectangle {
-                        x: 12px;
-                        y: 12px;
-                        width: 196px;
-                        height: 196px;
-                        border-radius: 20px;
-                        background: MaterialPalette.primary.with-alpha(0.08);
-                        border-width: 1.5px;
-                        border-color: MaterialPalette.primary.with-alpha(0.45);
-                    }
-
-                    // Phase label + remaining-seconds overlay,
-                    // centred inside the square — mirrors GTK's
-                    // inner_stack at `imp.rs:305-312`.
+                    // Top strip: "Box Breathing" eyebrow + counter.
                     VerticalLayout {
-                        x: 12px;
-                        y: 12px;
-                        width: 196px;
-                        height: 196px;
-                        alignment: center;
                         spacing: 2px;
-
                         Text {
-                            text: root.bb-phase-label;
-                            font-size: 14px;
+                            text: @tr("Box Breathing");
+                            font-size: 12px;
                             horizontal-alignment: center;
-                            color: MaterialPalette.primary;
+                            color: #ffffffaa;
                         }
                         Text {
-                            text: root.bb-phase-seconds;
-                            font-size: 56px;
+                            text: root.bb-counter-text;
+                            font-size: 28px;
                             horizontal-alignment: center;
                             color: #ffffff;
                         }
                     }
 
-                    // Halo — semi-transparent accent disc behind
-                    // the dot. Drawn before the dot so the dot
-                    // body sits on top. `animate x, y` smooths the
-                    // 200 ms tick-driven steps into glide-y motion;
-                    // linear easing because the perimeter is
-                    // axis-aligned (only one of x / y changes per
-                    // phase) and corner crossings always land on
-                    // the same coordinate before / after, so
-                    // linear interpolation never cuts inside.
+                    // Square + dot overlay. The frame is a 196×196
+                    // rounded rectangle at (12, 12) inside a 220×220
+                    // container — matches GTK's pad=12, side=196
+                    // (cairo drawing area is 220px). Halo + dot are
+                    // positioned at the perimeter point Rust computes
+                    // via `Phase::perimeter_point(t, 12, 196)`; the
+                    // -7 / -11 offsets centre them on that coordinate.
+                    //
+                    // HorizontalLayout { alignment: center } keeps the
+                    // 220 px container horizontally centred in the
+                    // parent column (default VerticalLayout
+                    // packing left-aligns sub-parent-width children).
+                    HorizontalLayout {
+                        alignment: center;
                     Rectangle {
-                        x: root.bb-dot-x - 11px;
-                        y: root.bb-dot-y - 11px;
-                        width: 22px;
-                        height: 22px;
-                        border-radius: 11px;
-                        background: MaterialPalette.primary.with-alpha(0.30);
-                        animate x { duration: 200ms; easing: linear; }
-                        animate y { duration: 200ms; easing: linear; }
+                        width: 220px;
+                        height: 220px;
+
+                        // Square frame — tinted fill + accent stroke.
+                        Rectangle {
+                            x: 12px;
+                            y: 12px;
+                            width: 196px;
+                            height: 196px;
+                            border-radius: 20px;
+                            background: MaterialPalette.primary.with-alpha(0.08);
+                            border-width: 1.5px;
+                            border-color: MaterialPalette.primary.with-alpha(0.45);
+                        }
+
+                        // Phase label + remaining-seconds overlay,
+                        // centred inside the square — mirrors GTK's
+                        // inner_stack at `imp.rs:305-312`.
+                        VerticalLayout {
+                            x: 12px;
+                            y: 12px;
+                            width: 196px;
+                            height: 196px;
+                            alignment: center;
+                            spacing: 2px;
+
+                            Text {
+                                text: root.bb-phase-label;
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                color: MaterialPalette.primary;
+                            }
+                            Text {
+                                text: root.bb-phase-seconds;
+                                font-size: 56px;
+                                horizontal-alignment: center;
+                                color: #ffffff;
+                            }
+                        }
+
+                        // Halo — semi-transparent accent disc behind
+                        // the dot. Drawn before the dot so the dot
+                        // body sits on top. `animate x, y` smooths the
+                        // 200 ms tick-driven steps into glide-y motion;
+                        // linear easing because the perimeter is
+                        // axis-aligned (only one of x / y changes per
+                        // phase) and corner crossings always land on
+                        // the same coordinate before / after, so
+                        // linear interpolation never cuts inside.
+                        Rectangle {
+                            x: root.bb-dot-x - 11px;
+                            y: root.bb-dot-y - 11px;
+                            width: 22px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: MaterialPalette.primary.with-alpha(0.30);
+                            animate x { duration: 200ms; easing: linear; }
+                            animate y { duration: 200ms; easing: linear; }
+                        }
+
+                        // Dot — white fill with accent ring. Matches
+                        // GTK's "white-filled, accent-bordered" dot
+                        // at `imp.rs:374-380`.
+                        Rectangle {
+                            x: root.bb-dot-x - 7px;
+                            y: root.bb-dot-y - 7px;
+                            width: 14px;
+                            height: 14px;
+                            border-radius: 7px;
+                            background: #ffffff;
+                            border-width: 2.5px;
+                            border-color: MaterialPalette.primary;
+                            animate x { duration: 200ms; easing: linear; }
+                            animate y { duration: 200ms; easing: linear; }
+                        }
                     }
-
-                    // Dot — white fill with accent ring. Matches
-                    // GTK's "white-filled, accent-bordered" dot
-                    // at `imp.rs:374-380`.
-                    Rectangle {
-                        x: root.bb-dot-x - 7px;
-                        y: root.bb-dot-y - 7px;
-                        width: 14px;
-                        height: 14px;
-                        border-radius: 7px;
-                        background: #ffffff;
-                        border-width: 2.5px;
-                        border-color: MaterialPalette.primary;
-                        animate x { duration: 200ms; easing: linear; }
-                        animate y { duration: 200ms; easing: linear; }
                     }
                 }
-                }
-            }
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: center;
-
-                // Normal (Running / Paused) row.
-                if !root.overtime-active : FilledButton {
-                    text: root.action-label;
-                    height: 56px;
-                    clicked => { root.action-tap(); }
+                // Core's button set (`EndButtons`): two in a row,
+                // Discard under them, then the note once paused or over.
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+                    EndButtonView {
+                        kind: root.end-left;
+                        add-label: root.overtime-add-label;
+                        tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
+                    }
+                    EndButtonView {
+                        kind: root.end-right;
+                        add-label: root.overtime-add-label;
+                        tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
+                    }
                 }
-                if !root.overtime-active && root.stop-visible : OutlineButton {
-                    text: @tr("Stop");
-                    height: 56px;
-                    clicked => { root.stop-tap(); }
+                if root.end-discard-below : HorizontalLayout {
+                    alignment: center;
+                    EndButtonView {
+                        kind: 4;
+                        tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
+                    }
                 }
-
-                // Overtime row — Finish (planned duration) +
-                // Add (incl. overtime). Mirrors GTK's morphed
-                // Pause→Finish button plus the revealed Add pill.
-                if root.overtime-active : FilledButton {
-                    text: @tr("Finish");
-                    height: 56px;
-                    clicked => { root.finish-tap(); }
-                }
-                if root.overtime-active : FilledButton {
-                    text: root.overtime-add-label;
-                    height: 56px;
-                    clicked => { root.add-tap(); }
+                // Kept (not `if`) so its text survives Resume.
+                VerticalLayout {
+                    visible: root.end-note;
+                    height: root.end-note ? self.preferred-height : 0px;
+                    spacing: 6px;
+                    Text {
+                        text: @tr("Note (optional)");
+                        font-size: 12px;
+                        color: #ffffffaa;
+                        horizontal-alignment: left;
+                        wrap: word-wrap;
+                    }
+                    running-note := NoteField {
+                        label: @tr("Note");
+                        text <=> root.note-text;
+                    }
                 }
             }
         }
@@ -5402,7 +5341,7 @@ export component MainWindow inherits Window {
     // button. Background extends behind that zone too (surface
     // colour) so the status bar reads against a matching tint.
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.edit-session-page;
+        visible: !root.running-page && !root.edit-session-page;
         x: 0;
         y: 0;
         width: parent.width;
@@ -5545,7 +5484,7 @@ export component MainWindow inherits Window {
     // and fires `nav-changed` so Rust can refresh per-page
     // state (e.g. reload the Log feed when entering it).
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.edit-session-page;
+        visible: !root.running-page && !root.edit-session-page;
         x: 0;
         y: parent.height - root.nav-bar-height - root.bottom-bar-inset;
         width: parent.width;

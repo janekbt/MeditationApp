@@ -212,12 +212,12 @@ When the selected guided file is renamed or deleted, here or on another device, 
 
 #### Scenario: Another device deletes or renames it (laptop)
 - **WHEN** a sync pulls a delete or rename of the selected file while Setup shows
-- **THEN** the selection clears or shows the new name; during a session or on Done it stays as it is
+- **THEN** the selection clears or shows the new name; during a session, until it is saved or discarded, it stays as it is
 - **TEST** `meditate-gtk/src/timer/imp.rs::manage_files_changes_follow_the_selected_file`
 
 #### Scenario: Another device deletes or renames it (phone)
 - **WHEN** a sync pulls a delete or rename of the selected file while Setup shows
-- **THEN** the selection clears or shows the new name; during a session or on Done it stays as it is
+- **THEN** the selection clears or shows the new name; during a session, until it is saved or discarded, it stays as it is
 - **TEST** `meditate-android/src/app.rs::a_pull_follows_the_guided_file_and_refills_choosers`
 
 #### Scenario: The library can't be read for a moment
@@ -255,3 +255,16 @@ The Starred Files list on the Guided page SHALL show a check on the row of the s
 - **WHEN** the selected file is not in Starred Files
 - **THEN** no row in Starred Files shows a check
 - **MANUAL** row layout on the laptop and the phone
+
+### Requirement: The phone's Guided buttons sit side by side
+On the phone, Manage Imports and Local Folder SHALL sit next to each other under the guided file, each showing its whole text on up to two lines in every language.
+
+#### Scenario: Russian at 360 dp
+- **WHEN** the phone is set to Russian and Guided is open at 360 dp
+- **THEN** "Управление файлами" and "Локальная папка" sit side by side, wrapped, neither cut off, both buttons as tall as the taller one
+- **TEST** `meditate-android/src/app.rs::the_guided_buttons_sit_side_by_side`
+
+#### Scenario: How it looks
+- **WHEN** Guided is opened on the phone in German and in Russian
+- **THEN** both buttons are side by side, tall enough for their text, and tap like the other buttons
+- **MANUAL** wrapping with the real font needs the phone

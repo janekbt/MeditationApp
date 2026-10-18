@@ -463,17 +463,12 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_duration_text(
         meditate_core::format::format_hhmm(target.as_secs() as u32).into(),
     );
-    ui.set_action_label(match state.primary_action() {
-        app::PrimaryAction::Start => {
-            ui.global::<Tr>().invoke_start_session()
-        }
-        app::PrimaryAction::Resume => ui.global::<Tr>().invoke_resume(),
-        app::PrimaryAction::Pause => ui.global::<Tr>().invoke_pause(),
-    });
-    ui.set_stop_visible(state.can_stop());
-    ui.set_overtime_active(state.is_overtime());
+    let end = state.end_buttons();
+    ui.set_end_left(app::end_button_code(end.row[0]));
+    ui.set_end_right(app::end_button_code(end.row[1]));
+    ui.set_end_discard_below(end.discard_below);
+    ui.set_end_note(end.note);
     ui.set_running_page(state.is_running_page());
-    ui.set_done_page(state.is_done_page());
 }
 
 /// Pull the latest `UpdateOvertimeLabel { overtime }` out of a
@@ -531,6 +526,17 @@ fn write_keep_awake_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, 
     if RELOADING.get() { return; }
     let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode);
     setting_saved(ui, "settings.keep_awake", lock_db().map(|db| db.set_setting(key, meditate_core::format_bool(value))));
+}
+
+fn read_auto_finish_for_mode(mode: meditate_core::SessionMode) -> bool {
+    let Some(db) = lock_db() else { return false; };
+    meditate_core::settings_keys::auto_finish_from_db(&db, mode)
+}
+
+fn write_auto_finish_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, value: bool) {
+    if RELOADING.get() { return; }
+    let key = meditate_core::settings_keys::auto_finish_key_for_mode(mode);
+    setting_saved(ui, "settings.auto_finish", lock_db().map(|db| db.set_setting(key, meditate_core::format_bool(value))));
 }
 
 fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core::SignalMode {
@@ -865,11 +871,9 @@ fn try_widget_deep_link(
     let Some(uuid) = widget::take_pending_launch(app) else {
         return false;
     };
-    // Bug-audit #1: `is_active()` is false in Finished, so a
-    // widget tap on the Done screen would autostart a new session
-    // and later OVERWRITE the pending unsaved one. Treat an open
-    // Done page like an active session: surface it, start nothing.
-    if state.borrow().is_active() || ui.get_done_page() {
+    // Bug-audit #1: an ended, unsaved session counts as one: a widget
+    // tap would otherwise start a new session and overwrite it.
+    if !state.borrow().is_idle() {
         // No new session — but the tap still means "show me the
         // timer": bring the Timer tab forward so the already-
         // running / Done view is visible (it only renders on nav 0).
@@ -2375,27 +2379,6 @@ fn render_insight(
     }
 }
 
-/// Initialise the Done expander state from Setup's current pick.
-/// Called when entering the Done screen (Stop tap or auto-finish).
-/// Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
-/// at `meditate-gtk/src/timer/imp.rs:2296`.
-fn mirror_setup_label_into_done(ui: &MainWindow, mode: meditate_core::SessionMode) {
-    let active = read_label_active_for_mode(mode);
-    if active {
-        if let Some((name, id)) = resolved_label_for_mode(mode) {
-            ui.set_done_label_active(true);
-            ui.set_done_label_name(name.into());
-            ui.set_done_label_id(id as i32);
-            return;
-        }
-    }
-    // Master off OR mode default got deleted — start the Done
-    // expander in the off state with no pick.
-    ui.set_done_label_active(false);
-    ui.set_done_label_name("".into());
-    ui.set_done_label_id(0);
-}
-
 /// Convenience: refresh BOTH the chooser list (with the mode's
 /// resolved id as the selection) AND the Setup row's subtitle.
 /// Most CRUD callsites in the Setup flow want this combined
@@ -2418,17 +2401,6 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
 /// row off, so Save never writes an id that no longer exists.
 fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode) {
     refresh_setup_label_name(ui, mode);
-    let done_id = ui.get_done_label_id();
-    if done_id > 0 {
-        match lookup_label_name(i64::from(done_id)) {
-            Some(name) => ui.set_done_label_name(name.into()),
-            None => {
-                ui.set_done_label_id(0);
-                ui.set_done_label_name("".into());
-                ui.set_done_label_active(false);
-            }
-        }
-    }
     let edit_id = ui.get_edit_label_id();
     if edit_id > 0 {
         match lookup_label_name(i64::from(edit_id)) {
@@ -2442,7 +2414,6 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
     }
     let picked = |id: i32| (id > 0).then_some(i64::from(id));
     let current_id = match ui.get_label_target() {
-        LabelTarget::Done => picked(ui.get_done_label_id()),
         LabelTarget::Edit => picked(ui.get_edit_label_id()),
         LabelTarget::Setup if read_label_active_for_mode(mode) => resolved_label_for_mode(mode).map(|(_, id)| id),
         LabelTarget::Setup => None,
@@ -2864,6 +2835,7 @@ fn load_setup_for_mode(
     timer_session_secs: &Cell<u32>,
 ) {
     ui.set_keep_awake_on(read_keep_awake_for_mode(mode));
+    ui.set_auto_finish_on(read_auto_finish_for_mode(mode));
     ui.set_cues_mode(signal_mode_to_chip_index(read_signal_mode_for_mode(mode)));
     ui.set_stopwatch_on(read_stopwatch_for_mode(mode));
     ui.set_label_active(read_label_active_for_mode(mode));
@@ -3177,17 +3149,28 @@ fn end_session(
     }
     snapshot_timer.stop();
     hold_ended_session_snapshot(pending_done.get(), mode);
-    ui.set_elapsed_text(
-        meditate_core::format::format_time(Duration::from_secs(secs.max(0) as u64)).into(),
-    );
-    ui.set_note_text("".into());
-    // Mirrors GTK's `show_done` copying the Setup label.
-    mirror_setup_label_into_done(ui, mode);
     ui.set_bb_running_active(false);
     ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime("00:00".into()));
 }
 
-/// A session just ended and the Done screen is up: keep it
+/// Auto-Finish ended the session: save it once the caller has let go
+/// of the state, and let the save say "Session saved" with Undo.
+fn on_auto_finish(ui: &MainWindow, effects: &[meditate_core::session::Effect], auto_finished: &Rc<Cell<bool>>) {
+    if !effects.iter().any(|e| matches!(e, meditate_core::session::Effect::AutoFinish { .. })) {
+        return;
+    }
+    auto_finished.set(true);
+    // A pending "Discard Session?" no longer has a session to discard.
+    close_modal(ui, Modal::Discard);
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_save_tap();
+        }
+    });
+}
+
+/// A session just ended: keep it
 /// recoverable with its final duration until Save or Discard clears
 /// it (core `hold_ended_session`). `done` is the `pending_done`
 /// pair (unix_start, final_secs); None means there is nothing to
@@ -3487,14 +3470,14 @@ fn finalize_session(
     mode: meditate_core::SessionMode,
     label_id: Option<i64>,
     guided_uuid: Option<String>,
-) -> Result<(), meditate_core::format::SessionSaveFailureKind> {
+) -> Result<Option<String>, meditate_core::format::SessionSaveFailureKind> {
     use meditate_core::format::{session_save_failure_log_message, SessionSaveFailureKind};
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
         // matches the GTK shell, which also filters zero-duration
         // rows out of insert. Avoids noise in stats from accidental
         // Start→Stop double-taps. Nothing to keep, so not a failure.
-        return Ok(());
+        return Ok(None);
     }
     let unopened = |detail: &str| {
         meditate_core::log(
@@ -3523,12 +3506,12 @@ fn finalize_session(
         session_guided_name(),
     );
     match db.insert_session_counting_local_play(&session, session_local_file()) {
-        Ok((rowid, _)) => {
+        Ok((rowid, saved)) => {
             meditate_core::log(
                 "session.insert",
                 &format!("ok rowid={rowid} duration_secs={elapsed_secs} start_unix={unix_start}"),
             );
-            Ok(())
+            Ok(Some(saved.uuid.as_str().to_owned()))
         }
         Err(e) => {
             meditate_core::log(
@@ -4509,6 +4492,9 @@ fn build_ui() -> MainWindow {
     // is the *user's* call on the Done screen, not an automatic
     // side-effect of Stop.
     let pending_done: Rc<Cell<Option<(i64, i64)>>> = Rc::new(Cell::new(None));
+    // Set when Auto-Finish ended the session: its save says "Session
+    // saved" with Undo.
+    let auto_finished: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     // Seed the stepper-driven duration from the persisted Timer
     // length (mirrors GTK's `load_timer_settings` restoring
@@ -4738,8 +4724,34 @@ fn build_ui() -> MainWindow {
         }
     };
     ui.on_stop_tap(end_tap(AppState::stop));
-    ui.on_finish_tap(end_tap(|s, _| s.finish_overtime()));
+    ui.on_save_end_tap(end_tap(AppState::save_end));
     ui.on_add_tap(end_tap(AppState::add_overtime));
+
+    // The running page's buttons, by core's code. Save and Add end a
+    // live session first (paused: the time so far; overtime: planned
+    // or with the overtime), then save it with the note.
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_end_button_tap(move |code| {
+            use meditate_core::session::EndButton;
+            let Some(ui) = weak.upgrade() else { return; };
+            match app::end_button_from_code(code) {
+                EndButton::Pause | EndButton::Resume => ui.invoke_action_tap(),
+                EndButton::Save => {
+                    if state.borrow().is_active() {
+                        ui.invoke_save_end_tap();
+                    }
+                    ui.invoke_save_tap();
+                }
+                EndButton::Add => {
+                    ui.invoke_add_tap();
+                    ui.invoke_save_tap();
+                }
+                EndButton::Discard => ui.invoke_discard_tap(),
+            }
+        });
+    }
 
     // Duration row tap: seed the dialog's edit-state copies from the
     // currently configured target, then open the dialog. The Slint
@@ -4766,6 +4778,7 @@ fn build_ui() -> MainWindow {
         let session_start_unix = session_start_unix.clone();
         let pending_done = pending_done.clone();
         let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
+        let auto_finished = auto_finished.clone();
         let timer_session_secs = timer_session_secs.clone();
         let guided_sel = guided_sel.clone();
         let guided_import_finalize = guided_import_finalize.clone();
@@ -5124,10 +5137,22 @@ fn build_ui() -> MainWindow {
                             &mut *state.borrow_mut(),
                             AppState::idle(),
                         );
+                        let was_active = prev.is_active();
                         let t = prev.enter_overtime();
                         dispatch_effects(&t.effects);
                         notify_if_complete(&t.state, &t.effects);
+                        let ended = was_active && t.state.is_finished();
                         *state.borrow_mut() = t.state;
+                        if ended {
+                            // Auto-Finish at the file's end.
+                            if let Some(ui) = weak.upgrade() {
+                                let secs = app::ended_duration_secs(&t.effects).unwrap_or(0) as i64;
+                                end_session(&ui, secs, current_mode.get().into(), &session_start_unix, &pending_done, snapshot_timer_ref);
+                                on_auto_finish(&ui, &t.effects, &auto_finished);
+                                on_state_changed(true, false, current_mode.get().into());
+                                refresh(&ui, &state.borrow(), now_since_epoch());
+                            }
+                        }
                     }
                     // Guided track lost audio focus (incoming call
                     // / another media app): route through the same
@@ -5194,6 +5219,7 @@ fn build_ui() -> MainWindow {
                         &pending_done,
                         snapshot_timer_ref,
                     );
+                    on_auto_finish(&ui, &transition.effects, &auto_finished);
                 }
             }
             // While a Box-Breath session is running, push the
@@ -5286,41 +5312,25 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
         let guided_sel = guided_sel.clone();
+        let auto_finished = auto_finished.clone();
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
-            stop_active_signals();
+            // Read once: no path leaves it set for the next session.
+            let auto = auto_finished.take();
+            // Auto-Finish's end bell plays on.
+            if !auto {
+                stop_active_signals();
+            }
             if let Some((unix_start, elapsed_secs)) = pending_done.take() {
                 // Core saves a whitespace-only note as no note.
                 let note = Some(ui.get_note_text().to_string());
                 let mode: meditate_core::SessionMode = current_mode.get().into();
-                // The Done expander's per-session pick drives both
-                // the session row's label_id AND the persist-back
-                // to the active mode's UUID setting (so the user's
-                // pick on Done becomes next session's default).
-                // Mirrors GTK's Save flow at `imp.rs:2336-2383`.
-                let picked: Option<i64> = if ui.get_done_label_active() {
-                    let id = ui.get_done_label_id() as i64;
-                    if id > 0 { Some(id) } else { None }
+                // The Setup label; Setup already keeps it for next time.
+                let picked = if read_label_active_for_mode(mode) {
+                    resolved_label_for_mode(mode).map(|(_, id)| id)
                 } else {
                     None
                 };
-                // Apply the persist action — but read the labels
-                // list inside the same DB lock as the writes.
-                let kept = lock_db().map(|db| {
-                    use meditate_core::labels::{persist_active_for_mode, persist_uuid_for_mode, PersistAction};
-                    let labels = meditate_core::db::list_labels_from_db(&db)
-                        .unwrap_or_default();
-                    match meditate_core::labels::resolve_persist_action(picked, &labels) {
-                        PersistAction::SetUuidAndActivate { uuid } => {
-                            persist_uuid_for_mode(&db, mode, uuid.as_str())
-                                .and_then(|()| persist_active_for_mode(&db, mode, true))
-                        }
-                        PersistAction::Deactivate => persist_active_for_mode(&db, mode, false),
-                        PersistAction::NoOp => Ok(()),
-                    }
-                });
-                // The session still saves; only next time's label didn't.
-                landed(&ui, "label.default", kept, ui.global::<Tr>().invoke_label_not_kept());
                 // Per-file attribution: only a GUIDED session with a
                 // library selection (starred tap / import) carries a
                 // uuid — Timer / Box Breath must stay None even when
@@ -5343,27 +5353,28 @@ fn build_ui() -> MainWindow {
                 ) {
                     // Saved: the insert cleared the held snapshot in
                     // the same write.
-                    Ok(()) => {}
+                    Ok(saved) => {
+                        if auto && APP_IN_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed) {
+                            if let Some(uuid) = saved {
+                                show_notice(&ui, ui.global::<Tr>().invoke_session_saved(), Some(app::PendingUndo::Recovery(uuid)), 8);
+                            }
+                        }
+                    }
                     Err(kind) => {
-                        // Keep everything: the Done screen stays up
-                        // (Save again or Discard), and the held
-                        // snapshot still recovers the session on the
-                        // next start.
+                        // Keep everything: the running page stays with
+                        // Save and Discard, and the held snapshot still
+                        // recovers the session on the next start.
                         pending_done.set(Some((unix_start, elapsed_secs)));
                         show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);
                         return;
                     }
                 }
-                // Refresh the Setup row so when Done slides off and
-                // reveals Setup, the ExpanderRow's master toggle +
-                // subtitle reflect the post-Save mode state.
-                refresh_setup_label_name(&ui, mode);
-                ui.set_label_active(read_label_active_for_mode(mode));
                 // Push the freshly-inserted row into the Log feed
                 // so a quick nav-to-Log shows it without restart.
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 refresh_stats(&ui);
             }
+            ui.set_note_text("".into());
             let mut s = state.borrow_mut();
             *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
             refresh(&ui, &s, now_since_epoch());
@@ -6433,6 +6444,14 @@ fn build_ui() -> MainWindow {
         ui.on_keep_awake_toggled(move |value| {
             let Some(ui) = weak.upgrade() else { return; };
             write_keep_awake_for_mode(&ui, current_mode.get().into(), value);
+        });
+    }
+    {
+        let current_mode = current_mode.clone();
+        let weak = ui.as_weak();
+        ui.on_auto_finish_toggled(move |value| {
+            let Some(ui) = weak.upgrade() else { return; };
+            write_auto_finish_for_mode(&ui, current_mode.get().into(), value);
         });
     }
 
@@ -8060,52 +8079,6 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Done expander master toggle — local state only (does NOT
-    // write the mode setting; the persist-back happens on Save
-    // via `resolve_persist_action`). Mirrors GTK's
-    // `done_label_enabled_row.connect_enable_expansion_notify`
-    // at `imp.rs:578-597`: toggling off clears the pick;
-    // toggling on adopts the mode-default when no pick is set.
-    {
-        let weak = ui.as_weak();
-        let current_mode = current_mode.clone();
-        ui.on_done_label_active_toggled(move |on| {
-            let Some(ui) = weak.upgrade() else { return; };
-            if !on {
-                ui.set_done_label_id(0);
-                ui.set_done_label_name("".into());
-                return;
-            }
-            if ui.get_done_label_id() == 0 {
-                let mode: meditate_core::SessionMode = current_mode.get().into();
-                if let Some((name, id)) = resolved_label_for_mode(mode) {
-                    ui.set_done_label_id(id as i32);
-                    ui.set_done_label_name(name.into());
-                }
-            }
-            let _ = current_mode.get();
-        });
-    }
-
-    // Done inner-row tap — open the same label chooser, but with
-    // label-target to done so picks update Done state rather than the
-    // mode's UUID setting. The check-mark inside the chooser
-    // reflects `done-label-id`. Mirrors GTK's
-    // `done_label_chooser_row.connect_activated` at `imp.rs:598`.
-    {
-        let weak = ui.as_weak();
-        ui.on_done_label_tap(move || {
-            {
-                let Some(ui) = weak.upgrade() else { return; };
-                ui.set_label_target(LabelTarget::Done);
-                let id = ui.get_done_label_id() as i64;
-                let current_id = if id > 0 { Some(id) } else { None };
-                refresh_chooser_items(&ui, current_id);
-                ui.set_labels_page(true);
-            }
-            let _ = weak.clone();
-        });
-    }
 
     // Chooser back arrow — just close the overlay. The selection
     // hasn't changed, so no Slint property refresh is needed.
@@ -8149,9 +8122,6 @@ fn build_ui() -> MainWindow {
     // Create button pressed — insert the new label, then route
     // by `label-target`:
     //   setup → Setup flow → persist UUID, refresh Setup state, close.
-    //   done → adopt the new label as the Done pick,
-    //       close. Mode setting unchanged (Save will persist via
-    //       resolve_persist_action).
     //   edit → adopt it as the session's label.
     // Treating creation as selection mirrors GTK's
     // `labels.rs:125-134`.
@@ -8164,12 +8134,6 @@ fn build_ui() -> MainWindow {
                 let text = ui.get_create_label_text().to_string();
                 if let Some((id, uuid)) = create_label_in_db(&text) {
                     match ui.get_label_target() {
-                        LabelTarget::Done => {
-                            // Done flow
-                            ui.set_done_label_id(id as i32);
-                            ui.set_done_label_name(text.trim().into());
-                            ui.set_done_label_active(true);
-                        }
                         LabelTarget::Edit => {
                             // Edit-Session flow
                             ui.set_edit_label_id(id as i32);
@@ -8253,9 +8217,6 @@ fn build_ui() -> MainWindow {
                     if ui.get_edit_label_id() as i64 == id {
                         ui.set_edit_label_name(text.trim().into());
                     }
-                    if ui.get_done_label_id() as i64 == id {
-                        ui.set_done_label_name(text.trim().into());
-                    }
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 } else {
                     show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
@@ -8307,11 +8268,6 @@ fn build_ui() -> MainWindow {
                         ui.set_edit_label_id(0);
                         ui.set_edit_label_name("".into());
                     }
-                    if ui.get_done_label_id() as i64 == id {
-                        ui.set_done_label_active(false);
-                        ui.set_done_label_id(0);
-                        ui.set_done_label_name("".into());
-                    }
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 } else {
                     show_notice(&ui, ui.global::<Tr>().invoke_delete_failed(), None, 4);
@@ -8348,12 +8304,9 @@ fn build_ui() -> MainWindow {
             }
             let mode: meditate_core::SessionMode =
                 current_mode.get().into();
-            // An Edit or Done page on the merged-away label follows its
+            // An Edit page on the merged-away label follows its
             // sessions to the kept one; then Delete's cleanup (a mode
             // default on it moved in core).
-            if i64::from(ui.get_done_label_id()) == suffixed_id {
-                ui.set_done_label_id(base_id as i32);
-            }
             if i64::from(ui.get_edit_label_id()) == suffixed_id {
                 ui.set_edit_label_id(base_id as i32);
             }
@@ -8390,9 +8343,6 @@ fn build_ui() -> MainWindow {
     //   setup → Setup flow → persist UUID to the active mode's setting,
     //       refresh the Setup ExpanderRow's subtitle. Mirrors GTK's
     //       Setup `on_selected` at `imp.rs:744-749`.
-    //   done → update Done state ONLY; persistence to the
-    //       mode setting happens on Save via `resolve_persist_action`.
-    //       Mirrors GTK's Done `on_selected` at `imp.rs:608-612`.
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
@@ -8400,14 +8350,6 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 match ui.get_label_target() {
-                    LabelTarget::Done => {
-                        // Done flow
-                        if let Some(name) = lookup_label_name(id as i64) {
-                            ui.set_done_label_id(id);
-                            ui.set_done_label_name(name.into());
-                            ui.set_done_label_active(true);
-                        }
-                    }
                     LabelTarget::Edit => {
                         // Edit-Session flow (L-4d) — write back to
                         // edit-label-* so the overlay re-appears
@@ -8432,14 +8374,20 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Discard: drop the pending session without writing a row, then
+    // Discard: end a live session, drop it without writing a row, then
     // dismiss to Idle. A typed note asks first ("Your note will be
-    // lost."), like GTK's `on_discard`. Back on Done comes here too.
+    // lost."), like GTK's `on_discard`; Cancel leaves the session as it was.
     {
         let weak = ui.as_weak();
         let state = state.clone();
         let pending_done = pending_done.clone();
         let discard = Rc::new(move || {
+            let live = state.borrow().is_active();
+            if live {
+                if let Some(ui) = weak.upgrade() {
+                    ui.invoke_stop_tap();
+                }
+            }
             {
                 stop_active_signals();
                 pending_done.set(None);
@@ -8448,6 +8396,7 @@ fn build_ui() -> MainWindow {
             let mut s = state.borrow_mut();
             *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
             if let Some(ui) = weak.upgrade() {
+                ui.set_note_text("".into());
                 refresh(&ui, &s, now_since_epoch());
             }
         });
@@ -8456,8 +8405,6 @@ fn build_ui() -> MainWindow {
         ui.on_discard_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             if !ui.get_note_text().is_empty() {
-                // Silence the end bell while the question is up, as GTK does.
-                stop_active_signals();
                 ui.set_modal(Modal::Discard);
                 return;
             }
@@ -8571,7 +8518,7 @@ fn build_ui() -> MainWindow {
                 U::Recovery(uuid) => {
                     // Deleting by uuid tombstones it for sync peers
                     // too, like GTK's recovery toast Undo.
-                    write_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
+                    delete_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                     refresh_stats(&ui);
                 }
@@ -9857,12 +9804,6 @@ fn build_ui() -> MainWindow {
             }
             if ui.get_interval_bells_page() {
                 ui.set_interval_bells_page(false);
-                return;
-            }
-            if ui.get_done_page() {
-                // Back on Done is the Discard button: it asks first
-                // when a note would be lost.
-                ui.invoke_discard_tap();
                 return;
             }
             if ui.get_nav_page() != 0 {

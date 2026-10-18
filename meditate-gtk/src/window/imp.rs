@@ -189,61 +189,6 @@ impl MeditateWindow {
             .build();
         self.timer_view.set_running_label(time_label.clone());
 
-        // Pause is a regular action (non-destructive, reversible via Resume);
-        // plain .pill. Stop ends the meditation early and surfaces the done
-        // screen where the user must then pick Save or Discard — the action
-        // is consequential enough that the HIG destructive tint is warranted
-        // here, matching the Discard and Stop-from-Pause styling elsewhere.
-        let pause_btn = gtk::Button::builder()
-            .label("Pause")
-            .css_classes(["pill"])
-            .tooltip_text("Pause Timer")
-            .build();
-        let stop_btn = gtk::Button::builder()
-            .label("Stop")
-            .css_classes(["pill", "destructive-action"])
-            .tooltip_text("Stop and Save Session")
-            .build();
-
-        // Sit-longer mode "Add MM:SS ?" — only visible after the
-        // countdown reaches zero. Tapping it commits the elapsed
-        // overtime as part of the session duration. Hidden in
-        // Running, in stopwatch mode, and in Box Breath since none
-        // of those have a countdown to overshoot. Wrapped in
-        // Adw.Clamp so it stays at a comfortable pill width on
-        // wide windows rather than stretching across the running
-        // page; tightening-threshold lets it shrink gracefully on
-        // phone-sized screens. Visibility lives on the Clamp (the
-        // imp walks `add_btn.parent()` to flip it).
-        let add_btn = gtk::Button::builder()
-            .label("Add 00:00 ?")
-            .css_classes(["suggested-action", "pill", "tabular-nums"])
-            .tooltip_text("Include the elapsed overtime in the session")
-            .build();
-        let add_clamp = adw::Clamp::builder()
-            .maximum_size(180)
-            .tightening_threshold(120)
-            .child(&add_btn)
-            .visible(false)
-            .build();
-        self.timer_view.set_running_pause_btn(pause_btn.clone());
-        self.timer_view.set_running_overtime_widgets(
-            stop_btn.clone(),
-            add_btn.clone(),
-        );
-        let obj_for_add = self.obj().clone();
-        add_btn.connect_clicked(move |_| {
-            obj_for_add.imp().timer_view.add_overtime_and_finish();
-        });
-
-        let btn_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .halign(gtk::Align::Center)
-            .build();
-        btn_box.append(&pause_btn);
-        btn_box.append(&stop_btn);
-
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(32)
@@ -253,10 +198,9 @@ impl MeditateWindow {
             .margin_start(12).margin_end(12)
             .build();
         content.append(&time_label);
-        content.append(&add_clamp);
-        content.append(&btn_box);
+        content.append(&self.end_controls());
 
-        self.push_running_page_with_content("Meditating", content, pause_btn, stop_btn);
+        self.push_running_page_with_content("Meditating", content);
     }
 
     /// Build the Box-Breath running page: session-countdown strip at top,
@@ -392,30 +336,6 @@ impl MeditateWindow {
             });
         }
 
-        // ── Pause / Stop buttons ──────────────────────────────────────
-        let pause_btn = gtk::Button::builder()
-            .label(gettext("Pause"))
-            .css_classes(["pill"])
-            .tooltip_text(gettext("Pause Timer"))
-            .build();
-        let stop_btn = gtk::Button::builder()
-            .label(gettext("Stop"))
-            .css_classes(["pill", "destructive-action"])
-            .tooltip_text(gettext("Stop and Save Session"))
-            .build();
-
-        let btn_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .halign(gtk::Align::Center)
-            .build();
-        btn_box.append(&pause_btn);
-        btn_box.append(&stop_btn);
-        // Mirror the timer-mode running page: stash the pause button
-        // on TimerView so on_pause / on_resume can morph the label
-        // (Pause ↔ Resume) in place without popping back to setup.
-        self.timer_view.set_running_pause_btn(pause_btn.clone());
-
         let top_strip = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(2)
@@ -434,7 +354,7 @@ impl MeditateWindow {
             .build();
         content.append(&top_strip);
         content.append(&overlay);
-        content.append(&btn_box);
+        content.append(&self.end_controls());
 
         // Install the per-frame tick callback on the drawing area. Elapsed
         // time is now read from `meditate_core::timer::Stopwatch` via the
@@ -488,23 +408,79 @@ impl MeditateWindow {
             glib::ControlFlow::Continue
         });
 
-        self.push_running_page_with_content("Box Breathing", content, pause_btn, stop_btn);
+        self.push_running_page_with_content(&gettext("Box Breathing"), content);
+    }
+
+    /// The running page's end of a session, for both running pages: a
+    /// row of two buttons, Discard under it, then the note. TimerView
+    /// sets what each shows from core's button set.
+    fn end_controls(&self) -> gtk::Box {
+        let button = || gtk::Button::builder().css_classes(["pill"]).build();
+        let (first, second, discard) = (button(), button(), button());
+        discard.set_label(&gettext("Discard"));
+        discard.add_css_class("destructive-action");
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .halign(gtk::Align::Center)
+            .build();
+        row.append(&first);
+        row.append(&second);
+        discard.set_halign(gtk::Align::Center);
+
+        let caption = gtk::Label::builder()
+            .label(gettext("Note (optional)"))
+            .css_classes(["caption", "dimmed"])
+            .halign(gtk::Align::Start)
+            .margin_start(12)
+            .build();
+        let note_view = gtk::TextView::builder()
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .accepts_tab(false)
+            .top_margin(8).bottom_margin(8).left_margin(12).right_margin(12)
+            .build();
+        note_view.update_relation(&[gtk::accessible::Relation::LabelledBy(&[caption.upcast_ref()])]);
+        let frame = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .height_request(180)
+            .css_classes(["log-note-editor"])
+            .child(&note_view)
+            .build();
+        let note = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).build();
+        note.append(&caption);
+        note.append(&frame);
+        let note_clamp = adw::Clamp::builder().maximum_size(480).child(&note).build();
+
+        let controls = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(18).build();
+        controls.append(&row);
+        controls.append(&discard);
+        controls.append(&note_clamp);
+
+        for (i, btn) in [&first, &second].into_iter().enumerate() {
+            let obj = self.obj().clone();
+            btn.connect_clicked(move |_| obj.imp().timer_view.end_button_clicked(i));
+        }
+        let obj = self.obj().clone();
+        discard.connect_clicked(move |_| obj.imp().timer_view.discard());
+        self.timer_view.set_running_controls(crate::timer::RunningControls {
+            first, second, discard, note: note_clamp.upcast(), note_view,
+        });
+        controls
     }
 
     /// Shared scaffolding for both running pages: wraps the content in an
     /// AdwNavigationPage with a header, wires Pause/Stop/Esc, pushes onto
     /// the nav view.
-    fn push_running_page_with_content(
-        &self,
-        title: &str,
-        content: gtk::Box,
-        pause_btn: gtk::Button,
-        stop_btn: gtk::Button,
-    ) {
+    fn push_running_page_with_content(&self, title: &str, content: gtk::Box) {
         let header = adw::HeaderBar::builder().show_back_button(false).build();
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
-        toolbar_view.set_content(Some(&content));
+        // The note can push the page past a short window.
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&content)
+            .build();
+        toolbar_view.set_content(Some(&scroll));
 
         // Black background + light foreground for low-light
         // meditation comfort. Applied to the ToolbarView (NOT the
@@ -523,15 +499,6 @@ impl MeditateWindow {
             .can_pop(false)
             .child(&toolbar_view)
             .build();
-
-        // toggle_playback dispatches by state — Running/Preparing →
-        // pause, Overtime → finish-overtime-session. The Pause button
-        // label morphs to "Finish" when we enter Overtime, so the
-        // user-visible action stays consistent with what gets called.
-        let obj = self.obj().clone();
-        pause_btn.connect_clicked(move |_| obj.imp().timer_view.toggle_playback());
-        let obj2 = self.obj().clone();
-        stop_btn.connect_clicked(move |_| obj2.imp().timer_view.stop());
 
         // Esc on the running page pauses (not stop, not dismiss — stop
         // would commit an unintended save, dismiss would leave the timer

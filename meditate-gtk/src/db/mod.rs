@@ -89,8 +89,6 @@ pub type Result<T> = std::result::Result<T, DbError>;
 pub enum Failed {
     Save,
     Delete,
-    /// The session saved, only its label pick for next time didn't.
-    LabelDefault,
 }
 
 /// `true` when the write landed. Otherwise logs it under `tag` and
@@ -138,7 +136,6 @@ fn show_write_failure(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: O
     let text = text.unwrap_or_else(|| match failed {
         Failed::Save => gettext("Save failed"),
         Failed::Delete => gettext("Delete failed"),
-        Failed::LabelDefault => gettext("Label not kept for next time"),
     });
     let toast = adw::Toast::builder().title(text).timeout(4).build();
     // One at a time: a slider step that fails again replaces the last

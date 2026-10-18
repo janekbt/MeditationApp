@@ -33,6 +33,10 @@ pub struct PresetConfig {
     /// (Timer presets just hold their default-empty form); only
     /// the Box-Breath apply path actually writes them back.
     pub box_breath_cues: PresetBoxBreathCues,
+    /// Per-mode Auto-Finish. Missing in presets saved before it
+    /// existed: those apply it as off.
+    #[serde(default)]
+    pub auto_finish: bool,
 }
 
 /// Mode-specific timing. Variant must match the column-level `mode`
@@ -426,6 +430,10 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
     let current = snapshot(db, mode, timing);
     let shown = |mut c: PresetConfig| {
         let vis = setup_visibility(mode);
+        if stopwatch {
+            // Setup hides Auto-Finish while counting up.
+            c.auto_finish = false;
+        }
         if !vis.starting_bell {
             c.starting_bell = PresetStartingBell::default();
         }
@@ -534,6 +542,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
 
     let cues_signal_mode = read_str(signal_mode_key_for_mode(mode), "both");
     let keep_screen_awake = read_bool(keep_screen_awake_key_for_mode(mode), false);
+    let auto_finish = read_bool(crate::settings_keys::auto_finish_key_for_mode(mode), false);
 
     PresetConfig {
         label,
@@ -543,6 +552,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         timing,
         cues_signal_mode,
         keep_screen_awake,
+        auto_finish,
         box_breath_cues,
     }
 }
@@ -606,6 +616,7 @@ pub fn apply(
         keep_screen_awake_key_for_mode(mode),
         bool_str(cfg.keep_screen_awake),
     )?;
+    set(crate::settings_keys::auto_finish_key_for_mode(mode), bool_str(cfg.auto_finish))?;
 
     // 2. Box-breath phase rows — only when cfg is BoxBreath. Timer
     // presets carry the seed values; stamping them on apply would
@@ -720,6 +731,7 @@ mod tests {
             },
             cues_signal_mode: "both".to_string(),
             keep_screen_awake: true,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues::default(),
         }
     }
@@ -755,6 +767,7 @@ mod tests {
             },
             cues_signal_mode: "vibration".to_string(),
             keep_screen_awake: false,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues {
                 master_enabled: true,
                 phases: vec![
@@ -837,6 +850,7 @@ mod tests {
             timing: PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
             cues_signal_mode: String::new(),
             keep_screen_awake: false,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues::default(),
         };
         let back = PresetConfig::from_json(&cfg.to_json()).unwrap();
@@ -918,6 +932,7 @@ mod tests {
             timing,
             cues_signal_mode: "both".to_string(),
             keep_screen_awake: true,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues::default(),
         }
     }
@@ -1045,6 +1060,7 @@ mod tests {
             },
             cues_signal_mode: "sound".to_string(),
             keep_screen_awake: false,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues {
                 master_enabled: true,
                 phases: vec![PresetBoxBreathPhase {
@@ -1396,6 +1412,60 @@ mod tests {
         let phases: Vec<BellVolume> =
             saved.box_breath_cues.phases.iter().map(|p| p.volume).collect();
         assert_eq!(phases, vec![pct(10.0), pct(30.0), pct(60.0), pct(90.0)]);
+    }
+
+    #[test]
+    fn a_preset_keeps_auto_finish() {
+        let (db, sound, pattern) = fresh_db();
+        let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
+        apply(&db, &cfg_with_known_uuids(timing.clone(), &sound, &pattern), SessionMode::Timer).unwrap();
+        db.set_setting("timer_auto_finish", "true").unwrap();
+        let saved = snapshot(&db, SessionMode::Timer, timing);
+        db.set_setting("timer_auto_finish", "false").unwrap();
+        apply(&db, &saved, SessionMode::Timer).unwrap();
+        assert_eq!(db.get_setting("timer_auto_finish", "").unwrap(), "true");
+        let back = PresetConfig::from_json(&saved.to_json()).unwrap();
+        assert!(back.auto_finish, "it survives the JSON");
+    }
+
+    #[test]
+    fn a_preset_from_before_auto_finish_applies_it_off() {
+        // config_json as 26.10.1 wrote it: no "auto_finish".
+        let json = r#"{
+            "label": {"enabled": false, "uuid": null},
+            "starting_bell": {"enabled": true, "sound_uuid": "s", "prep_time_enabled": false,
+                "prep_time_secs": 5, "signal_mode": "sound", "vibration_pattern_uuid": "p", "volume": 50},
+            "interval_bells": {"enabled": true, "bells": [{"kind": "interval", "minutes": 5,
+                "jitter_pct": 0, "sound_uuid": "s", "enabled": true, "signal_mode": "sound",
+                "vibration_pattern_uuid": "p", "volume": 50}]},
+            "end_bell": {"enabled": true, "sound_uuid": "s", "signal_mode": "sound",
+                "vibration_pattern_uuid": "p", "volume": 50},
+            "timing": {"mode": "timer", "stopwatch": false, "duration_secs": 600},
+            "cues_signal_mode": "both",
+            "keep_screen_awake": false,
+            "box_breath_cues": {"master_enabled": false, "phases": []}
+        }"#;
+        let cfg = PresetConfig::from_json(json).expect("old presets still load");
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_auto_finish", "true").unwrap();
+        apply(&db, &cfg, SessionMode::Timer).unwrap();
+        assert_eq!(db.get_setting("timer_auto_finish", "").unwrap(), "false");
+    }
+
+    #[test]
+    fn a_hidden_auto_finish_does_not_change_the_active_preset() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_session_secs", "600").unwrap();
+        db.set_setting("timer_stopwatch_active", "true").unwrap();
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: true, duration_secs: 600 });
+        db.insert_preset("Open", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.set_setting("timer_auto_finish", "true").unwrap();
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "hidden while counting up");
+        db.set_setting("timer_stopwatch_active", "false").unwrap();
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 });
+        db.insert_preset("Countdown", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.set_setting("timer_auto_finish", "false").unwrap();
+        assert!(active_presets(&db, SessionMode::Timer).is_empty(), "shown for a countdown, it counts");
     }
 
     #[test]

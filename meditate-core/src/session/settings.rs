@@ -112,6 +112,9 @@ pub struct SessionSettings {
     /// Box-Breath per-phase cue config. Only `Some` for BoxBreath
     /// sessions; ignored otherwise.
     pub box_breath_cues: Option<BoxBreathCueConfig>,
+    /// Auto-Finish: a countdown saves itself at its end instead of
+    /// going into overtime (`Effect::AutoFinish`).
+    pub auto_finish: bool,
 }
 
 impl SessionSettings {
@@ -138,6 +141,7 @@ impl SessionSettings {
             starting_bell: bells::starting_bell_cue_from_db(db, mode),
             end_bell: bells::end_bell_cue_from_db(db, display, mode),
             box_breath_cues: (mode == SessionMode::BoxBreath).then(|| bells::box_breath_cues_from_db(db)),
+            auto_finish: crate::settings_keys::auto_finish_from_db(db, mode),
             shape,
         }
     }
@@ -158,6 +162,7 @@ impl Default for SessionSettings {
             starting_bell: None,
             end_bell: None,
             box_breath_cues: None,
+            auto_finish: false,
         }
     }
 }
@@ -186,6 +191,7 @@ mod tests {
             starting_bell: bells::starting_bell_cue_from_db(db, mode),
             end_bell: bells::end_bell_cue_from_db(db, display, mode),
             box_breath_cues: matches!(mode, SessionMode::BoxBreath).then(|| bells::box_breath_cues_from_db(db)),
+            auto_finish: crate::settings_keys::auto_finish_from_db(db, mode),
             shape,
         }
     }

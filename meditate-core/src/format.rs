@@ -1013,6 +1013,7 @@ mod tests {
             timing: PresetTiming::Timer { stopwatch, duration_secs },
             cues_signal_mode: "both".into(),
             keep_screen_awake: false,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues::default(),
         }
     }
@@ -1040,6 +1041,7 @@ mod tests {
             },
             cues_signal_mode: "both".into(),
             keep_screen_awake: false,
+            auto_finish: false,
             box_breath_cues: PresetBoxBreathCues::default(),
         }
     }

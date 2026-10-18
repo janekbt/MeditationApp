@@ -709,8 +709,8 @@ msgstr[0] "{n} сессия до {0}-й"
 msgstr[1] "{n} сессии до {0}-й"
 msgstr[2] "{n} сессий до {0}-й"
 
-msgid "Add {} ?"
-msgstr "Добавить {}?"
+msgid "Add {} and Save"
+msgstr "Добавить {} и сохранить"
 
 msgid "Vibration"
 msgstr "Вибрация"
@@ -1151,8 +1151,6 @@ msgstr "{} %"
 msgid "Couldn't open the folder picker"
 msgstr "Не удалось открыть выбор папки"
 
-msgid "Label not kept for next time"
-msgstr "Метка не сохранена на следующий раз"
 
 msgid "Every {n} s"
 msgid_plural "Every {n} s"
@@ -1196,3 +1194,12 @@ msgstr "Добавляется к интервалу после каждого �
 msgctxt "Bell time"
 msgid "Time"
 msgstr "Время"
+
+msgid "Auto-Finish"
+msgstr "Завершать автоматически"
+
+msgid "Saves the session without asking when the time is up"
+msgstr "Сохраняет сессию без вопросов, когда время истекло"
+
+msgid "Session saved"
+msgstr "Сессия сохранена"

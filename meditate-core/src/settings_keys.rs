@@ -35,6 +35,19 @@ pub fn keep_screen_awake_key_for_mode(mode: SessionMode) -> &'static str {
     }
 }
 
+/// Per-mode Auto-Finish: a countdown saves itself at its end.
+pub fn auto_finish_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_auto_finish",
+        SessionMode::Guided => "guided_auto_finish",
+        SessionMode::BoxBreath => "boxbreath_auto_finish",
+    }
+}
+
+pub fn auto_finish_from_db(db: &Database, mode: SessionMode) -> bool {
+    read_bool(db, auto_finish_key_for_mode(mode), false)
+}
+
 /// Per-mode End Bell config (2026-07-17, was one flat key set
 /// shared across modes in both shells — a design bug: a guided
 /// track and a Timer session should be able to want different end
@@ -286,6 +299,18 @@ mod tests {
             keep_screen_awake_key_for_mode(SessionMode::Guided),
             keep_screen_awake_key_for_mode(SessionMode::BoxBreath),
         ]);
+    }
+
+    #[test]
+    fn auto_finish_is_remembered_per_mode() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!auto_finish_from_db(&db, SessionMode::Timer), "off by default");
+        db.set_setting("timer_auto_finish", "true").unwrap();
+        assert!(auto_finish_from_db(&db, SessionMode::Timer));
+        assert!(!auto_finish_from_db(&db, SessionMode::Guided));
+        assert!(!auto_finish_from_db(&db, SessionMode::BoxBreath));
+        let shape = crate::session::SessionShape::TimerCountdown { target_secs: 600 };
+        assert!(crate::session::SessionSettings::from_db(&db, shape).auto_finish, "a session starts with it");
     }
 
     #[test]

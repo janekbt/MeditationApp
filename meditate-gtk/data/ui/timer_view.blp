@@ -100,24 +100,6 @@ template $TimerView : Gtk.Widget {
                 label: _("Start Session");
                 css-classes: ["suggested-action", "pill"];
               }
-
-              Gtk.Box {
-                orientation: horizontal;
-                spacing: 12;
-                halign: center;
-
-                Gtk.Button resume_btn {
-                  label: _("Resume");
-                  css-classes: ["suggested-action", "pill"];
-                  visible: false;
-                }
-
-                Gtk.Button stop_from_pause_btn {
-                  label: _("Stop");
-                  css-classes: ["pill", "destructive-action"];
-                  visible: false;
-                }
-              }
             };
           }
 
@@ -392,6 +374,13 @@ template $TimerView : Gtk.Widget {
               // Guided (or vice versa) — Rust resolves the right key
               // (timer_keep_screen_awake / guided_keep_screen_awake /
               // boxbreath_keep_screen_awake) on visit and on toggle.
+              // Per mode; hidden while counting up (not for Guided,
+              // whose file always ends).
+              Adw.SwitchRow auto_finish_row {
+                title: _("Auto-Finish");
+                subtitle: _("Saves the session without asking when the time is up");
+              }
+
               Adw.SwitchRow keep_screen_awake_row {
                 title: _("Keep Screen Awake");
                 subtitle: _("Prevent display sleep during a session");
@@ -809,95 +798,6 @@ template $TimerView : Gtk.Widget {
             };
           }
 
-        };
-      };
-    }
-
-    // ── Done page ─────────────────────────────────────────────────────
-    Gtk.StackPage {
-      name: "done";
-      child: Gtk.ScrolledWindow {
-        hscrollbar-policy: never;
-        vexpand: true;
-
-        child: Gtk.Box {
-          orientation: vertical;
-          spacing: 18;
-          valign: center;
-          vexpand: true;
-          margin-top: 24;
-          margin-bottom: 24;
-          margin-start: 12;
-          margin-end: 12;
-
-          Gtk.Label done_duration_label {
-            css-classes: ["timer-setup-display"];
-            halign: center;
-          }
-
-          Gtk.Box {
-            orientation: vertical;
-            spacing: 6;
-
-            Gtk.Label note_caption {
-              label: _("Note (optional)");
-              halign: start;
-              margin-start: 12;
-              styles ["caption", "dimmed"]
-            }
-
-            Gtk.ScrolledWindow {
-              hscrollbar-policy: never;
-              height-request: 180;
-              styles ["log-note-editor"]
-
-              Gtk.TextView note_view {
-                wrap-mode: word_char;
-                accepts-tab: false;
-                top-margin: 8;
-                bottom-margin: 8;
-                left-margin: 12;
-                right-margin: 12;
-              }
-            }
-          }
-
-          Adw.PreferencesGroup {
-            Adw.ExpanderRow done_label_enabled_row {
-              title: _("Label");
-              subtitle: _("Tag this session");
-              show-enable-switch: true;
-              enable-expansion: false;
-
-              Adw.ActionRow done_label_chooser_row {
-                title: _("Selected");
-                activatable: true;
-
-                [suffix]
-                Gtk.Image {
-                  icon-name: "go-next-symbolic";
-                  styles ["dim-label"]
-                }
-              }
-            }
-          }
-
-          Gtk.Box {
-            orientation: horizontal;
-            spacing: 12;
-            halign: center;
-            homogeneous: true;
-
-            Gtk.Button discard_btn {
-              label: _("Discard");
-              css-classes: ["pill", "destructive-action"];
-            }
-
-            Gtk.Button save_btn {
-              label: _("Save");
-              css-classes: ["suggested-action", "pill"];
-            }
-          }
         };
       };
     }

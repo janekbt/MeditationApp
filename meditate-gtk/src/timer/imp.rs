@@ -63,6 +63,17 @@ impl From<TimerMode> for meditate_core::SessionMode {
 }
 
 
+/// The running page's end of a session, built by the window.
+#[derive(Debug)]
+pub struct RunningControls {
+    pub first: gtk::Button,
+    pub second: gtk::Button,
+    pub discard: gtk::Button,
+    /// The note caption and field, shown or hidden together.
+    pub note: gtk::Widget,
+    pub note_view: gtk::TextView,
+}
+
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
 /// A Setup-view bell Volume row. The end bell's row edits the current
@@ -95,6 +106,7 @@ pub struct TimerView {
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
     #[template_child] pub keep_screen_awake_row:  TemplateChild<adw::SwitchRow>,
+    #[template_child] pub auto_finish_row:        TemplateChild<adw::SwitchRow>,
     #[template_child] pub presets_section:       TemplateChild<adw::Clamp>,
     #[template_child] pub presets_group:         TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub save_settings_btn:     TemplateChild<gtk::Button>,
@@ -111,8 +123,6 @@ pub struct TimerView {
     #[template_child] pub local_folder_btn:      TemplateChild<gtk::Button>,
     #[template_child] pub phase_tiles_grid:       TemplateChild<gtk::Grid>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
-    #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
-    #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub cues_signal_mode_row:    TemplateChild<adw::ActionRow>,
     #[template_child] pub cues_signal_toggle_host: TemplateChild<gtk::Box>,
@@ -172,13 +182,6 @@ pub struct TimerView {
     #[template_child] pub boxbreath_phase_holdout_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdout_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
-    #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
-    #[template_child] pub note_view:             TemplateChild<gtk::TextView>,
-    #[template_child] pub note_caption:          TemplateChild<gtk::Label>,
-    #[template_child] pub done_label_enabled_row: TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub done_label_chooser_row: TemplateChild<adw::ActionRow>,
-    #[template_child] pub discard_btn:           TemplateChild<gtk::Button>,
-    #[template_child] pub save_btn:              TemplateChild<gtk::Button>,
 
     // ── Active session state ─────────────────────────────────────────
     // Only one session runs at a time across the three modes.
@@ -218,25 +221,16 @@ pub struct TimerView {
     screen_awake_cookie: Cell<u32>,
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
-    /// Refs to the running-page buttons so the Overtime transition
-    /// can morph them in place (Pause → Finish, Stop hidden, the
-    /// "Add MM:SS?" suffix shown). All three are dropped when the
-    /// session ends to release the widgets.
-    running_pause_btn: RefCell<Option<gtk::Button>>,
-    running_stop_btn: RefCell<Option<gtk::Button>>,
-    overtime_add_btn: RefCell<Option<gtk::Button>>,
+    /// The running page's buttons and note, set from core's button
+    /// set by `refresh_end_buttons`. Dropped when the page pops.
+    running_controls: RefCell<Option<RunningControls>>,
+    /// Overtime so far, for the Add button's label.
+    overtime_delta: Cell<Duration>,
     /// True while a label-row update is being applied programmatically
     /// (mode switch, show_done refresh) — suppresses the
     /// enable_expansion_notify / activated callbacks so they don't
     /// re-write the same value back to settings or open a chooser.
     labels_loading: Cell<bool>,
-    /// Per-session label pick on the Done page. Set in show_done
-    /// from the Setup view's current state, mutable when the user
-    /// taps the chooser on Done. Read by on_save. Stored as a
-    /// resolved local id (not uuid) since on_save writes label_id
-    /// to the session row, and the row is gone (label_id = NULL)
-    /// when the toggle is off.
-    done_selected_label_id: Cell<Option<i64>>,
     /// Currently-selected countdown duration in seconds, set by preset
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start (and Stopwatch Mode is off).
@@ -274,6 +268,9 @@ pub struct TimerView {
     current_apply_toast: RefCell<Option<adw::Toast>>,
     /// A Save write is in flight; a second tap must not insert twice.
     saving: Cell<bool>,
+    /// The open "Discard Session?" question, closed when the session
+    /// saves itself under it.
+    discard_dialog: RefCell<Option<adw::AlertDialog>>,
 
     // ── Guided meditation state ──────────────────────────────────────
     /// Transient "Open File" pick — set when the user picks a file via
@@ -394,12 +391,6 @@ impl ObjectImpl for TimerView {
         self.configure_preparation_time_secs_row();
         self.setup_boxbreath_phase_cues();
         self.setup_volume_rows();
-
-        // Tell screen readers that the free-text editor is labelled by
-        // its caption, matching the Log add/edit dialog.
-        self.note_view.update_relation(&[gtk::accessible::Relation::LabelledBy(
-            &[self.note_caption.upcast_ref::<gtk::Accessible>()],
-        )]);
     }
 
     fn dispose(&self) {
@@ -467,26 +458,25 @@ impl TimerView {
                 }
             }
         ));
+        self.auto_finish_row.connect_active_notify(clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.is_active();
+                if let Some(app) = imp.get_app() {
+                    let key = meditate_core::settings_keys::auto_finish_key_for_mode(imp.current_mode().into());
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_setting(
+                            key,
+                            meditate_core::format_bool(on),
+                        )));
+                }
+            }
+        ));
 
         self.start_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_start()
-        ));
-        self.resume_btn.connect_clicked(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().on_resume()
-        ));
-        self.stop_from_pause_btn.connect_clicked(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().on_stop()
-        ));
-        self.save_btn.connect_clicked(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().on_save()
-        ));
-        self.discard_btn.connect_clicked(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().on_discard()
         ));
 
         // ── Duration row: tap opens the H:M dialog ──────────────────
@@ -662,56 +652,11 @@ impl TimerView {
             true
         });
 
-        // ── Done-page label expander ────────────────────────────────
-        // Per-session pick. Initialized in show_done from the Setup
-        // view's currently-active label. Toggling here doesn't write
-        // any persistent setting — the choice rides with the session.
-        self.done_label_enabled_row.connect_enable_expansion_notify(clone!(
-            #[weak(rename_to = this)] obj,
-            move |row| {
-                let imp = this.imp();
-                if imp.labels_loading.get() { return; }
-                if !row.enables_expansion() {
-                    imp.done_selected_label_id.set(None);
-                    imp.refresh_done_label_chooser_subtitle();
-                    return;
-                }
-                // Toggling on: if no per-session pick is set yet,
-                // resolve the mode-default and adopt it.
-                if imp.done_selected_label_id.get().is_none() {
-                    let id = imp.resolve_label_for_mode(imp.current_mode())
-                        .map(|l| l.id);
-                    imp.done_selected_label_id.set(id);
-                }
-                imp.refresh_done_label_chooser_subtitle();
-            }
-        ));
         // A label renamed or deleted in the chooser (or by sync) shows
         // as it is now when the row is back on screen.
         self.setup_label_chooser_row.connect_map(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().refresh_setup_label_chooser_subtitle()
-        ));
-        self.done_label_chooser_row.connect_map(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().refresh_done_label_chooser_subtitle()
-        ));
-        self.done_label_chooser_row.connect_activated(clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| {
-                let imp = this.imp();
-                let Some(app) = imp.get_app() else { return; };
-                let Some(window) = this.root()
-                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
-                else { return; };
-                let current_id = imp.done_selected_label_id.get();
-                let this_for_pick = this.clone();
-                window.push_label_chooser(&app, current_id, move |label| {
-                    let imp2 = this_for_pick.imp();
-                    imp2.done_selected_label_id.set(Some(label.id));
-                    imp2.refresh_done_label_chooser_subtitle();
-                });
-            }
         ));
 
         // End Bell master toggle — gates whether the bell plays at the
@@ -1165,6 +1110,21 @@ impl TimerView {
         self.bells_loading.set(true);
         self.keep_screen_awake_row.set_active(on);
         self.bells_loading.set(false);
+    }
+
+    /// Sync the Auto-Finish switch with the current mode's stored
+    /// value; hidden while counting up, except for Guided, whose file
+    /// always ends.
+    pub(crate) fn refresh_auto_finish_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+        let mode = self.current_mode();
+        let on = app
+            .with_db(|db| meditate_core::settings_keys::auto_finish_from_db(db.core(), mode.into()))
+            .unwrap_or(false);
+        self.bells_loading.set(true);
+        self.auto_finish_row.set_active(on);
+        self.bells_loading.set(false);
+        self.auto_finish_row.set_sensitive(mode == TimerMode::Guided || !self.stopwatch_toggle_on.get());
     }
 
     /// Hold a suspend inhibit while the session runs (not while
@@ -1909,6 +1869,7 @@ impl TimerView {
         self.refresh_cues_signal_mode_state();
         // Same for the Keep-Screen-Awake switch.
         self.refresh_keep_screen_awake_state();
+        self.refresh_auto_finish_state();
         // Visible-list contents are mode-strict (Timer presets only
         // appear in Timer mode, Box-Breath presets in Box Breath mode)
         // — rebuild on every switch. Guided mode rebuilds its own
@@ -1956,12 +1917,10 @@ impl TimerView {
         match self.ui_state() {
             UiState::Idle      => self.show_idle_ui(),
             UiState::Paused    => self.show_paused_ui(self.current_display_secs()),
-            UiState::Done      => self.view_stack.set_visible_child_name("done"),
-            // Running, Preparing, and Overtime normally can't reach
-            // here (the nav page blocks the toggle while a session
-            // or prep is in flight); fall back to idle UI as a
-            // safety net.
-            UiState::Running | UiState::Preparing | UiState::Overtime => {
+            // Running, Preparing, Overtime and an ended session normally
+            // can't reach here (the running page covers the toggle);
+            // fall back to idle UI as a safety net.
+            UiState::Running | UiState::Preparing | UiState::Overtime | UiState::Done => {
                 self.show_idle_ui()
             }
         }
@@ -1969,8 +1928,6 @@ impl TimerView {
 
     fn show_idle_ui(&self) {
         self.start_btn.set_visible(true);
-        self.resume_btn.set_visible(false);
-        self.stop_from_pause_btn.set_visible(false);
         self.view_stack.set_visible_child_name("setup");
         let mode = self.current_mode();
         self.countdown_inputs.set_sensitive(true);
@@ -2024,8 +1981,6 @@ impl TimerView {
     /// they Resume or Stop.
     fn show_paused_ui(&self, display_secs: u64) {
         self.start_btn.set_visible(false);
-        self.resume_btn.set_visible(true);
-        self.stop_from_pause_btn.set_visible(true);
         self.view_stack.set_visible_child_name("setup");
         self.countdown_inputs.set_sensitive(false);
         self.boxbreath_inputs.set_sensitive(false);
@@ -2092,6 +2047,7 @@ impl TimerView {
         // stopwatch back off restores the user's previous choice.
         self.refresh_interval_bells_count();
         self.refresh_end_bell_dependent_ui();
+        self.refresh_auto_finish_state();
     }
 
     /// Mute / restore the End Bell row as a function of the
@@ -2218,7 +2174,13 @@ impl TimerView {
                             .map(meditate_core::session::Session::enter_overtime)
                             .unwrap_or_default();
                         imp.dispatch_session_effects(&effects);
-                        if effects.iter().any(|e| matches!(e, CoreSessionEffect::EnterOvertime)) {
+                        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
+                            imp.cancel_tick();
+                            // Not from inside the track's own callback:
+                            // the end drops the track.
+                            let obj = obj_for_eos.clone();
+                            glib::idle_add_local_once(move || obj.imp().auto_finish_session());
+                        } else if effects.iter().any(|e| matches!(e, CoreSessionEffect::EnterOvertime)) {
                             imp.transition_running_to_overtime();
                         }
                     },
@@ -2314,13 +2276,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             self.acquire_screen_awake_lock(&app);
         }
-        // Flip the pause-button label back from "Resume" to "Pause"
-        // — the running page stays up across pause/resume now, so
-        // we own this morph end-to-end.
-        if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
-            btn.set_label(&gettext("Pause"));
-            btn.set_tooltip_text(Some(&gettext("Pause Timer")));
-        }
+        self.refresh_end_buttons();
         // Refresh the hero label NOW instead of waiting up to ~1s for
         // the first post-resume tick. The cores' elapsed reading is
         // correct the moment resumed_at fires — without this push,
@@ -2364,53 +2320,117 @@ impl TimerView {
             self.release_screen_awake_lock(&app);
         }
 
-        // Stay on the running page — morph the running pause-button
-        // to "Resume" so the user can pick up without first popping
-        // back to the dimmed setup view. The same physical button
-        // is reused; toggle_playback dispatches Paused → on_resume.
-        if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
-            btn.set_label(&gettext("Resume"));
-            btn.set_tooltip_text(Some(&gettext("Resume Timer")));
-        }
+        self.refresh_end_buttons();
 
         self.show_paused_ui(self.current_display_secs());
         self.obj().emit_by_name::<()>("timer-paused", &[]);
     }
 
-    /// Called by the window when Stop is pressed (from running page or paused state).
-    pub fn on_stop(&self) {
+    /// End the in-flight session with `f` (stop, finish or add) and
+    /// leave the running page showing the ended session's buttons.
+    /// Returns the duration core recorded.
+    fn end_in_flight<F>(&self, f: F) -> Option<u64>
+    where
+        F: FnOnce(&mut CoreSession, Duration) -> Vec<CoreSessionEffect>,
+    {
         self.cancel_tick();
+        let elapsed = self.core_session_end(f);
+        self.session_ended();
+        elapsed
+    }
 
-        // Drive the stop decision through Session: returns the
-        // duration to save regardless of phase (prep elapsed for
-        // stop-during-prep, running elapsed mid-Running, running+
-        // overtime elapsed mid-Overtime, paused-at value if paused).
-        let elapsed = self
-            .core_session_end(meditate_core::session::Session::stop)
-            .unwrap_or(0);
-        // Session transitioned to Stopped and stashed `elapsed` as
-        // its final duration — the Done view reads it back via
-        // `session_final_duration_secs()`. Don't drop the Session
-        // here; reset_mode drops it when the user leaves Done.
-        // Guided playback stops the moment the user picks Stop —
+    /// Shell side of any end: the track stops, the inhibit goes, the
+    /// snapshot holds the final length for a kill before Save, and
+    /// the page shows Save and Discard.
+    fn session_ended(&self) {
         // Drop runs set_state(Null) + drops the bus signal-watch.
-        // No-op for non-Guided sessions (slot is already None).
         *self.guided_playback.borrow_mut() = None;
-
-        // Release the running-page widget refs — the page is about
-        // to pop when "timer-stopped" fires below.
-        *self.running_label.borrow_mut() = None;
-        *self.running_pause_btn.borrow_mut() = None;
-        *self.running_stop_btn.borrow_mut() = None;
-        *self.overtime_add_btn.borrow_mut() = None;
-
-        // Release the keep-screen-awake inhibit (no-op if none held).
         if let Some(app) = self.get_app() {
             self.release_screen_awake_lock(&app);
         }
+        if let Some(secs) = self.session_final_duration_secs() {
+            self.write_in_progress_snapshot(secs.try_into().unwrap_or(u32::MAX));
+        }
+        self.refresh_end_buttons();
+    }
 
-        self.obj().emit_by_name::<()>("timer-stopped", &[]);
-        self.show_done(elapsed);
+    /// Set the running page's buttons and note from core's button set.
+    fn refresh_end_buttons(&self) {
+        use meditate_core::session::EndButton;
+        let Some(buttons) = self.core_session.borrow().as_ref().map(CoreSession::end_buttons) else { return; };
+        let controls = self.running_controls.borrow();
+        let Some(c) = controls.as_ref() else { return; };
+        for (btn, which) in [(&c.first, buttons.row[0]), (&c.second, buttons.row[1])] {
+            let (label, classes): (String, &[&str]) = match which {
+                EndButton::Pause => (gettext("Pause"), &["pill"]),
+                EndButton::Resume => (gettext("Resume"), &["pill", "suggested-action"]),
+                EndButton::Save => (gettext("Save"), &["pill", "suggested-action"]),
+                EndButton::Add => (overtime_add_button_label(self.overtime_delta.get()), &["pill", "tabular-nums"]),
+                EndButton::Discard => (gettext("Discard"), &["pill", "destructive-action"]),
+            };
+            btn.set_label(&label);
+            btn.set_css_classes(classes);
+            // "Add 03:00 and Save" takes two lines where one doesn't fit.
+            if let Some(text) = btn.child().and_downcast::<gtk::Label>() {
+                text.set_wrap(true);
+                text.set_justify(gtk::Justification::Center);
+            }
+        }
+        c.discard.set_visible(buttons.discard_below);
+        c.note.set_visible(buttons.note);
+    }
+
+    /// One of the running page's two row buttons was clicked.
+    pub(crate) fn end_button_clicked(&self, index: usize) {
+        use meditate_core::session::EndButton;
+        let Some(buttons) = self.core_session.borrow().as_ref().map(CoreSession::end_buttons) else { return; };
+        match buttons.row[index] {
+            EndButton::Pause => self.on_pause(),
+            EndButton::Resume => self.on_resume(),
+            EndButton::Discard => self.on_discard(),
+            EndButton::Add => {
+                self.end_in_flight(CoreSession::add_overtime_and_finish);
+                self.on_save(false);
+            }
+            EndButton::Save => {
+                match self.ui_state() {
+                    UiState::Overtime => { self.end_in_flight(|s, _now| s.finish_overtime()); }
+                    UiState::Done => {}
+                    _ => { self.end_in_flight(CoreSession::stop); }
+                }
+                self.on_save(false);
+            }
+        }
+    }
+
+    /// The countdown reached its end with Auto-Finish on: core already
+    /// stopped the session at its planned length.
+    fn auto_finish_session(&self) {
+        // The tick source ends itself; forget its id.
+        self.tick_source.borrow_mut().take();
+        self.session_ended();
+        self.notify_complete();
+        if let Some(dialog) = self.discard_dialog.take() {
+            dialog.close();
+        }
+        self.on_save(true);
+    }
+
+    /// "Meditation Complete" when the window isn't focused; the page
+    /// itself shows the end otherwise.
+    fn notify_complete(&self) {
+        let Some(app) = self.get_app() else { return; };
+        if app.active_window().is_some_and(|w| w.is_active()) {
+            return;
+        }
+        let n = gtk::gio::Notification::new("Meditation Complete");
+        let target = self
+            .core_session
+            .borrow()
+            .as_ref()
+            .map_or(0, meditate_core::session::Session::completion_duration_secs);
+        n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
+        app.send_notification(Some("timer-done"), &n);
     }
 
     /// Elapsed seconds for the active session. Used by on_stop /
@@ -2437,38 +2457,14 @@ impl TimerView {
             .and_then(meditate_core::session::Session::final_duration_secs)
     }
 
-    fn show_done(&self, elapsed_secs: u64) {
-        // Hold the final duration, not the last 60 s heartbeat's, for a kill on Done.
-        self.write_in_progress_snapshot(elapsed_secs.try_into().unwrap_or(u32::MAX));
-        self.done_duration_label.set_label(&format_time(Duration::from_secs(elapsed_secs)));
-        self.note_view.buffer().set_text("");
-        // Mirror the Setup view's currently-active label into the
-        // Done page's per-session pick. The user can flip the toggle
-        // off or change the pick before tapping Save.
-        self.done_selected_label_id.set(self.setup_selected_label_id());
-        self.refresh_done_label_chooser_subtitle();
-        // Skip the stack's crossfade when entering Done — the running
-        // nav page is about to pop on top of this stack, and a fade
-        // here means the timer view bleeds through for the first
-        // frames of the pop animation. Done is the destination, so
-        // flip instantly; the back-to-setup path keeps its fade.
-        let saved = self.view_stack.transition_type();
-        self.view_stack.set_transition_type(gtk::StackTransitionType::None);
-        self.view_stack.set_visible_child_name("done");
-        self.view_stack.set_transition_type(saved);
-        // Without this, GTK's default-focus logic lands on `note_view` (the
-        // first focusable descendant), which on phones pops the on-screen
-        // keyboard up and hides Save/Discard. Putting focus on Save keeps
-        // the action buttons visible; the user can still tap the note view
-        // explicitly to start typing.
-        self.save_btn.grab_focus();
-    }
-
-    fn on_save(&self) {
+    fn on_save(&self, auto: bool) {
         if self.saving.get() {
             return;
         }
-        self.stop_active_signals();
+        // Auto-Finish's end bell plays on.
+        if !auto {
+            self.stop_active_signals();
+        }
         let mode = self.current_mode();
 
         let elapsed = self.elapsed_secs_for_mode();
@@ -2480,15 +2476,9 @@ impl TimerView {
         }
 
         // Core saves a whitespace-only note as no note.
-        let note = {
-            let buffer = self.note_view.buffer();
-            let (start, end) = buffer.bounds();
-            Some(buffer.text(&start, &end, false).to_string())
-        };
-        // Per-session pick is stored on `done_selected_label_id`,
-        // mirrored from Setup at show_done and mutable on the Done
-        // page. None = toggle off / no label.
-        let label_id = self.done_selected_label_id.get();
+        let note = Some(self.note_text());
+        // Setup's label; Setup already keeps it for next time.
+        let label_id = self.setup_selected_label_id();
 
         let session_mode = match mode {
             TimerMode::Timer => SessionMode::Timer,
@@ -2520,31 +2510,6 @@ impl TimerView {
         } else {
             None
         };
-
-        // Record the user's pick as the new persisted default for
-        // this mode — covers the case where they changed the
-        // selection on the Done screen and want it stuck for next
-        // session. Off-toggle clears the active flag so the next
-        // session starts off too. The "what action to take" decision
-        // (set / deactivate / noop on a now-missing id) lives in
-        // core::labels so the Android shell shares it.
-        let labels = self
-            .get_app()
-            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
-            .and_then(std::result::Result::ok)
-            .unwrap_or_default();
-        if let Some(app) = self.get_app() {
-            use meditate_core::labels::{persist_active_for_mode, persist_uuid_for_mode, PersistAction};
-            let kept = match meditate_core::labels::resolve_persist_action(label_id, &labels) {
-                PersistAction::SetUuidAndActivate { uuid } => app.with_db_mut(|db| {
-                    persist_uuid_for_mode(db.core(), mode.into(), uuid.as_str())
-                        .and_then(|()| persist_active_for_mode(db.core(), mode.into(), true))
-                }),
-                PersistAction::Deactivate => app.with_db_mut(|db| persist_active_for_mode(db.core(), mode.into(), false)),
-                PersistAction::NoOp => Some(Ok(())),
-            };
-            crate::db::write_ok(&*self.obj(), "label.default", kept, crate::db::Failed::LabelDefault);
-        }
 
         // Fire-and-forget DB write on the blocking pool. SQLite fsync on
         // eMMC costs ~15 ms even with synchronous=NORMAL; doing it on the
@@ -2600,27 +2565,50 @@ impl TimerView {
                     }
                 };
 
-                // Only now: on a failed write Done stays up, because the
+                // Only now: on a failed write the page stays up, because the
                 // next Start would overwrite the snapshot, the only copy.
                 obj.imp().reset_mode(mode, false);
                 app.invalidate(crate::application::InvalidateScope::STATS);
+                let id = session.id;
                 if let Some(win) = app.active_window()
                     .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                 {
                     let imp = win.imp();
                     imp.log_view.prepend_session(session);
                     imp.timer_view.refresh_streak();
+                    if auto && win.is_active() {
+                        let toast = adw::Toast::builder()
+                            .title(gettext("Session saved"))
+                            .button_label(gettext("Undo"))
+                            .timeout(8)
+                            .build();
+                        let app_for_undo = app.clone();
+                        let win_for_undo = win.clone();
+                        toast.connect_button_clicked(move |_| {
+                            let deleted = app_for_undo.with_db_mut(|db| db.delete_session(id));
+                            crate::db::write_ok(&win_for_undo, "session.auto_finish.undo", deleted, crate::db::Failed::Delete);
+                            app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
+                            win_for_undo.imp().timer_view.refresh_streak();
+                            win_for_undo.imp().log_view.refresh();
+                        });
+                        win.add_toast(toast);
+                    }
                 }
             });
         }
     }
 
-    fn on_discard(&self) {
-        self.stop_active_signals();
-        let buffer = self.note_view.buffer();
-        let (start, end) = buffer.bounds();
-        let note = buffer.text(&start, &end, false);
-        if !note.is_empty() {
+    /// The running page's note, empty when there is no page.
+    fn note_text(&self) -> String {
+        self.running_controls.borrow().as_ref().map_or_else(String::new, |c| {
+            let buffer = c.note_view.buffer();
+            let (start, end) = buffer.bounds();
+            buffer.text(&start, &end, false).to_string()
+        })
+    }
+
+    pub(crate) fn on_discard(&self) {
+        if !self.note_text().is_empty() {
             let dialog = adw::AlertDialog::builder()
                 .heading(gettext("Discard Session?"))
                 .body(gettext("Your note will be lost."))
@@ -2638,10 +2626,13 @@ impl TimerView {
             let obj = self.obj().clone();
             let mode = self.current_mode();
             dialog.connect_response(None, move |_, id| {
+                obj.imp().discard_dialog.take();
                 if id == "discard" {
+                    obj.imp().stop_active_signals();
                     obj.imp().reset_mode(mode, true);
                 }
             });
+            self.discard_dialog.replace(Some(dialog.clone()));
 
             if let Some(win) = self.obj().root()
                 .and_then(|r| r.downcast::<gtk::Window>().ok())
@@ -2649,6 +2640,7 @@ impl TimerView {
                 dialog.present(Some(&win));
             }
         } else {
+            self.stop_active_signals();
             self.reset_mode(self.current_mode(), true);
         }
     }
@@ -2656,6 +2648,11 @@ impl TimerView {
     /// Reset a single mode back to Idle and update the UI if it's currently shown.
     /// `clear_snapshot` is false only for Save, whose insert clears it.
     fn reset_mode(&self, mode: TimerMode, clear_snapshot: bool) {
+        // Discard can end a session that still runs.
+        self.cancel_tick();
+        if let Some(app) = self.get_app() {
+            self.release_screen_awake_lock(&app);
+        }
         // Session is the sole owner of session timing state; drop
         // it once, regardless of mode. The gst playbin is the only
         // mode-specific gtk-side artefact left that still needs
@@ -2683,6 +2680,12 @@ impl TimerView {
         if clear_snapshot {
             self.clear_in_progress_snapshot();
         }
+
+        // The running page pops; its widgets go with it.
+        *self.running_label.borrow_mut() = None;
+        *self.running_controls.borrow_mut() = None;
+        self.overtime_delta.set(Duration::ZERO);
+        self.obj().emit_by_name::<()>("timer-stopped", &[]);
 
         // Only update the visible UI if this mode is the one currently shown.
         if mode == self.current_mode() {
@@ -2868,11 +2871,17 @@ impl TimerView {
     fn tick_breathing(&self) -> glib::ControlFlow {
         let effects = self.box_breath_session_tick();
         self.dispatch_session_effects(&effects);
+        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
+            self.auto_finish_session();
+            return glib::ControlFlow::Break;
+        }
         if effects.iter().any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. })) {
             // The source ends with Break; forget its id so a later
-            // cancel_tick doesn't remove it a second time.
+            // cancel_tick doesn't remove it a second time. The page
+            // stays up with Save and Discard.
             self.tick_source.borrow_mut().take();
-            self.finish_breath_session();
+            self.session_ended();
+            self.notify_complete();
             return glib::ControlFlow::Break;
         }
         glib::ControlFlow::Continue
@@ -2899,6 +2908,10 @@ impl TimerView {
         // transition).
         self.dispatch_session_effects(&effects);
 
+        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
+            self.auto_finish_session();
+            return glib::ControlFlow::Break;
+        }
         if done {
             // Countdown crossed zero. Don't auto-finish — slide
             // into Overtime so the user can either commit the
@@ -2926,50 +2939,10 @@ impl TimerView {
     /// itself keeps running and now dispatches tick_overtime.
     fn transition_running_to_overtime(&self) {
         // The guided track already stopped on core's StopGuidedAudio,
-        // dispatched ahead of the end bell.
-        if let Some(app) = self.get_app() {
-            // End bell fires via Session's FireEndBell effect (emitted
-            // alongside EnterOvertime in tick_running, and from
-            // Session::enter_overtime() on the EOS-driven path).
-            // System notification stays here — it's a gtk mechanism.
-
-            // Only send a system notification when the app isn't
-            // focused — the in-app overtime UI already signals
-            // completion.
-            if !app.active_window().is_some_and(|w| w.is_active()) {
-                let n = gtk::gio::Notification::new("Meditation Complete");
-                // Session knows its own planned target (Timer's
-                // countdown, Guided's probed duration via target_secs,
-                // Box-Breath's cycle-aligned end) — read it instead
-                // of re-deriving per mode.
-                let target = self
-                    .core_session
-                    .borrow()
-                    .as_ref()
-                    .map_or(0, meditate_core::session::Session::completion_duration_secs);
-                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
-                app.send_notification(Some("timer-done"), &n);
-            }
-        }
-
-        if let Some(stop_btn) = self.running_stop_btn.borrow().as_ref() {
-            stop_btn.set_visible(false);
-        }
-        if let Some(pause_btn) = self.running_pause_btn.borrow().as_ref() {
-            pause_btn.set_label(&gettext("Finish"));
-            pause_btn.set_tooltip_text(Some(&gettext(
-                "End at the planned duration",
-            )));
-        }
-        if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&overtime_add_button_label(Duration::ZERO));
-            // Visibility is owned by the Clamp wrapper that the
-            // window builder put around the button — flipping the
-            // button itself wouldn't reveal the row.
-            if let Some(parent) = add_btn.parent() {
-                parent.set_visible(true);
-            }
-        }
+        // dispatched ahead of the end bell, which core also fired.
+        self.notify_complete();
+        self.overtime_delta.set(Duration::ZERO);
+        self.refresh_end_buttons();
         // Hero stays frozen at the planned countdown duration —
         // the user chose that target, so the static reading is
         // their accomplishment. Only the Add button counts up,
@@ -3010,39 +2983,9 @@ impl TimerView {
         };
         self.dispatch_session_effects(&effects);
 
-        if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&overtime_add_button_label(overtime));
-        }
+        self.overtime_delta.set(overtime);
+        self.refresh_end_buttons();
         glib::ControlFlow::Continue
-    }
-
-    /// Overtime user picked "Add MM:SS?" — record the planned
-    /// duration *plus* the elapsed overtime as the session length,
-    /// pop the running page, surface the Done screen.
-    pub(super) fn add_overtime_and_finish(&self) {
-        if self.ui_state() != UiState::Overtime {
-            return;
-        }
-        let elapsed = self
-            .core_session_end(meditate_core::session::Session::add_overtime_and_finish)
-            .unwrap_or(0);
-        self.end_overtime_session(elapsed);
-    }
-
-    /// Overtime user picked "Finish" — record exactly the planned
-    /// countdown duration (overtime discarded). Session stashes the
-    /// target in its `final_duration_secs` slot via `finish_overtime`,
-    /// which `elapsed_secs_for_mode` then reads back so the Save path
-    /// stores the same value the Done screen shows.
-    pub(super) fn finish_overtime_session(&self) {
-        if self.ui_state() != UiState::Overtime {
-            return;
-        }
-        let target = self.countdown_target_secs.get();
-        let elapsed = self
-            .core_session_end(|s, _now| s.finish_overtime())
-            .unwrap_or(u64::from(target));
-        self.end_overtime_session(elapsed);
     }
 
     /// Run a terminating call against the in-flight Session,
@@ -3066,61 +3009,6 @@ impl TimerView {
         });
         self.dispatch_session_effects(&effects);
         duration
-    }
-
-    fn end_overtime_session(&self, elapsed_secs: u64) {
-        // Cutting in-flight signals is Session's call — it fires
-        // StopActiveSignals from finish_overtime / add_overtime_
-        // and_finish, dispatched via core_session_end above.
-        self.cancel_tick();
-        *self.running_label.borrow_mut() = None;
-        *self.running_pause_btn.borrow_mut() = None;
-        *self.running_stop_btn.borrow_mut() = None;
-        *self.overtime_add_btn.borrow_mut() = None;
-        // Session is in `Stopped` with `elapsed_secs` stashed —
-        // `ui_state()` flips to Done off that.
-        if let Some(app) = self.get_app() {
-            self.release_screen_awake_lock(&app);
-        }
-        self.obj().emit_by_name::<()>("timer-stopped", &[]);
-        self.show_done(elapsed_secs);
-    }
-
-    /// Natural completion path for a breath session: marks Done, plays the
-    /// end chime, vibrates, and sends a notification when not focused.
-    /// Mirrors the countdown's done branch (timer.imp at the 1 Hz tick).
-    /// Distinct from `on_stop` (user-initiated), which is silent.
-    pub(super) fn finish_breath_session(&self) {
-        // tick_box_breath already transitioned Session to Stopped
-        // and stashed `duration_secs` into Session::final_duration_secs;
-        // both survive until reset_mode drops the Session at user
-        // dismissal of the Done view.
-        let elapsed = self
-            .session_final_duration_secs()
-            .unwrap_or_else(|| self.breath_elapsed().as_secs());
-        // Release running-page widget refs — the page pops next.
-        *self.running_label.borrow_mut() = None;
-        *self.running_pause_btn.borrow_mut() = None;
-        if let Some(app) = self.get_app() {
-            self.release_screen_awake_lock(&app);
-        }
-        self.obj().emit_by_name::<()>("timer-stopped", &[]);
-        self.show_done(elapsed);
-        // End bell fires via Session's FireEndBell effect, emitted
-        // with EndBoxBreath and dispatched by tick_breathing before
-        // we get here. System notification stays in gtk.
-        if let Some(app) = self.get_app() {
-            if !app.active_window().is_some_and(|w| w.is_active()) {
-                let n = gtk::gio::Notification::new("Meditation Complete");
-                let target = self
-                    .core_session
-                    .borrow()
-                    .as_ref()
-                    .map_or(elapsed, meditate_core::session::Session::completion_duration_secs);
-                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
-                app.send_notification(Some("timer-done"), &n);
-            }
-        }
     }
 
     /// Countdown remaining seconds (ceiling), 0 if no session running.
@@ -3306,6 +3194,7 @@ impl TimerView {
 
         // Per-mode Keep-Screen-Awake switch.
         self.refresh_keep_screen_awake_state();
+        self.refresh_auto_finish_state();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
@@ -3772,6 +3661,7 @@ impl TimerView {
                 timing,
                 cues_signal_mode: "both".to_string(),
                 keep_screen_awake: false,
+                auto_finish: false,
                 box_breath_cues: PresetBoxBreathCues::default(),
             })
     }
@@ -4093,43 +3983,11 @@ impl TimerView {
         self.labels_loading.set(false);
     }
 
-    /// A merge moved `from`'s sessions to `into`: a Done pick on
-    /// `from` follows them, and both rows show the labels as they are
-    /// (core moved a mode default on `from` too).
-    pub(crate) fn label_merged(&self, from: i64, into: i64) {
-        if self.done_selected_label_id.get() == Some(from) {
-            self.done_selected_label_id.set(Some(into));
-        }
+    /// A merge moved `from`'s sessions to `into`; the Setup row
+    /// shows the labels as they are (core moved a mode default on
+    /// `from` too).
+    pub(crate) fn label_merged(&self, _from: i64, _into: i64) {
         self.refresh_setup_label_chooser_subtitle();
-        self.refresh_done_label_chooser_subtitle();
-    }
-
-    /// Refresh the Done-view label chooser-row's subtitle from the
-    /// current `done_selected_label_id` state.
-    fn refresh_done_label_chooser_subtitle(&self) {
-        let app = self.get_app();
-        let id = self.done_selected_label_id.get();
-        let labels = app
-            .as_ref()
-            .and_then(|a| a.with_db(super::super::db::Database::list_labels))
-            .and_then(std::result::Result::ok)
-            .unwrap_or_default();
-        let subtitle = id
-            .and_then(|id| labels.iter().find(|l| l.id == id).map(|l| l.name.clone()))
-            .unwrap_or_else(|| {
-                if id.is_some() {
-                    gettext("(none — pick one)")
-                } else {
-                    gettext("Off")
-                }
-            });
-        self.done_label_chooser_row.set_subtitle(&subtitle);
-
-        // Keep the ExpanderRow's switch state in sync with the
-        // selected-id state without re-firing the toggle callback.
-        self.labels_loading.set(true);
-        self.done_label_enabled_row.set_enable_expansion(id.is_some());
-        self.labels_loading.set(false);
     }
 
     fn get_app(&self) -> Option<crate::application::MeditateApplication> {
@@ -4157,21 +4015,10 @@ impl TimerView {
         *self.running_label.borrow_mut() = Some(label);
     }
 
-    /// Both modes (timer + breathing) call this so on_pause /
-    /// on_resume can morph the label in place.
-    pub fn set_running_pause_btn(&self, btn: gtk::Button) {
-        *self.running_pause_btn.borrow_mut() = Some(btn);
-    }
-
-    /// Timer-mode only — these are needed for the Overtime
-    /// transition (Stop hidden, "Add MM:SS ?" revealed).
-    pub fn set_running_overtime_widgets(
-        &self,
-        stop_btn: gtk::Button,
-        add_btn: gtk::Button,
-    ) {
-        *self.running_stop_btn.borrow_mut() = Some(stop_btn);
-        *self.overtime_add_btn.borrow_mut() = Some(add_btn);
+    /// Both running pages hand over their buttons and note.
+    pub fn set_running_controls(&self, controls: RunningControls) {
+        *self.running_controls.borrow_mut() = Some(controls);
+        self.refresh_end_buttons();
     }
 
     pub fn toggle_playback(&self) {
@@ -4179,7 +4026,6 @@ impl TimerView {
         match meditate_core::session::Session::toggle_action(self.ui_state()) {
             ToggleAction::Start => self.on_start(),
             ToggleAction::Pause => self.on_pause(),
-            ToggleAction::FinishOvertime => self.finish_overtime_session(),
             ToggleAction::Resume => self.on_resume(),
             ToggleAction::NoOp => {}
         }
@@ -4391,7 +4237,7 @@ fn library_pick(f: &crate::db::GuidedFile) -> crate::guided::GuidedFilePick {
 /// returns the formatted MM:SS via `format_time`; the shell owns
 /// word order via this gettext template.
 fn overtime_add_button_label(overtime: std::time::Duration) -> String {
-    gettext("Add {time} ?")
+    gettext("Add {time} and Save")
         .replace("{time}", &meditate_core::format::format_time(overtime))
 }
 
@@ -4655,7 +4501,7 @@ mod tests {
         let failed = saved.find("crate::db::write_ok(").expect("the failure message");
         let reload = saved.find("idle_add_local_once").expect("reload on the next turn");
         assert!(failed < reload && saved[reload..].contains(".reload_setup()"));
-        assert_eq!(code.matches("crate::db::write_ok(").count(), 2, "every write goes through setting_saved, but the label default");
+        assert_eq!(code.matches("crate::db::write_ok(").count(), 2, "every write goes through setting_saved, but the Undo of an auto-save");
         let reload = body(&code, "fn reload_setup(&self)");
         for f in ["refresh_streak()", "refresh_setup_label_chooser_subtitle()"] {
             assert!(reload.contains(f), "{f}");
@@ -4712,15 +4558,67 @@ mod tests {
     }
 
     #[test]
-    fn a_label_default_that_was_not_kept_says_so() {
-        // #191: Save keeps the session; when only the label pick for
-        // next time didn't save, the message says just that.
+    fn an_auto_finished_session_is_saved_with_undo() {
+        // #6: with Auto-Finish the countdown saves itself (note
+        // included, same path as Save), then "Session saved" offers
+        // Undo; a failed Undo says "Delete failed".
         let code = production();
-        let save = &code[code.find("// Record the user's pick as the new persisted default").unwrap()..];
-        let save = &save[..save.find("with_db_blocking_mut").unwrap()];
-        assert!(save.contains("crate::db::Failed::LabelDefault"));
-        let db = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/db/mod.rs")).unwrap();
-        assert!(db.contains("Failed::LabelDefault => gettext(\"Label not kept for next time\")"));
+        assert!(code.contains("CoreSessionEffect::AutoFinish { .. }"), "every tick and the track end look for it");
+        assert_eq!(code.matches(".auto_finish_session()").count(), 3, "Timer and Guided ticks, Box Breath, the track end");
+        let auto = body(&code, "fn auto_finish_session(&self)");
+        assert!(auto.contains("self.on_save(true)"));
+        assert!(auto.contains("self.notify_complete()"), "the notification still goes out");
+        let save = &code[code.find("fn on_save(&self, auto: bool)").unwrap()..];
+        let save = &save[..save.find("\n    fn ").unwrap()];
+        let ok = save.find("reset_mode(mode, false)").unwrap();
+        assert!(save.contains("gettext(\"Session saved\")"));
+        assert!(save.contains("delete_session(id)"));
+        assert!(save.contains("crate::db::Failed::Delete"));
+        // Away from the window no toast is left waiting.
+        assert!(save[ok..].contains("if auto && win.is_active() {"), "only after the write landed");
+        // Undo also puts the streak chip under it back.
+        let undo = &save[save.find("delete_session(id)").unwrap()..];
+        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("refresh_streak()"));
+        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("log_view.refresh()"), "an open Log follows at once");
+        // The switch: per mode, written like every other setting.
+        let row = body(&code, "fn refresh_auto_finish_state(&self)");
+        assert!(row.contains("auto_finish_from_db("));
+        assert!(row.contains("auto_finish_row.set_sensitive(") && !row.contains("auto_finish_row.set_visible("), "greyed out, not hidden");
+        assert!(code.contains("auto_finish_key_for_mode("));
+    }
+
+    #[test]
+    fn the_add_button_says_that_it_saves() {
+        assert_eq!(super::overtime_add_button_label(std::time::Duration::from_secs(180)), "Add 03:00 and Save");
+        // Two lines where one doesn't fit.
+        let code = production();
+        let refresh = body(&code, "fn refresh_end_buttons(&self)");
+        assert!(refresh.contains("set_wrap(true)") && refresh.contains("Justification::Center"));
+    }
+
+    #[test]
+    fn an_auto_save_lets_the_end_bell_ring() {
+        // #6 review: the save silenced everything, so the end bell
+        // that Auto-Finish just rang was cut at once.
+        let code = production();
+        let save = &code[code.find("fn on_save(&self, auto: bool)").unwrap()..];
+        let save = &save[..save.find("\n    fn ").unwrap()];
+        let stop = save.find("self.stop_active_signals();").expect("a tapped Save silences what rings");
+        assert!(save[..stop].ends_with("if !auto {\n            "), "only a tapped Save");
+    }
+
+    #[test]
+    fn a_discard_question_closes_when_the_session_saves_itself() {
+        // #6 review: Discard asked, the time ran out, the session saved
+        // itself behind the dialog, and the later "Discard" did nothing.
+        let code = production();
+        let auto = body(&code, "fn auto_finish_session(&self)");
+        assert!(auto.contains("self.discard_dialog.take()") && auto.contains(".close()"));
+        // Asking silences nothing: Cancel leaves a ringing bell ringing.
+        let discard = body(&code, "pub(crate) fn on_discard(&self)");
+        let ask = discard.find("AlertDialog::builder()").unwrap();
+        assert!(!discard[..ask].contains("stop_active_signals"));
+        assert_eq!(discard.matches("self.stop_active_signals();").count() + discard.matches("obj.imp().stop_active_signals();").count(), 2, "on confirm, and without a note");
     }
 
     #[test]

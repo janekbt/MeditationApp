@@ -695,8 +695,8 @@ msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "距第 {0} 个会话还差 {n} 个"
 
-msgid "Add {} ?"
-msgstr "加上 {}？"
+msgid "Add {} and Save"
+msgstr "加上 {} 并保存"
 
 msgid "Vibration"
 msgstr "振动"
@@ -765,7 +765,7 @@ msgid_plural "{n} sessions · {0}"
 msgstr[0] "{n} 个会话 · {0}"
 
 msgid "Pause"
-msgstr "已暂停"
+msgstr "暂停"
 
 msgid "Resume"
 msgstr "继续"
@@ -1101,8 +1101,6 @@ msgstr "{}%"
 msgid "Couldn't open the folder picker"
 msgstr "无法打开文件夹选择器"
 
-msgid "Label not kept for next time"
-msgstr "未能为下次保存标签"
 
 msgid "Every {n} s"
 msgid_plural "Every {n} s"
@@ -1140,3 +1138,12 @@ msgstr "每次响铃后加到间隔上"
 msgctxt "Bell time"
 msgid "Time"
 msgstr "时间"
+
+msgid "Auto-Finish"
+msgstr "自动结束"
+
+msgid "Saves the session without asking when the time is up"
+msgstr "时间到时直接保存会话，不再询问"
+
+msgid "Session saved"
+msgstr "已保存会话"

@@ -708,8 +708,8 @@ msgstr "Pause"
 msgid "Resume"
 msgstr "Fortsetzen"
 
-msgid "Add {} ?"
-msgstr "{} hinzufügen"
+msgid "Add {} and Save"
+msgstr "{} hinzufügen und speichern"
 
 msgid "Stopwatch"
 msgstr "Stoppuhr"
@@ -1126,8 +1126,6 @@ msgstr "{} %"
 msgid "Couldn't open the folder picker"
 msgstr "Ordnerauswahl konnte nicht geöffnet werden"
 
-msgid "Label not kept for next time"
-msgstr "Label für das nächste Mal nicht gemerkt"
 
 msgid "Every {n} s"
 msgid_plural "Every {n} s"
@@ -1168,3 +1166,12 @@ msgstr "Wird nach jedem Läuten zum Abstand addiert"
 msgctxt "Bell time"
 msgid "Time"
 msgstr "Zeit"
+
+msgid "Auto-Finish"
+msgstr "Automatisch beenden"
+
+msgid "Saves the session without asking when the time is up"
+msgstr "Speichert die Sitzung ohne Nachfrage, wenn die Zeit um ist"
+
+msgid "Session saved"
+msgstr "Sitzung gespeichert"

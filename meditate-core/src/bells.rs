@@ -1793,6 +1793,7 @@ mod tests {
             starting_bell: starting_bell_cue_from_db(db, mode),
             end_bell: None,
             box_breath_cues: None,
+            auto_finish: false,
         };
         let start = Duration::from_secs(100);
         let (mut session, mut effects) = Session::start(settings, start);

@@ -702,8 +702,8 @@ msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "Nog {n} sessie tot je {0}e"
 msgstr[1] "Nog {n} sessies tot je {0}e"
 
-msgid "Add {} ?"
-msgstr "{} toevoegen?"
+msgid "Add {} and Save"
+msgstr "{} toevoegen en opslaan"
 
 msgid "Vibration"
 msgstr "Trillen"
@@ -781,7 +781,7 @@ msgstr[0] "{n} sessie · {0}"
 msgstr[1] "{n} sessies · {0}"
 
 msgid "Pause"
-msgstr "Gepauzeerd"
+msgstr "Pauzeren"
 
 msgid "Resume"
 msgstr "Hervatten"
@@ -1126,8 +1126,6 @@ msgstr "{}%"
 msgid "Couldn't open the folder picker"
 msgstr "Kan de mapkiezer niet openen"
 
-msgid "Label not kept for next time"
-msgstr "Label niet onthouden voor de volgende keer"
 
 msgid "Every {n} s"
 msgid_plural "Every {n} s"
@@ -1168,3 +1166,12 @@ msgstr "Na elke slag bij de tussenpoos opgeteld"
 msgctxt "Bell time"
 msgid "Time"
 msgstr "Tijd"
+
+msgid "Auto-Finish"
+msgstr "Automatisch afronden"
+
+msgid "Saves the session without asking when the time is up"
+msgstr "Slaat de sessie zonder te vragen op als de tijd om is"
+
+msgid "Session saved"
+msgstr "Sessie opgeslagen"

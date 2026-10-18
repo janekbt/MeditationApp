@@ -42,13 +42,38 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// Slint's code for a running-page button (`EndButtonView.kind`).
+pub fn end_button_code(button: meditate_core::session::EndButton) -> i32 {
+    use meditate_core::session::EndButton as B;
+    match button {
+        B::Pause => 0,
+        B::Resume => 1,
+        B::Save => 2,
+        B::Add => 3,
+        B::Discard => 4,
+    }
+}
+
+pub fn end_button_from_code(code: i32) -> meditate_core::session::EndButton {
+    use meditate_core::session::EndButton as B;
+    match code {
+        0 => B::Pause,
+        1 => B::Resume,
+        2 => B::Save,
+        3 => B::Add,
+        _ => B::Discard,
+    }
+}
+
 /// The duration core says to save for the session that just ended:
 /// `EndSession` (Stop, Finish, Add) or `EndBoxBreath` (a Box Breath
 /// session reaching its cycle-aligned end). `None` when the effects
 /// end nothing.
 pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
     effects.iter().rev().find_map(|e| match e {
-        Effect::EndSession { duration_secs } | Effect::EndBoxBreath { duration_secs } => {
+        Effect::EndSession { duration_secs }
+        | Effect::EndBoxBreath { duration_secs }
+        | Effect::AutoFinish { duration_secs } => {
             Some(*duration_secs)
         }
         _ => None,
@@ -67,7 +92,7 @@ pub fn completion_notice_secs(state: &AppState, effects: &[Effect], in_foregroun
         return None;
     }
     effects.iter().find_map(|e| match (e, state) {
-        (Effect::EndBoxBreath { duration_secs }, _) => Some(*duration_secs),
+        (Effect::EndBoxBreath { duration_secs } | Effect::AutoFinish { duration_secs }, _) => Some(*duration_secs),
         (Effect::EnterOvertime, AppState::Active(s)) => Some(s.completion_duration_secs()),
         _ => None,
     })
@@ -285,16 +310,6 @@ pub fn group_digits(n: i64, sep: &str) -> String {
     } else {
         grouped
     }
-}
-
-/// What the running-screen primary button does right now. Kept
-/// as a typed key (not a rendered string) so translation happens
-/// at the shell boundary — see [`AppState::primary_action`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrimaryAction {
-    Start,
-    Resume,
-    Pause,
 }
 
 #[derive(Debug)]
@@ -587,6 +602,10 @@ impl AppState {
                 if matches!(s.ui_state(), UiState::Running) =>
             {
                 let effects = s.enter_overtime();
+                // Auto-Finish stops the session at the file's end.
+                if matches!(s.ui_state(), UiState::Done) {
+                    return Transition::new(Self::Finished, effects);
+                }
                 Transition::new(Self::Active(s), effects)
             }
             other => Transition::new(other, Vec::new()),
@@ -605,47 +624,29 @@ impl AppState {
         }
     }
 
-    /// Typed key for the primary action button — the shell maps
-    /// each variant to its translated label (Tr catalogue on
-    /// Android, gettext on a future shell).
-    pub fn primary_action(&self) -> PrimaryAction {
-        match self {
-            Self::Idle | Self::Finished => PrimaryAction::Start,
-            Self::Active(s) if matches!(s.ui_state(), UiState::Paused) => {
-                PrimaryAction::Resume
-            }
-            Self::Active(_) => PrimaryAction::Pause,
-        }
-    }
-
-    /// English render of `primary_action` (tests + logging).
-    pub fn primary_label(&self) -> &'static str {
-        match self.primary_action() {
-            PrimaryAction::Start => "Start Session",
-            PrimaryAction::Resume => "Resume",
-            PrimaryAction::Pause => "Pause",
-        }
-    }
-
-    /// Whether the Stop button should be visible / enabled. Only
-    /// true while a session is in flight — the Done screen has its
-    /// own Save / Discard buttons, not a Stop button.
-    pub fn can_stop(&self) -> bool {
-        self.is_active()
-    }
-
-    /// Whether the Running overlay should be visible. Only Active
-    /// (Running or Paused) qualifies; Finished swaps the base layer
-    /// to the Done view instead.
+    /// Whether the Running overlay should be visible: a live session,
+    /// or one that ended and waits for Save or Discard.
     pub fn is_running_page(&self) -> bool {
-        self.is_active()
+        !self.is_idle()
     }
 
-    /// Whether the Done base layer should replace Setup. True
-    /// exactly when a session has just ended and the user hasn't
-    /// yet Save / Discard'd it.
-    pub fn is_done_page(&self) -> bool {
-        self.is_finished()
+    /// The running page's buttons: core's set for a live session; an
+    /// ended one not saved yet shows Save and Discard.
+    pub fn end_buttons(&self) -> meditate_core::session::EndButtons {
+        match self {
+            Self::Active(s) => s.end_buttons(),
+            Self::Idle | Self::Finished => meditate_core::session::EndButtons::ENDED,
+        }
+    }
+
+    /// Save tap on a live session: paused keeps the time so far, in
+    /// overtime the planned length. An ended session passes through.
+    pub fn save_end(self, now: Duration) -> Transition {
+        if self.is_overtime() {
+            self.finish_overtime()
+        } else {
+            self.stop(now)
+        }
     }
 
     /// Big hero-label text. Setup shows `HH:MM` of the configured
@@ -1066,7 +1067,7 @@ mod tests {
         }
         let undo = body("ui.on_snackbar_undo_tap(");
         // The guided one reports by offering its Undo again.
-        assert_eq!(undo.matches("write_ok(").count(), 4, "every Undo write reports");
+        assert_eq!(undo.matches("write_ok(").count() + undo.matches("delete_ok(").count(), 4, "every Undo write reports");
         assert!(!undo.contains("let _ = db."));
     }
 
@@ -1088,7 +1089,7 @@ mod tests {
         assert!(rename.contains("reset_log_feed(") && rename.contains("ui.set_edit_label_name("));
         let delete = body("ui.on_delete_label_confirm(");
         assert!(delete.contains("reset_log_feed(") && !delete.contains("if ui.get_filter_label_id() != filtered"));
-        assert!(delete.contains("ui.set_edit_label_enabled(false);") && delete.contains("ui.set_done_label_active(false);"));
+        assert!(delete.contains("ui.set_edit_label_enabled(false);"));
         let menu = std::fs::read_to_string(root.join("material-1.0/ui/components/drop_down_menu.slint")).unwrap();
         assert!(menu.contains("changed items => {\n        root.update_text(root.current_index);"));
     }
@@ -1335,7 +1336,7 @@ mod tests {
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         let at = slint.find("component NoteField inherits Rectangle {").unwrap();
         assert!(slint[at..at + 600].contains("public function release() {\n        input.clear-focus();"));
-        for (field, page) in [("edit-note := NoteField {", "edit-session-page"), ("done-note := NoteField {", "done-page")] {
+        for (field, page) in [("edit-note := NoteField {", "edit-session-page"), ("running-note := NoteField {", "running-page")] {
             assert!(slint.contains(field), "{field}");
             let name = &field[..field.find(" :=").unwrap()];
             let changed = slint.find(&format!("changed {page} => {{")).expect(page);
@@ -1349,7 +1350,7 @@ mod tests {
             let at = slint.find(tap).expect(tap);
             assert!(slint[at - 160..at].contains("edit-note.release();"), "{tap} releases the note");
         }
-        assert!(slint.contains("body-tapped => {\n                        done-note.release();\n                        root.done-label-tap();"));
+        assert!(slint.contains("tapped(kind) => { running-note.release(); root.end-button-tap(kind); }"), "a running-page button lets go of the note");
     }
 
     /// Confirm and name dialogs share one card (320 px, centred), so
@@ -1504,8 +1505,7 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_conflict_merge_tap(").unwrap();
         let merge = &lib[at..at + lib[at..].find("\n        });").unwrap()];
-        let moved = merge.find("ui.set_done_label_id(base_id as i32);").expect("the Done pick follows");
-        assert!(merge.contains("ui.set_edit_label_id(base_id as i32);"));
+        let moved = merge.find("ui.set_edit_label_id(base_id as i32);").expect("the editor's pick follows");
         let cleanup = merge.find("refresh_after_label_change(&ui, mode);").expect("Delete's cleanup");
         assert!(moved < cleanup);
         assert!(merge.contains("refresh_filter_label_items(&ui);"));
@@ -1560,7 +1560,7 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert_eq!(code.matches("pending_done.set(Some((unix_start,").count(), 2, "end_session and the failed save");
-        assert_eq!(code.matches("end_session(").count(), 3, "the helper, the end taps and the tick");
+        assert_eq!(code.matches("end_session(").count(), 4, "the helper, the end taps, the tick and a guided file's end");
         let at = code.find("fn end_session(").unwrap();
         let body = &code[at..at + code[at..].find("\n}\n").unwrap()];
         for step in [
@@ -1570,7 +1570,7 @@ mod tests {
         ] {
             assert!(body.contains(step), "{step}");
         }
-        for tap in ["ui.on_stop_tap(end_tap(", "ui.on_finish_tap(end_tap(", "ui.on_add_tap(end_tap("] {
+        for tap in ["ui.on_stop_tap(end_tap(", "ui.on_save_end_tap(end_tap(", "ui.on_add_tap(end_tap("] {
             assert!(code.contains(tap), "{tap}");
         }
     }
@@ -2107,14 +2107,14 @@ mod tests {
         let helper = &code[helper..helper + code[helper..].find("\n}\n").unwrap()];
         assert!(helper.contains("Effect::StopActiveSignals"), "the same stop Stop/Finish use");
 
-        // Discard and Back on Done share one discard path.
+        // Save and Discard both silence ringing signals.
         for exit in ["ui.on_save_tap(", "let discard = Rc::new(move || {"] {
             let at = code.find(exit).unwrap_or_else(|| panic!("missing {exit}"));
             let body = &code[at..at + 1500];
             assert!(body.contains("stop_active_signals();"), "{exit} must silence ringing signals");
         }
-        let back = code.find("if ui.get_done_page() {").unwrap();
-        assert!(code[back..back + 200].contains("ui.invoke_discard_tap();"));
+        let back = handler(code, "back_pressed");
+        assert!(!back.contains("invoke_discard_tap"), "Back on the running page does nothing");
     }
 
     /// The guided track stops on core's `StopGuidedAudio`, which
@@ -2190,7 +2190,7 @@ mod tests {
 
         let finalize = code.find("fn finalize_session(").unwrap();
         let sig = &code[finalize..finalize + code[finalize..].find('{').unwrap()];
-        assert!(sig.contains("-> Result<(), meditate_core::format::SessionSaveFailureKind>"), "{sig}");
+        assert!(sig.contains("-> Result<Option<String>, meditate_core::format::SessionSaveFailureKind>"), "{sig}");
         let body = &code[finalize..finalize + code[finalize..].find("\n}\n").unwrap()];
         assert!(body.contains("session_save_failure_log_message("), "log through core's message");
 
@@ -2198,7 +2198,7 @@ mod tests {
         let save = &code[save..save + code[save..].find("\n        });").unwrap()];
         let call = save.find("match finalize_session(").expect("the result is checked");
         let after = &save[call..];
-        let ok = after.find("Ok(()) =>").expect("success branch");
+        let ok = after.find("Ok(saved) =>").expect("success branch");
         let err = after.find("Err(kind) =>").expect("failure branch");
         assert!(ok < err);
         let err_arm = &after[err..];
@@ -3043,22 +3043,20 @@ mod tests {
         let tap = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(tap.contains("if !ui.get_note_text().is_empty() {"));
         assert!(tap.contains("ui.set_modal(Modal::Discard);"));
-        let at = lib.find("ui.on_back_pressed(").unwrap();
-        let back = &lib[at..];
-        let done = back.find("if ui.get_done_page() {").unwrap();
-        assert!(back[done..done + 200].contains("ui.invoke_discard_tap();"));
+        let back = handler(&lib, "back_pressed");
+        assert!(!back.contains("invoke_discard_tap"), "a stray Back never discards");
         assert!(slint.contains("if root.modal == Modal.discard : ConfirmDialog {"));
         assert!(slint.contains("if root.modal == Modal.interval-bell-delete : ConfirmDialog {"));
         assert!(!slint.contains("clicked => { root.interval-bell-delete(item.uuid); }"));
-        // Declared after the Done screen and the bell list they cover.
+        // Declared after the running page and the bell list they cover.
         let dialogs = slint.find("if root.modal == Modal.discard : ConfirmDialog {").unwrap();
-        assert!(slint.find("root.discard-tap();").unwrap() < dialogs);
+        assert!(slint.find("running-note := NoteField {").unwrap() < dialogs);
         assert!(slint.find("root.modal = Modal.interval-bell-delete;").unwrap() < dialogs);
     }
 
     #[test]
-    fn label_changes_reach_the_done_and_edit_rows() {
-        // Deleting the label the Edit-Session (or Done) row showed left
+    fn label_changes_reach_the_edit_rows() {
+        // Deleting the label the Edit-Session row showed left
         // its id behind and Save failed on the missing row; Create from
         // the edit dialog changed the Setup label; rename/delete moved
         // the chooser's tick to the Setup label; a deleted filter label
@@ -3068,7 +3066,6 @@ mod tests {
         let at = lib.find("fn refresh_after_label_change(").unwrap();
         let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(helper.contains("ui.set_edit_label_enabled(false);"));
-        assert!(helper.contains("ui.set_done_label_active(false);"));
         assert!(helper.contains("LabelTarget::Edit => picked(ui.get_edit_label_id()),"));
         for handler in ["ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
             let at = lib.find(handler).unwrap();
@@ -3246,8 +3243,8 @@ mod tests {
         // and then holds the snapshot.
         assert!(lib.contains("    snapshot_timer.stop();\n    hold_ended_session_snapshot(pending_done.get(), mode);"));
 
-        // Only Discard clears it here (Back on Done goes through the
-        // Discard path); Save clears it inside its insert, see
+        // Only Discard clears it here (Back on the running page does
+        // nothing); Save clears it inside its insert, see
         // `a_failed_save_keeps_the_session_and_says_so`.
         let exits = ["let discard = Rc::new(move || {"];
         let clears: Vec<usize> = code
@@ -3792,6 +3789,171 @@ mod tests {
     }
 
     #[test]
+    fn the_running_page_is_the_only_end_screen() {
+        use meditate_core::session::{EndButton, EndButtons};
+        let t0 = Duration::from_secs(100);
+        let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
+        assert!(running.is_running_page());
+        assert_eq!(running.end_buttons().row, [EndButton::Pause, EndButton::Discard]);
+        let paused = running.toggle(timer_countdown(Duration::from_secs(60)), t0 + Duration::from_secs(5)).state;
+        assert_eq!(paused.end_buttons().row, [EndButton::Resume, EndButton::Save]);
+        // Save while paused keeps the time so far; in overtime the planned length.
+        let saved = paused.save_end(t0 + Duration::from_secs(9));
+        assert_eq!(ended_duration_secs(&saved.effects), Some(5));
+        assert!(saved.is_finished() && saved.is_running_page(), "an ended session stays on the running page");
+        assert_eq!(saved.end_buttons(), EndButtons::ENDED);
+        let over = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).tick(t0 + Duration::from_secs(90)).state;
+        assert_eq!(ended_duration_secs(&over.save_end(t0 + Duration::from_secs(95)).effects), Some(60));
+        for b in [EndButton::Pause, EndButton::Resume, EndButton::Save, EndButton::Add, EndButton::Discard] {
+            assert_eq!(end_button_from_code(end_button_code(b)), b, "Slint hands back the button it was given");
+        }
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for gone in ["done-page", "done-label", "done-note", "elapsed-text"] {
+            assert!(!slint.contains(gone), "{gone}");
+        }
+        assert!(slint.contains("running-note := NoteField {"));
+        assert!(slint.contains("root.end-button-tap("));
+        let code = ui_code();
+        assert!(!code.contains("done_label") && !code.contains("LabelTarget::Done"));
+        let tap = handler(&code, "end_button_tap");
+        for (button, does) in [
+            ("EndButton::Save", "ui.invoke_save_tap()"),
+            ("EndButton::Add", "ui.invoke_add_tap()"),
+            ("EndButton::Discard", "ui.invoke_discard_tap()"),
+        ] {
+            let at = tap.find(button).unwrap_or_else(|| panic!("{button}"));
+            assert!(tap[at..].contains(does), "{button}");
+        }
+        let save = handler(&code, "save_tap");
+        assert!(!save.contains("resolve_persist_action("), "Setup keeps the label for next time");
+        assert!(save.contains("resolved_label_for_mode(mode)"), "the session gets the Setup label");
+    }
+
+    #[test]
+    fn discard_returns_to_idle_without_saving() {
+        let t0 = Duration::from_secs(100);
+        let ended = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).stop(t0 + Duration::from_secs(5));
+        assert!(ended.state.dismiss().is_idle());
+        let code = ui_code();
+        let at = code.find("let discard = Rc::new(move || {").unwrap();
+        let discard = &code[at..at + code[at..].find("\n        });").unwrap()];
+        let stop = discard.find("ui.invoke_stop_tap();").expect("a running session is ended first");
+        assert!(discard[..stop].contains("is_active()"));
+        assert!(stop < discard.find("clear_session_in_progress_snapshot();").unwrap());
+        assert!(!discard.contains("finalize_session("), "nothing is saved");
+        // A note asks first, and Cancel leaves the session as it was.
+        let tap = handler(&code, "discard_tap");
+        assert!(tap.find("ui.set_modal(Modal::Discard);").unwrap() < tap.find("discard_now();").unwrap());
+    }
+
+    #[test]
+    fn an_auto_finished_session_is_saved_with_undo() {
+        let t0 = Duration::from_secs(100);
+        let settings = SessionSettings { auto_finish: true, ..SessionSettings { shape: timer_countdown(Duration::from_secs(60)), ..Default::default() } };
+        let t = AppState::start_session(settings, t0).state.tick(t0 + Duration::from_secs(61));
+        assert!(t.is_finished(), "no overtime");
+        assert_eq!(ended_duration_secs(&t.effects), Some(60));
+        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(60), "the notification still comes");
+        // A guided file ending first ends the session too.
+        let guided = SessionSettings {
+            auto_finish: true,
+            shape: SessionShape::Guided { duration_secs: 600, count_up_display: false },
+            ..Default::default()
+        };
+        assert!(AppState::start_session(guided, t0).state.enter_overtime().is_finished());
+
+        let code = ui_code();
+        assert_eq!(code.matches("on_auto_finish(&ui, &t").count(), 2, "the tick and the file's end");
+        let eos = &code[code.find("on_auto_finish(&ui, &t.effects").unwrap()..];
+        assert!(eos[..200].contains("on_state_changed(true, false,"), "a file's end releases the service and the track");
+        let helper = &code[code.find("fn on_auto_finish(").unwrap()..];
+        assert!(helper[..800].contains("auto_finished.set(true);") && helper[..800].contains("ui.invoke_save_tap();"));
+        let save = handler(&code, "save_tap");
+        let ok = save.find("Ok(saved) =>").expect("the saved row comes back");
+        let notice = &save[ok..];
+        assert!(notice.contains("if auto && "));
+        assert!(notice.contains("invoke_session_saved()"));
+        assert!(notice.contains("Some(app::PendingUndo::Recovery(uuid))"));
+        assert!(notice[..notice.find("invoke_session_saved()").unwrap()].contains("APP_IN_FOREGROUND.load("), "no notice left waiting in the background");
+        let err = save.find("Err(kind) =>").unwrap();
+        assert!(save[err..].contains("pending_done.set(Some("), "a failed auto-save stays on the running page");
+        let undo = handler(&code, "snackbar_undo_tap");
+        let rec = &undo[undo.find("U::Recovery(uuid) =>").unwrap()..];
+        assert!(rec[..300].contains("delete_ok(&ui, \"session.recovery.undo\""), "a failed Undo says Delete failed");
+        let slint = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint")).unwrap();
+        assert!(slint.contains("@tr(\"Session saved\")"));
+        assert!(slint.contains("title: @tr(\"Auto-Finish\");"));
+        assert!(slint.contains("subtitle: @tr(\"Saves the session without asking when the time is up\");"));
+        // Greyed out for a stopwatch, like the Duration row, not hidden.
+        assert!(!slint.contains("if root.setup-mode == 1 || !root.stopwatch-on : SwitchRow"));
+        let row = &slint[slint.find("title: @tr(\"Auto-Finish\");").unwrap()..];
+        assert!(row[..300].contains("enabled: root.setup-mode == 1 || !root.stopwatch-on;"));
+        assert!(code.contains("auto_finish_key_for_mode(mode)"));
+    }
+
+    fn slint_code() -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint")).unwrap()
+    }
+
+    /// The body of a Slint component, up to the next top-level item.
+    fn component<'a>(slint: &'a str, name: &str) -> &'a str {
+        let at = slint.find(&format!("component {name} ")).unwrap_or_else(|| panic!("missing {name}"));
+        let end = slint[at..].find("\n}\n").map_or(slint.len(), |e| at + e);
+        &slint[at..end]
+    }
+
+    #[test]
+    fn the_add_button_says_that_it_saves() {
+        let slint = slint_code();
+        assert!(slint.contains("@tr(\"Add {} and Save\", t)"));
+        // The bundled Material buttons clip; the house one wraps.
+        let wrap = component(&slint, "WrapButton");
+        assert!(wrap.contains("wrap: word-wrap;") && wrap.contains("horizontal-alignment: center;"));
+        assert!(wrap.contains("preferred-height"), "it grows with its lines");
+        let end = component(&slint, "EndButtonView");
+        assert!(end.contains("WrapButton {") && !end.contains("FilledButton") && !end.contains("OutlineButton"));
+    }
+
+    #[test]
+    fn the_guided_buttons_sit_side_by_side() {
+        let slint = slint_code();
+        let at = slint.find("text: @tr(\"Manage Imports\");").unwrap();
+        let before = &slint[..at];
+        let row = before.rfind("HorizontalLayout {").unwrap();
+        let block = &slint[row..at + 400];
+        assert!(block.contains("text: @tr(\"Local Folder\");"), "both in one row");
+        assert!(slint[row..at].contains("WrapButton {"));
+        assert_eq!(block.matches("WrapButton {").count(), 2);
+    }
+
+    #[test]
+    fn an_auto_save_lets_the_end_bell_ring() {
+        // #6 review: Save silenced everything, so the end bell that
+        // Auto-Finish just rang was cut one event-loop turn later.
+        let code = ui_code();
+        let save = handler(&code, "save_tap");
+        // Read once, so no path can leave it set for the next session.
+        let flag = save.find("let auto = auto_finished.take();").expect("the flag is read once, first");
+        assert_eq!(save.matches("auto_finished.").count(), 1);
+        let stop = save.find("stop_active_signals();").expect("a tapped Save silences what rings");
+        assert!(flag < stop && save[..stop].trim_end().ends_with("if !auto {"), "only a tapped Save");
+    }
+
+    #[test]
+    fn a_discard_question_closes_when_the_session_saves_itself() {
+        // #6 review: the session saved itself behind the question and
+        // a later "Discard" did nothing.
+        let code = ui_code();
+        let helper = &code[code.find("fn on_auto_finish(").unwrap()..];
+        assert!(helper[..helper.find("\n}\n").unwrap()].contains("close_modal(ui, Modal::Discard);"));
+        // Asking silences nothing: Cancel leaves a ringing bell ringing.
+        let tap = handler(&code, "discard_tap");
+        assert!(!tap.contains("stop_active_signals"));
+    }
+
+    #[test]
     fn finish_and_add_report_cores_duration() {
         let start = || {
             AppState::idle()
@@ -4034,55 +4196,6 @@ mod tests {
     // ── labels + flags ──────────────────────────────────────────
 
     #[test]
-    fn primary_label_idle() {
-        assert_eq!(AppState::idle().primary_label(), "Start Session");
-    }
-
-    #[test]
-    fn primary_label_running() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
-        assert_eq!(s.primary_label(), "Pause");
-    }
-
-    #[test]
-    fn primary_label_paused() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(0))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(10));
-        assert_eq!(s.primary_label(), "Resume");
-    }
-
-    #[test]
-    fn primary_label_finished_is_start_again() {
-        assert_eq!(AppState::Finished.primary_label(), "Start Session");
-    }
-
-    #[test]
-    fn can_stop_idle_false() {
-        assert!(!AppState::idle().can_stop());
-    }
-
-    #[test]
-    fn can_stop_running_true() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
-        assert!(s.can_stop());
-    }
-
-    #[test]
-    fn can_stop_paused_true() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(0))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(10));
-        assert!(s.can_stop());
-    }
-
-    #[test]
-    fn can_stop_finished_false() {
-        // Done screen has its own Save / Discard buttons, not Stop.
-        assert!(!AppState::Finished.can_stop());
-    }
-
-    #[test]
     fn is_running_page_idle_false() {
         assert!(!AppState::idle().is_running_page());
     }
@@ -4094,27 +4207,9 @@ mod tests {
     }
 
     #[test]
-    fn is_running_page_finished_false() {
-        // Finished swaps the BASE layer (Setup → Done); the Running
-        // overlay slides off to the right rather than staying on
-        // top of Done. So is_running_page is false here.
-        assert!(!AppState::Finished.is_running_page());
-    }
-
-    #[test]
-    fn is_done_page_finished_true() {
-        assert!(AppState::Finished.is_done_page());
-    }
-
-    #[test]
-    fn is_done_page_idle_false() {
-        assert!(!AppState::idle().is_done_page());
-    }
-
-    #[test]
-    fn is_done_page_active_false() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
-        assert!(!s.is_done_page());
+    fn is_running_page_finished_true() {
+        // An ended session waits on the running page for Save or Discard.
+        assert!(AppState::Finished.is_running_page());
     }
 
     #[test]
@@ -4406,19 +4501,6 @@ mod tests {
         let back = apply.find("apply_preset_once(ui, &before,").expect("put back");
         assert!(parsed < before && before < once && once < back);
         assert!(apply.contains("if apply_preset_once(ui, &cfg, mode, timer_session_secs) {\n        return true;"), "put back only on failure");
-    }
-
-    #[test]
-    fn a_label_default_that_was_not_kept_says_so() {
-        // #191: Save keeps the session; when only the label pick for
-        // next time didn't save, the message says just that.
-        let code = ui_code();
-        let save = handler(&code, "save_tap");
-        let persist = save.find("resolve_persist_action(").unwrap();
-        let shown = save.find("invoke_label_not_kept()").expect("its own message");
-        assert!(persist < shown && shown < save.find("save_ended_session").unwrap_or(save.len()));
-        let slint = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint")).unwrap();
-        assert!(slint.contains("label-not-kept() -> string { return @tr(\"Label not kept for next time\"); }"));
     }
 
     #[test]

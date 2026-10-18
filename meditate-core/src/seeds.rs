@@ -158,6 +158,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
         timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
         cues_signal_mode: "both".to_string(),
         keep_screen_awake: false,
+        auto_finish: false,
         box_breath_cues: PresetBoxBreathCues::default(),
     };
     let box_4444 = PresetConfig {
@@ -184,6 +185,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
         },
         cues_signal_mode: "both".to_string(),
         keep_screen_awake: false,
+        auto_finish: false,
         box_breath_cues: PresetBoxBreathCues::default(),
     };
     let box_4780 = PresetConfig {

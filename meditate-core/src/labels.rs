@@ -94,27 +94,6 @@ pub fn resolve_label_for_mode(db: &Database, mode: SessionMode) -> Option<Label>
         .find(|l| l.uuid == uuid)
 }
 
-/// What the Done-screen "user picked this label" rule resolves to,
-/// given the per-session pick and the current labels list.
-///
-/// The shell observes one of these and applies it via the
-/// `persist_*` helpers (NoOp does nothing).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PersistAction {
-    /// User picked an existing label — persist its uuid as the new
-    /// per-mode default and flip the master toggle on.
-    SetUuidAndActivate { uuid: crate::db::LabelUuid },
-    /// User cleared the per-session pick — flip the master toggle off
-    /// so the next session starts un-labelled too. UUID is left as
-    /// the prior value so re-enabling the toggle restores intent.
-    Deactivate,
-    /// User picked a label id that no longer exists in the labels
-    /// list (a race against a peer's delete-sync). Shell shouldn't
-    /// touch persisted state — the next visit will resolve through
-    /// the existing fallback chain.
-    NoOp,
-}
-
 /// Typed key for the delete-label dialog's body copy. The shell
 /// maps each variant to its gettext template — "Sessions tagged
 /// '{name}': {n}" for `InUse`, "'{name}' isn't used by any saved
@@ -142,34 +121,9 @@ pub fn delete_impact_key(session_count: i64) -> DeleteImpactKey {
     }
 }
 
-/// Resolve the persist action for a Done-screen save:
-/// - `picked = Some(id)` + the id exists in `labels` →
-///   `SetUuidAndActivate` with that label's uuid.
-/// - `picked = Some(id)` + the id is missing → `NoOp`.
-/// - `picked = None` (user toggled the row off on the Done screen)
-///   → `Deactivate`.
-pub fn resolve_persist_action(picked: Option<i64>, labels: &[Label]) -> PersistAction {
-    match picked {
-        Some(id) => labels
-            .iter()
-            .find(|l| l.id == id)
-            .map_or(PersistAction::NoOp, |l| PersistAction::SetUuidAndActivate { uuid: l.uuid.clone() }),
-        None => PersistAction::Deactivate,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Label;
-
-    fn label(id: i64, uuid: &str, name: &str) -> Label {
-        Label {
-            id,
-            uuid: uuid.into(),
-            name: name.into(),
-        }
-    }
 
     #[test]
     fn label_active_from_db_defaults_to_off_for_timer_and_box_breath() {
@@ -211,20 +165,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_persist_action_returns_set_for_existing_id() {
-        let labels = vec![label(7, "u-7", "Sit")];
-        let action = resolve_persist_action(Some(7), &labels);
-        assert_eq!(
-            action,
-            PersistAction::SetUuidAndActivate { uuid: "u-7".into() }
-        );
-    }
 
-    #[test]
-    fn resolve_persist_action_returns_deactivate_for_none() {
-        assert_eq!(resolve_persist_action(None, &[]), PersistAction::Deactivate);
-    }
 
     #[test]
     fn delete_impact_key_routes_at_zero_boundary() {
@@ -234,11 +175,6 @@ mod tests {
         assert_eq!(delete_impact_key(-1), DeleteImpactKey::Unused, "no negative counts in practice");
     }
 
-    #[test]
-    fn resolve_persist_action_returns_noop_for_missing_id() {
-        let labels = vec![label(1, "u-1", "Walk")];
-        assert_eq!(resolve_persist_action(Some(999), &labels), PersistAction::NoOp);
-    }
 
     // ── Turning the label on adopts the mode's default ──────────────
 

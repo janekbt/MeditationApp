@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 16:34+0200\n"
+"POT-Creation-Date: 2026-10-18 08:46+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -90,12 +90,12 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:708
-#: src/presets.rs:695 src/timer/imp.rs:3898 src/vibrations.rs:470
-#: src/vibrations.rs:511
+#: src/presets.rs:695 src/timer/imp.rs:2582 src/timer/imp.rs:3788
+#: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "Ongedaan maken"
 
-#: src/bells.rs:51 data/ui/timer_view.blp:505
+#: src/bells.rs:51 data/ui/timer_view.blp:494
 msgid "Interval Bells"
 msgstr "Intervalbellen"
 
@@ -107,11 +107,11 @@ msgstr "Nieuwe intervalbel aanmaken…"
 msgid "Delete bell"
 msgstr "Bel verwijderen"
 
-#: src/bells.rs:333 src/bells.rs:874
+#: src/bells.rs:333 src/bells.rs:893
 msgid "Delete Bell?"
 msgstr "Bel verwijderen?"
 
-#: src/bells.rs:334 src/bells.rs:875
+#: src/bells.rs:334 src/bells.rs:894
 msgid "This bell will no longer ring during sessions."
 msgstr "Deze bel klinkt niet meer tijdens sessies."
 
@@ -119,18 +119,18 @@ msgstr "Deze bel klinkt niet meer tijdens sessies."
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:338 src/bells.rs:879 src/guided.rs:231 src/guided.rs:962
+#: src/bells.rs:338 src/bells.rs:898 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
 #: src/preferences.rs:595 src/preferences.rs:669 src/presets.rs:441
 #: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
-#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2634
-#: src/timer/imp.rs:4027 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2622
+#: src/timer/imp.rs:3917 src/vibration_editor.rs:129 src/vibrations.rs:546
 #: src/vibrations.rs:639
 msgid "Cancel"
 msgstr "Annuleren"
 
-#: src/bells.rs:339 src/bells.rs:880 src/guided.rs:1080 src/labels.rs:405
+#: src/bells.rs:339 src/bells.rs:899 src/guided.rs:1080 src/labels.rs:405
 #: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "Verwijderen"
@@ -143,28 +143,28 @@ msgstr "Geen intervalbellen ingesteld"
 msgid "Tap the row above to add one"
 msgstr "Tik op de rij hierboven om er een toe te voegen"
 
-#: src/bells.rs:387
+#: src/bells.rs:389
 #, rust-format
 msgid "Every 1 min"
 msgid_plural "Every {n} min"
 msgstr[0] "Elke minuut"
 msgstr[1] "Elke {n} min"
 
-#: src/bells.rs:388
+#: src/bells.rs:391
 #, rust-format
 msgid "Every 1 s"
 msgid_plural "Every {n} s"
 msgstr[0] "Elke seconde"
 msgstr[1] "Elke {n} s"
 
-#: src/bells.rs:392
+#: src/bells.rs:393
 #, rust-format
 msgid "At 1 min"
 msgid_plural "At {n} min"
 msgstr[0] "Na 1 min"
 msgstr[1] "Na {n} min"
 
-#: src/bells.rs:393
+#: src/bells.rs:395
 #, rust-format
 msgid "At 1 s"
 msgid_plural "At {n} s"
@@ -178,117 +178,117 @@ msgid_plural "{n} min before end"
 msgstr[0] "1 min voor het einde"
 msgstr[1] "{n} min voor het einde"
 
-#: src/bells.rs:398
+#: src/bells.rs:399
 #, rust-format
 msgid "1 s before end"
 msgid_plural "{n} s before end"
 msgstr[0] "1 s voor het einde"
 msgstr[1] "{n} s voor het einde"
 
-#: src/bells.rs:417
+#: src/bells.rs:415
 #, rust-format
 msgid "{n} min"
 msgstr "{n} min"
 
-#: src/bells.rs:418
+#: src/bells.rs:416
 #, rust-format
 msgid "{n} s"
 msgstr "{n} s"
 
-#: src/bells.rs:432
+#: src/bells.rs:430
 msgid "Missing"
 msgstr "Ontbreekt"
 
-#: src/bells.rs:483
+#: src/bells.rs:477
 msgid "s"
 msgstr "s"
 
-#: src/bells.rs:483 src/vibration_editor.rs:172 data/ui/timer_view.blp:493
+#: src/bells.rs:477 src/vibration_editor.rs:172 data/ui/timer_view.blp:482
 msgid "Seconds"
 msgstr "Seconden"
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/bells.rs:484 src/log/imp.rs:443
+#: src/bells.rs:478 src/log/imp.rs:443
 msgid "min"
 msgstr "min"
 
-#: src/bells.rs:484 src/log/imp.rs:878 src/timer/imp.rs:4001
+#: src/bells.rs:478 src/log/imp.rs:878 src/timer/imp.rs:3891
 msgid "Minutes"
 msgstr "Minuten"
 
-#: src/bells.rs:563
+#: src/bells.rs:574
 msgid "Repeating"
 msgstr "Herhalend"
 
-#: src/bells.rs:564
+#: src/bells.rs:575
 msgid "At time from start"
 msgstr "Op tijd vanaf start"
 
-#: src/bells.rs:565
+#: src/bells.rs:576
 msgid "Before end"
 msgstr "Voor het einde"
 
-#: src/bells.rs:569
+#: src/bells.rs:580
 msgid "Kind"
 msgstr "Soort"
 
 #. Time — common to all kinds; its meaning shifts with kind.
-#: src/bells.rs:580
+#: src/bells.rs:591
 msgid "Time"
 msgstr "Tijd"
 
-#: src/bells.rs:586
+#: src/bells.rs:597
 msgid "Jitter"
 msgstr "Variatie"
 
-#: src/bells.rs:587
+#: src/bells.rs:598
 msgid "Random shift of each ring"
 msgstr "Willekeurige verschuiving van elke slag"
 
-#: src/bells.rs:594
+#: src/bells.rs:605
 msgid "Step"
 msgstr "Stap"
 
-#: src/bells.rs:595
+#: src/bells.rs:606
 msgid "Added to the gap after each ring"
 msgstr "Na elke slag bij de tussenpoos opgeteld"
 
-#: src/bells.rs:605 data/ui/timer_view.blp:433 data/ui/timer_view.blp:535
-#: data/ui/timer_view.blp:623 data/ui/timer_view.blp:671
-#: data/ui/timer_view.blp:719 data/ui/timer_view.blp:767
+#: src/bells.rs:616 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
+#: data/ui/timer_view.blp:612 data/ui/timer_view.blp:660
+#: data/ui/timer_view.blp:708 data/ui/timer_view.blp:756
 msgid "Type"
 msgstr "Type"
 
-#: src/bells.rs:620 src/bells.rs:640 src/timer/imp.rs:1621
-#: src/timer/imp.rs:1695 src/timer/imp.rs:1777 data/ui/timer_view.blp:636
-#: data/ui/timer_view.blp:684 data/ui/timer_view.blp:732
-#: data/ui/timer_view.blp:780
+#: src/bells.rs:631 src/bells.rs:651 src/timer/imp.rs:1581
+#: src/timer/imp.rs:1655 src/timer/imp.rs:1737 data/ui/timer_view.blp:625
+#: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
+#: data/ui/timer_view.blp:769
 msgid "Sound"
 msgstr "Geluid"
 
-#: src/bells.rs:624 src/timer/imp.rs:1625 src/timer/imp.rs:1697
-#: src/timer/imp.rs:1779
+#: src/bells.rs:635 src/timer/imp.rs:1585 src/timer/imp.rs:1657
+#: src/timer/imp.rs:1739
 msgid "Vibration"
 msgstr "Trillen"
 
-#: src/bells.rs:628 src/timer/imp.rs:1629 src/timer/imp.rs:1699
-#: src/timer/imp.rs:1781
+#: src/bells.rs:639 src/timer/imp.rs:1589 src/timer/imp.rs:1659
+#: src/timer/imp.rs:1741
 msgid "Both"
 msgstr "Beide"
 
-#: src/bells.rs:658 src/vibration_editor.rs:235 data/ui/timer_view.blp:474
-#: data/ui/timer_view.blp:576 data/ui/timer_view.blp:657
-#: data/ui/timer_view.blp:705 data/ui/timer_view.blp:753
-#: data/ui/timer_view.blp:801
+#: src/bells.rs:669 src/vibration_editor.rs:235 data/ui/timer_view.blp:463
+#: data/ui/timer_view.blp:565 data/ui/timer_view.blp:646
+#: data/ui/timer_view.blp:694 data/ui/timer_view.blp:742
+#: data/ui/timer_view.blp:790
 msgid "Pattern"
 msgstr "Patroon"
 
-#: src/bells.rs:679
+#: src/bells.rs:690
 msgid "Delete Bell"
 msgstr "Bel verwijderen"
 
-#: src/bells.rs:697
+#: src/bells.rs:708
 msgid "Edit Bell"
 msgstr "Bel bewerken"
 
@@ -317,18 +317,14 @@ msgstr "Database niet beschikbaar"
 msgid "«{name}» is already taken"
 msgstr "«{name}» is al in gebruik"
 
-#: src/db/mod.rs:139 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
+#: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
 #: src/local_folder.rs:78 src/preferences.rs:435 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Opslaan mislukt"
 
-#: src/db/mod.rs:140
+#: src/db/mod.rs:138
 msgid "Delete failed"
 msgstr "Verwijderen mislukt"
-
-#: src/db/mod.rs:141
-msgid "Label not kept for next time"
-msgstr "Label niet onthouden voor de volgende keer"
 
 #: src/format.rs:21 src/format.rs:28
 #, rust-format
@@ -368,7 +364,7 @@ msgstr "Gekozen bestand heeft geen lokaal pad"
 msgid "This file has no audio track"
 msgstr "Dit bestand heeft geen audiospoor"
 
-#: src/guided.rs:164 src/timer/imp.rs:3701
+#: src/guided.rs:164 src/timer/imp.rs:3590
 msgid "Couldn't read audio file"
 msgstr "Kan audiobestand niet lezen"
 
@@ -410,7 +406,7 @@ msgstr "Importproces is onverwacht gestopt"
 msgid "Over 100 MB, too large to sync"
 msgstr "Boven 100 MB: niet te synchroniseren"
 
-#: src/guided.rs:586 data/ui/timer_view.blp:297
+#: src/guided.rs:586 data/ui/timer_view.blp:279
 msgid "Manage Imports"
 msgstr "Importen beheren"
 
@@ -579,7 +575,7 @@ msgstr[1] "{n} bestanden"
 msgid "{n}%"
 msgstr "{n}%"
 
-#: src/local_folder.rs:263 src/timer/imp.rs:3565
+#: src/local_folder.rs:263 src/timer/imp.rs:3454
 msgid "Unstar"
 msgstr "Ster verwijderen"
 
@@ -587,7 +583,7 @@ msgstr "Ster verwijderen"
 msgid "Star"
 msgstr "Ster geven"
 
-#: src/local_folder.rs:327 src/local_folder.rs:353 data/ui/timer_view.blp:301
+#: src/local_folder.rs:327 src/local_folder.rs:353 data/ui/timer_view.blp:283
 msgid "Local Folder"
 msgstr "Lokale map"
 
@@ -687,7 +683,7 @@ msgid_plural "{n} sessions"
 msgstr[0] "{n} sessie"
 msgstr[1] "{n} sessies"
 
-#: src/log/imp.rs:865 src/timer/imp.rs:3994
+#: src/log/imp.rs:865 src/timer/imp.rs:3884
 msgid "Hours"
 msgstr "Uren"
 
@@ -707,25 +703,24 @@ msgstr "Uur"
 msgid "Minute"
 msgstr "Minuut"
 
-#: src/log/imp.rs:959 data/ui/timer_view.blp:376 data/ui/timer_view.blp:873
+#: src/log/imp.rs:959 data/ui/timer_view.blp:358
 msgid "Selected"
 msgstr "Geselecteerd"
 
-#: src/log/imp.rs:974 data/ui/timer_view.blp:370 data/ui/timer_view.blp:867
-#: data/ui/window.blp:107
+#: src/log/imp.rs:974 data/ui/timer_view.blp:352 data/ui/window.blp:107
 msgid "Label"
 msgstr "Label"
 
-#: src/log/imp.rs:975 data/ui/timer_view.blp:371 data/ui/timer_view.blp:868
+#: src/log/imp.rs:975 data/ui/timer_view.blp:353
 msgid "Tag this session"
 msgstr "Label deze sessie"
 
-#: src/log/imp.rs:1033 data/ui/timer_view.blp:843
+#: src/log/imp.rs:1033 src/window/imp.rs:432
 msgid "Note (optional)"
 msgstr "Notitie (optioneel)"
 
-#: src/log/imp.rs:1053 src/vibration_editor.rs:171 data/ui/timer_view.blp:352
-#: data/ui/timer_view.blp:492
+#: src/log/imp.rs:1053 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
+#: data/ui/timer_view.blp:481
 msgid "Duration"
 msgstr "Duur"
 
@@ -754,15 +749,15 @@ msgstr "Sessie bewerken"
 msgid "Add Session"
 msgstr "Sessie toevoegen"
 
-#: src/log/imp.rs:1164 src/timer/imp.rs:4083 src/timer/imp.rs:4121
+#: src/log/imp.rs:1164 src/timer/imp.rs:3973
 msgid "(none — pick one)"
 msgstr "(geen — kies er een)"
 
-#: src/log/imp.rs:1263 src/timer/imp.rs:2578
+#: src/log/imp.rs:1263 src/timer/imp.rs:2543
 msgid "Couldn't save session — storage error"
 msgstr "Kan sessie niet opslaan — opslagfout"
 
-#: src/log/imp.rs:1268 src/timer/imp.rs:2596
+#: src/log/imp.rs:1268 src/timer/imp.rs:2561
 msgid "Couldn't save session — storage unavailable"
 msgstr "Kan sessie niet opslaan — opslag niet beschikbaar"
 
@@ -1067,7 +1062,7 @@ msgstr[1] "{n} bellen"
 msgid "Save Preset"
 msgstr "Voorinstelling opslaan"
 
-#: src/presets.rs:66 data/ui/timer_view.blp:165
+#: src/presets.rs:66 data/ui/timer_view.blp:147
 msgid "Manage Presets"
 msgstr "Beheren"
 
@@ -1415,149 +1410,141 @@ msgstr "{duration} · 1 sessie"
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} sessies"
 
-#: src/timer/imp.rs:1195
+#: src/timer/imp.rs:1155
 msgid "Meditation session running"
 msgstr "Meditatiesessie loopt"
 
-#: src/timer/imp.rs:1198
+#: src/timer/imp.rs:1158
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Kon de computer niet wakker houden voor de bellen"
 
-#: src/timer/imp.rs:1814
+#: src/timer/imp.rs:1774
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Dit apparaat kan niet trillen, dus er klinkt niets"
 
-#: src/timer/imp.rs:1815
+#: src/timer/imp.rs:1775
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Dit apparaat kan niet trillen, dus alleen het geluid klinkt"
 
-#: src/timer/imp.rs:2035
+#: src/timer/imp.rs:1990
 msgid "Paused"
 msgstr "Gepauzeerd"
 
-#: src/timer/imp.rs:2062 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2017 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Uren · Minuten"
 
-#: src/timer/imp.rs:2232
+#: src/timer/imp.rs:2194
 msgid "Couldn't start playback"
 msgstr "Kan afspelen niet starten"
 
-#: src/timer/imp.rs:2321 src/window/imp.rs:397
+#: src/timer/imp.rs:2365
 msgid "Pause"
-msgstr "Gepauzeerd"
+msgstr "Pauzeren"
 
-#: src/timer/imp.rs:2322 src/window/imp.rs:399
-msgid "Pause Timer"
-msgstr "Timer pauzeren"
-
-#: src/timer/imp.rs:2372 data/ui/timer_view.blp:110
+#: src/timer/imp.rs:2366
 msgid "Resume"
 msgstr "Hervatten"
 
-#: src/timer/imp.rs:2373
-msgid "Resume Timer"
-msgstr "Timer hervatten"
+#: src/timer/imp.rs:2367 src/vibration_editor.rs:130
+msgid "Save"
+msgstr "Opslaan"
 
-#: src/timer/imp.rs:2625
-msgid "Discard Session?"
-msgstr "Sessie verwijderen?"
-
-#: src/timer/imp.rs:2626
-msgid "Your note will be lost."
-msgstr "Je notitie gaat verloren."
-
-#: src/timer/imp.rs:2635 data/ui/timer_view.blp:892
+#: src/timer/imp.rs:2369 src/timer/imp.rs:2623 src/window/imp.rs:420
 msgid "Discard"
 msgstr "Verwijderen"
 
-#: src/timer/imp.rs:2959
-msgid "Finish"
-msgstr "Afronden"
+#: src/timer/imp.rs:2581
+msgid "Session saved"
+msgstr "Sessie opgeslagen"
 
-#: src/timer/imp.rs:2961
-msgid "End at the planned duration"
-msgstr "Stoppen op de geplande duur"
+#: src/timer/imp.rs:2613
+msgid "Discard Session?"
+msgstr "Sessie verwijderen?"
 
-#: src/timer/imp.rs:3315
+#: src/timer/imp.rs:2614
+msgid "Your note will be lost."
+msgstr "Je notitie gaat verloren."
+
+#: src/timer/imp.rs:3204
 msgid "Start your streak today"
 msgstr "Begin vandaag je reeks"
 
-#: src/timer/imp.rs:3316 src/timer/imp.rs:3318
+#: src/timer/imp.rs:3205 src/timer/imp.rs:3207
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Reeks van {n} dag"
 msgstr[1] "Reeks van {n} dagen"
 
-#: src/timer/imp.rs:3372
+#: src/timer/imp.rs:3261
 msgid "Tap Save Settings to create your first preset"
 msgstr "Tik op Opslaan om je eerste voorinstelling te maken"
 
-#: src/timer/imp.rs:3447
+#: src/timer/imp.rs:3336
 msgid "No starred files"
 msgstr "Geen favoriete bestanden"
 
-#: src/timer/imp.rs:3449
+#: src/timer/imp.rs:3338
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr ""
 "Tik op Bestand openen en dan Bestand importeren, of geef een bestand een "
 "ster in Importen beheren"
 
-#: src/timer/imp.rs:3543
+#: src/timer/imp.rs:3432
 msgid "not found"
 msgstr "niet gevonden"
 
-#: src/timer/imp.rs:3547
+#: src/timer/imp.rs:3436
 msgid "Local file"
 msgstr "Lokaal bestand"
 
-#: src/timer/imp.rs:3579
+#: src/timer/imp.rs:3468
 msgid "File not found in the local folder"
 msgstr "Bestand niet gevonden in de lokale map"
 
-#: src/timer/imp.rs:3596
+#: src/timer/imp.rs:3485
 msgid "Reading length"
 msgstr "Lengte wordt gelezen"
 
-#: src/timer/imp.rs:3602 src/timer/imp.rs:3603
+#: src/timer/imp.rs:3491 src/timer/imp.rs:3492
 msgid "Local folder"
 msgstr "Lokale map"
 
-#: src/timer/imp.rs:3609 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3498 data/ui/timer_view.blp:234
 msgid "No file selected"
 msgstr "Geen bestand geselecteerd"
 
-#: src/timer/imp.rs:3611 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3500 data/ui/timer_view.blp:235
 msgid "Tap Open File or pick from list below"
 msgstr "Tik op Bestand openen of kies uit de lijst"
 
-#: src/timer/imp.rs:3619
+#: src/timer/imp.rs:3508
 msgid "Open New File"
 msgstr "Nieuw bestand openen"
 
-#: src/timer/imp.rs:3621 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3510 data/ui/timer_view.blp:251
 msgid "Open File"
 msgstr "Bestand openen"
 
-#: src/timer/imp.rs:3896
+#: src/timer/imp.rs:3786
 #, rust-format
 msgid "'{name}' applied"
 msgstr "'{name}' toegepast"
 
-#: src/timer/imp.rs:4021
+#: src/timer/imp.rs:3911
 msgid "Custom Time"
 msgstr "Aangepaste tijd"
 
-#: src/timer/imp.rs:4022
+#: src/timer/imp.rs:3912
 msgid "Hours : Minutes"
 msgstr "Uren : Minuten"
 
-#: src/timer/imp.rs:4028
+#: src/timer/imp.rs:3918
 msgid "Set"
 msgstr "Instellen"
 
-#: src/timer/imp.rs:4085 src/timer/imp.rs:4123
+#: src/timer/imp.rs:3975
 msgid "Off"
 msgstr "Uit"
 
@@ -1568,49 +1555,45 @@ msgstr "Uit"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4394
+#: src/timer/imp.rs:4240
 #, rust-format
-msgid "Add {time} ?"
-msgstr "{time} toevoegen?"
+msgid "Add {time} and Save"
+msgstr "{time} toevoegen en opslaan"
 
-#: src/timer/imp.rs:4404
+#: src/timer/imp.rs:4250
 msgid "None enabled"
 msgstr "Geen actief"
 
-#: src/timer/imp.rs:4405 src/timer/imp.rs:4406
+#: src/timer/imp.rs:4251 src/timer/imp.rs:4252
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} actief"
 msgstr[1] "{n} actief"
 
-#: src/timer/imp.rs:4430 data/ui/timer_view.blp:618
+#: src/timer/imp.rs:4276 data/ui/timer_view.blp:607
 msgid "Inhale"
 msgstr "Inademen"
 
-#: src/timer/imp.rs:4431
+#: src/timer/imp.rs:4277
 msgid "Hold (full)"
 msgstr "Vasthouden (vol)"
 
-#: src/timer/imp.rs:4432 data/ui/timer_view.blp:714
+#: src/timer/imp.rs:4278 data/ui/timer_view.blp:703
 msgid "Exhale"
 msgstr "Uitademen"
 
-#: src/timer/imp.rs:4433
+#: src/timer/imp.rs:4279
 msgid "Hold (empty)"
 msgstr "Vasthouden (leeg)"
 
-#: src/timer/imp.rs:4495
+#: src/timer/imp.rs:4341
 msgid "Decrease"
 msgstr "Verlagen"
 
-#: src/timer/imp.rs:4506
+#: src/timer/imp.rs:4352
 msgid "Increase"
 msgstr "Verhogen"
-
-#: src/vibration_editor.rs:130 data/ui/timer_view.blp:897
-msgid "Save"
-msgstr "Opslaan"
 
 #: src/vibration_editor.rs:167
 msgid "Shape"
@@ -1682,89 +1665,81 @@ msgstr ""
 msgid "Volume"
 msgstr "Volume"
 
-#: src/window/imp.rs:278
+#: src/window/imp.rs:222 src/window/imp.rs:411
 msgid "Box Breathing"
 msgstr "Vierkante ademhaling"
 
-#: src/window/imp.rs:402 data/ui/timer_view.blp:116
-msgid "Stop"
-msgstr "Stoppen"
-
-#: src/window/imp.rs:404
-msgid "Stop and Save Session"
-msgstr "Sessie stoppen en opslaan"
-
-#: src/window/imp.rs:467
+#: src/window/imp.rs:387
 msgid "Breathe in"
 msgstr "Adem in"
 
-#: src/window/imp.rs:468
+#: src/window/imp.rs:388
 msgid "Hold"
 msgstr "Vasthouden"
 
-#: src/window/imp.rs:469
+#: src/window/imp.rs:389
 msgid "Breathe out"
 msgstr "Adem uit"
 
-#: src/window/imp.rs:679
+#: src/window/imp.rs:646
 msgid "Syncing with Nextcloud…"
 msgstr "Synchroniseren met Nextcloud…"
 
-#: src/window/imp.rs:689
+#: src/window/imp.rs:656
 msgid "Last sync failed — click to retry"
 msgstr "Laatste synchronisatie mislukt — klik om opnieuw te proberen"
 
-#: src/window/imp.rs:701
+#: src/window/imp.rs:668
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Sommige bestanden zijn niet geüpload, klik om opnieuw te proberen"
 
-#: src/window/imp.rs:711
+#: src/window/imp.rs:678
 msgid "No password saved, click to enter it"
 msgstr "Geen wachtwoord opgeslagen, klik om het in te voeren"
 
-#: src/window/imp.rs:726
+#: src/window/imp.rs:693
 msgid "Sync configured (waiting for first run)"
 msgstr "Synchronisatie ingesteld (wacht op eerste run)"
 
-#: src/window/imp.rs:755
+#: src/window/imp.rs:722
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: te groot om te synchroniseren"
 
-#: src/window/imp.rs:756
+#: src/window/imp.rs:723
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: te groot voor de server"
 
-#: src/window/imp.rs:757
+#: src/window/imp.rs:724
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: de server is vol"
 
-#: src/window/imp.rs:759
+#: src/window/imp.rs:726
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: geweigerd door de server ({status})"
 
-#: src/window/imp.rs:770
+#: src/window/imp.rs:737
 msgid "Synced just now"
 msgstr "Zojuist gesynchroniseerd"
 
-#: src/window/imp.rs:772
+#: src/window/imp.rs:739
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "1 minuut geleden gesynchroniseerd"
 msgstr[1] "{n} minuten geleden gesynchroniseerd"
 
-#: src/window/imp.rs:775
+#: src/window/imp.rs:742
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "1 uur geleden gesynchroniseerd"
 msgstr[1] "{n} uur geleden gesynchroniseerd"
 
-#: src/window/imp.rs:778
+#: src/window/imp.rs:745
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
@@ -1860,111 +1835,119 @@ msgstr "Box-ademhaling"
 msgid "Start Session"
 msgstr "Sessie starten"
 
-#: data/ui/timer_view.blp:148
+#: data/ui/timer_view.blp:130
 msgid "Presets"
 msgstr "Voorinstellingen"
 
-#: data/ui/timer_view.blp:160
+#: data/ui/timer_view.blp:142
 msgid "Save Settings"
 msgstr "Opslaan"
 
-#: data/ui/timer_view.blp:202
+#: data/ui/timer_view.blp:184
 msgid "Breath Phases"
 msgstr "Ademfasen"
 
-#: data/ui/timer_view.blp:249
+#: data/ui/timer_view.blp:231
 msgid "Current file"
 msgstr "Huidig bestand"
 
-#: data/ui/timer_view.blp:274
+#: data/ui/timer_view.blp:256
 msgid "Import File"
 msgstr "Bestand importeren"
 
-#: data/ui/timer_view.blp:283
+#: data/ui/timer_view.blp:265
 msgid "Starred Files"
 msgstr "Favoriete bestanden"
 
-#: data/ui/timer_view.blp:313
+#: data/ui/timer_view.blp:295
 msgid "Session"
 msgstr "Sessie"
 
-#: data/ui/timer_view.blp:325
+#: data/ui/timer_view.blp:307
 msgid "Cues"
 msgstr "Signalen"
 
-#: data/ui/timer_view.blp:343
+#: data/ui/timer_view.blp:325
 msgid "Stopwatch Mode"
 msgstr "Stopwatchmodus"
 
-#: data/ui/timer_view.blp:344
+#: data/ui/timer_view.blp:326
 msgid "Count up from zero"
 msgstr "Tel op vanaf nul"
 
-#: data/ui/timer_view.blp:396
+#: data/ui/timer_view.blp:380
+msgid "Auto-Finish"
+msgstr "Automatisch afronden"
+
+#: data/ui/timer_view.blp:381
+msgid "Saves the session without asking when the time is up"
+msgstr "Slaat de sessie zonder te vragen op als de tijd om is"
+
+#: data/ui/timer_view.blp:385
 msgid "Keep Screen Awake"
 msgstr "Scherm aan houden"
 
-#: data/ui/timer_view.blp:397
+#: data/ui/timer_view.blp:386
 msgid "Prevent display sleep during a session"
 msgstr "Voorkomt dat het scherm uitgaat tijdens een sessie"
 
-#: data/ui/timer_view.blp:415
+#: data/ui/timer_view.blp:404
 msgid "Bells"
 msgstr "Bellen"
 
-#: data/ui/timer_view.blp:427
+#: data/ui/timer_view.blp:416
 msgid "Starting Bell"
 msgstr "Startbel"
 
-#: data/ui/timer_view.blp:428
+#: data/ui/timer_view.blp:417
 msgid "Play a signal when the session begins"
 msgstr "Geef een signaal bij het begin van de sessie"
 
-#: data/ui/timer_view.blp:448 data/ui/timer_view.blp:550
+#: data/ui/timer_view.blp:437 data/ui/timer_view.blp:539
 msgid "Bell Sound"
 msgstr "Belgeluid"
 
-#: data/ui/timer_view.blp:486
+#: data/ui/timer_view.blp:475
 msgid "Preparation Time"
 msgstr "Voorbereidingstijd"
 
-#: data/ui/timer_view.blp:487
+#: data/ui/timer_view.blp:476
 msgid "Silence before the starting bell"
 msgstr "Stilte voor de startbel"
 
-#: data/ui/timer_view.blp:506
+#: data/ui/timer_view.blp:495
 msgid "Ring during the session"
 msgstr "Klinken tijdens de sessie"
 
-#: data/ui/timer_view.blp:511
+#: data/ui/timer_view.blp:500
 msgid "Manage Bells"
 msgstr "Bellen beheren"
 
-#: data/ui/timer_view.blp:529
+#: data/ui/timer_view.blp:518
 msgid "End Bell"
 msgstr "Eindbel"
 
-#: data/ui/timer_view.blp:530
+#: data/ui/timer_view.blp:519
 msgid "Play a signal when the session ends"
 msgstr "Geef een signaal aan het einde van de sessie"
 
-#: data/ui/timer_view.blp:609
+#: data/ui/timer_view.blp:598
 msgid "Box Breath cues"
 msgstr "Signalen vierkante ademhaling"
 
-#: data/ui/timer_view.blp:612
+#: data/ui/timer_view.blp:601
 msgid "Cues during phases"
 msgstr "Signalen tijdens fasen"
 
-#: data/ui/timer_view.blp:613
+#: data/ui/timer_view.blp:602
 msgid "Different cue per phase to feel the cycle"
 msgstr "Een ander signaal per fase om de cyclus te voelen"
 
-#: data/ui/timer_view.blp:666
+#: data/ui/timer_view.blp:655
 msgid "Hold (in)"
 msgstr "Vasthouden (in)"
 
-#: data/ui/timer_view.blp:762
+#: data/ui/timer_view.blp:751
 msgid "Hold (out)"
 msgstr "Vasthouden (uit)"
 
@@ -2568,6 +2551,24 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:228
 msgid "Initial release."
 msgstr "Eerste uitgave."
+
+#~ msgid "Label not kept for next time"
+#~ msgstr "Label niet onthouden voor de volgende keer"
+
+#~ msgid "Pause Timer"
+#~ msgstr "Timer pauzeren"
+
+#~ msgid "Resume Timer"
+#~ msgstr "Timer hervatten"
+
+#~ msgid "End at the planned duration"
+#~ msgstr "Stoppen op de geplande duur"
+
+#~ msgid "Stop"
+#~ msgstr "Stoppen"
+
+#~ msgid "Stop and Save Session"
+#~ msgstr "Sessie stoppen en opslaan"
 
 #, rust-format
 #~ msgid "Every 1 min ±{j}%"
