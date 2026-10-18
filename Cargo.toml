@@ -28,17 +28,3 @@ strip = "symbols"
 [profile.dev]
 strip = "debuginfo"
 
-# Slint bundles translations in whatever order the filesystem returns the
-# `lang/` entries in, so the generated string table differs between machines
-# and F-Droid's build can never match our published APK. third_party holds
-# the stock 1.16.1 crate with one added sort; see third_party/README.md.
-# The same fix is proposed upstream in slint-ui/slint#12932, and this patch
-# goes away once a release carries it.
-#
-# Vendored by path rather than pulled from a git fork: the published crate
-# depends on i-slint-common from crates.io, so there is a single source for
-# it. A git patch resolves the fork's workspace path deps instead, giving two
-# copies of that crate, which offline vendoring (the Flatpak build) refuses.
-# It also keeps the build free of any external repository.
-[patch.crates-io]
-i-slint-compiler = { path = "third_party/i-slint-compiler" }

@@ -123,6 +123,25 @@ pub fn day_header(unix_secs: i64, now_unix: i64) -> DayHeader {
     }
 }
 
+/// Days in a month; out-of-range input falls back to 30 so the
+/// calendar grid still renders.
+pub fn month_day_count(month: i32, year: i32) -> i32 {
+    use chrono::NaiveDate;
+    // Last day of month = (1st of next month) - 1 day.
+    let (ny, nm) = if month >= 12 { (year + 1, 1) } else { (year, month + 1) };
+    let first_next = NaiveDate::from_ymd_opt(ny, nm as u32, 1);
+    let first_this = NaiveDate::from_ymd_opt(year, month as u32, 1);
+    match (first_this, first_next) {
+        (Some(a), Some(b)) => b.signed_duration_since(a).num_days() as i32,
+        _ => 30,
+    }
+}
+
+/// The date picker's years: this year back to 2000, newest first.
+pub fn picker_years(today_year: i32) -> Vec<i32> {
+    (2000..=today_year).rev().collect()
+}
+
 /// Interval-bell editor kind chip index ↔ core kind. Chip order:
 /// Every N min, At N min, N min before end. An unknown index is
 /// core's default kind.
@@ -873,6 +892,36 @@ mod local_folder_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn picking_a_year_keeps_the_day_and_month_and_every_year_is_reachable() {
+        // Slint can't run on the host. Material's picker jumped to 1 January
+        // and truncated its row count, so 28 years in 3 columns hid 2000.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("material-1.0/ui/components/date_picker.slint")).unwrap();
+        assert!(slint.contains("property <int> row_count: ceil(root.model.length / root.column_count);"));
+        assert!(slint.contains(
+            "    function select_year(year: int) {\n        root.current_date = {\n            day: min(root.current_date.day, DatePickerAdapter.month_day_count(root.current_date.month, year)),\n            month: root.current_date.month,\n            year: year,\n        };\n        root.display_date = root.current_date;"
+        ));
+    }
+
+    #[test]
+    fn a_month_has_its_calendar_length() {
+        assert_eq!(super::month_day_count(2, 2023), 28);
+        assert_eq!(super::month_day_count(2, 2024), 29);
+        assert_eq!(super::month_day_count(6, 2019), 30);
+        assert_eq!(super::month_day_count(12, 2025), 31);
+        assert_eq!(super::month_day_count(13, 2025), 30);
+    }
+
+    #[test]
+    fn the_year_list_runs_from_this_year_back_to_2000() {
+        let years = super::picker_years(2026);
+        assert_eq!(years.len(), 27);
+        assert_eq!(years.first(), Some(&2026));
+        assert_eq!(years.last(), Some(&2000));
+        assert!(years.windows(2).all(|w| w[1] == w[0] - 1), "{years:?}");
+    }
+
     use super::{remove_stale_import_files, Notice, PendingUndo};
 
     fn apply() -> PendingUndo {
@@ -1343,7 +1392,7 @@ mod tests {
             assert!(slint[changed..changed + 160].contains(&format!("{name}.release();")), "{page} releases {name}");
             // A tap on empty space or another row doesn't take focus,
             // so those let go of the note too.
-            let blank = format!("TouchArea {{\n                width: parent.viewport-width;\n                height: parent.viewport-height;\n                clicked => {{ {name}.release(); }}");
+            let blank = format!("TouchArea {{\n                width: parent.content-width;\n                height: parent.content-height;\n                clicked => {{ {name}.release(); }}");
             assert!(slint.contains(&blank), "{page}: a background tap releases {name}");
         }
         for tap in ["root.modal = Modal.duration;", "date-popup.show();", "time-popup.show();", "root.edit-label-row-tap();"] {
@@ -3194,7 +3243,7 @@ mod tests {
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("diag-flick := Flickable {"));
         assert!(slint.contains(
-            "diag-flick.viewport-y = min(0px, diag-flick.height - diag-flick.viewport-height);"
+            "diag-flick.content-y = min(0px, diag-flick.height - diag-flick.content-height);"
         ));
         assert!(slint.contains("changed diag-page => {"));
         assert!(slint.contains("changed diag-text => {"));

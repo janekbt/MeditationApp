@@ -3168,7 +3168,7 @@ export component MainWindow inherits Window {
     // The log is oldest-first, so the Diagnostics page opens at the
     // newest entry at the bottom.
     function scroll-diag-to-end() {
-        diag-flick.viewport-y = min(0px, diag-flick.height - diag-flick.viewport-height);
+        diag-flick.content-y = min(0px, diag-flick.height - diag-flick.content-height);
     }
     changed diag-page => {
         if (root.diag-page) {
@@ -3272,8 +3272,8 @@ export component MainWindow inherits Window {
         Flickable {
             width: 100%;
             height: 100%;
-            viewport-width: self.width;
-            viewport-height: setup-stack.preferred-height;
+            content-width: self.width;
+            content-height: setup-stack.preferred-height;
 
             setup-stack := VerticalLayout {
             padding-left: 24px;
@@ -4104,17 +4104,17 @@ export component MainWindow inherits Window {
         Flickable {
             width: 100%;
             height: 100%;
-            viewport-width: self.width;
-            viewport-height: max(self.height, running-stack.preferred-height);
+            content-width: self.width;
+            content-height: max(self.height, running-stack.preferred-height);
             // A tap on empty space lets go of the note.
             TouchArea {
-                width: parent.viewport-width;
-                height: parent.viewport-height;
+                width: parent.content-width;
+                height: parent.content-height;
                 clicked => { running-note.release(); }
             }
 
             running-stack := VerticalLayout {
-                height: parent.viewport-height;
+                height: parent.content-height;
                 alignment: center;
                 // Short viewports (phone landscape): tighter spacing +
                 // smaller hero so the column fits ~360dp heights. The
@@ -4374,8 +4374,8 @@ export component MainWindow inherits Window {
         if root.log-sections.length > 0 : Flickable {
             width: 100%;
             height: 100%;
-            viewport-width: self.width;
-            viewport-height: log-stack.preferred-height;
+            content-width: self.width;
+            content-height: log-stack.preferred-height;
 
             log-stack := VerticalLayout {
                 padding-left: 12px;
@@ -4592,8 +4592,8 @@ export component MainWindow inherits Window {
         Flickable {
             width: 100%;
             height: 100%;
-            viewport-width: self.width;
-            viewport-height: stats-stack.preferred-height;
+            content-width: self.width;
+            content-height: stats-stack.preferred-height;
 
             stats-stack := VerticalLayout {
                 padding-top: root.status-bar-inset + root.header-bar-height + 18px;
@@ -5142,14 +5142,14 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: max(self.height, es-scroll.preferred-height);
+            content-width: self.width;
+            content-height: max(self.height, es-scroll.preferred-height);
 
             // A tap on empty space lets go of the note (a tap doesn't
             // take focus). Behind the content, so rows keep their taps.
             TouchArea {
-                width: parent.viewport-width;
-                height: parent.viewport-height;
+                width: parent.content-width;
+                height: parent.content-height;
                 clicked => { edit-note.release(); }
             }
 
@@ -5751,8 +5751,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: lab-scroll.preferred-height;
+            content-width: self.width;
+            content-height: lab-scroll.preferred-height;
 
             lab-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -5939,8 +5939,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: ib-scroll.preferred-height;
+            content-width: self.width;
+            content-height: ib-scroll.preferred-height;
 
             ib-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -6101,14 +6101,14 @@ export component MainWindow inherits Window {
 
         // Scrolls so every row is reachable in landscape (#146).
         Flickable {
-            viewport-width: self.width;
-            viewport-height: max(self.height, ie-scroll.preferred-height);
+            content-width: self.width;
+            content-height: max(self.height, ie-scroll.preferred-height);
 
             // A tap anywhere outside the inputs lets go of a typed
             // number. Declared behind the form so rows keep their taps.
             TouchArea {
-                width: parent.viewport-width;
-                height: parent.viewport-height;
+                width: parent.content-width;
+                height: parent.content-height;
                 clicked => { root.release-interval-editor-inputs(); }
             }
 
@@ -6257,8 +6257,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: bc-scroll.preferred-height;
+            content-width: self.width;
+            content-height: bc-scroll.preferred-height;
 
             bc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -6418,8 +6418,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: pc-scroll.preferred-height;
+            content-width: self.width;
+            content-height: pc-scroll.preferred-height;
 
             pc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -6592,12 +6592,12 @@ export component MainWindow inherits Window {
                 min-height: 0;
                 preferred-height: ve-top.preferred-height;
                 max-height: ve-top.preferred-height;
-                viewport-width: self.width;
-                viewport-height: ve-top.preferred-height;
+                content-width: self.width;
+                content-height: ve-top.preferred-height;
 
                 TouchArea {
-                    width: parent.viewport-width;
-                    height: parent.viewport-height;
+                    width: parent.content-width;
+                    height: parent.content-height;
                     clicked => { root.release-vibration-editor-inputs(); }
                 }
 
@@ -6905,8 +6905,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: prc-scroll.preferred-height;
+            content-width: self.width;
+            content-height: prc-scroll.preferred-height;
 
             prc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -7269,8 +7269,8 @@ export component MainWindow inherits Window {
         TouchArea {}
 
         Flickable {
-            viewport-width: self.width;
-            viewport-height: gm-scroll.preferred-height;
+            content-width: self.width;
+            content-height: gm-scroll.preferred-height;
 
             gm-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
@@ -7483,8 +7483,8 @@ export component MainWindow inherits Window {
         }
 
         if root.local-has-folder : Flickable {
-            viewport-width: self.width;
-            viewport-height: lf-scroll.preferred-height;
+            content-width: self.width;
+            content-height: lf-scroll.preferred-height;
 
             lf-scroll := VerticalLayout {
                 padding-top: root.status-bar-inset + 24px;
@@ -7729,8 +7729,8 @@ export component MainWindow inherits Window {
             // the Setup page uses. Header stays pinned above.
             Flickable {
                 vertical-stretch: 1;
-                viewport-width: self.width;
-                viewport-height: prefs-body.preferred-height;
+                content-width: self.width;
+                content-height: prefs-body.preferred-height;
 
                 prefs-body := VerticalLayout {
                 spacing: 16px;
@@ -8011,7 +8011,7 @@ export component MainWindow inherits Window {
                 clip: true;
 
                 diag-flick := Flickable {
-                    viewport-height: diag-body.preferred-height + 24px;
+                    content-height: diag-body.preferred-height + 24px;
                     diag-body := Text {
                         x: 12px;
                         y: 12px;

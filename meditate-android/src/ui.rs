@@ -249,8 +249,8 @@ fn local_change_watch() -> Option<meditate_core::db::LocalChangeWatch> {
 
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
 /// TextInput is supposed to dismiss the IME via the
-/// `InputMethodRequest::Disable` path, but on this slint+android-
-/// activity stack (1.16.1 / 0.6.1) tapping a non-input button
+/// `InputMethodRequest::Disable` path, but on the slint+android-
+/// activity stack it was written for (1.16.1 / 0.6.1) tapping a non-input button
 /// like Save / Cancel doesn't dispatch a focus-lost event for the
 /// already-focused TextInput, so the IME stays parked. Going
 /// through `AndroidApp::hide_soft_input` directly side-steps
@@ -3538,7 +3538,7 @@ fn finalize_session(
     }
 }
 
-/// Wire the six callbacks Material's `DatePickerAdapter` global
+/// Wire the seven callbacks Material's `DatePickerAdapter` global
 /// expects. All implemented in terms of chrono::NaiveDate so the
 /// picker renders the same calendar grid GTK gives us (Sunday-
 /// first headers, locale-aware month names via strftime).
@@ -3548,22 +3548,7 @@ fn wire_date_picker_adapter(ui: &MainWindow) {
 
     let adapter = ui.global::<DatePickerAdapter>();
 
-    adapter.on_month_day_count(|month, year| {
-        // Last day of month = (1st of next month) − 1 day.
-        let (ny, nm) = if month >= 12 {
-            (year + 1, 1)
-        } else {
-            (year, month + 1)
-        };
-        let first_next = NaiveDate::from_ymd_opt(ny, nm as u32, 1);
-        let first_this = NaiveDate::from_ymd_opt(year, month as u32, 1);
-        match (first_this, first_next) {
-            (Some(a), Some(b)) => b.signed_duration_since(a).num_days() as i32,
-            // Defensive: any out-of-range input falls back to 30
-            // so the calendar grid still renders.
-            _ => 30,
-        }
-    });
+    adapter.on_month_day_count(crate::app::month_day_count);
 
     adapter.on_month_offset(|month, year| {
         // Day-of-week of the 1st of the month, Sunday-indexed
@@ -3585,6 +3570,10 @@ fn wire_date_picker_adapter(ui: &MainWindow) {
             .map(|d| locale_date(d, skeleton, format.as_str()))
             .unwrap_or_default()
             .into()
+    });
+
+    adapter.on_year_list(|today_year| {
+        std::rc::Rc::new(slint::VecModel::from(crate::app::picker_years(today_year))).into()
     });
 
     adapter.on_parse_date(|date, format| {

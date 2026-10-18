@@ -42,7 +42,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
-| [ ] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
+| [ ] | Y. Slint library fixes (build environment: ask first) | #160 | vendored Slint code; needs the repro probe |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -340,20 +340,12 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 ## Y. Slint library fixes (build environment: ask first)
 
-### #148 Android: the date picker's year grid skips 2030 and starts at 2024
-- Where: `meditate-android/material-1.0/ui/components/date_picker.slint:356`.
-- Problem: the vendored year list is hard-coded, so an imported 2022 session can't be moved by year.
-- Fix: build the list from the current year backwards.
-
-
-### #160 Android: Slint's text fields misplace the cursor handle and ignore the space-bar slide
-- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.16.1 (`java/SlintAndroidJavaHelper.java`, `javahelper.rs`), not our code. Seen on the FP5 in Preferences (batch F test); batch F made Preferences let go of its fields, which removed the stuck keyboard, handle and copy bar there.
+### #160 Android: Slint's text fields ignore the space-bar slide, and the copy bar covers the text
+- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.18.1 (`java/SlintAndroidJavaHelper.java`), not our code. Slint 1.18 fixed the cursor handle at the screen's left edge in an empty field.
 - Problem:
-  - A cursor at the very start of a field (an empty field) gets its handle at the screen's left edge: `set_imm_data` sends x = -1 when the cursor fails its clip check, and the one-handle path shows the handle there instead of hiding it.
-  - The cut/copy/paste bar covers the field's text instead of sitting above it (cause not found yet; the content rect comes from the same cursor coordinates).
-  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection, and Slint's editable only reports text replacements, never a selection-only change.
-  - Other pages with a Material `TextField` (rename and name dialogs, Log edit) may keep the handle after closing too; check each close path like Preferences.
-- Fix: patch the Java helper (hide the handle at x = -1, report `setSelection` back through `updateText`, then the content rect), which means vendoring the backend like `third_party/i-slint-compiler`: build environment, so ask first, then run the repro probe. Report it upstream either way.
+  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection's `setSelection`, which only sets the selection span on the Java editable; `SlintEditable` reports text replacements (`replace` -> `update` -> `updateText`), never a selection-only change. Still so on Slint's master (2026-10-18).
+  - The cut/copy/paste bar still covers the field's text instead of sitting above it (FP5, 1.18.1, 2026-10-18; cause not found yet, its content rect comes from the same cursor coordinates). Closing the dialogs with a text field leaves nothing behind on 1.18.
+- Fix: override `setSelection` in the input connection to report the new selection (deferred to `endBatchEdit` inside a batch, like `replace`), vendored like the old `third_party/i-slint-compiler` until upstream ships it: build environment, so ask first, then the repro probe. Written to Slint's conventions and proposed upstream as a pull request.
 
 ## Z. Android touch targets
 
