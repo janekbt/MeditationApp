@@ -28,3 +28,8 @@ strip = "symbols"
 [profile.dev]
 strip = "debuginfo"
 
+# Slint's Android backend with two fixes on top of the crates.io release: the
+# cursor follows moves from the keyboard (Gboard's space bar), and the text
+# selection menu sits next to the selection. See third_party/README.md.
+[patch.crates-io]
+i-slint-backend-android-activity = { path = "third_party/i-slint-backend-android-activity" }

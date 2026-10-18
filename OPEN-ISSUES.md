@@ -42,7 +42,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
-| [ ] | Y. Slint library fixes (build environment: ask first) | #160 | vendored Slint code; needs the repro probe |
+| [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
+| [ ] | Y2. Slint long-press selection | #195 | a selection that shrinks under the finger |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -338,14 +339,12 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: README promises that build.sh installs missing dependencies, but a fresh machine stops with a rustup error on `./build.sh android`.
 - Fix: call `ensure_rust` before the Android bootstrap. README/BUILDING say "install rustup first" until then.
 
-## Y. Slint library fixes (build environment: ask first)
+## Y2. Slint long-press selection
 
-### #160 Android: Slint's text fields ignore the space-bar slide, and the copy bar covers the text
-- Where: Slint's Android layer, `i-slint-backend-android-activity` 1.18.1 (`java/SlintAndroidJavaHelper.java`), not our code. Slint 1.18 fixed the cursor handle at the screen's left edge in an empty field.
-- Problem:
-  - Sliding over Gboard's space bar doesn't move the cursor: the keyboard moves the selection through the input connection's `setSelection`, which only sets the selection span on the Java editable; `SlintEditable` reports text replacements (`replace` -> `update` -> `updateText`), never a selection-only change. Still so on Slint's master (2026-10-18).
-  - The cut/copy/paste bar still covers the field's text instead of sitting above it (FP5, 1.18.1, 2026-10-18; cause not found yet, its content rect comes from the same cursor coordinates). Closing the dialogs with a text field leaves nothing behind on 1.18.
-- Fix: override `setSelection` in the input connection to report the new selection (deferred to `endBatchEdit` inside a batch, like `replace`), vendored like the old `third_party/i-slint-compiler` until upstream ships it: build environment, so ask first, then the repro probe. Written to Slint's conventions and proposed upstream as a pull request.
+### #195 Android: after a long press selects a word, the selection end jumps to the finger
+- Where: Slint core's `TextInput` (`i-slint-core` `items/text.rs`, the pointer handling after a long press), not our code and not the Android Java helper: the FP5 log shows the selection changing on the Rust side only (16,48 -> 16,44 within 130 ms).
+- Problem: a long press selects the word, but the slightest finger movement before lifting moves the selection end to the finger, so the left end stays and the right one jumps. Android's own fields extend by whole words and ignore jitter. Found during batch Y's device test (FP5, 2026-10-18).
+- Fix: upstream in Slint core (extend by word after a long press, like Android); report it there first. Our app needs no change.
 
 ## Z. Android touch targets
 

@@ -3018,19 +3018,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/i-slint-backend-android-activity/i-slint-backend-android-activity-1.18.1.crate",
-        "sha256": "70d538003a566d7312572ac1435be0704934e46a63d55abdabede513f72332cb",
-        "dest": "cargo/vendor/i-slint-backend-android-activity-1.18.1"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"70d538003a566d7312572ac1435be0704934e46a63d55abdabede513f72332cb\", \"files\": {}}",
-        "dest": "cargo/vendor/i-slint-backend-android-activity-1.18.1",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/i-slint-backend-linuxkms/i-slint-backend-linuxkms-1.18.1.crate",
         "sha256": "0f519a8611a4982921e46e391015e5e40ceac5cc63813333ef91ada77df180d8",
         "dest": "cargo/vendor/i-slint-backend-linuxkms-1.18.1"
