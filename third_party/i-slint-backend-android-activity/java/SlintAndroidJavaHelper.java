@@ -436,12 +436,6 @@ class SlintInputView extends View {
                 view.getLocationInWindow(location);
                 outRect.set(selectionRect);
                 outRect.offset(-location[0], -location[1]);
-                if (outRect.top < 0) {
-                    // FIXME: I don't know why this is the case, but without that, the menu doesn't
-                    // show at the right position when there is no room on top.
-                    // Looks like the menu is always shown at outRect.top.
-                    outRect.top = outRect.bottom;
-                }
             }
 
         };

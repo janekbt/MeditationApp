@@ -14,6 +14,8 @@ with two fixes, both proposed upstream against Slint's master:
 - **The cut/copy/paste bar sits next to the selection.**
   `onGetContentRect()` handed Android window coordinates where it expects
   view coordinates, so the bar sat one status bar lower, on the text.
+  The old `top < 0` workaround is gone: with view coordinates, Android
+  already places the bar below a selection that is partly above the view.
 
 Everything else is unchanged; `diff -r` against the registry copy shows
 only these two fixes, plus the call to `select_word_on_long_press` in the
