@@ -7,10 +7,11 @@
 // own PendingIntent, so the Android pattern is one *template*
 // PendingIntent on the list + a per-row *fill-in* Intent (set in
 // the factory) merged into it at click time. The template is a
-// *broadcast* back to this receiver, not a direct activity
+// *broadcast* to MeditateWidgetLaunchReceiver (not exported, so
+// no other app can start a session), not a direct activity
 // launch: NativeActivity never forwards onNewIntent to native
 // code, so a warm process could never read the tapped uuid off
-// an Intent. Instead onReceive writes the uuid to the drop file
+// an Intent. Instead the receiver writes the uuid to the drop file
 // the Rust side polls (`<filesDir>/meditate/widget_launch`) and
 // then foregrounds the app — one channel that works whether the
 // app was dead or already running.
@@ -33,9 +34,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.util.Log
 import android.widget.RemoteViews
-import java.io.File
 
 class MeditateWidgetProvider : AppWidgetProvider() {
 
@@ -52,45 +51,6 @@ class MeditateWidgetProvider : AppWidgetProvider() {
         manager.notifyAppWidgetViewDataChanged(widgetIds, R.id.widget_list)
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == ACTION_LAUNCH) {
-            val uuid = intent.getStringExtra("preset_uuid")
-            if (!uuid.isNullOrEmpty()) {
-                writeLaunchFile(context, uuid)
-            }
-            // Foreground the app (cold start: this is the first
-            // launch; warm: brings the running task forward). The
-            // Rust side picks the uuid up from the drop file at
-            // android_main and on every tick.
-            try {
-                val launch = context.packageManager
-                    .getLaunchIntentForPackage(context.packageName)
-                if (launch != null) {
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(launch)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "deep-link launch failed: $e")
-            }
-            return
-        }
-        super.onReceive(context, intent)
-    }
-
-    private fun writeLaunchFile(context: Context, uuid: String) {
-        try {
-            // Mirrors widget::LAUNCH_FILENAME + the open_database
-            // layout (`<filesDir>/meditate/`). The dir normally
-            // already exists (the user had to open the app to
-            // star a preset); mkdirs is defensive.
-            val dir = File(context.filesDir, "meditate")
-            dir.mkdirs()
-            MeditateDropFile.write(File(dir, "widget_launch"), uuid)
-        } catch (e: Exception) {
-            Log.w(TAG, "writeLaunchFile failed: $e")
-        }
-    }
-
     private fun buildRemoteViews(context: Context, widgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_root)
 
@@ -104,11 +64,9 @@ class MeditateWidgetProvider : AppWidgetProvider() {
         views.setRemoteAdapter(R.id.widget_list, svc)
         views.setEmptyView(R.id.widget_list, R.id.widget_empty)
 
-        // Broadcast template back to this receiver; the row's
+        // Broadcast template to the launch receiver; the row's
         // fill-in (set in the factory) supplies preset_uuid.
-        val tap = Intent(context, MeditateWidgetProvider::class.java).apply {
-            action = ACTION_LAUNCH
-        }
+        val tap = Intent(context, MeditateWidgetLaunchReceiver::class.java)
         val mutableFlag =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                 PendingIntent.FLAG_MUTABLE
@@ -137,11 +95,5 @@ class MeditateWidgetProvider : AppWidgetProvider() {
         )
         views.setOnClickPendingIntent(R.id.widget_title, openPi)
         return views
-    }
-
-    companion object {
-        private const val TAG = "MeditateWidget"
-        private const val ACTION_LAUNCH =
-            "io.github.janekbt.Meditate.WIDGET_LAUNCH"
     }
 }

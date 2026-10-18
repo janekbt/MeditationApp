@@ -4321,17 +4321,11 @@ fn build_ui() -> MainWindow {
         app::render_time_of_day(key, &fmt).into()
     });
     if let Some(app) = android_app() {
-        // Try the exact regional bundle first (pt-BR → pt_BR,
-        // zh-CN → zh_CN), then the bare language (de-DE → de).
         // Without the regional step, pt-BR/zh-CN users fell back
         // to slint's sys-locale auto-pick — the SYSTEM language,
         // not the per-app one.
         let tag = about::locale_tag(app);
-        let mut candidates = vec![tag.replace('-', "_")];
-        if let Some((base, _)) = tag.split_once('-') {
-            candidates.push(base.to_string());
-        }
-        if !candidates.iter().any(|c| {
+        if !app::translation_candidates(&tag).iter().any(|c| {
             slint::select_bundled_translation(c).is_ok()
         }) {
             meditate_core::log(
@@ -5931,6 +5925,9 @@ fn build_ui() -> MainWindow {
                     return;
                 };
                 if !guided::play(app, &path) {
+                    // The failed start already silenced the playing row.
+                    ui.set_guided_manage_preview_uuid("".into());
+                    show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
                     return;
                 }
                 ui.set_guided_manage_preview_uuid(uuid.clone());
@@ -9873,6 +9870,11 @@ fn android_main(android_app: slint::android::AndroidApp) {
         let app = &android_app;
         alarm_volume::set_curve(audio::alarm_steps(app));
         audio::recover_alarm_volume(app);
+        // No session survives a new screen; one recreated mid-session
+        // left its service, notification, wake lock and track running.
+        service::stop_leftover(app);
+        guided::stop(app);
+        audio::stop(app);
     }
     // Sync whenever the app comes to the foreground — Android reports
     // a resume at launch too, so this is also the launch sync. Mirrors

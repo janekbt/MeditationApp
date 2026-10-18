@@ -174,6 +174,13 @@ class MeditateSessionService : Service() {
             context.startService(intent)
         }
 
+        /// Stop a service an earlier screen left running. stopService
+        /// never creates one, so a cold start shows no media control.
+        @JvmStatic
+        fun stopLeftover(context: Context) {
+            context.stopService(Intent(context, MeditateSessionService::class.java))
+        }
+
         /// A paused session lets the phone sleep; the service and its
         /// notification stay.
         @JvmStatic

@@ -58,6 +58,13 @@ pub fn stop(app: &AndroidApp) {
     }
 }
 
+/// Stop a service left running by an earlier screen; starts none.
+pub fn stop_leftover(app: &AndroidApp) {
+    if let Err(e) = invoke(app, "stopLeftover") {
+        meditate_core::log("service", &format!("stopLeftover FAILED: {e:?}"));
+    }
+}
+
 /// Release the wake lock while the session is paused; the service
 /// and its notification stay. Same swallow-error policy.
 pub fn pause(app: &AndroidApp) {

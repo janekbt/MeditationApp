@@ -13,7 +13,10 @@
 
 package io.github.janekbt.Meditate
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -27,6 +30,9 @@ object MeditateGuided {
     private val lock = Any()
     private var player: MediaPlayer? = null
     private var focusRequest: AudioFocusRequest? = null
+    // Earbuds disconnecting: pause like a focus loss, or the track
+    // moves to the loudspeaker.
+    private var noisyReceiver: BroadcastReceiver? = null
 
     private val attrs = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -38,7 +44,11 @@ object MeditateGuided {
         synchronized(lock) {
             releaseLocked(context)
             clearEos(context)
-            requestFocus(context)
+            if (!requestFocus(context)) {
+                // Refused (a call, say): report it, play nothing.
+                releaseLocked(context)
+                return false
+            }
             val mp = MediaPlayer()
             try {
                 mp.setAudioAttributes(attrs)
@@ -61,6 +71,16 @@ object MeditateGuided {
                 mp.prepare()
                 mp.start()
                 player = mp
+                val noisy = object : BroadcastReceiver() {
+                    override fun onReceive(c: Context, i: Intent) {
+                        markFocusLoss(context)
+                    }
+                }
+                context.applicationContext.registerReceiver(
+                    noisy,
+                    IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                )
+                noisyReceiver = noisy
                 return true
             } catch (e: Exception) {
                 Log.w(TAG, "startAudio failed path=$path: $e")
@@ -149,6 +169,10 @@ object MeditateGuided {
     }
 
     private fun releaseLocked(context: Context) {
+        noisyReceiver?.let { r ->
+            runCatching { context.applicationContext.unregisterReceiver(r) }
+        }
+        noisyReceiver = null
         abandonFocus(context)
         player?.let { mp ->
             runCatching { if (mp.isPlaying) mp.stop() }

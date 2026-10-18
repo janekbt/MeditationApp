@@ -14,6 +14,7 @@
 package io.github.janekbt.Meditate
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Build
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
@@ -69,8 +70,8 @@ object MeditateHaptics {
     // classifies un-attributed vibrations and the device's
     // haptic / DND settings can silently drop them; the ALARM
     // usage is exempt (same rationale as an alarm-clock buzz).
-    // The attributed overload is API 33+; minSdk-26..32 falls
-    // back to the bare call.
+    // Below 33 the AudioAttributes overload (API 26+) carries the
+    // same usage; without it Battery Saver on 9..12 drops it.
     private fun emit(vibrator: Vibrator, effect: VibrationEffect) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val attrs = VibrationAttributes.Builder()
@@ -79,7 +80,9 @@ object MeditateHaptics {
             vibrator.vibrate(effect, attrs)
         } else {
             @Suppress("DEPRECATION")
-            vibrator.vibrate(effect)
+            vibrator.vibrate(effect, AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .build())
         }
     }
 

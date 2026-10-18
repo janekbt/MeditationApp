@@ -87,3 +87,11 @@ Each row of the phone's pattern chooser SHALL show its controls as icon buttons 
 - **WHEN** a custom pattern named "Sanftes Ansteigen am Morgen" is listed in German at 360 dp width
 - **THEN** the full name shows, wrapped if needed, next to the play, edit and delete icons
 - **MANUAL** layout on a phone
+
+### Requirement: Vibration bells get through Battery Saver
+On the phone, a vibration bell SHALL be sent as an alarm vibration on every Android version whose Battery Saver lets alarm vibrations through (9 and newer).
+
+#### Scenario: A Vibration end bell on Android 9 to 12 under Battery Saver
+- **WHEN** a session with a Vibration end bell ends on Android 9 to 12 with Battery Saver on
+- **THEN** the phone vibrates
+- **TEST** `meditate-android/src/app.rs::vibrations_are_alarms_on_every_android`

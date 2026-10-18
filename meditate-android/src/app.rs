@@ -890,6 +890,21 @@ mod local_folder_tests {
     }
 }
 
+/// The bundled translations to try for an Android language tag, best
+/// first: language and region, then the language alone.
+pub fn translation_candidates(tag: &str) -> Vec<String> {
+    let mut parts = tag.split('-');
+    let lang = parts.next().unwrap_or_default();
+    // A script subtag ("Hans") sits between language and region.
+    let region = parts.find(|p| {
+        (p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic()))
+            || (p.len() == 3 && p.chars().all(|c| c.is_ascii_digit()))
+    });
+    let mut out: Vec<String> = region.map(|r| format!("{lang}_{r}")).into_iter().collect();
+    out.push(lang.to_string());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -2777,7 +2792,7 @@ mod tests {
         let picker = read("MeditateFilePickerActivity.kt");
         assert_eq!(picker.matches("MeditateDropFile.write(").count(), 5, "pick, failed pick, export result, csv pick, local folder");
         assert!(!picker.contains(".writeText("));
-        assert!(read("MeditateWidgetProvider.kt").contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
+        assert!(read("MeditateWidgetLaunchReceiver.kt").contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
         assert!(read("MeditateGuidedImport.kt").contains("MeditateDropFile.write(File(dir, \"guided_import_result.$run\"), result)"));
         let local = read("MeditateLocalFolder.kt");
         assert_eq!(local.matches("MeditateDropFile.write(").count(), 2, "scan, lengths");
@@ -3221,6 +3236,151 @@ mod tests {
         assert!(kt[at..at + 80].contains("releaseWakeLock()"));
         let at = kt.find("ACTION_RESUME_SESSION -> ").unwrap();
         assert!(kt[at..at + 80].contains("acquireWakeLock()"));
+    }
+
+    #[test]
+    fn only_the_widget_can_start_a_preset() {
+        // The exported widget provider wrote the launch file for any
+        // app's broadcast; the default preset ids are public.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(root.join("android/app/src/main/AndroidManifest.xml")).unwrap();
+        let at = manifest.find("android:name=\".MeditateWidgetLaunchReceiver\"").expect("launch receiver declared");
+        let decl = &manifest[at..at + manifest[at..].find('>').unwrap()];
+        assert!(decl.contains("android:exported=\"false\""));
+        assert!(decl.trim_end().ends_with('/'), "no intent-filter: only an explicit intent reaches it");
+        let provider = std::fs::read_to_string(root.join("kotlin/MeditateWidgetProvider.kt")).unwrap();
+        assert!(!provider.contains("override fun onReceive"), "the exported provider ignores launches");
+        assert!(!provider.contains("writeLaunchFile"));
+        assert!(provider.contains("Intent(context, MeditateWidgetLaunchReceiver::class.java)"), "the tap goes to the new receiver");
+        let receiver = std::fs::read_to_string(root.join("kotlin/MeditateWidgetLaunchReceiver.kt")).unwrap();
+        assert!(receiver.contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
+        assert!(receiver.contains("context.startActivity(launch)"));
+    }
+
+    #[test]
+    fn a_phone_transfer_takes_no_app_data() {
+        // allowBackup="false" stops only cloud backup since Android 12;
+        // a transfer copied the device id to the new phone.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(root.join("android/app/src/main/AndroidManifest.xml")).unwrap();
+        assert!(manifest.contains("android:dataExtractionRules=\"@xml/data_extraction_rules\""));
+        let rules = std::fs::read_to_string(root.join("android/app/src/main/res/xml/data_extraction_rules.xml")).unwrap();
+        for section in ["device-transfer", "cloud-backup"] {
+            let at = rules.find(&format!("<{section}>")).unwrap_or_else(|| panic!("{section} missing"));
+            let body = &rules[at..at + rules[at..].find(&format!("</{section}>")).unwrap()];
+            assert!(!body.contains("<include"));
+            for domain in ["root", "file", "database", "sharedpref", "external",
+                "device_root", "device_file", "device_database", "device_sharedpref"] {
+                assert!(body.contains(&format!("<exclude domain=\"{domain}\" path=\".\" />")), "{section} keeps {domain}");
+            }
+        }
+    }
+
+    fn kotlin_fn<'a>(kt: &'a str, sig: &str) -> &'a str {
+        let at = kt.find(sig).unwrap_or_else(|| panic!("{sig} missing"));
+        &kt[at..at + kt[at..].find("\n    }\n").unwrap()]
+    }
+
+    #[test]
+    fn a_refused_audio_focus_starts_no_track() {
+        // The track played on through a call when focus was refused.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateGuided.kt")).unwrap();
+        let body = kotlin_fn(&kt, "fun startAudio(");
+        let gate = body.find("if (!requestFocus(context))").expect("focus is checked");
+        assert!(gate < body.find("MediaPlayer()").unwrap(), "before a player exists");
+        let block = &body[gate..gate + body[gate..].find("\n            }").unwrap()];
+        assert!(block.contains("return false"));
+    }
+
+    #[test]
+    fn disconnected_headphones_pause_the_track() {
+        // With nothing listening, the track moved to the loudspeaker.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateGuided.kt")).unwrap();
+        assert!(kt.contains("AudioManager.ACTION_AUDIO_BECOMING_NOISY"));
+        let start = kotlin_fn(&kt, "fun startAudio(");
+        assert!(start.contains("context.applicationContext.registerReceiver("));
+        let release = kotlin_fn(&kt, "private fun releaseLocked(");
+        assert!(release.contains("unregisterReceiver("));
+        let at = kt.find("onReceive(").expect("noisy receiver");
+        assert!(kt[at..at + 200].contains("markFocusLoss("));
+    }
+
+    #[test]
+    fn a_guided_preview_that_fails_says_so() {
+        // Play on a file whose audio hadn't arrived did nothing visible.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = ui.find("ui.on_guided_manage_preview_tap(").unwrap();
+        let body = &ui[at..at + ui[at..].find("\n    }\n").unwrap()];
+        let fail = body.find("if !guided::play(app, &path) {").unwrap();
+        let branch = &body[fail..fail + body[fail..].find("return;").unwrap()];
+        assert!(branch.contains("invoke_playback_failed()"));
+        // The failed start already silenced the row that was playing.
+        assert!(branch.contains("ui.set_guided_manage_preview_uuid(\"\".into());"), "no row stays Stop");
+    }
+
+    #[test]
+    fn a_language_with_a_script_picks_its_region() {
+        // zh-Hans-CN became zh_Hans_CN, then zh; the bundle is zh_CN.
+        assert_eq!(super::translation_candidates("zh-Hans-CN"), ["zh_CN", "zh"]);
+        assert_eq!(super::translation_candidates("sr-Latn"), ["sr"]);
+    }
+
+    #[test]
+    fn a_language_without_a_script_picks_as_before() {
+        assert_eq!(super::translation_candidates("pt-BR"), ["pt_BR", "pt"]);
+        assert_eq!(super::translation_candidates("es-419"), ["es_419", "es"]);
+        assert_eq!(super::translation_candidates("de"), ["de"]);
+    }
+
+    #[test]
+    fn vibrations_are_alarms_on_every_android() {
+        // Below Android 13 the bare vibrate() had no usage, and Battery
+        // Saver dropped it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateHaptics.kt")).unwrap();
+        let body = kotlin_fn(&kt, "private fun emit(");
+        let older = &body[body.find("} else {").expect("below-33 branch")..];
+        assert!(older.contains("vibrator.vibrate(effect, AudioAttributes.Builder()"));
+        assert!(older.contains(".setUsage(AudioAttributes.USAGE_ALARM)"));
+        assert!(!older.contains("vibrator.vibrate(effect)\n"));
+    }
+
+    #[test]
+    fn configuration_changes_keep_the_session() {
+        // These recreated the screen and ended a running session.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(root.join("android/app/src/main/AndroidManifest.xml")).unwrap();
+        let at = manifest.find("android:configChanges=\"").unwrap() + "android:configChanges=\"".len();
+        let values: Vec<&str> = manifest[at..at + manifest[at..].find('"').unwrap()].split('|').collect();
+        for v in ["fontScale", "smallestScreenSize", "keyboard", "navigation",
+            "fontWeightAdjustment", "orientation", "keyboardHidden", "screenSize", "screenLayout", "density", "uiMode"] {
+            assert!(values.contains(&v), "{v} missing");
+        }
+        // A language change still recreates the screen: the
+        // translation is picked once, at startup.
+        assert!(!values.contains(&"locale") && !values.contains(&"layoutDirection"));
+    }
+
+    #[test]
+    fn startup_stops_what_an_old_screen_left_running() {
+        // A recreated screen came back Idle while the service, its
+        // notification, the wake lock and a guided track ran on.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let main = &ui[ui.find("fn android_main(").unwrap()..];
+        let from = main.find("set_android_app(android_app.clone());").unwrap();
+        let to = main.find("slint::android::init_with_event_listener(").unwrap();
+        let startup = &main[from..to];
+        for call in ["service::stop_leftover(app);", "guided::stop(app);", "audio::stop(app);"] {
+            assert!(startup.contains(call), "{call} missing at startup");
+        }
+        // stopService: a cold start must not create the service (and
+        // flash its media control) just to stop it.
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        assert!(kotlin_fn(&kt, "fun stopLeftover(").contains("context.stopService("));
     }
 
     #[test]

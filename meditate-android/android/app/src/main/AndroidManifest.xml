@@ -39,12 +39,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- No cloud/D2D backup: the DB restores wrong (Keystore-
-         encrypted sync secret can't decrypt on another device) and
+         encrypted sync secret can't decrypt on another device, and
+         a copied device id makes two phones sync as one) and
          Nextcloud sync + CSV export are the real backup story.
          Session notes are personal data; keep them off transports
-         the user never chose. -->
+         the user never chose. allowBackup="false" covers both up to
+         Android 11; from 12 on it no longer stops a phone-to-phone
+         transfer, which dataExtractionRules does. -->
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="true"
@@ -53,7 +57,7 @@
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode|fontScale|smallestScreenSize|keyboard|navigation|fontWeightAdjustment"
             android:windowSoftInputMode="adjustResize">
             <meta-data
                 android:name="android.app.lib_name"
@@ -98,6 +102,13 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_provider" />
         </receiver>
+
+        <!-- The widget's row tap. Not exported and no intent-filter:
+             only the widget's own PendingIntent reaches it, so no
+             other app can start a session. -->
+        <receiver
+            android:name=".MeditateWidgetLaunchReceiver"
+            android:exported="false" />
 
         <!-- Backs R.id.widget_list. BIND_REMOTEVIEWS is the
              system-held permission that lets only the platform

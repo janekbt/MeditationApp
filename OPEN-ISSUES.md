@@ -29,7 +29,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
 | [x] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
 | [ ] | K3. Presets all or nothing | #193 | a preset that fails halfway |
-| [ ] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
+| [x] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
 | [x] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
@@ -56,42 +56,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Fix: nestable transactions (savepoints) in core::db, then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
 
 ## L. Android platform (manifest: ask first)
-
-### #50 Android: any installed app can start a meditation
-- Where: `meditate-android/kotlin/MeditateWidgetProvider.kt:55-78`; receiver `exported="true"` in the manifest.
-- Problem: `WIDGET_LAUNCH` arrives at the exported widget receiver, which writes `widget_launch` without a check. The default preset uuids are public constants. A session starts (now or at next launch) and its end bell rings at alarm volume.
-- Fix: a small non-exported receiver for the launch action; point the widget's tap PendingIntent at it. Manifest change: ask first.
-
-### #51 Android: phone-to-phone transfer copies the device id
-- Where: `meditate-android/android/app/src/main/AndroidManifest.xml:41-47`.
-- Problem: since API 31, `allowBackup="false"` only stops cloud backup, not device-to-device transfer. A new phone gets the old `device_id`; if the old phone keeps syncing, both write events under one id.
-- Fix: `android:dataExtractionRules` with a `<device-transfer>` section excluding everything. Manifest change: ask first and run the repro probe.
-
-### #57 Android: guided audio quirks
-- Where: `kotlin/MeditateGuided.kt:38`; `src/ui.rs:5332-5334`.
-- Problem: `startAudio` ignores a refused audio focus, so a track plays during a call and is never paused. In Manage Files, Play on a not-yet-downloaded file does nothing visible.
-- Fix: return false when focus is refused (Rust already shows "Couldn't start playback"); show `invoke_playback_failed` in the preview path.
-- Also: nothing listens for `ACTION_AUDIO_BECOMING_NOISY`, so when Bluetooth earbuds disconnect during a guided session the track moves to the loudspeaker (`MeditateGuided.kt:36-69, 146-153`). Register a receiver on applicationContext in `startAudio` that calls `markFocusLoss`, unregister it in `releaseLocked`; the existing focus-loss path pauses the timer and the track.
-
-### #79 Android: the Simplified Chinese translation is never picked
-- Where: `meditate-android/kotlin/MeditateAbout.kt:268-270`; `src/ui.rs:3831-3841`.
-- Problem: the system tag is usually `zh-Hans-CN`, which becomes `zh_Hans_CN` then `zh`; the bundle is `zh_CN`, so the app stays English. Not checked on a device.
-- Fix: return `"${l.language}-${l.country}"` (or just `language` when country is empty).
-
-### #63 Android: a paused session keeps the phone awake
-- Where: `kotlin/MeditateSessionService.kt:178-186`, `src/ui.rs:277-313`.
-- Problem: pause keeps the partial wake lock, renewed every 30 min, so the 200 ms tick runs all night if a paused session is forgotten.
-- Fix: release on pause, re-acquire on resume. Or skip if this never happens in practice.
-
-### #149 Android 8-12: vibration bells are dropped under Battery Saver
-- Where: `meditate-android/kotlin/MeditateHaptics.kt:67-84`.
-- Problem: below API 33 the code calls `vibrate(effect)` with no usage. In battery saver, Android 8-12 only lets alarm, ringtone and communication vibrations through, so a Vibration end bell is silent. The FP5 (Android 15) is not affected.
-- Fix: `vibrator.vibrate(effect, AudioAttributes` with `USAGE_ALARM)`, which exists since API 26; correct the comment that says it needs API 33.
-
-### #176 Android: a font-size or language change mid-session ends the session but leaves its service running
-- Where: `meditate-android/android/app/src/main/AndroidManifest.xml:56` (`configChanges` lacks `fontScale|locale|smallestScreenSize|keyboard|navigation|layoutDirection`); `service::stop` / `guided::stop` / `audio::stop` run only on an Active-to-inactive transition.
-- Problem: a font size or language change, split screen or a hardware keyboard recreates the NativeActivity. Startup finalizes the live snapshot as "recovered" (up to 60 s lost) and comes back Idle, while the foreground service, its notification, the wake lock and a guided track keep going. Not yet confirmed on the FP5.
-- Fix: add the missing `configChanges`; at startup stop any leftover service and players when no session is active. Manifest: ask first, run the repro probe.
 
 ## N. Stats numbers
 
