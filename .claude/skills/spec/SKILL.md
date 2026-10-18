@@ -246,6 +246,7 @@ not approval either: reply with the test steps and wait.
 | "The other app can follow later." | Both apps, in the same change, or a written reason the human approved. |
 | "The test passed first time, good." | Either it tests nothing or the behaviour existed. Find out which. |
 | "It built." | Stat the artifact. |
+| "They tested (or said ship), so now the optimised build." | Every build is the debug build. Only the maintainer asking for an optimised build builds one. |
 | "The reviewer found nothing, so it's right." | The review is one check of several; step 6 still applies. |
 | "They said go earlier." | Approval covers what you showed. New scope needs a new go. |
 | "An `#[allow(...)]` silences it." | Fix the cause. |
