@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 08:46+0200\n"
+"POT-Creation-Date: 2026-10-18 10:14+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -86,7 +86,7 @@ msgstr ""
 msgid "Meditate"
 msgstr ""
 
-#: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:708
+#: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:722
 #: src/presets.rs:695 src/timer/imp.rs:2582 src/timer/imp.rs:3788
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
@@ -206,11 +206,11 @@ msgstr ""
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/bells.rs:478 src/log/imp.rs:443
+#: src/bells.rs:478 src/log/imp.rs:458
 msgid "min"
 msgstr ""
 
-#: src/bells.rs:478 src/log/imp.rs:878 src/timer/imp.rs:3891
+#: src/bells.rs:478 src/log/imp.rs:892 src/timer/imp.rs:3891
 msgid "Minutes"
 msgstr ""
 
@@ -650,108 +650,108 @@ msgstr ""
 msgid "No audio files in this folder"
 msgstr ""
 
-#: src/log/imp.rs:350
+#: src/log/imp.rs:365
 msgid "All labels"
 msgstr ""
 
-#: src/log/imp.rs:491
+#: src/log/imp.rs:506
 msgid "No note added"
 msgstr ""
 
-#: src/log/imp.rs:533
+#: src/log/imp.rs:548
 msgid "Delete Session"
 msgstr ""
 
-#: src/log/imp.rs:652
+#: src/log/imp.rs:666
 msgid "Today"
 msgstr ""
 
-#: src/log/imp.rs:653
+#: src/log/imp.rs:667
 msgid "Yesterday"
 msgstr ""
 
-#: src/log/imp.rs:675 src/log/imp.rs:677
+#: src/log/imp.rs:689 src/log/imp.rs:691
 #, rust-format
 msgid "1 session"
 msgid_plural "{n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/log/imp.rs:865 src/timer/imp.rs:3884
+#: src/log/imp.rs:879 src/timer/imp.rs:3884
 msgid "Hours"
 msgstr ""
 
-#: src/log/imp.rs:898
+#: src/log/imp.rs:912
 msgid "Date"
 msgstr ""
 
-#: src/log/imp.rs:915
+#: src/log/imp.rs:929
 msgid "Pick a Date"
 msgstr ""
 
-#: src/log/imp.rs:940
+#: src/log/imp.rs:954
 msgid "Hour"
 msgstr ""
 
-#: src/log/imp.rs:945
+#: src/log/imp.rs:959
 msgid "Minute"
 msgstr ""
 
-#: src/log/imp.rs:959 data/ui/timer_view.blp:358
+#: src/log/imp.rs:973 data/ui/timer_view.blp:358
 msgid "Selected"
 msgstr ""
 
-#: src/log/imp.rs:974 data/ui/timer_view.blp:352 data/ui/window.blp:107
+#: src/log/imp.rs:988 data/ui/timer_view.blp:352 data/ui/window.blp:107
 msgid "Label"
 msgstr ""
 
-#: src/log/imp.rs:975 data/ui/timer_view.blp:353
+#: src/log/imp.rs:989 data/ui/timer_view.blp:353
 msgid "Tag this session"
 msgstr ""
 
-#: src/log/imp.rs:1033 src/window/imp.rs:432
+#: src/log/imp.rs:1047 src/window/imp.rs:432
 msgid "Note (optional)"
 msgstr ""
 
-#: src/log/imp.rs:1053 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
+#: src/log/imp.rs:1067 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
 #: data/ui/timer_view.blp:481
 msgid "Duration"
 msgstr ""
 
-#: src/log/imp.rs:1059
+#: src/log/imp.rs:1073
 msgid "Start time"
 msgstr ""
 
-#: src/log/imp.rs:1088
+#: src/log/imp.rs:1102
 msgid "_Cancel"
 msgstr ""
 
-#: src/log/imp.rs:1092 src/preferences.rs:342
+#: src/log/imp.rs:1106 src/preferences.rs:342
 msgid "_Save"
 msgstr ""
 
-#: src/log/imp.rs:1092
+#: src/log/imp.rs:1106
 msgid "_Add"
 msgstr ""
 
-#: src/log/imp.rs:1136 src/log/imp.rs:1143
+#: src/log/imp.rs:1150 src/log/imp.rs:1157
 msgid "Edit Session"
 msgstr ""
 
-#: src/log/imp.rs:1136 src/log/imp.rs:1143 data/ui/log_view.blp:18
+#: src/log/imp.rs:1150 src/log/imp.rs:1157 data/ui/log_view.blp:18
 #: data/ui/window.blp:117
 msgid "Add Session"
 msgstr ""
 
-#: src/log/imp.rs:1164 src/timer/imp.rs:3973
+#: src/log/imp.rs:1178 src/timer/imp.rs:3973
 msgid "(none — pick one)"
 msgstr ""
 
-#: src/log/imp.rs:1263 src/timer/imp.rs:2543
+#: src/log/imp.rs:1277 src/timer/imp.rs:2543
 msgid "Couldn't save session — storage error"
 msgstr ""
 
-#: src/log/imp.rs:1268 src/timer/imp.rs:2561
+#: src/log/imp.rs:1282 src/timer/imp.rs:2561
 msgid "Couldn't save session — storage unavailable"
 msgstr ""
 
@@ -2035,41 +2035,112 @@ msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:93
 msgid ""
-"A large round of fixes, mostly for the Android app, and a few new touches."
+"New ways to practise, most of them suggested by @voidplayer: thank you! Also "
+"a long round of fixes for sync, backups and the timer. Please update every "
+"device that syncs together: older versions read interval bells only in whole "
+"minutes."
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
-msgid "Log cards show the name of the guided meditation you listened to"
+msgid ""
+"Guided: play files from a folder of your own, browsed by folder or as one "
+"list, without copying them"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
-msgid "Editing a session in the log keeps its exact length, down to the second"
+msgid ""
+"Interval bells: times in seconds or minutes, the jitter as a time, and a "
+"repeating bell whose gap grows on each ring"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
+msgid ""
+"One screen from start to end: save, add or discard the session on the "
+"running page, with your note"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+msgid ""
+"Auto-Finish, per mode: a countdown saves itself when the time is up, with "
+"Undo"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:99
+msgid ""
+"The Log's label colours follow the accent colour and are the same on every "
+"device"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:100
+msgid "Setup shows which starred preset is in effect"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:101
+msgid ""
+"Backups restore without doubling the synced log, and a partly unreadable "
+"file asks before importing the rest"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:102
+msgid ""
+"Sync: data-safety fixes, a clear status when a sync can't start, and a file "
+"the server refuses no longer stops the rest"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:103
+msgid ""
+"Bells and the timer stay right after a suspend; the trend card compares the "
+"last 30 days with the 30 before"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:104
+msgid ""
+"Android: each bell's volume sets the phone's alarm step, so bells no longer "
+"ring at full volume on some phones; dates and the week start follow your "
+"language; your own vibration patterns can be deleted"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:105
+msgid "A failed save now says so instead of looking saved"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+msgid ""
+"A large round of fixes, mostly for the Android app, and a few new touches."
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:113
+msgid "Log cards show the name of the guided meditation you listened to"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:114
+msgid "Editing a session in the log keeps its exact length, down to the second"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:115
 msgid ""
 "A session that started in the hour skipped by a daylight saving change keeps "
 "its real date"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:116
 msgid ""
 "In Overtime the timer holds at the planned length, and a guided track stops "
 "before the end bell"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:99
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:117
 msgid "Imported bell sounds are found on every synced device"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:100
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:118
 msgid ""
 "Android: rename and delete your own bell sounds, a \"Meditation complete\" "
 "notification, and interval bells with an on/off switch and typeable minutes "
 "and jitter"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:101
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
 msgid ""
 "Android: many fixes from two full bug reviews. Every change now syncs, a "
 "finished session is kept until you save or discard it, the screen-off timer "
@@ -2077,13 +2148,13 @@ msgid ""
 "translated"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
 msgid ""
 "Every bell now has its own volume, plus fixes for issues reported by "
 "@voidplayer — thank you!"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
 msgid ""
 "Each bell has its own volume slider under its sound: starting, interval and "
 "end bells, and the Box Breath cues. On Android the level is absolute: it "
@@ -2091,175 +2162,175 @@ msgid ""
 "volume"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
 msgid "Starting and interval bells no longer ring during guided meditations"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
 msgid ""
 "Guided meditations and sounds can be imported from MP4 files. Files without "
 "an audio track show a clear message instead of failing silently"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:130
 msgid "Android: the starting bell now rings when preparation time is off"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:113
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:131
 msgid ""
 "The desktop app is fully translated in all nine languages, and counts use "
 "the correct plural form in every language"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:137
 msgid "Beta for testing."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:121
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:139
 msgid ""
 "Bell volume: a new slider in Preferences sets how loud bells ring, relative "
 "to the system volume."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:140
 msgid ""
 "Guided meditations and sounds can be imported from MP4 files. Files without "
 "an audio track now show a clear message instead of failing silently."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:141
 msgid ""
 "The app is now fully translated in all nine languages, and counts like “21 "
 "days” are shown correctly in every language."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:134
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:139
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:147
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:152
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:157
 msgid ""
 "Packaging only: the Android build now produces identical output on any "
 "machine, so F-Droid can verify it against this source. Nothing changes in "
 "the app itself."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:144
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:162
 msgid ""
 "Fixes for entering a session length by keyboard on Android, and a packaging "
 "change so F-Droid can verify the app against its source."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:146
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:164
 msgid ""
 "Android: typing a duration and tapping Set now keeps what you typed, instead "
 "of falling back to the previous value"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:147
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:165
 msgid ""
 "Android: tapping the hours or minutes selects the whole number, so the first "
 "keystroke replaces it"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:148
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:166
 msgid ""
 "Android: the dismiss button in the session editor is announced as \"Cancel\" "
 "by screen readers again"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:154
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:172
 msgid ""
 "Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the "
 "Android app."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:159
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:177
 msgid ""
 "A longer reach for daily goals, and a friendlier way to set a session length "
 "on Android."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:161
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:179
 msgid ""
 "The daily goal can now be set to anything up to 24 hours, instead of "
 "stopping at 4"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:162
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:180
 msgid ""
 "Android: tap the hours or minutes in the time picker to type a duration, "
 "rather than only stepping it with the plus and minus buttons"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:163
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:181
 msgid ""
 "Android: the Save button in the session editor no longer runs off the edge "
 "of the screen in languages with longer words"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:164
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:182
 msgid ""
 "Android builds are now reproducible, so the published APK can be verified "
 "against this source"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:170
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
 msgid ""
 "Nextcloud sync between all your devices, a guided-audio mode, daily goals, "
 "custom sounds and vibration patterns — and the first release of the Android "
 "companion app."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:172
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
 msgid ""
 "Sync sessions, labels, presets, bells, and preferences between your devices "
 "via your own Nextcloud server — offline-first, with automatic conflict "
 "handling and remote-storage compaction"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:173
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:191
 msgid ""
 "New Guided mode: import your own guided-meditation audio; the end bell rings "
 "when the track finishes"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:174
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
 msgid ""
 "Stats now track a daily goal: the progress ring resets each day and the "
 "heatmap stars days that cleared it"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:175
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:193
 msgid ""
 "Interval, starting, and end bells are configurable per mode, with imported "
 "custom sounds and a visual vibration-pattern editor"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:176
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:194
 msgid ""
 "Session log gains CSV export/import (duplicate-safe on re-import) and "
 "Insight Timer import"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:177
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:195
 msgid ""
 "Duplicate labels created on two devices can be merged from a conflict "
 "prompt, moving all sessions onto the surviving label"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:178
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:196
 msgid ""
 "Android companion app (F-Droid): the same modes, log, stats, and sync, "
 "sharing the identical core — plus a home-screen widget for one-tap preset "
 "starts, in all ten languages"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:203
 msgid ""
 "A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
 "for bug reporting — plus a handful of polish fixes."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:187
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:205
 msgid ""
 "New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
 "(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
@@ -2267,123 +2338,123 @@ msgid ""
 "in, hold, out, hold"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:206
 msgid ""
 "Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
 "row, so you can see how much meditation time you've spent under each label"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:189
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:207
 msgid ""
 "About dialog has a new Troubleshooting view with a rolling diagnostics log "
 "(startup, database open, import/export results, panics) — copy or save to "
 "attach to a bug report"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:208
 msgid ""
 "Each timer mode remembers its own last-chosen label, so a Box Breath session "
 "no longer changes the default label for Countdown or Stopwatch"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:191
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:209
 msgid ""
 "Release notes shown in the About dialog now reflect the current version "
 "instead of staying pinned to the initial release"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:210
 msgid ""
 "Log-edit calendar picker shows the proper icon again; post-session note "
 "field no longer steals focus on phones and hides the Save / Discard buttons "
 "behind the on-screen keyboard"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:199
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:217
 msgid ""
 "Performance and polish pass, focused on Linux phones like the Librem 5. The "
 "app starts and switches views noticeably faster on lower-end ARM hardware, "
 "and the consequential-action buttons now carry the standard red tint."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:201
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:219
 msgid ""
 "Cold start is roughly twice as fast on slow ARM phones; view switches, "
 "session start, and session end no longer stall the UI"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:202
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:220
 msgid ""
 "Haptic feedback on session end now fires correctly on devices with "
 "feedbackd, without the end-sound doubling up"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:203
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:221
 msgid ""
 "Stop, Discard, and per-session delete buttons are styled as destructive "
 "(red) per the GNOME HIG"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:204
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:222
 msgid ""
 "Log view loads 15 sessions per page by default instead of 200, with Load "
 "more for older entries"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:211
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:229
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
 "data features, and translations in nine languages."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:213
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:231
 msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:214
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:232
 msgid ""
 "Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
 "insights panel"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:215
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:233
 msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:216
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:234
 msgid "CSV import and export, plus one-click migration from Insight Timer"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:217
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:235
 msgid ""
 "Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
 "as the new default"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:218
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:236
 msgid "Post-session note field is now multi-line"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:219
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:237
 msgid "Weekly goal resets on the locale's first day of the week"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:220
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:238
 msgid "New \"Vibrate on session end\" toggle for Linux phones"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:221
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:239
 msgid ""
 "Full translation coverage across English, German, Spanish, French, Italian, "
 "Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:222
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:240
 msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:228
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr ""

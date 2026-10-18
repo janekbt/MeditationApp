@@ -1,0 +1,9 @@
+• Meditaciones guiadas desde tu carpeta, sin copiarlas
+• Campanas en segundos, variación como tiempo, pausas que crecen
+• Una sola pantalla final: guardar, añadir o descartar
+• «Finalizar automáticamente» guarda la cuenta atrás
+• Las etiquetas del registro siguen el color de acento
+• Las campanas mantienen tu volumen en más teléfonos
+• Muchas correcciones de sincronización, copias y guardado
+• Actualiza todos los dispositivos sincronizados
+• Gracias a @voidplayer por la mayoría de las ideas

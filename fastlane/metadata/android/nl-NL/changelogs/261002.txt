@@ -1,0 +1,9 @@
+• Begeleide meditaties uit je eigen map, zonder kopiëren
+• Beltijden in seconden, variatie als tijd, groeiende pauzes
+• Eén eindscherm: opslaan, toevoegen of verwijderen
+• 'Automatisch afronden' slaat een aftelling op als de tijd om is
+• Labelkleuren in het logboek volgen de accentkleur
+• Bellen houden op meer telefoons het ingestelde volume
+• Veel oplossingen voor synchronisatie, back-ups en opslaan
+• Werk alle gesynchroniseerde apparaten bij
+• Dank aan @voidplayer voor de meeste ideeën

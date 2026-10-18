@@ -1,0 +1,9 @@
+• Geführte Meditationen aus einem eigenen Ordner, ohne Kopieren
+• Glockenzeiten in Sekunden, Streuung als Zeit, wachsende Abstände
+• Ein Endbildschirm: speichern, hinzufügen oder verwerfen
+• „Automatisch beenden“ speichert Countdowns selbst
+• Labelfarben im Verlauf folgen der Akzentfarbe
+• Glocken halten auf mehr Handys ihre Lautstärke
+• Viele Korrekturen für Sync, Sicherungen und Speichern
+• Bitte alle synchronisierten Geräte aktualisieren
+• Danke an @voidplayer für die meisten Ideen

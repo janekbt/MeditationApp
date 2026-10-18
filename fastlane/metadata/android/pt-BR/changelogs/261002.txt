@@ -1,0 +1,9 @@
+• Meditações guiadas da sua própria pasta, sem copiar
+• Sinos em segundos, variação como tempo, intervalos crescentes
+• Uma só tela final: salvar, adicionar ou descartar
+• "Concluir automaticamente" salva uma contagem regressiva
+• As cores das etiquetas no histórico seguem a cor de destaque
+• Os sinos mantêm seu volume em mais celulares
+• Correções de sincronização, backups e salvamento
+• Atualize todos os dispositivos que sincronizam juntos
+• Obrigado a @voidplayer pela maioria das ideias

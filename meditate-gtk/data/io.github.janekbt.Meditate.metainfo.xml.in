@@ -88,6 +88,24 @@
   </content_rating>
 
   <releases>
+    <release version="26.10.2" date="2026-10-18">
+      <description translate="yes">
+        <p>New ways to practise, most of them suggested by @voidplayer: thank you! Also a long round of fixes for sync, backups and the timer. Please update every device that syncs together: older versions read interval bells only in whole minutes.</p>
+        <ul>
+          <li>Guided: play files from a folder of your own, browsed by folder or as one list, without copying them</li>
+          <li>Interval bells: times in seconds or minutes, the jitter as a time, and a repeating bell whose gap grows on each ring</li>
+          <li>One screen from start to end: save, add or discard the session on the running page, with your note</li>
+          <li>Auto-Finish, per mode: a countdown saves itself when the time is up, with Undo</li>
+          <li>The Log's label colours follow the accent colour and are the same on every device</li>
+          <li>Setup shows which starred preset is in effect</li>
+          <li>Backups restore without doubling the synced log, and a partly unreadable file asks before importing the rest</li>
+          <li>Sync: data-safety fixes, a clear status when a sync can't start, and a file the server refuses no longer stops the rest</li>
+          <li>Bells and the timer stay right after a suspend; the trend card compares the last 30 days with the 30 before</li>
+          <li>Android: each bell's volume sets the phone's alarm step, so bells no longer ring at full volume on some phones; dates and the week start follow your language; your own vibration patterns can be deleted</li>
+          <li>A failed save now says so instead of looking saved</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.10.1" date="2026-10-04">
       <description translate="yes">
         <p>A large round of fixes, mostly for the Android app, and a few new touches.</p>

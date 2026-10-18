@@ -1,0 +1,9 @@
+• Méditations guidées depuis votre dossier, sans copie
+• Cloches en secondes, variation en durée, écarts croissants
+• Un seul écran de fin : enregistrer, ajouter ou abandonner
+• « Terminer automatiquement » enregistre un compte à rebours
+• Les étiquettes du journal suivent l'accent
+• Les cloches gardent votre volume sur plus de téléphones
+• Corrections : synchro, sauvegardes, enregistrement
+• Mettez à jour tous les appareils synchronisés
+• Merci à @voidplayer pour la plupart des idées

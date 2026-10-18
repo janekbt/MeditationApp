@@ -1,0 +1,9 @@
+• Play guided meditations from your own folder, without copying
+• Bell times in seconds, jitter as a time, gaps that grow
+• One end screen: save, add or discard on the running page
+• Auto-Finish saves a countdown when the time is up
+• Log label colours follow the accent
+• Bells keep the volume you set on more phones
+• Many fixes for sync, backups and failed saves
+• Please update all devices that sync together
+• Thanks to @voidplayer for most of these ideas

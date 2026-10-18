@@ -1,0 +1,9 @@
+• Meditazioni guidate dalla tua cartella, senza copiarle
+• Campane in secondi, variazione come tempo, intervalli crescenti
+• Una sola schermata finale: salva, aggiungi o scarta
+• «Termina automaticamente» salva un conto alla rovescia
+• I colori delle etichette nel registro seguono l'accento
+• Le campane mantengono il tuo volume su più telefoni
+• Correzioni per sincronizzazione, backup e salvataggio
+• Aggiorna tutti i dispositivi sincronizzati
+• Grazie a @voidplayer per gran parte delle idee

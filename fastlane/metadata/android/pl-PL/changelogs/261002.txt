@@ -1,0 +1,9 @@
+• Medytacje z przewodnikiem z własnego folderu, bez kopiowania
+• Dzwonki w sekundach, losowość jako czas, rosnące odstępy
+• Jeden ekran końcowy: zapisz, dodaj lub odrzuć
+• „Kończ automatycznie” zapisuje odliczanie po upływie czasu
+• Kolory etykiet w dzienniku podążają za kolorem akcentu
+• Dzwonki trzymają głośność na większej liczbie telefonów
+• Wiele poprawek synchronizacji, kopii i zapisywania
+• Zaktualizuj wszystkie synchronizowane urządzenia
+• Dziękuję @voidplayer za większość pomysłów
