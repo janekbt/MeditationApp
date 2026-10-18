@@ -282,8 +282,8 @@ phone. Wrap ssh and scp in `timeout`, since a suspended phone hangs each call.
 
 ## CI
 
-`.github/workflows/flatpak.yml` runs on pushes and pull requests to `main`,
-and manually on any branch:
+`.github/workflows/flatpak.yml` runs on pull requests to `beta`, and
+manually on any branch:
 
 ```sh
 gh workflow run flatpak.yml --ref beta               # everything (~35 min)
@@ -294,4 +294,5 @@ Jobs: metainfo + desktop-file validation, `cargo test` + `clippy -D warnings`
 for core and android, an Android release APK (JDK 21 and no build-tools
 31.0.0, so its APK is not the reproducible one; signed with the debug
 keystore), and the x86_64 and aarch64 Flatpak bundles. The bundles of
-a tagged commit's run are what a release ships to Linux users.
+the release commit's run on `beta` are what a release ships to Linux
+users; `main` fast-forwards to that same commit, so pushing it runs nothing.

@@ -183,7 +183,9 @@ Flathub is not available to this app, so the GitHub release is the ONLY way
 Linux users get a build. A release without the bundles ships nothing for the
 primary target.
 
-Wait for the Flatpak CI run on the tagged commit to go green, then:
+The bundles come from the Flatpak CI run dispatched on `beta` in step 4.
+`main` fast-forwards to that same commit and pushing it starts no run, so
+that run already is the tagged commit's run. Once the release is published:
 
     build-aux/attach-flatpaks.sh <version>
 
@@ -192,8 +194,8 @@ them as `meditate-<version>-<arch>.flatpak`. It refuses to run if no
 successful run exists for the tag's commit, so the bundles always match the
 tag rather than whatever was built last.
 
-- Do NOT cancel the CI run on the tagged commit, even when later pushes make
-  it look redundant. Its artifacts are the release. If it was cancelled,
+- Do NOT cancel the step 4 run on the release commit, even when later
+  pushes make it look redundant. Its artifacts are the release. If it was cancelled,
   re-run it: `gh run rerun <id>`, or `gh workflow run flatpak.yml --ref <tag>`.
 - Batch documentation and recipe commits into one push BEFORE tagging, so
   there are no redundant runs tempting you to cancel in the first place.

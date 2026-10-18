@@ -1,10 +1,10 @@
 name: Flatpak CI
 
 on:
-  push:
-    branches: [main]
+  # main only moves by fast-forward to a commit beta's run already built, and
+  # attach-flatpaks.sh picks the run by commit, so pushes to main run nothing.
   pull_request:
-    branches: [main]
+    branches: [beta]
   # Manual trigger: run CI on any branch (e.g. beta) without paying for CI
   # on every push. Use the "Run workflow" button under the Actions tab and
   # pick the branch to test. scope=light skips the two long Flatpak

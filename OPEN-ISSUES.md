@@ -428,3 +428,8 @@ So these aren't proposed again:
 - Splitting `ui.rs` per screen or the big core files: cosmetic.
 - A `Divider` component, a page stack model, caching JNI classes, moving the CAN_DUCK policy to Rust, a typed `SettingKey` enum, a core pending-Undo queue.
 - Back on the Done screen discarding the session (decided behaviour).
+
+### #194 Back up everything, not only the Log
+- Where: Preferences backup in both apps; the CSV export (`meditate-core/src/data_io.rs`) carries sessions and labels only.
+- Problem: without sync, presets, interval bells, Box Breath patterns, vibration patterns, imported sounds and guided files, and every setting live only on the device. A lost or reset phone or laptop loses them; the CSV restores the Log alone.
+- Idea: a full backup file (the database, e.g. `VACUUM INTO`, which needs no new dependency, plus the sounds and guided audio) and a restore for it, in both apps. Open questions: what a restore does to the device id, the event log and sync state on a device that syncs, and whether it replaces or merges. Raised by the maintainer, 2026-10-18.
