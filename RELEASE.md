@@ -111,6 +111,12 @@ another `JAVA_HOME`. Confirm:
   and let Janek confirm the release works before tagging. The
   release-key APK is only for publishing: it can't install over a
   debug-key install.
+- **[judgment] Linux check, when `runtime-version` in the manifest
+  changed since the last release:** download `meditate-aarch64.flatpak`
+  from the green run, install it on the Librem 5 and let Janek run one
+  timer session (bells, vibration, the end notification) before
+  tagging. Also check that the run has both `meditate-<arch>.tar.gz`
+  and that `bin/meditate` in the aarch64 one is an aarch64 binary.
 
 ## 5. Tag and publish (needs Janek's explicit go)
 
@@ -189,10 +195,19 @@ that run already is the tagged commit's run. Once the release is published:
 
     build-aux/attach-flatpaks.sh <version>
 
-It pulls `meditate-{x86_64,aarch64}.flatpak` from that exact run and uploads
-them as `meditate-<version>-<arch>.flatpak`. It refuses to run if no
-successful run exists for the tag's commit, so the bundles always match the
-tag rather than whatever was built last.
+It pulls `meditate-{x86_64,aarch64}.flatpak` and the app trees
+`meditate-{x86_64,aarch64}.tar.gz` from that exact run and uploads them as
+`meditate-<version>-<arch>.flatpak` and
+`meditate-<version>-linux-<arch>.tar.gz`. It refuses to run if no
+successful run exists for the tag's commit, so the files always match the
+tag rather than whatever was built last, and it downloads all four before
+uploading any.
+
+The tarballs are what FlatPark installs: its package downloads them at
+install time and finds new releases twice a day by the
+`linux-<arch>.tar.gz` names. Don't rename them or change their layout
+(one `meditate/` directory holding the `/app` tree) without updating the
+package in github.com/flatpark/flatpark first.
 
 - Do NOT cancel the step 4 run on the release commit, even when later
   pushes make it look redundant. Its artifacts are the release. If it was cancelled,

@@ -131,7 +131,7 @@ flatpak-builder --user --install --force-clean --install-deps-from=flathub \
 flatpak run io.github.janekbt.Meditate
 ```
 
-`--install-deps-from=flathub` pulls the GNOME 50 runtime/SDK and the
+`--install-deps-from=flathub` pulls the GNOME 51 runtime/SDK and the
 `rust-stable` extension on first run. `--install` replaces any installed
 Meditate Flatpak. The build runs cargo offline against
 `build-aux/cargo-sources.json`, which must list every crate in `Cargo.lock`
@@ -323,6 +323,7 @@ gh workflow run flatpak.yml --ref beta -f scope=light  # skip the two Flatpak bu
 Jobs: metainfo + desktop-file validation, `cargo test` + `clippy -D warnings`
 for core and android, an Android release APK (JDK 21 and no build-tools
 31.0.0, so its APK is not the reproducible one; signed with the debug
-keystore), and the x86_64 and aarch64 Flatpak bundles. The bundles of
+keystore), and the x86_64 and aarch64 Flatpak bundles plus their app
+trees as tarballs for FlatPark. The bundles and tarballs of
 the release commit's run on `beta` are what a release ships to Linux
 users; `main` fast-forwards to that same commit, so pushing it runs nothing.

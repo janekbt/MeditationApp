@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.janekbt.Meditate</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Meditate</name>
+  <name xml:lang="zh-Hans-CN">Meditate</name>
+  <name xml:lang="ru">Meditate</name>
+  <name xml:lang="pt-BR">Meditate</name>
+  <name xml:lang="pl">Meditate</name>
+  <name xml:lang="nl">Meditate</name>
+  <name xml:lang="it">Meditate</name>
+  <name xml:lang="fr">Meditate</name>
+  <name xml:lang="es">Meditate</name>
+  <name xml:lang="de">Meditate</name>
+  <summary>Meditation timer and session log</summary>
+  <summary xml:lang="zh-Hans-CN">冥想计时器与会话记录</summary>
+  <summary xml:lang="ru">Таймер медитации и журнал сессий</summary>
+  <summary xml:lang="pt-BR">Temporizador de meditação e histórico de sessões</summary>
+  <summary xml:lang="pl">Minutnik do medytacji i dziennik sesji</summary>
+  <summary xml:lang="nl">Meditatietimer en sessielogboek</summary>
+  <summary xml:lang="it">Timer di meditazione e registro delle sessioni</summary>
+  <summary xml:lang="fr">Minuteur de méditation et journal de séances</summary>
+  <summary xml:lang="es">Temporizador de meditación y registro de sesiones</summary>
+  <summary xml:lang="de">Meditationstimer und Sitzungsprotokoll</summary>
+  <description>
+    <p>
+      Meditate is a simple meditation companion for GNOME. It provides a
+      countdown and stopwatch timer, a session log, and statistics to help
+      you build a consistent practice.
+    </p>
+    <p xml:lang="zh-Hans-CN">Meditate 是一款适用于 GNOME 的简洁冥想助手。它提供倒计时和秒表计时器、会话记录以及统计功能，帮助你养成持续的练习习惯。</p>
+    <p xml:lang="ru">Meditate — простой помощник для медитации в GNOME. Он предлагает таймер обратного отсчёта и секундомер, журнал сессий и статистику, которые помогут выработать регулярную практику.</p>
+    <p xml:lang="pt-BR">O Meditate é um companheiro de meditação simples para o GNOME. Ele oferece um temporizador com contagem regressiva e cronômetro, um histórico de sessões e estatísticas para ajudar você a manter uma prática constante.</p>
+    <p xml:lang="pl">Meditate to prosty towarzysz medytacji dla GNOME. Oferuje minutnik z odliczaniem i stoperem, dziennik sesji oraz statystyki, które pomagają wypracować regularną praktykę.</p>
+    <p xml:lang="nl">Meditate is een eenvoudige meditatiehulp voor GNOME. De app biedt een aftel- en stopwatchtimer, een sessielogboek en statistieken om je te helpen een regelmatige beoefening op te bouwen.</p>
+    <p xml:lang="it">Meditate è un semplice compagno di meditazione per GNOME. Offre un timer con conto alla rovescia e cronometro, un registro delle sessioni e statistiche per aiutarti a costruire una pratica costante.</p>
+    <p xml:lang="fr">Meditate est un compagnon de méditation simple pour GNOME. Il propose un compte à rebours et un chronomètre, un journal des séances et des statistiques pour vous aider à installer une pratique régulière.</p>
+    <p xml:lang="es">Meditate es un sencillo compañero de meditación para GNOME. Ofrece un temporizador de cuenta atrás y cronómetro, un registro de sesiones y estadísticas que te ayudan a mantener una práctica constante.</p>
+    <p xml:lang="de">Meditate ist ein schlichter Meditationsbegleiter für GNOME. Mit Countdown- und Stoppuhr-Timer, Sitzungsprotokoll und Statistik hilft er dir, eine beständige Praxis aufzubauen.</p>
+    <ul>
+      <li>Countdown and stopwatch timer modes</li>
+      <li xml:lang="zh-Hans-CN">倒计时与秒表模式</li>
+      <li xml:lang="ru">Режимы обратного отсчёта и секундомера</li>
+      <li xml:lang="pt-BR">Modos contagem regressiva e cronômetro</li>
+      <li xml:lang="pl">Tryby odliczania i stopera</li>
+      <li xml:lang="nl">Aftel- en stopwatchmodus</li>
+      <li xml:lang="it">Modalità conto alla rovescia e cronometro</li>
+      <li xml:lang="fr">Modes compte à rebours et chronomètre</li>
+      <li xml:lang="es">Modos de cuenta atrás y cronómetro</li>
+      <li xml:lang="de">Countdown- und Stoppuhr-Modus</li>
+      <li>Label your sessions (sitting, walking, chanting, …)</li>
+      <li xml:lang="zh-Hans-CN">为会话添加标签（坐姿、行走、持诵 …）</li>
+      <li xml:lang="ru">Помечайте сессии (сидя, ходьба, мантра, …)</li>
+      <li xml:lang="pt-BR">Rotule suas sessões (sentado, caminhando, cântico, …)</li>
+      <li xml:lang="pl">Oznaczaj sesje (siedząca, spacer, mantra …)</li>
+      <li xml:lang="nl">Label je sessies (zittend, lopend, mantra, …)</li>
+      <li xml:lang="it">Etichetta le tue sessioni (seduto, camminando, mantra, …)</li>
+      <li xml:lang="fr">Étiquetez vos séances (assis, en marche, chant, …)</li>
+      <li xml:lang="es">Etiqueta tus sesiones (sentado, caminando, mantra …)</li>
+      <li xml:lang="de">Sitzungen beschriften (sitzend, gehend, Mantra …)</li>
+      <li>Add notes to each session</li>
+      <li xml:lang="zh-Hans-CN">为每次会话添加笔记</li>
+      <li xml:lang="ru">Добавляйте заметки к каждой сессии</li>
+      <li xml:lang="pt-BR">Adicione notas a cada sessão</li>
+      <li xml:lang="pl">Dodawaj notatki do każdej sesji</li>
+      <li xml:lang="nl">Voeg notities toe aan elke sessie</li>
+      <li xml:lang="it">Aggiungi note a ogni sessione</li>
+      <li xml:lang="fr">Ajoutez des notes à chaque séance</li>
+      <li xml:lang="es">Añade notas a cada sesión</li>
+      <li xml:lang="de">Notizen zu jeder Sitzung hinzufügen</li>
+      <li>View your history and statistics</li>
+      <li xml:lang="zh-Hans-CN">查看历史与统计</li>
+      <li xml:lang="ru">Просматривайте историю и статистику</li>
+      <li xml:lang="pt-BR">Veja seu histórico e estatísticas</li>
+      <li xml:lang="pl">Przeglądaj historię i statystyki</li>
+      <li xml:lang="nl">Bekijk je geschiedenis en statistieken</li>
+      <li xml:lang="it">Consulta la cronologia e le statistiche</li>
+      <li xml:lang="fr">Consultez votre historique et vos statistiques</li>
+      <li xml:lang="es">Consulta tu historial y estadísticas</li>
+      <li xml:lang="de">Verlauf und Statistik einsehen</li>
+      <li>Track your streak and stay consistent</li>
+      <li xml:lang="zh-Hans-CN">跟踪连续天数，保持稳定练习</li>
+      <li xml:lang="ru">Следите за серией и сохраняйте регулярность</li>
+      <li xml:lang="pt-BR">Acompanhe sua sequência e mantenha a constância</li>
+      <li xml:lang="pl">Śledź swoją passę i utrzymuj rytm</li>
+      <li xml:lang="nl">Houd je reeks bij en blijf consistent</li>
+      <li xml:lang="it">Monitora la tua serie e mantieni la costanza</li>
+      <li xml:lang="fr">Suivez votre série et gardez le cap</li>
+      <li xml:lang="es">Sigue tu racha y mantén la constancia</li>
+      <li xml:lang="de">Verfolge deine Serie und bleib dran</li>
+    </ul>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-timer.png</image>
+      <caption>Countdown timer with quick presets and streak display</caption>
+      <caption xml:lang="zh-Hans-CN">倒计时，配有快捷预设与连续天数显示</caption>
+      <caption xml:lang="ru">Обратный отсчёт с предустановками и серией</caption>
+      <caption xml:lang="pt-BR">Contagem regressiva com predefinições e sequência</caption>
+      <caption xml:lang="pl">Odliczanie z ustawieniami i licznikiem passy</caption>
+      <caption xml:lang="nl">Aftel-timer met snelvoorinstellingen en reeks</caption>
+      <caption xml:lang="it">Conto alla rovescia con preimpostazioni rapide e serie</caption>
+      <caption xml:lang="fr">Compte à rebours avec préréglages et série affichée</caption>
+      <caption xml:lang="es">Temporizador de cuenta atrás con preajustes y racha</caption>
+      <caption xml:lang="de">Countdown-Timer mit Schnellauswahl und Serienanzeige</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-stats.png</image>
+      <caption>Weekly goal, 13-week heatmap, and insights</caption>
+      <caption xml:lang="zh-Hans-CN">每周目标、13 周热力图与分析</caption>
+      <caption xml:lang="ru">Недельная цель, тепловая карта за 13 недель и аналитика</caption>
+      <caption xml:lang="pt-BR">Meta semanal, mapa de calor de 13 semanas e análises</caption>
+      <caption xml:lang="pl">Cel tygodniowy, mapa ciepła 13 tygodni i analizy</caption>
+      <caption xml:lang="nl">Wekelijks doel, heatmap van 13 weken en inzichten</caption>
+      <caption xml:lang="it">Obiettivo settimanale, heatmap di 13 settimane e analisi</caption>
+      <caption xml:lang="fr">Objectif hebdomadaire, heatmap sur 13 semaines et analyses</caption>
+      <caption xml:lang="es">Meta semanal, mapa de calor de 13 semanas y análisis</caption>
+      <caption xml:lang="de">Wochenziel, 13-Wochen-Heatmap und Einblicke</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-log.png</image>
+      <caption>Session log grouped by date, with labels and notes</caption>
+      <caption xml:lang="zh-Hans-CN">按日期分组的会话记录，带标签与笔记</caption>
+      <caption xml:lang="ru">Журнал сессий, сгруппированный по дате, с метками и заметками</caption>
+      <caption xml:lang="pt-BR">Histórico de sessões agrupado por data, com rótulos e notas</caption>
+      <caption xml:lang="pl">Dziennik sesji pogrupowany według daty, z etykietami i notatkami</caption>
+      <caption xml:lang="nl">Sessielogboek gegroepeerd op datum, met labels en notities</caption>
+      <caption xml:lang="it">Registro delle sessioni raggruppato per data, con etichette e note</caption>
+      <caption xml:lang="fr">Journal des séances groupé par date, avec étiquettes et notes</caption>
+      <caption xml:lang="es">Registro de sesiones agrupado por fecha, con etiquetas y notas</caption>
+      <caption xml:lang="de">Nach Datum gruppiertes Sitzungsprotokoll mit Labels und Notizen</caption>
+    </screenshot>
+  </screenshots>
+  <launchable type="desktop-id">io.github.janekbt.Meditate.desktop</launchable>
+  <icon type="stock">io.github.janekbt.Meditate</icon>
+  <categories>
+    <category>Utility</category>
+    <category>Clock</category>
+  </categories>
+  <url type="homepage">https://github.com/janekbt/MeditationApp</url>
+  <url type="bugtracker">https://github.com/janekbt/MeditationApp/issues</url>
+  <developer id="io.github.janekbt">
+    <name>janekbt</name>
+    <name xml:lang="zh-Hans-CN">janekbt</name>
+    <name xml:lang="ru">janekbt</name>
+    <name xml:lang="pt-BR">janekbt</name>
+    <name xml:lang="pl">janekbt</name>
+    <name xml:lang="nl">janekbt</name>
+    <name xml:lang="it">janekbt</name>
+    <name xml:lang="fr">janekbt</name>
+    <name xml:lang="es">janekbt</name>
+    <name xml:lang="de">janekbt</name>
+  </developer>
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-cartoon">none</content_attribute>
+    <content_attribute id="violence-fantasy">none</content_attribute>
+    <content_attribute id="violence-realistic">none</content_attribute>
+    <content_attribute id="violence-bloodshed">none</content_attribute>
+    <content_attribute id="violence-sexual">none</content_attribute>
+    <content_attribute id="violence-desecration">none</content_attribute>
+    <content_attribute id="violence-slavery">none</content_attribute>
+    <content_attribute id="violence-worship">none</content_attribute>
+    <content_attribute id="drugs-alcohol">none</content_attribute>
+    <content_attribute id="drugs-narcotics">none</content_attribute>
+    <content_attribute id="drugs-tobacco">none</content_attribute>
+    <content_attribute id="sex-nudity">none</content_attribute>
+    <content_attribute id="sex-themes">none</content_attribute>
+    <content_attribute id="sex-homosexuality">none</content_attribute>
+    <content_attribute id="sex-prostitution">none</content_attribute>
+    <content_attribute id="sex-adultery">none</content_attribute>
+    <content_attribute id="sex-appearance">none</content_attribute>
+    <content_attribute id="language-profanity">none</content_attribute>
+    <content_attribute id="language-humor">none</content_attribute>
+    <content_attribute id="language-discrimination">none</content_attribute>
+    <content_attribute id="social-chat">none</content_attribute>
+    <content_attribute id="social-info">none</content_attribute>
+    <content_attribute id="social-audio">none</content_attribute>
+    <content_attribute id="social-location">none</content_attribute>
+    <content_attribute id="social-contacts">none</content_attribute>
+    <content_attribute id="money-purchasing">none</content_attribute>
+    <content_attribute id="money-gambling">none</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="26.10.2" date="2026-10-18">
+      <description translate="yes">
+        <p>New ways to practise, most of them suggested by @voidplayer: thank you! Also a long round of fixes for sync, backups and the timer. Please update every device that syncs together: older versions read interval bells only in whole minutes.</p>
+        <p xml:lang="zh-Hans-CN">新的练习方式，其中大部分由 @voidplayer 提出：谢谢你！另外还有大量同步、备份和计时器方面的修复。请更新所有一起同步的设备：旧版本只能以整分钟读取间隔铃。</p>
+        <p xml:lang="ru">Новые способы практики, большинство предложил @voidplayer: спасибо! А также много исправлений синхронизации, резервных копий и таймера. Обновите все устройства, которые синхронизируются вместе: старые версии читают интервальные колокола только в целых минутах.</p>
+        <p xml:lang="pt-BR">Novas formas de praticar, a maioria sugerida por @voidplayer: obrigado! Também muitas correções de sincronização, backups e cronômetro. Atualize todos os dispositivos que sincronizam juntos: versões anteriores leem os sinos de intervalo apenas em minutos inteiros.</p>
+        <p xml:lang="pl">Nowe sposoby praktyki, w większości zaproponowane przez @voidplayer: dziękuję! Do tego wiele poprawek synchronizacji, kopii zapasowych i minutnika. Zaktualizuj wszystkie urządzenia, które synchronizują się razem: starsze wersje odczytują dzwonki interwałowe tylko w pełnych minutach.</p>
+        <p xml:lang="nl">Nieuwe manieren om te oefenen, de meeste voorgesteld door @voidplayer: dank je! Daarnaast veel oplossingen voor synchronisatie, back-ups en de timer. Werk alle apparaten bij die samen synchroniseren: oudere versies lezen intervalbellen alleen in hele minuten.</p>
+        <p xml:lang="it">Nuovi modi di praticare, quasi tutti suggeriti da @voidplayer: grazie! E molte correzioni per sincronizzazione, backup e timer. Aggiorna tutti i dispositivi che si sincronizzano insieme: le versioni precedenti leggono le campane a intervalli solo in minuti interi.</p>
+        <p xml:lang="fr">De nouvelles façons de pratiquer, la plupart suggérées par @voidplayer : merci ! Et de nombreuses corrections pour la synchronisation, les sauvegardes et le minuteur. Mettez à jour tous les appareils synchronisés ensemble : les anciennes versions ne lisent les cloches d'intervalle qu'en minutes entières.</p>
+        <p xml:lang="es">Nuevas formas de practicar, la mayoría sugeridas por @voidplayer: ¡gracias! Además, muchas correcciones de sincronización, copias de seguridad y temporizador. Actualiza todos los dispositivos que sincronizan juntos: las versiones anteriores solo leen las campanas de intervalo en minutos enteros.</p>
+        <p xml:lang="de">Neue Möglichkeiten zum Üben, die meisten davon vorgeschlagen von @voidplayer: danke! Dazu viele Korrekturen für Sync, Sicherungen und den Timer. Bitte aktualisiere alle Geräte, die zusammen synchronisieren: ältere Versionen lesen Intervallglocken nur in ganzen Minuten.</p>
+        <ul>
+          <li>Guided: play files from a folder of your own, browsed by folder or as one list, without copying them</li>
+          <li xml:lang="zh-Hans-CN">引导：直接播放你自己文件夹中的文件，可按文件夹浏览或作为一个列表，无需复制</li>
+          <li xml:lang="ru">С гидом: воспроизводите файлы из своей папки, по папкам или одним списком, без копирования</li>
+          <li xml:lang="pt-BR">Guiada: toque arquivos de uma pasta sua, por pastas ou como uma só lista, sem copiá-los</li>
+          <li xml:lang="pl">Z przewodnikiem: odtwarzaj pliki z własnego folderu, według folderów lub jako jedną listę, bez kopiowania</li>
+          <li xml:lang="nl">Begeleid: speel bestanden af uit een eigen map, per map of als één lijst, zonder ze te kopiëren</li>
+          <li xml:lang="it">Guidata: riproduci i file di una tua cartella, per cartelle o in un unico elenco, senza copiarli</li>
+          <li xml:lang="fr">Guidée : lisez les fichiers d'un dossier à vous, par dossier ou en une seule liste, sans les copier</li>
+          <li xml:lang="es">Guiada: reproduce archivos de tu propia carpeta, por carpetas o en una sola lista, sin copiarlos</li>
+          <li xml:lang="de">Geführt: Dateien aus einem eigenen Ordner abspielen, nach Ordnern oder als eine Liste, ohne sie zu kopieren</li>
+          <li>Interval bells: times in seconds or minutes, the jitter as a time, and a repeating bell whose gap grows on each ring</li>
+          <li xml:lang="zh-Hans-CN">间隔铃：时间可用秒或分钟，随机幅度改为时间，重复铃的间隔可在每次响铃后增长</li>
+          <li xml:lang="ru">Интервальные колокола: время в секундах или минутах, разброс как время и повторяющийся колокол, пауза которого растёт с каждым ударом</li>
+          <li xml:lang="pt-BR">Sinos de intervalo: tempos em segundos ou minutos, a variação como tempo e um sino repetido cujo intervalo cresce a cada toque</li>
+          <li xml:lang="pl">Dzwonki interwałowe: czasy w sekundach lub minutach, losowość jako czas i powtarzany dzwonek, którego odstęp rośnie z każdym uderzeniem</li>
+          <li xml:lang="nl">Intervalbellen: tijden in seconden of minuten, de variatie als tijd, en een herhalende bel waarvan de pauze bij elke slag groeit</li>
+          <li xml:lang="it">Campane a intervalli: tempi in secondi o minuti, la variazione come tempo e una campana ripetuta il cui intervallo cresce a ogni rintocco</li>
+          <li xml:lang="fr">Cloches d'intervalle : durées en secondes ou en minutes, la variation en durée, et une cloche répétée dont l'écart grandit à chaque son</li>
+          <li xml:lang="es">Campanas de intervalo: tiempos en segundos o minutos, la variación como tiempo y una campana repetida cuya pausa crece en cada toque</li>
+          <li xml:lang="de">Intervallglocken: Zeiten in Sekunden oder Minuten, die Streuung als Zeit und eine wiederholte Glocke, deren Abstand bei jedem Läuten wächst</li>
+          <li>One screen from start to end: save, add or discard the session on the running page, with your note</li>
+          <li xml:lang="zh-Hans-CN">从开始到结束只有一个页面：在计时页面直接保存、添加或放弃会话，并附上备注</li>
+          <li xml:lang="ru">Один экран от начала до конца: сохраните, добавьте или удалите сессию прямо на странице таймера, с заметкой</li>
+          <li xml:lang="pt-BR">Uma tela do início ao fim: salve, adicione ou descarte a sessão na página em andamento, com sua nota</li>
+          <li xml:lang="pl">Jeden ekran od początku do końca: zapisz, dodaj lub odrzuć sesję na trwającej stronie, z notatką</li>
+          <li xml:lang="nl">Eén scherm van begin tot eind: sla de sessie op de lopende pagina op, voeg toe of verwijder, met je notitie</li>
+          <li xml:lang="it">Una schermata dall'inizio alla fine: salva, aggiungi o scarta la sessione nella pagina in corso, con la tua nota</li>
+          <li xml:lang="fr">Un seul écran du début à la fin : enregistrez, ajoutez ou abandonnez la séance sur la page en cours, avec votre note</li>
+          <li xml:lang="es">Una pantalla de principio a fin: guarda, añade o descarta la sesión en la página en curso, con tu nota</li>
+          <li xml:lang="de">Ein Bildschirm von Anfang bis Ende: die Sitzung auf der laufenden Seite speichern, hinzufügen oder verwerfen, mit deiner Notiz</li>
+          <li>Auto-Finish, per mode: a countdown saves itself when the time is up, with Undo</li>
+          <li xml:lang="zh-Hans-CN">自动结束（按模式）：时间到时倒计时会自动保存，并可撤销</li>
+          <li xml:lang="ru">Автозавершение для каждого режима: обратный отсчёт сохраняется сам, когда время вышло, с возможностью отмены</li>
+          <li xml:lang="pt-BR">Concluir automaticamente, por modo: uma contagem regressiva se salva sozinha quando o tempo acaba, com Desfazer</li>
+          <li xml:lang="pl">Automatyczne zakończenie dla każdego trybu: odliczanie zapisuje się samo po upływie czasu, z opcją Cofnij</li>
+          <li xml:lang="nl">Automatisch afronden, per modus: een aftelling slaat zichzelf op als de tijd om is, met Ongedaan maken</li>
+          <li xml:lang="it">Termina automaticamente, per modalità: un conto alla rovescia si salva da solo allo scadere del tempo, con Annulla</li>
+          <li xml:lang="fr">Terminer automatiquement, par mode : un compte à rebours s'enregistre seul quand le temps est écoulé, avec Annuler</li>
+          <li xml:lang="es">Finalizar automáticamente, por modo: una cuenta atrás se guarda sola al terminar el tiempo, con Deshacer</li>
+          <li xml:lang="de">Automatisch beenden, je Modus: ein Countdown speichert sich selbst, wenn die Zeit um ist, mit Rückgängig</li>
+          <li>The Log's label colours follow the accent colour and are the same on every device</li>
+          <li xml:lang="zh-Hans-CN">记录中的标签颜色跟随强调色，并在每台设备上一致</li>
+          <li xml:lang="ru">Цвета меток в журнале следуют акцентному цвету и одинаковы на всех устройствах</li>
+          <li xml:lang="pt-BR">As cores das etiquetas no histórico seguem a cor de destaque e são iguais em todos os dispositivos</li>
+          <li xml:lang="pl">Kolory etykiet w dzienniku podążają za kolorem akcentu i są takie same na każdym urządzeniu</li>
+          <li xml:lang="nl">De labelkleuren in het logboek volgen de accentkleur en zijn op elk apparaat gelijk</li>
+          <li xml:lang="it">I colori delle etichette nel registro seguono il colore di accento e sono uguali su ogni dispositivo</li>
+          <li xml:lang="fr">Les couleurs des étiquettes du journal suivent la couleur d'accent et sont les mêmes sur chaque appareil</li>
+          <li xml:lang="es">Los colores de etiqueta del registro siguen el color de acento y son iguales en todos los dispositivos</li>
+          <li xml:lang="de">Die Labelfarben im Verlauf folgen der Akzentfarbe und sind auf jedem Gerät gleich</li>
+          <li>Setup shows which starred preset is in effect</li>
+          <li xml:lang="zh-Hans-CN">设置页会显示当前生效的是哪个已加星标的预设</li>
+          <li xml:lang="ru">Настройка показывает, какой отмеченный звёздочкой пресет сейчас действует</li>
+          <li xml:lang="pt-BR">A configuração mostra qual predefinição com estrela está em uso</li>
+          <li xml:lang="pl">Ustawienia pokazują, który oznaczony gwiazdką szablon obowiązuje</li>
+          <li xml:lang="nl">De instellingen tonen welke voorinstelling met ster nu geldt</li>
+          <li xml:lang="it">La configurazione mostra quale preset preferito è in uso</li>
+          <li xml:lang="fr">La configuration indique quel préréglage favori est en vigueur</li>
+          <li xml:lang="es">La configuración muestra qué preajuste destacado está en uso</li>
+          <li xml:lang="de">Die Einrichtung zeigt, welche markierte Voreinstellung gerade gilt</li>
+          <li>Backups restore without doubling the synced log, and a partly unreadable file asks before importing the rest</li>
+          <li xml:lang="zh-Hans-CN">恢复备份时不再与已同步的记录重复，部分无法读取的文件会先询问是否导入其余内容</li>
+          <li xml:lang="ru">Резервные копии восстанавливаются без удвоения синхронизированного журнала, а при частично нечитаемом файле приложение спрашивает перед импортом остального</li>
+          <li xml:lang="pt-BR">Backups são restaurados sem duplicar o histórico sincronizado, e um arquivo em parte ilegível pergunta antes de importar o resto</li>
+          <li xml:lang="pl">Kopie zapasowe przywracają się bez podwajania synchronizowanego dziennika, a przy częściowo nieczytelnym pliku aplikacja pyta przed importem reszty</li>
+          <li xml:lang="nl">Back-ups worden hersteld zonder het gesynchroniseerde logboek te verdubbelen, en bij een deels onleesbaar bestand wordt eerst gevraagd of de rest geïmporteerd moet worden</li>
+          <li xml:lang="it">I backup si ripristinano senza raddoppiare il registro sincronizzato, e un file in parte illeggibile chiede prima di importare il resto</li>
+          <li xml:lang="fr">Les sauvegardes se restaurent sans doubler le journal synchronisé, et un fichier en partie illisible demande avant d'importer le reste</li>
+          <li xml:lang="es">Las copias de seguridad se restauran sin duplicar el registro sincronizado, y un archivo en parte ilegible pregunta antes de importar el resto</li>
+          <li xml:lang="de">Sicherungen werden wiederhergestellt, ohne den synchronisierten Verlauf zu verdoppeln, und bei einer teils unlesbaren Datei fragt die App, bevor sie den Rest importiert</li>
+          <li>Sync: data-safety fixes, a clear status when a sync can't start, and a file the server refuses no longer stops the rest</li>
+          <li xml:lang="zh-Hans-CN">同步：数据安全修复；同步无法开始时显示清楚的状态；服务器拒绝的文件不再阻止其余内容同步</li>
+          <li xml:lang="ru">Синхронизация: исправления сохранности данных, понятный статус, когда синхронизация не может начаться, а отклонённый сервером файл больше не останавливает остальное</li>
+          <li xml:lang="pt-BR">Sincronização: correções de segurança dos dados, um status claro quando uma sincronização não pode começar, e um arquivo recusado pelo servidor não interrompe mais o resto</li>
+          <li xml:lang="pl">Synchronizacja: poprawki bezpieczeństwa danych, jasny status, gdy synchronizacja nie może się rozpocząć, a plik odrzucony przez serwer nie zatrzymuje już reszty</li>
+          <li xml:lang="nl">Synchronisatie: oplossingen voor gegevensveiligheid, een duidelijke status als een synchronisatie niet kan starten, en een bestand dat de server weigert houdt de rest niet meer tegen</li>
+          <li xml:lang="it">Sincronizzazione: correzioni per la sicurezza dei dati, uno stato chiaro quando una sincronizzazione non può partire, e un file rifiutato dal server non blocca più il resto</li>
+          <li xml:lang="fr">Synchronisation : corrections pour la sécurité des données, un état clair quand une synchronisation ne peut pas démarrer, et un fichier refusé par le serveur n'arrête plus le reste</li>
+          <li xml:lang="es">Sincronización: correcciones de seguridad de datos, un estado claro cuando una sincronización no puede empezar, y un archivo que el servidor rechaza ya no detiene el resto</li>
+          <li xml:lang="de">Sync: Korrekturen für die Datensicherheit, ein klarer Status, wenn ein Sync nicht starten kann, und eine vom Server abgelehnte Datei hält den Rest nicht mehr auf</li>
+          <li>Bells and the timer stay right after a suspend; the trend card compares the last 30 days with the 30 before</li>
+          <li xml:lang="zh-Hans-CN">休眠后铃声和计时器仍然准确；趋势卡片比较最近 30 天与之前的 30 天</li>
+          <li xml:lang="ru">Колокола и таймер остаются точными после сна; карточка тренда сравнивает последние 30 дней с 30 предыдущими</li>
+          <li xml:lang="pt-BR">Sinos e cronômetro continuam certos após uma suspensão; o cartão de tendência compara os últimos 30 dias com os 30 anteriores</li>
+          <li xml:lang="pl">Dzwonki i minutnik działają poprawnie po uśpieniu; karta trendu porównuje ostatnie 30 dni z 30 poprzednimi</li>
+          <li xml:lang="nl">Bellen en timer blijven juist na de slaapstand; de trendkaart vergelijkt de laatste 30 dagen met de 30 ervoor</li>
+          <li xml:lang="it">Campane e timer restano corretti dopo una sospensione; la scheda dell'andamento confronta gli ultimi 30 giorni con i 30 precedenti</li>
+          <li xml:lang="fr">Les cloches et le minuteur restent justes après une mise en veille ; la carte de tendance compare les 30 derniers jours aux 30 précédents</li>
+          <li xml:lang="es">Las campanas y el temporizador siguen correctos tras una suspensión; la tarjeta de tendencia compara los últimos 30 días con los 30 anteriores</li>
+          <li xml:lang="de">Glocken und Timer bleiben nach dem Ruhezustand richtig; die Trendkarte vergleicht die letzten 30 Tage mit den 30 davor</li>
+          <li>Android: each bell's volume sets the phone's alarm step, so bells no longer ring at full volume on some phones; dates and the week start follow your language; your own vibration patterns can be deleted</li>
+          <li xml:lang="zh-Hans-CN">Android：每个铃声的音量会设置手机的闹钟音量档位，因此在部分手机上铃声不再以最大音量响起；日期和每周起始日跟随你的语言；可以删除自己的振动模式</li>
+          <li xml:lang="ru">Android: громкость каждого колокола задаёт шаг громкости будильника телефона, поэтому на некоторых телефонах колокола больше не звучат на полной громкости; даты и начало недели следуют вашему языку; свои шаблоны вибрации можно удалять</li>
+          <li xml:lang="pt-BR">Android: o volume de cada sino ajusta o nível de alarme do celular, então os sinos não tocam mais no volume máximo em alguns celulares; datas e início da semana seguem seu idioma; seus próprios padrões de vibração podem ser excluídos</li>
+          <li xml:lang="pl">Android: głośność każdego dzwonka ustawia poziom alarmu w telefonie, więc na niektórych telefonach dzwonki nie biją już z pełną głośnością; daty i początek tygodnia według twojego języka; własne wzory wibracji można usuwać</li>
+          <li xml:lang="nl">Android: het volume van elke bel stelt het alarmniveau van de telefoon in, zodat bellen op sommige telefoons niet meer op vol volume klinken; datums en weekbegin volgen je taal; je eigen trilpatronen kunnen worden verwijderd</li>
+          <li xml:lang="it">Android: il volume di ogni campana imposta il livello della sveglia del telefono, così su alcuni telefoni le campane non suonano più al massimo; date e inizio settimana seguono la tua lingua; i tuoi schemi di vibrazione si possono eliminare</li>
+          <li xml:lang="fr">Android : le volume de chaque cloche règle le niveau d'alarme du téléphone, les cloches ne sonnent donc plus à plein volume sur certains téléphones ; les dates et le début de semaine suivent votre langue ; vos propres motifs de vibration peuvent être supprimés</li>
+          <li xml:lang="es">Android: el volumen de cada campana ajusta el nivel de alarma del teléfono, así las campanas ya no suenan a todo volumen en algunos teléfonos; las fechas y el inicio de semana siguen tu idioma; tus propios patrones de vibración se pueden eliminar</li>
+          <li xml:lang="de">Android: die Lautstärke jeder Glocke stellt die Weckerlautstärke des Handys ein, so läuten Glocken auf manchen Handys nicht mehr mit voller Lautstärke; Datum und Wochenbeginn folgen deiner Sprache; eigene Vibrationsmuster lassen sich löschen</li>
+          <li>A failed save now says so instead of looking saved</li>
+          <li xml:lang="zh-Hans-CN">保存失败时现在会明确提示，而不是看起来已保存</li>
+          <li xml:lang="ru">Неудачное сохранение теперь сообщает об этом, а не выглядит сохранённым</li>
+          <li xml:lang="pt-BR">Um salvamento com falha agora avisa, em vez de parecer salvo</li>
+          <li xml:lang="pl">Nieudany zapis teraz to zgłasza, zamiast wyglądać na zapisany</li>
+          <li xml:lang="nl">Een mislukte opslag meldt dat nu, in plaats van opgeslagen te lijken</li>
+          <li xml:lang="it">Un salvataggio non riuscito ora lo dice invece di sembrare salvato</li>
+          <li xml:lang="fr">Un enregistrement échoué le signale désormais au lieu de sembler réussi</li>
+          <li xml:lang="es">Un guardado fallido ahora lo indica en vez de parecer guardado</li>
+          <li xml:lang="de">Ein fehlgeschlagenes Speichern sagt das jetzt, statt gespeichert auszusehen</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+</component>

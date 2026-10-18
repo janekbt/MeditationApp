@@ -107,7 +107,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
     steps:
       - uses: actions/checkout@v5
@@ -116,16 +116,25 @@ jobs:
           bundle: meditate-x86_64.flatpak
           manifest-path: build-aux/io.github.janekbt.Meditate.json
           cache-key: flatpak-builder-x86_64-${{ github.sha }}
+          build-dir: flatpak_app
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: meditate-x86_64.flatpak
           path: meditate-x86_64.flatpak
+      # FlatPark takes the installed tree, not a bundle (RELEASE.md 5b).
+      - name: Pack the app tree for FlatPark
+        run: tar -C flatpak_app --transform 's,^files,meditate,' -czf meditate-x86_64.tar.gz files
+      - name: Upload app tree
+        uses: actions/upload-artifact@v6
+        with:
+          name: meditate-x86_64.tar.gz
+          path: meditate-x86_64.tar.gz
 
   # aarch64: QEMU binfmt must be registered on the host *before* the container
   # that needs it starts.  Job-level containers prevent running host steps first,
   # so we (1) register binfmt via a plain `docker run`, then (2) start the
-  # gnome-50 container ourselves — it runs as root so runtime installs succeed.
+  # gnome-51 container ourselves — it runs as root so runtime installs succeed.
   flatpak-aarch64:
     name: Flatpak (aarch64)
     if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
@@ -141,7 +150,7 @@ jobs:
           docker run --privileged --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --workdir /workspace \
-            ghcr.io/flathub-infra/flatpak-github-actions:gnome-50 \
+            ghcr.io/flathub-infra/flatpak-github-actions:gnome-51 \
             bash -c '
               set -e
               flatpak remote-add --if-not-exists flathub \
@@ -159,6 +168,8 @@ jobs:
                 repo \
                 meditate-aarch64.flatpak \
                 io.github.janekbt.Meditate
+              # FlatPark takes the installed tree, not a bundle (RELEASE.md 5b).
+              tar -C flatpak_app --transform "s,^files,meditate," -czf meditate-aarch64.tar.gz files
             '
 
       - name: Upload artifact
@@ -166,3 +177,8 @@ jobs:
         with:
           name: meditate-aarch64.flatpak
           path: meditate-aarch64.flatpak
+      - name: Upload app tree
+        uses: actions/upload-artifact@v6
+        with:
+          name: meditate-aarch64.tar.gz
+          path: meditate-aarch64.tar.gz

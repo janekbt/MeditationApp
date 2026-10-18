@@ -36,7 +36,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
-| [ ] | S. Cleanup | #58, #61, #85, #87, #157, #167, #171, #175 | dead code, wrong comments |
+| [ ] | S. Cleanup | #58, #61, #85, #87, #157, #167, #171, #175, #197 | dead code, wrong comments |
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
@@ -188,10 +188,15 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - android `ui.rs`: doc comments on the wrong item at 488-492, 803-822, 1128-1132, 2348-2350 (shows a start time with a UTC offset, which never exists), 2904-2909 and 9477-9481; false claims at 1406, 1444, 3874, 4028, 5878 and 5909.
 - `sync/fake.rs:1-4` claims the fake behaves like Nextcloud (see #91).
 
-### #167 Linux packaging: broken screenshot links and a Rust floor that's too low
-- Where: `meditate-gtk/data/io.github.janekbt.Meditate.metainfo.xml.in:27, 31, 35`; `build.sh:72`; `meditate-gtk/Cargo.toml:6`; `clippy.toml` (`msrv`).
-- Problem: the screenshot URLs point at `main/data/screenshots/`, which doesn't exist (the files are under `meditate-gtk/data/screenshots/`), so software centres show none. build.sh accepts rustc 1.85, but the locked gtk4 0.11.2 and glib 0.22.5 need 1.92, so the build fails halfway; `rust-version` and `msrv` still say 1.75.
-- Fix: add `meditate-gtk/` to the three URLs; raise the check, `rust-version` and `msrv` to 1.92 (Cargo.toml: ask first).
+### #167 Linux packaging: a Rust floor that's too low
+- Where: `build.sh:72`; `meditate-gtk/Cargo.toml:6`; `clippy.toml` (`msrv`).
+- Problem: build.sh accepts rustc 1.85, but the locked gtk4 0.11.2 and glib 0.22.5 need 1.92, so the build fails halfway; `rust-version` and `msrv` still say 1.75.
+- Fix: raise the check, `rust-version` and `msrv` to 1.92 (Cargo.toml: ask first).
+
+### #197 GTK: bell rows in a revealer warn on GNOME 51
+- Where: `meditate-gtk/data/ui/timer_view.blp:431-470, 533-570` (sound, volume and pattern rows of the start and end bell, each in a `Gtk.Revealer` inside the list).
+- Problem: libadwaita in GNOME 51 checks that rows sit directly in a `GtkListBox` and logs 18 warnings at every start ("AdwActionRow placed into GtkRevealer, can only be placed into GtkListBox"). GNOME 50 has no such check. Janek's test of the GNOME 51 build passed (2026-10-18); seen so far only in the log.
+- Fix: show and hide the rows without a revealer (row `visible`), or ask Janek whether the slide is worth keeping another way.
 
 ### #171 The `synchronous=NORMAL` comment promises safety it doesn't have
 - Where: `meditate-core/src/db/mod.rs:229-241`.

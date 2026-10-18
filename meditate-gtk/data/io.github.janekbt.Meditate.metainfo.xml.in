@@ -24,15 +24,15 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-timer.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-timer.png</image>
       <caption>Countdown timer with quick presets and streak display</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-stats.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-stats.png</image>
       <caption>Weekly goal, 13-week heatmap, and insights</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-log.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-log.png</image>
       <caption>Session log grouped by date, with labels and notes</caption>
     </screenshot>
   </screenshots>

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Attach the Flatpak bundles to a published GitHub release.
+# Attach the Flatpak bundles and the FlatPark app trees to a published
+# GitHub release.
 #
 # Flathub is not an option for this app, so the GitHub release is the only way
 # Linux users get a build. The bundles are already produced by the Flatpak CI
@@ -34,17 +35,51 @@ echo "using run $RUN"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Download and check everything before the first upload, so a missing
+# artifact never leaves the release half attached.
+# FlatPark installs from the app tree tarball, not the bundle.
 for arch in x86_64 aarch64; do
-    name="meditate-$arch.flatpak"
-    gh run download "$RUN" --name "$name" --dir "$WORK/$arch"
-    file="$WORK/$arch/$name"
-    [ -s "$file" ] || { echo "$name missing or empty in run $RUN" >&2; exit 1; }
-    # Version the filename: release assets from different tags otherwise
+    for name in "meditate-$arch.flatpak" "meditate-$arch.tar.gz"; do
+        gh run download "$RUN" --name "$name" --dir "$WORK/$arch" ||
+            { echo "run $RUN has no $name (a scope=light run? re-run the full one)" >&2; exit 1; }
+        [ -s "$WORK/$arch/$name" ] || { echo "$name missing or empty in run $RUN" >&2; exit 1; }
+    done
+done
+
+# FlatPark pins a tarball by sha256 and size once it has seen it, so a
+# replaced tarball would break every FlatPark install until the next release:
+# an attached one with other content stops the script, the same one is kept.
+declare -A upload_tarball
+for arch in x86_64 aarch64; do
+    # Version the filenames: release assets from different tags otherwise
     # collide in a browser's download folder as identical names.
-    dest="$WORK/meditate-$VERSION-$arch.flatpak"
-    mv "$file" "$dest"
-    gh release upload "$TAG" "$dest" --clobber
-    echo "attached $(basename "$dest") ($(du -h "$dest" | cut -f1))"
+    mv "$WORK/$arch/meditate-$arch.flatpak" "$WORK/meditate-$VERSION-$arch.flatpak"
+    tarball="meditate-$VERSION-linux-$arch.tar.gz"
+    mv "$WORK/$arch/meditate-$arch.tar.gz" "$WORK/$tarball"
+    have="$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name==\"$tarball\") | \"\\(.state) \\(.digest)\"")"
+    want="uploaded sha256:$(sha256sum "$WORK/$tarball" | cut -d' ' -f1)"
+    if [ -z "$have" ]; then
+        upload_tarball[$arch]=1
+    elif [ "${have%% *}" != uploaded ]; then
+        # An upload that broke off leaves an asset nobody can download.
+        echo "$tarball is half uploaded; delete it: gh release delete-asset $TAG $tarball" >&2
+        exit 1
+    elif [ "$have" != "$want" ]; then
+        echo "$tarball is already attached with other content; FlatPark may have pinned it, not replacing" >&2
+        exit 1
+    fi
+done
+
+for arch in x86_64 aarch64; do
+    gh release upload "$TAG" "$WORK/meditate-$VERSION-$arch.flatpak" --clobber
+    echo "attached meditate-$VERSION-$arch.flatpak"
+    tarball="meditate-$VERSION-linux-$arch.tar.gz"
+    if [ -n "${upload_tarball[$arch]:-}" ]; then
+        gh release upload "$TAG" "$WORK/$tarball"
+        echo "attached $tarball"
+    else
+        echo "$tarball already attached, same file"
+    fi
 done
 
 echo

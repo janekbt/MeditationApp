@@ -5,14 +5,14 @@
 # Prereqs (one-time):
 #   rustup target add aarch64-unknown-linux-gnu
 #   sudo apt install gcc-aarch64-linux-gnu
-#   flatpak install --user --arch=aarch64 flathub org.gnome.Sdk//50
-#   ln -sfn ~/.local/share/flatpak/runtime/org.gnome.Sdk/aarch64/50/active/files \
-#          ~/sysroots/gnome50-aarch64/usr
+#   flatpak install --user --arch=aarch64 flathub org.gnome.Sdk//51
+#   ln -sfn ~/.local/share/flatpak/runtime/org.gnome.Sdk/aarch64/51/active/files \
+#          ~/sysroots/gnome51-aarch64/usr
 #
 # Output: target/aarch64-unknown-linux-gnu/release/meditate
 set -euo pipefail
 
-SYSROOT="${HOME}/sysroots/gnome50-aarch64"
+SYSROOT="${HOME}/sysroots/gnome51-aarch64"
 if [[ ! -d "${SYSROOT}/usr" ]]; then
     echo "Sysroot missing at ${SYSROOT}/usr — see prereqs at top of this script." >&2
     exit 1

@@ -81,7 +81,7 @@ not an option for this app.) CI runs attach the same bundles on the
 days and need a GitHub login.
 
 ```sh
-flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo  # provides the GNOME 50 runtime
+flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo  # provides the GNOME 51 runtime
 flatpak install --user meditate-<version>-<arch>.flatpak
 flatpak run io.github.janekbt.Meditate
 ```
