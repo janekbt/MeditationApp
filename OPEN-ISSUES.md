@@ -43,7 +43,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
-| [ ] | Y2. Slint long-press selection | #196 | a long press that selects nothing |
+| [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -282,12 +282,17 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Problem: README promises that build.sh installs missing dependencies, but a fresh machine stops with a rustup error on `./build.sh android`.
 - Fix: call `ensure_rust` before the Android bootstrap. README/BUILDING say "install rustup first" until then.
 
-## Y2. Slint long-press selection
+## Y2. Slint text fields (upstream)
 
 ### #196 Android: a long press on a field that has no focus yet selects nothing
 - Where: Slint's Android backend (`long_press_timeout` only acts on the focused item) and core `TextInput` (on Android it takes focus on release, `items/text.rs` Released branch). Not our code.
 - Problem: long-pressing a word in a field you haven't tapped yet selects nothing; you have to tap first. Android's own fields select the word. Found in the review of #195 (2026-10-18).
 - Fix: upstream; the long press would need to focus the pressed field first. Report it there.
+
+### #198 Android: Gboard's "line start" key doesn't move the cursor
+- Where: Slint's Android backend, not our code. It maps `KEYCODE_MOVE_HOME` to Home (`androidwindowadapter.rs` `map_key_code`), so the cause is unknown.
+- Problem: in Gboard's text editing panel, the |< key left the cursor where it was in a Slint text field; the arrow keys and Select worked. Seen once in the material gallery on the API 35 emulator (2026-10-19), while testing Slint PR #14205; not reproduced, not tried in Meditate or on the FP5.
+- Fix: first reproduce it (with and without Select), log which key event or `setSelection` arrives, then fix or report upstream.
 
 ## Z. Android touch targets
 
