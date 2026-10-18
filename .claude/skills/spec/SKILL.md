@@ -182,6 +182,12 @@ fresh agent reviews only those: give it the list of fixes from
 `tasks.md`, the files and the brief, and fix what it finds the same
 way. Fixes to wording, comments or docs need no second look.
 
+Then, when the last reviewer of the code is done, run `/simplify`
+(Skill tool, `simplify`) on the change. Every change runs it, a small
+one too, and it runs again after a later fix review (step 6). Apply
+its fixes the same way as review findings, note skipped ones in
+`tasks.md`, and run the whole suite again afterwards.
+
 ### 5. Specs, docs and the list
 
 - Run `build-aux/check-specs.sh`: every test named in a spec exists.
@@ -247,6 +253,7 @@ not approval either: reply with the test steps and wait.
 | "The test passed first time, good." | Either it tests nothing or the behaviour existed. Find out which. |
 | "It built." | Stat the artifact. |
 | "They tested (or said ship), so now the optimised build." | Every build is the debug build. Only the maintainer asking for an optimised build builds one. |
+| "The review was clean, /simplify can be skipped." | It runs after every last review. Unskippable. |
 | "The reviewer found nothing, so it's right." | The review is one check of several; step 6 still applies. |
 | "They said go earlier." | Approval covers what you showed. New scope needs a new go. |
 | "An `#[allow(...)]` silences it." | Fix the cause. |
