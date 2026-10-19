@@ -40,3 +40,16 @@ aarch64 build started on a Librem 5 before it is tagged.
 - **WHEN** the release's CI run is green and its aarch64 bundle is installed on the Librem 5
 - **THEN** a timer session rings its bells, vibrates, and shows its notification at the end
 - **MANUAL** Janek on the Librem 5 at the next release (RELEASE.md step 4); no aarch64 GNOME 51 build exists before CI builds the committed change
+
+### Requirement: The store listing shows current screenshots
+The Linux app's metainfo SHALL link screenshots that exist in the repo at the linked path.
+
+#### Scenario: A screenshot link after files moved
+- **WHEN** the metainfo is read
+- **THEN** every screenshot it links names a file in the repo, so the store finds it once `main` has it
+- **TEST** `meditate-gtk/src/application.rs::metainfo_screenshots_exist_in_the_repo`
+
+#### Scenario: The store after the next release
+- **WHEN** the released Flatpak is opened in GNOME Software
+- **THEN** it shows the light/dark Timer, Guided and Box Breath screenshots with their captions in the system language
+- **MANUAL** Janek after the next release; the images load from `main`, which only moves at a release

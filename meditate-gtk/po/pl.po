@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 21:39+0200\n"
+"POT-Creation-Date: 2026-10-19 19:28+0200\n"
 "PO-Revision-Date: 2026-04-20 18:30+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Polish\n"
@@ -2074,16 +2074,16 @@ msgid "Track your streak and stay consistent"
 msgstr "Śledź swoją passę i utrzymuj rytm"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:28
-msgid "Countdown timer with quick presets and streak display"
-msgstr "Odliczanie z ustawieniami i licznikiem passy"
+msgid "Timer mode with presets and daily streak"
+msgstr "Tryb minutnika z szablonami i codzienną passą"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:32
-msgid "Weekly goal, 13-week heatmap, and insights"
-msgstr "Cel tygodniowy, mapa ciepła 13 tygodni i analizy"
+msgid "Guided mode with your own audio files"
+msgstr "Tryb z przewodnikiem z własnymi plikami dźwiękowymi"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:36
-msgid "Session log grouped by date, with labels and notes"
-msgstr "Dziennik sesji pogrupowany według daty, z etykietami i notatkami"
+msgid "Box Breath mode with adjustable breath phases"
+msgstr "Oddech pudełkowy z regulowanymi fazami oddechu"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:52
 msgid "janekbt"
@@ -2672,6 +2672,12 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "Pierwsze wydanie."
+
+#~ msgid "Weekly goal, 13-week heatmap, and insights"
+#~ msgstr "Cel tygodniowy, mapa ciepła 13 tygodni i analizy"
+
+#~ msgid "Session log grouped by date, with labels and notes"
+#~ msgstr "Dziennik sesji pogrupowany według daty, z etykietami i notatkami"
 
 #~ msgid "Streak"
 #~ msgstr "Passa"

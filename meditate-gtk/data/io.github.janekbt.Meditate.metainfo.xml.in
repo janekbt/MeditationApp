@@ -24,16 +24,16 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-timer.png</image>
-      <caption>Countdown timer with quick presets and streak display</caption>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-timer.png</image>
+      <caption>Timer mode with presets and daily streak</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-stats.png</image>
-      <caption>Weekly goal, 13-week heatmap, and insights</caption>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-guided.png</image>
+      <caption>Guided mode with your own audio files</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/screenshot-log.png</image>
-      <caption>Session log grouped by date, with labels and notes</caption>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-box-breath.png</image>
+      <caption>Box Breath mode with adjustable breath phases</caption>
     </screenshot>
   </screenshots>
 

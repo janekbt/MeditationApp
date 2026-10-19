@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-18 21:39+0200\n"
+"POT-Creation-Date: 2026-10-19 19:28+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -1992,16 +1992,16 @@ msgid "Track your streak and stay consistent"
 msgstr "跟踪连续天数，保持稳定练习"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:28
-msgid "Countdown timer with quick presets and streak display"
-msgstr "倒计时，配有快捷预设与连续天数显示"
+msgid "Timer mode with presets and daily streak"
+msgstr "计时器模式，含预设与每日连续天数"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:32
-msgid "Weekly goal, 13-week heatmap, and insights"
-msgstr "每周目标、13 周热力图与分析"
+msgid "Guided mode with your own audio files"
+msgstr "引导模式，使用你自己的音频文件"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:36
-msgid "Session log grouped by date, with labels and notes"
-msgstr "按日期分组的会话记录，带标签与笔记"
+msgid "Box Breath mode with adjustable breath phases"
+msgstr "箱式呼吸，呼吸阶段可调"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:52
 msgid "janekbt"
@@ -2505,6 +2505,12 @@ msgstr "自适应布局最窄支持 360 像素；强调色和无障碍功能符�
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:246
 msgid "Initial release."
 msgstr "首个版本。"
+
+#~ msgid "Weekly goal, 13-week heatmap, and insights"
+#~ msgstr "每周目标、13 周热力图与分析"
+
+#~ msgid "Session log grouped by date, with labels and notes"
+#~ msgstr "按日期分组的会话记录，带标签与笔记"
 
 #~ msgid "Streak"
 #~ msgstr "连续天数"

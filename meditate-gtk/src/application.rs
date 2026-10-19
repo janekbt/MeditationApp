@@ -893,4 +893,23 @@ mod tests {
         assert!(about.contains("include_str!(\"../data/io.github.janekbt.Meditate.metainfo.xml.in\")"));
         assert!(!about.contains("gettext(\""), "no hand-kept copy of the notes");
     }
+
+    /// The store loads the screenshots from `main`; a link to a moved
+    /// file left 26.10.2 without any.
+    #[test]
+    fn metainfo_screenshots_exist_in_the_repo() {
+        const PREFIX: &str = "https://raw.githubusercontent.com/janekbt/MeditationApp/main/";
+        let metainfo = include_str!("../data/io.github.janekbt.Meditate.metainfo.xml.in");
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let images: Vec<&str> = metainfo
+            .split("<image>")
+            .skip(1)
+            .map(|rest| &rest[..rest.find("</image>").unwrap()])
+            .collect();
+        assert!(!images.is_empty(), "no <image> found");
+        for url in images {
+            let path = url.strip_prefix(PREFIX).unwrap_or_else(|| panic!("{url} is not on main"));
+            assert!(repo.join(path).is_file(), "{path} is missing");
+        }
+    }
 }

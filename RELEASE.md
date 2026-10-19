@@ -57,6 +57,10 @@ Do these BEFORE bumping, so fixes land in the release:
   focus), and verify no locale leaked the wrong language
   (pixel-diff the nav strip across locales — identical nav strips
   mean a leak). Reset with the same command minus `--locales`.
+  Linux: recapture the light/dark composites in
+  `meditate-gtk/data/screenshots/composite-*.png` (README and store
+  listing) from a light and a dark window screenshot each, split
+  diagonally like the Android ones.
 
 ## 2. Bump
 
