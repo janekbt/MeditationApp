@@ -67,8 +67,9 @@ Do these BEFORE bumping, so fixes land in the release:
     build-aux/bump-version.sh          # or: bump-version.sh yy.m.p
 
 Stamps gradle, both Cargo.tomls, meson, the Flatpak manifest,
-and inserts skeletons for the metainfo release entry and the
-en-US fastlane changelog. Run `cargo check --workspace` once so
+inserts skeletons for the metainfo release entry and the
+en-US fastlane changelog, and moves the metainfo screenshot links
+to the new tag. Run `cargo check --workspace` once so
 Cargo.lock picks up the crate version bumps.
 
 ## 3. [judgment] Release notes
@@ -247,8 +248,9 @@ follows steps 1–4 above, with these differences:
   recipe only checks tags matching `^v[0-9.]+$`, so F-Droid never sees
   a beta; the next plain tag becomes the F-Droid update as usual. Never
   give a beta a plain `v<version>` tag.
-- **Notes:** mark the metainfo entry `type="development"`; delete the
-  fastlane changelog skeleton (F-Droid never builds the beta).
+- **Notes:** mark the metainfo entry `type="development"` and add
+  `-beta` to the tag in its screenshot links (the GTK tests check it);
+  delete the fastlane changelog skeleton (F-Droid never builds the beta).
 - **APK:** release build on JDK 17, signed with the release key (check
   it as in 5a), so it installs over the F-Droid version and back without
   losing data. Asset name `Meditate-<version>-beta.apk`.

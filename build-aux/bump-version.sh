@@ -19,7 +19,7 @@
 #   meditate-gtk/Cargo.toml                    version
 #   meditate-gtk/meson.build                   project version
 #   build-aux/io.github.janekbt.Meditate.json  APP_VERSION
-#   meditate-gtk/data/...metainfo.xml.in       <release> skeleton
+#   meditate-gtk/data/...metainfo.xml.in       <release> skeleton, screenshot tag
 #   fastlane .../en-US/changelogs/<code>.txt   skeleton
 #
 # It does NOT write changelog content, translate, test, tag, or
@@ -77,6 +77,9 @@ skel = (f'    <release version="{ver}" date="{today}">\n'
 i = s.index(marker)
 open(path, 'w').write(s[:i] + skel + s[i:])
 PYEOF
+# Screenshots load from the release's own tag, so a later file move
+# can't break a shipped store page. A beta adds `-beta` by hand.
+sed -i -E "s#(raw\.githubusercontent\.com/janekbt/MeditationApp/)[^/]+/#\1v$NEW/#" "$META"
 
 CHANGELOG=fastlane/metadata/android/en-US/changelogs/$CODE.txt
 [ -f "$CHANGELOG" ] || echo "TODO: release notes (see RELEASE.md step 3)" > "$CHANGELOG"

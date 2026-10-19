@@ -106,30 +106,30 @@
       <caption xml:lang="de">Timer-Modus mit Voreinstellungen und täglicher Serie</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-guided.png</image>
-      <caption>Guided mode with your own audio files</caption>
-      <caption xml:lang="zh-Hans-CN">引导模式，使用你自己的音频文件</caption>
-      <caption xml:lang="ru">Режим с гидом и вашими аудиофайлами</caption>
-      <caption xml:lang="pt-BR">Modo guiado com seus próprios arquivos de áudio</caption>
-      <caption xml:lang="pl">Tryb z przewodnikiem z własnymi plikami dźwiękowymi</caption>
-      <caption xml:lang="nl">Begeleide modus met je eigen audiobestanden</caption>
-      <caption xml:lang="it">Modalità guidata con i tuoi file audio</caption>
-      <caption xml:lang="fr">Mode guidé avec vos propres fichiers audio</caption>
-      <caption xml:lang="es">Modo guiado con tus propios archivos de audio</caption>
-      <caption xml:lang="de">Geführter Modus mit eigenen Audiodateien</caption>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-stats.png</image>
+      <caption>Daily goal, 13-week heatmap and insights</caption>
+      <caption xml:lang="zh-Hans-CN">每日目标、13 周热力图与分析</caption>
+      <caption xml:lang="ru">Дневная цель, тепловая карта за 13 недель и аналитика</caption>
+      <caption xml:lang="pt-BR">Meta diária, mapa de calor de 13 semanas e análises</caption>
+      <caption xml:lang="pl">Cel dzienny, mapa ciepła 13 tygodni i analizy</caption>
+      <caption xml:lang="nl">Dagdoel, heatmap van 13 weken en inzichten</caption>
+      <caption xml:lang="it">Obiettivo giornaliero, heatmap di 13 settimane e analisi</caption>
+      <caption xml:lang="fr">Objectif quotidien, heatmap sur 13 semaines et analyses</caption>
+      <caption xml:lang="es">Meta diaria, mapa de calor de 13 semanas y análisis</caption>
+      <caption xml:lang="de">Tagesziel, 13-Wochen-Heatmap und Einblicke</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-box-breath.png</image>
-      <caption>Box Breath mode with adjustable breath phases</caption>
-      <caption xml:lang="zh-Hans-CN">箱式呼吸，呼吸阶段可调</caption>
-      <caption xml:lang="ru">Квадратное дыхание с настраиваемыми фазами дыхания</caption>
-      <caption xml:lang="pt-BR">Respiração quadrada com fases da respiração ajustáveis</caption>
-      <caption xml:lang="pl">Oddech pudełkowy z regulowanymi fazami oddechu</caption>
-      <caption xml:lang="nl">Box-ademhaling met instelbare ademfasen</caption>
-      <caption xml:lang="it">Respirazione quadrata con fasi del respiro regolabili</caption>
-      <caption xml:lang="fr">Respiration carrée avec phases de respiration réglables</caption>
-      <caption xml:lang="es">Respiración cuadrada con fases de respiración ajustables</caption>
-      <caption xml:lang="de">Box-Atmung mit einstellbaren Atemphasen</caption>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/meditate-gtk/data/screenshots/composite-log.png</image>
+      <caption>Session log grouped by date, with labels and notes</caption>
+      <caption xml:lang="zh-Hans-CN">按日期分组的会话记录，带标签与笔记</caption>
+      <caption xml:lang="ru">Журнал сессий, сгруппированный по дате, с метками и заметками</caption>
+      <caption xml:lang="pt-BR">Histórico de sessões agrupado por data, com rótulos e notas</caption>
+      <caption xml:lang="pl">Dziennik sesji pogrupowany według daty, z etykietami i notatkami</caption>
+      <caption xml:lang="nl">Sessielogboek gegroepeerd op datum, met labels en notities</caption>
+      <caption xml:lang="it">Registro delle sessioni raggruppato per data, con etichette e note</caption>
+      <caption xml:lang="fr">Journal des séances groupé par date, avec étiquettes et notes</caption>
+      <caption xml:lang="es">Registro de sesiones agrupado por fecha, con etiquetas y notas</caption>
+      <caption xml:lang="de">Nach Datum gruppiertes Sitzungsprotokoll mit Labels und Notizen</caption>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.janekbt.Meditate.desktop</launchable>

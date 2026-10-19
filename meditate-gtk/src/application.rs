@@ -894,12 +894,14 @@ mod tests {
         assert!(!about.contains("gettext(\""), "no hand-kept copy of the notes");
     }
 
-    /// The store loads the screenshots from `main`; a link to a moved
-    /// file left 26.10.2 without any.
+    /// Each release links the screenshots at its own tag, so moving a file
+    /// later can't empty the store page of a shipped release (26.10.2 lost
+    /// its screenshots that way).
     #[test]
     fn metainfo_screenshots_exist_in_the_repo() {
-        const PREFIX: &str = "https://raw.githubusercontent.com/janekbt/MeditationApp/main/";
         let metainfo = include_str!("../data/io.github.janekbt.Meditate.metainfo.xml.in");
+        let tag = screenshot_tag(metainfo);
+        let prefix = format!("https://raw.githubusercontent.com/janekbt/MeditationApp/{tag}/");
         let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let images: Vec<&str> = metainfo
             .split("<image>")
@@ -908,8 +910,29 @@ mod tests {
             .collect();
         assert!(!images.is_empty(), "no <image> found");
         for url in images {
-            let path = url.strip_prefix(PREFIX).unwrap_or_else(|| panic!("{url} is not on main"));
+            let path = url.strip_prefix(&prefix).unwrap_or_else(|| panic!("{url} is not at {tag}"));
             assert!(repo.join(path).is_file(), "{path} is missing");
         }
+    }
+
+    /// The git tag of the newest `<release>`: a beta has its own `-beta` tag.
+    fn screenshot_tag(metainfo: &str) -> String {
+        let newest = &metainfo[metainfo.find("<release ").unwrap()..];
+        let newest = &newest[..newest.find('>').unwrap()];
+        let version = newest.split("version=\"").nth(1).unwrap().split('"').next().unwrap();
+        if newest.contains("type=\"development\"") {
+            format!("v{version}-beta")
+        } else {
+            format!("v{version}")
+        }
+    }
+
+    #[test]
+    fn a_beta_links_its_beta_tag() {
+        let beta = r#"<releases>
+    <release version="26.11.0" date="2026-11-01" type="development"></release>
+    <release version="26.10.2" date="2026-10-18"></release>"#;
+        assert_eq!(screenshot_tag(beta), "v26.11.0-beta");
+        assert_eq!(screenshot_tag(&beta.replace(r#" type="development""#, "")), "v26.11.0");
     }
 }

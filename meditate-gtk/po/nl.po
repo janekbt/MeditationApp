@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-19 19:28+0200\n"
+"POT-Creation-Date: 2026-10-19 19:38+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -2050,12 +2050,12 @@ msgid "Timer mode with presets and daily streak"
 msgstr "Timermodus met voorinstellingen en dagelijkse reeks"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:32
-msgid "Guided mode with your own audio files"
-msgstr "Begeleide modus met je eigen audiobestanden"
+msgid "Daily goal, 13-week heatmap and insights"
+msgstr "Dagdoel, heatmap van 13 weken en inzichten"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:36
-msgid "Box Breath mode with adjustable breath phases"
-msgstr "Box-ademhaling met instelbare ademfasen"
+msgid "Session log grouped by date, with labels and notes"
+msgstr "Sessielogboek gegroepeerd op datum, met labels en notities"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:52
 msgid "janekbt"
@@ -2648,11 +2648,11 @@ msgstr ""
 msgid "Initial release."
 msgstr "Eerste uitgave."
 
-#~ msgid "Weekly goal, 13-week heatmap, and insights"
-#~ msgstr "Wekelijks doel, heatmap van 13 weken en inzichten"
+#~ msgid "Guided mode with your own audio files"
+#~ msgstr "Begeleide modus met je eigen audiobestanden"
 
-#~ msgid "Session log grouped by date, with labels and notes"
-#~ msgstr "Sessielogboek gegroepeerd op datum, met labels en notities"
+#~ msgid "Box Breath mode with adjustable breath phases"
+#~ msgstr "Box-ademhaling met instelbare ademfasen"
 
 #~ msgid "Streak"
 #~ msgstr "Reeks"

@@ -17,9 +17,9 @@ Android:
 Linux:
 
 <p>
-  <img src="meditate-gtk/data/screenshots/composite-timer.png" alt="Timer mode" width="250">
-  <img src="meditate-gtk/data/screenshots/composite-guided.png" alt="Guided mode" width="250">
-  <img src="meditate-gtk/data/screenshots/composite-box-breath.png" alt="Box Breath mode" width="250">
+  <img src="meditate-gtk/data/screenshots/composite-timer.png" alt="Timer" width="250">
+  <img src="meditate-gtk/data/screenshots/composite-stats.png" alt="Stats" width="250">
+  <img src="meditate-gtk/data/screenshots/composite-log.png" alt="Log" width="250">
 </p>
 
 ## Features

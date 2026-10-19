@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-19 19:28+0200\n"
+"POT-Creation-Date: 2026-10-19 19:38+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -2022,11 +2022,11 @@ msgid "Timer mode with presets and daily streak"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:32
-msgid "Guided mode with your own audio files"
+msgid "Daily goal, 13-week heatmap and insights"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:36
-msgid "Box Breath mode with adjustable breath phases"
+msgid "Session log grouped by date, with labels and notes"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:52
