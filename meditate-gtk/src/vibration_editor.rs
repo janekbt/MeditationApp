@@ -629,9 +629,12 @@ fn draw_chart(
 ) {
     let (cx, cy, cw, ch) = chart_rect(w, h);
 
-    // Hardcoded accent (close to Adwaita default purple-blue) — real
-    // implementation pulls from AdwStyleManager.
-    let (ar, ag, ab) = (0.32, 0.29, 0.72);
+    let accent = adw::StyleManager::default().accent_color_rgba();
+    let (ar, ag, ab) = (
+        f64::from(accent.red()),
+        f64::from(accent.green()),
+        f64::from(accent.blue()),
+    );
 
     let intensities = editor.intensities.borrow();
     let n = intensities.len();
