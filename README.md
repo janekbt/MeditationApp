@@ -4,6 +4,24 @@ A meditation timer and session log for Android and Linux.
 
 Countdown and stopwatch, a browsable log, and daily-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones, with a native Android app that syncs over your own Nextcloud.
 
+## Screenshots
+
+Android:
+
+<p>
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1-timer.png" alt="Timer" width="250">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2-stats.png" alt="Stats" width="250">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3-log.png" alt="Log" width="250">
+</p>
+
+Linux:
+
+<p>
+  <img src="meditate-gtk/data/screenshots/composite-timer.png" alt="Timer mode" width="250">
+  <img src="meditate-gtk/data/screenshots/composite-guided.png" alt="Guided mode" width="250">
+  <img src="meditate-gtk/data/screenshots/composite-box-breath.png" alt="Box Breath mode" width="250">
+</p>
+
 ## Features
 
 ### Timer
