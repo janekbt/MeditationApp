@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget palette from the system colours (Android 12+), the
+         tones Android's own widgets use. Dark mode: values-night-v31. -->
+    <color name="widget_bg">@android:color/system_neutral1_50</color>
+    <color name="widget_fg">@android:color/system_neutral1_900</color>
+    <color name="widget_fg_muted">@android:color/system_neutral2_700</color>
+    <color name="widget_row_bg">@android:color/system_accent2_100</color>
+</resources>

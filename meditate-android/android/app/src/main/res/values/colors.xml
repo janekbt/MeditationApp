@@ -2,8 +2,8 @@
 <resources>
     <!-- Widget palette. Same calm slate as the icon; Nord-ish
          fg pair (snow / muted). RemoteViews can't read theme
-         attrs, so these are fixed (Phase 8 theming will revisit
-         alongside the rest of res/). -->
+         attrs, so these are fixed. Android 12+ takes the system
+         colours instead (values-v31, values-night-v31). -->
     <color name="widget_bg">#E62E3440</color>
     <color name="widget_fg">#ECEFF4</color>
     <color name="widget_fg_muted">#A3ABB8</color>

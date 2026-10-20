@@ -417,9 +417,13 @@ worth knowing before reading it:
   because MediaCodec can't encode Vorbis, and conversion needs
   Android 10 (API 29) or later. GTK converts to Ogg/Vorbis. Both apps
   play both, so synced files work either way.
-- **Colours.** The Material palette is rebuilt from one of six fixed
-  accent seeds (`theme.rs`, `ACCENTS`). There is no wallpaper-based
-  dynamic colour.
+- **Colours.** The Material palette comes from the picked accent
+  (`theme.rs`): Blue is the shipped scheme, the other fixed accents
+  are Material's tonal-spot scheme from their seed (crate
+  `material-colors`), and System (Android 14+) reads the phone's own
+  roles. The layout uses Material roles only (guarded by
+  `the_layout_uses_only_material_roles`). The home-screen widget takes
+  the system colours on Android 12+ (`res/values-v31`).
 
 Reading order for a new contributor: `lib.rs` → `session/` →
 `db/events.rs` → `sync/orchestrator.rs`.

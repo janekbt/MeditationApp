@@ -3427,6 +3427,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "material-colors"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e226ffda362d5bc26bb8f730d637a0851eedfb05e35d92108c9d8b48d2e47941"
+dependencies = [
+ "ahash",
+ "indexmap",
+ "serde",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3465,6 +3476,7 @@ dependencies = [
  "android-activity 0.6.1",
  "chrono",
  "jni 0.21.1",
+ "material-colors",
  "meditate-core",
  "serde_json",
  "slint",

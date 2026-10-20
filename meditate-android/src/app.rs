@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     /// Nothing showed which preset Setup currently matches. The
-    /// matching one is tinted with its name in the accent colour, and
+    /// matching one is tinted, its text in the matching on-colour, and
     /// every local change re-checks it.
     #[test]
     fn the_active_preset_is_highlighted() {
@@ -1303,7 +1303,7 @@ mod tests {
         let item = &slint[slint.find("export struct PresetItem {").unwrap()..];
         assert!(item[..item.find('}').unwrap()].contains("    selected: bool,"));
         assert!(slint.contains("background: item.selected ? MaterialPalette.secondary-container"));
-        assert!(slint.contains("color: item.selected ? MaterialPalette.primary : MaterialPalette.on-surface;"));
+        assert!(slint.contains("color: item.selected ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface;"));
         assert!(slint.contains("accessible-checked: item.selected;"));
         let starred = &lib[lib.find("fn list_starred_presets_for_mode(").unwrap()..];
         assert!(starred[..starred.find("\n}\n").unwrap()].contains("meditate_core::preset_config::active_presets(&db, mode)"));
@@ -1605,7 +1605,7 @@ mod tests {
         let at = slint.find("component ScrimArea inherits TouchArea {").unwrap();
         let def = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(def.contains("abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px"));
-        let scrims: Vec<_> = slint.match_indices("background: #00000080;").map(|(i, _)| i).collect();
+        let scrims: Vec<_> = slint.match_indices("background: MaterialPalette.scrim.with-alpha(0.32);").map(|(i, _)| i).collect();
         assert_eq!(scrims.len(), 8, "ConfirmDialog holds the scrim of the simple dialogs");
         for at in scrims {
             let next = &slint[at..];
@@ -4695,6 +4695,43 @@ mod tests {
         let accent = handler(&code, "accent_picked");
         let saved = accent.find("if !write_global_setting(&ui, \"android_accent\"").expect("accent checks the save");
         assert!(saved < accent.find("apply_accent(").unwrap());
+    }
+
+    #[test]
+    fn the_layout_uses_only_material_roles() {
+        // A fixed or darkened colour ignores the accent and the system
+        // colours. Exempt: the black running screen, and the white wand
+        // on the System circle (which shows the system primary).
+        let layout = slint_code();
+        let lines: Vec<&str> = layout.lines().collect();
+        let running = lines.iter().position(|l| l.contains("// ── Running screen")).unwrap();
+        let log_page = lines.iter().position(|l| l.contains("// ── Log page")).unwrap();
+        for (n, line) in lines.iter().enumerate() {
+            let code = line.split("//").next().unwrap();
+            for off_role in [".darker(", ".brighter(", ".transparentize(", "rgb(", "rgba(", "hsv(", "hsl(", "oklch(", "Colors."] {
+                assert!(!code.contains(off_role), "main.slint:{} uses {off_role}", n + 1);
+            }
+            let hex = code.match_indices('#').any(|(i, _)| {
+                let digits = code[i + 1..].bytes().take_while(u8::is_ascii_hexdigit).count();
+                digits >= 3 && !code[i + 1 + digits..].starts_with(char::is_alphanumeric)
+            });
+            let value = code.split_once(':').map_or("", |(_, v)| v);
+            let named = value
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+                .any(|w| ["white", "black", "gray", "grey", "red", "green", "blue", "yellow", "orange", "pink", "purple"].contains(&w));
+            let wand = code.trim() == "colorize: #ffffff;" && lines[n.saturating_sub(3)..n].iter().any(|l| l.contains("auto_fix.svg"));
+            assert!(!(hex || named) || (running..log_page).contains(&n) || wand, "main.slint:{} has a fixed colour", n + 1);
+        }
+    }
+
+    #[test]
+    fn the_window_background_is_the_surface_role() {
+        // Without its own background the window shows Slint's fixed
+        // #fafafa behind every page that doesn't paint one (Timer).
+        let layout = slint_code();
+        let window = &layout[layout.find("export component MainWindow inherits Window {").unwrap()..];
+        let own = &window[..window.find("\n\n").unwrap()];
+        assert!(own.contains("    background: MaterialPalette.surface;"), "{own}");
     }
 
     #[test]

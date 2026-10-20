@@ -1,34 +1,25 @@
-//! Accent theming (Phase 8): rebuild `MaterialPalette.schemes`
-//! from a picked accent colour. The Material lib's `schemes` is an
-//! `in` property — the intended theming hook — so no vendored
-//! patch: Rust reads the baseline (blue) schemes at startup and
-//! swaps the accent-family fields (primary / secondary / tertiary
-//! plus their fixed variants, surfaceTint, inversePrimary) for the
-//! selected seed, leaving every neutral (surfaces, outlines,
-//! error) untouched so contrast stays canonical.
-//!
-//! Tone generation approximates the Material-3 HCT ladder with an
-//! HSL lightness ladder per tone — not colorimetrically exact HCT,
-//! but structure-faithful (tone 40 light primary / 80 dark primary
-//! / 90 containers / 10 on-containers) and visually consistent
-//! across the six seeds. Secondary = same hue desaturated;
-//! tertiary = hue shifted +60°, mid-saturation — the same
-//! relationships the M3 baseline uses.
+//! Accent theming: rebuild `MaterialPalette.schemes` from the picked
+//! accent. The Material lib's `schemes` is an `in` property, the
+//! intended theming hook. Blue is the shipped baseline verbatim, the
+//! other fixed accents are Material's tonal-spot scheme from their
+//! seed (every role, surfaces included), System is the phone's own.
 
+use material_colors::{color::Argb, hct::Hct, scheme::variant::SchemeTonalSpot};
 use slint::Color;
 
 use crate::MaterialSchemes;
 
-/// Accent catalogue: (name, seed hue in degrees). Index 0 is the
-/// baseline blue — selecting it restores the untouched shipped
-/// schemes rather than a regenerated approximation.
-pub const ACCENTS: &[(&str, f32)] = &[
-    ("Blue", 220.0), // baseline — shipped scheme used verbatim
-    ("Green", 140.0),
-    ("Teal", 180.0),
-    ("Purple", 275.0),
-    ("Rose", 350.0),
-    ("Amber", 40.0),
+/// Accent catalogue: (name, seed). Index 0 is the baseline blue,
+/// whose seed is unused: it restores the shipped schemes. The seeds
+/// are the swatches the HSL approximation used to show, so each
+/// accent keeps its hue.
+pub const ACCENTS: &[(&str, u32)] = &[
+    ("Blue", 0xff44_5e91),
+    ("Green", 0xff32_8c50),
+    ("Teal", 0xff32_8c8c),
+    ("Purple", 0xff66_328c),
+    ("Rose", 0xff8c_3241),
+    ("Amber", 0xff8c_6e32),
 ];
 
 /// HSL → Color. h in degrees, s/l in 0..=1.
@@ -49,112 +40,10 @@ fn hsl(h: f32, s: f32, l: f32) -> Color {
     Color::from_rgb_u8(to8(r1), to8(g1), to8(b1))
 }
 
-/// M3-ish tone → HSL lightness. Tones brighten slightly slower
-/// than linear at the top so containers stay pastel, not washed.
-fn tone_l(tone: f32) -> f32 {
-    (tone / 100.0).powf(1.08)
-}
-
-/// One tonal family (a hue+saturation pair rendered at the M3
-/// reference tones the scheme fields need).
-struct Family {
-    hue: f32,
-    sat: f32,
-}
-
-impl Family {
-    fn t(&self, tone: f32) -> Color {
-        // Saturation eases off toward the extremes like real
-        // tonal palettes do.
-        let edge = ((tone - 50.0).abs() / 50.0).powi(2);
-        let s = self.sat * (1.0 - 0.35 * edge);
-        hsl(self.hue, s, tone_l(tone))
-    }
-}
-
-/// The accent-family field values for one mode.
-pub struct AccentFields {
-    pub primary: Color,
-    pub on_primary: Color,
-    pub primary_container: Color,
-    pub on_primary_container: Color,
-    pub secondary: Color,
-    pub on_secondary: Color,
-    pub secondary_container: Color,
-    pub on_secondary_container: Color,
-    pub tertiary: Color,
-    pub on_tertiary: Color,
-    pub tertiary_container: Color,
-    pub on_tertiary_container: Color,
-    pub inverse_primary: Color,
-    pub primary_fixed: Color,
-    pub on_primary_fixed: Color,
-    pub primary_fixed_dim: Color,
-    pub on_primary_fixed_variant: Color,
-    pub secondary_fixed: Color,
-    pub on_secondary_fixed: Color,
-    pub secondary_fixed_dim: Color,
-    pub on_secondary_fixed_variant: Color,
-    pub tertiary_fixed: Color,
-    pub on_tertiary_fixed: Color,
-    pub tertiary_fixed_dim: Color,
-    pub on_tertiary_fixed_variant: Color,
-}
-
-/// Generate the accent fields for `hue`, per mode. Tone mapping
-/// mirrors the M3 scheme tables; the `fixed` family is
-/// mode-independent by spec (same values in light + dark).
-pub fn accent_fields(hue: f32, dark: bool) -> AccentFields {
-    let p = Family { hue, sat: 0.48 };
-    let s = Family { hue, sat: 0.18 };
-    let t = Family { hue: hue + 60.0, sat: 0.30 };
-
-    let (pri, on_pri, cont, on_cont) = if dark {
-        (80.0, 20.0, 30.0, 90.0)
-    } else {
-        (40.0, 100.0, 90.0, 10.0)
-    };
-    let inv_pri = if dark { 40.0 } else { 80.0 };
-
-    AccentFields {
-        primary: p.t(pri),
-        on_primary: p.t(on_pri),
-        primary_container: p.t(cont),
-        on_primary_container: p.t(on_cont),
-        secondary: s.t(pri),
-        on_secondary: s.t(on_pri),
-        secondary_container: s.t(cont),
-        on_secondary_container: s.t(on_cont),
-        tertiary: t.t(pri),
-        on_tertiary: t.t(on_pri),
-        tertiary_container: t.t(cont),
-        on_tertiary_container: t.t(on_cont),
-        inverse_primary: p.t(inv_pri),
-        primary_fixed: p.t(90.0),
-        on_primary_fixed: p.t(10.0),
-        primary_fixed_dim: p.t(80.0),
-        on_primary_fixed_variant: p.t(30.0),
-        secondary_fixed: s.t(90.0),
-        on_secondary_fixed: s.t(10.0),
-        secondary_fixed_dim: s.t(80.0),
-        on_secondary_fixed_variant: s.t(30.0),
-        tertiary_fixed: t.t(90.0),
-        on_tertiary_fixed: t.t(10.0),
-        tertiary_fixed_dim: t.t(80.0),
-        on_tertiary_fixed_variant: t.t(30.0),
-    }
-}
-
-/// Swatch colour for the Preferences picker circle — the accent's
-/// tone-40 primary (readable on light and dark list surfaces).
-/// Index 0 (baseline blue) uses the shipped primary directly so
-/// the swatch matches exactly what selecting it restores.
-pub fn swatch(idx: usize, baseline_primary: Color) -> Color {
-    if idx == 0 {
-        baseline_primary
-    } else {
-        Family { hue: ACCENTS[idx].1, sat: 0.48 }.t(40.0)
-    }
+/// Swatch colour for the Preferences picker circle: the light primary
+/// of the scheme picking `accent` would show.
+pub fn swatch(baseline: &MaterialSchemes, accent: Accent, system: Option<&MaterialSchemes>) -> Color {
+    accent_schemes(baseline, accent, system).light.primary
 }
 
 /// The Log's sixteen label colours for one mode, from that mode's
@@ -316,51 +205,81 @@ macro_rules! define_system_schemes {
 system_roles!(define_system_schemes);
 
 /// The scheme for `accent`: Blue is the shipped baseline verbatim,
-/// the other colours regenerate the accent families over the baseline
-/// neutrals, and System is the phone's (from `system_schemes`).
+/// the other colours are the tonal-spot scheme from their seed, and
+/// System is the phone's (from `system_schemes`).
 pub fn accent_schemes(baseline: &MaterialSchemes, accent: Accent, system: Option<&MaterialSchemes>) -> MaterialSchemes {
-    let idx = match (accent, system) {
-        (Accent::System, Some(system)) => return system.clone(),
-        (Accent::Fixed(idx), _) if idx > 0 && idx < ACCENTS.len() => idx,
-        _ => return baseline.clone(),
-    };
-    let hue = ACCENTS[idx].1;
-    let mut schemes = baseline.clone();
-    for (scheme, dark) in [
-        (&mut schemes.light, false),
-        (&mut schemes.dark, true),
-    ] {
-        let f = accent_fields(hue, dark);
-        scheme.primary = f.primary;
-        scheme.surfaceTint = f.primary;
-        scheme.onPrimary = f.on_primary;
-        scheme.primaryContainer = f.primary_container;
-        scheme.onPrimaryContainer = f.on_primary_container;
-        scheme.secondary = f.secondary;
-        scheme.onSecondary = f.on_secondary;
-        scheme.secondaryContainer = f.secondary_container;
-        scheme.onSecondaryContainer = f.on_secondary_container;
-        scheme.tertiary = f.tertiary;
-        scheme.onTertiary = f.on_tertiary;
-        scheme.tertiaryContainer = f.tertiary_container;
-        scheme.onTertiaryContainer = f.on_tertiary_container;
-        scheme.inversePrimary = f.inverse_primary;
-        scheme.primaryFixed = f.primary_fixed;
-        scheme.onPrimaryFixed = f.on_primary_fixed;
-        scheme.primaryFixedDim = f.primary_fixed_dim;
-        scheme.onPrimaryFixedVariant = f.on_primary_fixed_variant;
-        scheme.secondaryFixed = f.secondary_fixed;
-        scheme.onSecondaryFixed = f.on_secondary_fixed;
-        scheme.secondaryFixedDim = f.secondary_fixed_dim;
-        scheme.onSecondaryFixedVariant =
-            f.on_secondary_fixed_variant;
-        scheme.tertiaryFixed = f.tertiary_fixed;
-        scheme.onTertiaryFixed = f.on_tertiary_fixed;
-        scheme.tertiaryFixedDim = f.tertiary_fixed_dim;
-        scheme.onTertiaryFixedVariant =
-            f.on_tertiary_fixed_variant;
+    match (accent, system) {
+        (Accent::System, Some(system)) => system.clone(),
+        (Accent::Fixed(idx), _) if idx > 0 && idx < ACCENTS.len() => {
+            tonal_spot(Color::from_argb_encoded(ACCENTS[idx].1))
+        }
+        _ => baseline.clone(),
     }
-    schemes
+}
+
+fn argb(a: Argb) -> Color {
+    Color::from_argb_u8(a.alpha, a.red, a.green, a.blue)
+}
+
+/// Material's tonal-spot scheme (2023 spec, standard contrast) from
+/// `seed`, light and dark, every role.
+pub fn tonal_spot(seed: Color) -> MaterialSchemes {
+    let seed = Hct::new(Argb::from_u32(seed.as_argb_encoded()));
+    let scheme = |dark| {
+        let m = SchemeTonalSpot::new(seed, dark, None).scheme;
+        crate::MaterialScheme {
+        background: argb(m.background()),
+        onBackground: argb(m.on_background()),
+        surface: argb(m.surface()),
+        surfaceDim: argb(m.surface_dim()),
+        surfaceBright: argb(m.surface_bright()),
+        surfaceContainerLowest: argb(m.surface_container_lowest()),
+        surfaceContainerLow: argb(m.surface_container_low()),
+        surfaceContainer: argb(m.surface_container()),
+        surfaceContainerHigh: argb(m.surface_container_high()),
+        surfaceContainerHighest: argb(m.surface_container_highest()),
+        onSurface: argb(m.on_surface()),
+        surfaceVariant: argb(m.surface_variant()),
+        onSurfaceVariant: argb(m.on_surface_variant()),
+        inverseSurface: argb(m.inverse_surface()),
+        inverseOnSurface: argb(m.inverse_on_surface()),
+        outline: argb(m.outline()),
+        outlineVariant: argb(m.outline_variant()),
+        shadow: argb(m.shadow()),
+        scrim: argb(m.scrim()),
+        surfaceTint: argb(m.surface_tint()),
+        primary: argb(m.primary()),
+        onPrimary: argb(m.on_primary()),
+        primaryContainer: argb(m.primary_container()),
+        onPrimaryContainer: argb(m.on_primary_container()),
+        inversePrimary: argb(m.inverse_primary()),
+        secondary: argb(m.secondary()),
+        onSecondary: argb(m.on_secondary()),
+        secondaryContainer: argb(m.secondary_container()),
+        onSecondaryContainer: argb(m.on_secondary_container()),
+        tertiary: argb(m.tertiary()),
+        onTertiary: argb(m.on_tertiary()),
+        tertiaryContainer: argb(m.tertiary_container()),
+        onTertiaryContainer: argb(m.on_tertiary_container()),
+        error: argb(m.error()),
+        onError: argb(m.on_error()),
+        errorContainer: argb(m.error_container()),
+        onErrorContainer: argb(m.on_error_container()),
+        primaryFixed: argb(m.primary_fixed()),
+        primaryFixedDim: argb(m.primary_fixed_dim()),
+        onPrimaryFixed: argb(m.on_primary_fixed()),
+        onPrimaryFixedVariant: argb(m.on_primary_fixed_variant()),
+        secondaryFixed: argb(m.secondary_fixed()),
+        secondaryFixedDim: argb(m.secondary_fixed_dim()),
+        onSecondaryFixed: argb(m.on_secondary_fixed()),
+        onSecondaryFixedVariant: argb(m.on_secondary_fixed_variant()),
+        tertiaryFixed: argb(m.tertiary_fixed()),
+        tertiaryFixedDim: argb(m.tertiary_fixed_dim()),
+        onTertiaryFixed: argb(m.on_tertiary_fixed()),
+        onTertiaryFixedVariant: argb(m.on_tertiary_fixed_variant()),
+        }
+    };
+    MaterialSchemes { light: scheme(false), dark: scheme(true) }
 }
 
 #[cfg(test)]
@@ -386,8 +305,8 @@ mod tests {
 
     #[test]
     fn label_colours_start_at_the_accent_and_step_round_the_wheel() {
-        let light_primary = accent_fields(140.0, false).primary;
-        let dark_primary = accent_fields(140.0, true).primary;
+        let light_primary = hsl(140.0, 0.48, 0.37);
+        let dark_primary = hsl(140.0, 0.48, 0.78);
         let light = label_palette(light_primary, false);
         let dark = label_palette(dark_primary, true);
         assert_eq!(light[0], light_primary);
@@ -403,34 +322,6 @@ mod tests {
             assert!(l(dark[k]) > l(light[k]) + 0.05, "place {k} not lighter in dark mode");
             assert!(l(dark[k + 8]) > l(dark[k]) + 0.03, "place {} not lighter in dark mode", k + 8);
         }
-    }
-
-    #[test]
-    fn accent_light_and_dark_use_m3_tone_relationship() {
-        let l = accent_fields(140.0, false);
-        let d = accent_fields(140.0, true);
-        // dark primary is the light fixed-dim (both tone 80).
-        assert_eq!(d.primary, l.primary_fixed_dim);
-        // fixed family is mode-independent.
-        assert_eq!(l.primary_fixed, d.primary_fixed);
-        assert_eq!(l.on_tertiary_fixed_variant, d.on_tertiary_fixed_variant);
-    }
-
-    #[test]
-    fn on_colors_contrast_with_their_base() {
-        // Coarse sanity: tone distance ≥ 60 between a colour and
-        // its on-colour ⇒ big lightness gap.
-        let f = accent_fields(275.0, false);
-        let lum = |c: Color| {
-            0.299 * f32::from(c.red())
-                + 0.587 * f32::from(c.green())
-                + 0.114 * f32::from(c.blue())
-        };
-        assert!((lum(f.primary) - lum(f.on_primary)).abs() > 90.0);
-        assert!(
-            (lum(f.primary_container) - lum(f.on_primary_container)).abs()
-                > 90.0
-        );
     }
 
     #[test]
@@ -561,5 +452,107 @@ mod tests {
         // Without a scheme, System keeps the shipped colours.
         assert_eq!(accent_schemes(&baseline, Accent::System, None), baseline);
         assert_eq!(accent_schemes(&baseline, Accent::Fixed(0), Some(&system)), baseline);
+    }
+
+    fn c(argb: u32) -> Color {
+        Color::from_argb_encoded(argb)
+    }
+
+    #[test]
+    fn a_seed_gives_materials_tonal_spot_scheme() {
+        // Values from material-color-utilities' 2023 Swift test
+        // (SchemeTonalSpotTests, seed 0xfffa2bec).
+        let s = tonal_spot(c(0xfffa_2bec));
+        let (l, d) = (&s.light, &s.dark);
+        let light = [
+            (l.primary, 0xff81_4c77), (l.onPrimary, 0xffff_ffff),
+            (l.primaryContainer, 0xffff_d7f3), (l.onPrimaryContainer, 0xff34_0830),
+            (l.secondary, 0xff6e_5868), (l.onSecondary, 0xffff_ffff),
+            (l.secondaryContainer, 0xfff8_daee), (l.onSecondaryContainer, 0xff27_1624),
+            (l.tertiary, 0xff81_5343), (l.onTertiary, 0xffff_ffff),
+            (l.tertiaryContainer, 0xffff_dbd0), (l.onTertiaryContainer, 0xff32_1207),
+            (l.error, 0xffba_1a1a), (l.onError, 0xffff_ffff),
+            (l.errorContainer, 0xffff_dad6), (l.onErrorContainer, 0xff41_0002),
+            (l.background, 0xffff_f7f9), (l.onBackground, 0xff20_1a1e),
+            (l.surface, 0xffff_f7f9), (l.onSurface, 0xff20_1a1e),
+            (l.surfaceVariant, 0xffee_dee7), (l.onSurfaceVariant, 0xff4e_444b),
+            (l.outline, 0xff80_747b), (l.outlineVariant, 0xffd2_c2cb),
+            (l.shadow, 0xff00_0000), (l.scrim, 0xff00_0000),
+            (l.inverseSurface, 0xff36_2e33), (l.inverseOnSurface, 0xfffa_edf3),
+            (l.inversePrimary, 0xfff3_b2e4),
+        ];
+        let dark = [
+            (d.primary, 0xfff3_b2e4), (d.onPrimary, 0xff4d_1f47),
+            (d.primaryContainer, 0xff67_355e), (d.onPrimaryContainer, 0xffff_d7f3),
+            (d.secondary, 0xffdb_bed1), (d.onSecondary, 0xff3e_2a39),
+            (d.secondaryContainer, 0xff55_4050), (d.onSecondaryContainer, 0xfff8_daee),
+            (d.tertiary, 0xfff5_b9a5), (d.onTertiary, 0xff4c_2619),
+            (d.tertiaryContainer, 0xff66_3c2d), (d.onTertiaryContainer, 0xffff_dbd0),
+            (d.error, 0xffff_b4ab), (d.onError, 0xff69_0005),
+            (d.errorContainer, 0xff93_000a), (d.onErrorContainer, 0xffff_dad6),
+            (d.background, 0xff18_1216), (d.onBackground, 0xffec_dfe5),
+            (d.surface, 0xff18_1216), (d.onSurface, 0xffec_dfe5),
+            (d.surfaceVariant, 0xff4e_444b), (d.onSurfaceVariant, 0xffd2_c2cb),
+            (d.outline, 0xff9a_8d95), (d.outlineVariant, 0xff4e_444b),
+            (d.shadow, 0xff00_0000), (d.scrim, 0xff00_0000),
+            (d.inverseSurface, 0xffec_dfe5), (d.inverseOnSurface, 0xff36_2e33),
+            (d.inversePrimary, 0xff81_4c77),
+        ];
+        for (i, (got, want)) in light.iter().chain(dark.iter()).enumerate() {
+            assert_eq!(*got, c(*want), "role {i}");
+        }
+        // The roles the reference test doesn't list: the crate's own
+        // value for the same role, so a swapped field fails.
+        for (ours, dark) in [(l, false), (d, true)] {
+            let m = SchemeTonalSpot::new(Hct::new(Argb::from_u32(0xfffa_2bec)), dark, None).scheme;
+            let rest = [
+                (ours.surfaceTint, m.surface_tint()), (ours.surfaceDim, m.surface_dim()),
+                (ours.surfaceBright, m.surface_bright()),
+                (ours.surfaceContainerLowest, m.surface_container_lowest()),
+                (ours.surfaceContainerLow, m.surface_container_low()),
+                (ours.surfaceContainer, m.surface_container()),
+                (ours.surfaceContainerHigh, m.surface_container_high()),
+                (ours.surfaceContainerHighest, m.surface_container_highest()),
+                (ours.primaryFixed, m.primary_fixed()), (ours.primaryFixedDim, m.primary_fixed_dim()),
+                (ours.onPrimaryFixed, m.on_primary_fixed()),
+                (ours.onPrimaryFixedVariant, m.on_primary_fixed_variant()),
+                (ours.secondaryFixed, m.secondary_fixed()), (ours.secondaryFixedDim, m.secondary_fixed_dim()),
+                (ours.onSecondaryFixed, m.on_secondary_fixed()),
+                (ours.onSecondaryFixedVariant, m.on_secondary_fixed_variant()),
+                (ours.tertiaryFixed, m.tertiary_fixed()), (ours.tertiaryFixedDim, m.tertiary_fixed_dim()),
+                (ours.onTertiaryFixed, m.on_tertiary_fixed()),
+                (ours.onTertiaryFixedVariant, m.on_tertiary_fixed_variant()),
+            ];
+            for (i, (got, want)) in rest.iter().enumerate() {
+                assert_eq!(*got, argb(*want), "dark {dark}, role {i}");
+            }
+            // Containers step from the surface, as Material's ladder does.
+            assert_ne!(ours.surfaceContainerLow, ours.surfaceContainer);
+        }
+    }
+
+    const ROSE_SEED: u32 = 0xff8c_3241;
+
+    #[test]
+    fn a_fixed_accent_takes_every_role_from_its_seed() {
+        let baseline = MaterialSchemes::default();
+        let rose = accent_schemes(&baseline, Accent::Fixed(4), None);
+        assert_eq!(rose, tonal_spot(c(ROSE_SEED)));
+        assert_ne!(rose.light.surface, baseline.light.surface);
+    }
+
+    #[test]
+    fn blue_stays_the_shipped_scheme() {
+        let mut baseline = MaterialSchemes::default();
+        baseline.light.primary = c(0xff44_5e91);
+        assert_eq!(accent_schemes(&baseline, Accent::Fixed(0), None), baseline);
+    }
+
+    #[test]
+    fn a_circle_shows_its_accents_light_primary() {
+        let mut baseline = MaterialSchemes::default();
+        baseline.light.primary = c(0xff44_5e91);
+        assert_eq!(swatch(&baseline, Accent::Fixed(0), None), c(0xff44_5e91));
+        assert_eq!(swatch(&baseline, Accent::Fixed(4), None), tonal_spot(c(ROSE_SEED)).light.primary);
     }
 }

@@ -3686,8 +3686,8 @@ fn apply_system_insets(ui: &MainWindow) {
 /// Apply the persisted accent to MaterialPalette.schemes (P8) and
 /// the Log's label palettes.
 /// Blue restores the shipped baseline verbatim; the other colours
-/// regenerate the accent families over the baseline neutrals; System
-/// takes every role from the phone. `baseline` is the untouched
+/// are the tonal-spot scheme from their seed, surfaces included;
+/// System takes every role from the phone. `baseline` is the untouched
 /// shipped MaterialSchemes captured once at startup.
 fn apply_accent(ui: &MainWindow, baseline: &MaterialSchemes, accent: theme::Accent, system: Option<&MaterialSchemes>) {
     let schemes = theme::accent_schemes(baseline, accent, system);
@@ -9344,10 +9344,7 @@ fn build_ui() -> MainWindow {
         let row = theme::accent_row(has_system);
         let swatches: Vec<slint::Color> = row
             .iter()
-            .map(|accent| match accent {
-                theme::Accent::System => system.as_ref().map_or(baseline.light.primary, |s| s.light.primary),
-                theme::Accent::Fixed(i) => theme::swatch(*i, baseline.light.primary),
-            })
+            .map(|accent| theme::swatch(&baseline, *accent, system.as_ref()))
             .collect();
         ui.set_accent_swatches(
             std::rc::Rc::new(slint::VecModel::from(swatches)).into(),

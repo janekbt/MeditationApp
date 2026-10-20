@@ -59,6 +59,11 @@ serde_json = "1"
 # `chrono::Local::now()` to seed the picker on first open.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# material-colors: Google's Material 3 colour maths (HCT, tonal-spot
+# scheme) for the fixed accents. 0.4.2 because 0.5 needs Rust 1.97;
+# its dependencies were already in the lock.
+material-colors = "0.4.2"
+
 # jni: thin wrapper over Android's JNI for calling the Kotlin
 # MeditateSessionService.start/stop static methods from Rust. Only
 # linked on android-targets via the cfg gate in `src/service.rs`;

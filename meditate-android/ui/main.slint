@@ -426,8 +426,8 @@ component WrapButton inherits Rectangle {
     border-width: root.outline ? 1px : 0px;
     border-color: MaterialPalette.outline;
     background: root.outline
-        ? (touch.pressed ? MaterialPalette.primary.transparentize(0.88) : transparent)
-        : (touch.pressed ? MaterialPalette.primary.darker(0.15) : MaterialPalette.primary);
+        ? (touch.pressed ? MaterialPalette.primary.with-alpha(MaterialPalette.state-layer-opacity-press) : transparent)
+        : (touch.pressed ? MaterialPalette.primary.mix(MaterialPalette.on-primary, 1 - MaterialPalette.state-layer-opacity-press) : MaterialPalette.primary);
 
     accessible-role: button;
     accessible-label: root.text;
@@ -775,7 +775,7 @@ component CompactToggle inherits Rectangle {
                     font-size: 13px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
-                    color: MaterialPalette.on-surface;
+                    color: idx == root.current-index ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface;
                 }
             }
 
@@ -837,7 +837,7 @@ component ModeToggle inherits Rectangle {
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                color: MaterialPalette.on-surface;
+                color: idx == root.current-index ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface;
             }
 
             // Divider on the segment's right edge (skipped after
@@ -901,8 +901,8 @@ component CuesRow inherits Rectangle {
 // Bells group's Sound rows, nested Preparation Time). Single
 // definition so every one looks + behaves identically:
 // 14 px title / 12 px subtitle / "›" chevron, the
-// `.darker(0.35)` child-grouping fill with a subtle
-// `.darker(0.22)` hover. At least 56 px, taller when its text
+// surface-container-low child-grouping fill with an on-surface
+// state layer on hover and press. At least 56 px, taller when its text
 // wraps — the parent expander
 // owns the reveal height-animation + clip. (Previously the
 // Starting Bell used a `DurationRow` here, which has 16 px
@@ -913,7 +913,7 @@ component ChooserRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     in property <bool> enabled: true;
-    // `child-shade` true → the `.darker(0.35)` grouped fill used
+    // `child-shade` true → the surface-container-low grouped fill used
     // when this row is nested inside an expander body (a "child"
     // of another row). false → the regular boxed-list look
     // (transparent on the parent surface, surface-container-high
@@ -924,9 +924,11 @@ component ChooserRow inherits Rectangle {
 
     height: max(56px, cr-layout.preferred-height);
     background: root.child-shade
-        ? (touch.has-hover && root.enabled
-            ? MaterialPalette.surface-container.darker(0.22)
-            : MaterialPalette.surface-container.darker(0.35))
+        ? (touch.pressed && root.enabled
+            ? MaterialPalette.surface-container-low.mix(MaterialPalette.on-surface, 1 - MaterialPalette.state-layer-opacity-press)
+            : touch.has-hover && root.enabled
+                ? MaterialPalette.surface-container-low.mix(MaterialPalette.on-surface, 1 - MaterialPalette.state-layer-opacity-hover)
+                : MaterialPalette.surface-container-low)
         : (touch.has-hover && root.enabled
             ? MaterialPalette.surface-container-high
             : transparent);
@@ -1184,12 +1186,12 @@ component ExpanderGroup inherits Rectangle {
         // `animate height` — `reveal` is the only animated
         // quantity (and a nested ExpanderRow's own `reveal`
         // flows in through `preferred-height` with no second
-        // animator). The `.darker(0.35)` fill + 16 px inset
+        // animator). The surface-container-low fill + 16 px inset
         // group the rows as children of this expander.
         Rectangle {
             clip: true;
             height: root.reveal * bodyContent.preferred-height;
-            background: MaterialPalette.surface-container.darker(0.35);
+            background: MaterialPalette.surface-container-low;
 
             bodyContent := VerticalLayout {
                 y: 0;
@@ -1337,7 +1339,7 @@ component ConfirmDialog inherits Rectangle {
     callback cancel();
     callback confirm();
 
-    background: #00000080;
+    background: MaterialPalette.scrim.with-alpha(0.32);
     ScrimArea {
         tapped => { root.cancel(); }
     }
@@ -1423,8 +1425,8 @@ component PreviewPill inherits Rectangle {
     border-radius: 16px;
     border-width: 1px;
     border-color: MaterialPalette.outline;
-    background: touch.has-hover
-        ? MaterialPalette.secondary-container
+    background: touch.pressed ? MaterialPalette.primary.with-alpha(MaterialPalette.state-layer-opacity-press)
+        : touch.has-hover ? MaterialPalette.primary.with-alpha(MaterialPalette.state-layer-opacity-hover)
         : transparent;
 
     touch := TouchArea {
@@ -1435,7 +1437,7 @@ component PreviewPill inherits Rectangle {
         font-size: 13px;
         horizontal-alignment: center;
         vertical-alignment: center;
-        color: MaterialPalette.on-surface;
+        color: MaterialPalette.primary;
         visible: !root.playing;
     }
     stop-label := Text {
@@ -1443,7 +1445,7 @@ component PreviewPill inherits Rectangle {
         font-size: 13px;
         horizontal-alignment: center;
         vertical-alignment: center;
-        color: MaterialPalette.on-surface;
+        color: MaterialPalette.primary;
         visible: root.playing;
     }
 }
@@ -1792,7 +1794,7 @@ component RevealVolume inherits Rectangle {
             }
             Rectangle {
                 background: root.child-shade
-                    ? MaterialPalette.surface-container.darker(0.35)
+                    ? MaterialPalette.surface-container-low
                     : transparent;
                 VerticalLayout {
                     padding-left: 16px;
@@ -2043,6 +2045,7 @@ export enum Modal {
 export component MainWindow inherits Window {
     in-out property <Modal> modal;
     title: @tr("Meditate");
+    background: MaterialPalette.surface;
 
     in property <string> remaining-text: "00:10";
     in property <string> duration-text: "00:10";
@@ -3409,12 +3412,12 @@ export component MainWindow inherits Window {
                                         text: item.name;
                                         wrap: word-wrap;
                                         font-size: 16px;
-                                        color: item.selected ? MaterialPalette.primary : MaterialPalette.on-surface;
+                                        color: item.selected ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface;
                                     }
                                     if item.subtitle != "" : Text {
                                         text: item.subtitle;
                                         font-size: 12px;
-                                        color: MaterialPalette.on-surface-variant;
+                                        color: item.selected ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface-variant;
                                     }
                                 }
                             }
@@ -5554,7 +5557,7 @@ export component MainWindow inherits Window {
     // or receive input, so the scrim still behaves modally.
     Rectangle {
         visible: root.filter-sheet-open;
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => { root.filter-sheet-open = false; }
         }
@@ -5630,7 +5633,7 @@ export component MainWindow inherits Window {
     // renders later children above earlier ones).
     if root.modal == Modal.duration : Rectangle {
         // Scrim — taps outside the card cancel.
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => { root.modal = Modal.none; }
         }
@@ -6140,7 +6143,7 @@ export component MainWindow inherits Window {
             // GTK's interval-bell edit page is a single
             // Adw.PreferencesGroup (Kind ComboRow, Minutes /
             // Jitter SpinRows, Type toggle row, Sound / Pattern
-            // rows). Regular surface (NOT the `.darker` "child"
+            // rows). Regular surface (NOT the container-low "child"
             // shade) since this group isn't nested inside another
             // row here. Conditional rows (Jitter, Sound, Pattern)
             // collapse via the reveal scaffold — an `if`-gated
@@ -7189,7 +7192,7 @@ export component MainWindow inherits Window {
     // VerticalSpinBox steps by 1 (GTK's SpinRow steps 5 — minor
     // Android deviation, acceptable for a transient picker).
     if root.modal == Modal.prep : Rectangle {
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => { root.modal = Modal.none; }
         }
@@ -8062,7 +8065,7 @@ export component MainWindow inherits Window {
         border-radius: 4px;
         background: MaterialPalette.inverse-surface;
         drop-shadow-blur: 8px;
-        drop-shadow-color: #00000040;
+        drop-shadow-color: MaterialPalette.shadow.with-alpha(0.25);
         drop-shadow-offset-y: 2px;
 
         snackbar-row := HorizontalLayout {
@@ -8101,7 +8104,7 @@ export component MainWindow inherits Window {
     // While the worker runs, the form freezes and Import becomes a
     // "Converting…" label; Cancel stays live (mirrors GTK).
     if root.modal == Modal.guided-import : Rectangle {
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => {
                 if (!root.guided-import-busy) {
@@ -8303,7 +8306,7 @@ export component MainWindow inherits Window {
     // (seeded from core DAILY_GOAL_MIN/MAX). Declared with the
     // other dialogs so it tops the Preferences page.
     if root.modal == Modal.goal : Rectangle {
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => { root.modal = Modal.none; }
         }
@@ -8382,7 +8385,7 @@ export component MainWindow inherits Window {
     // Preferences (the indicator tap that opens them lives in the
     // AppBar). Copy mirrors GTK's recovery_dialog.rs verbatim.
     if root.modal == Modal.recovery : Rectangle {
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         ScrimArea {
             tapped => { root.modal = Modal.none; }
         }
@@ -8466,7 +8469,7 @@ export component MainWindow inherits Window {
     // evented, so every device converges. Keep-both dismisses the
     // prompt on this device; the label stays for manual renaming.
     if root.modal == Modal.label-conflict : Rectangle {
-        background: #00000080;
+        background: MaterialPalette.scrim.with-alpha(0.32);
         // Scrim tap = decide later (no dismissal recorded); the
         // prompt returns after the next sync.
         ScrimArea {
