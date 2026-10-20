@@ -45,7 +45,9 @@
          Session notes are personal data; keep them off transports
          the user never chose. allowBackup="false" covers both up to
          Android 11; from 12 on it no longer stops a phone-to-phone
-         transfer, which dataExtractionRules does. -->
+         transfer, which dataExtractionRules does. Meditate keeps
+         nothing in device-protected storage, so the rules name only
+         the five credential-protected domains. -->
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

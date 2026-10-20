@@ -3269,10 +3269,12 @@ mod tests {
             let at = rules.find(&format!("<{section}>")).unwrap_or_else(|| panic!("{section} missing"));
             let body = &rules[at..at + rules[at..].find(&format!("</{section}>")).unwrap()];
             assert!(!body.contains("<include"));
-            for domain in ["root", "file", "database", "sharedpref", "external",
-                "device_root", "device_file", "device_database", "device_sharedpref"] {
+            for domain in ["root", "file", "database", "sharedpref", "external"] {
                 assert!(body.contains(&format!("<exclude domain=\"{domain}\" path=\".\" />")), "{section} keeps {domain}");
             }
+            // Meditate has no device-protected storage, and the pinned
+            // AGP 7.3 lint rejects the device_* domains in a release build.
+            assert!(!body.contains("device_"), "{section} names a device_* domain");
         }
     }
 
