@@ -3,25 +3,23 @@
 ## i-slint-backend-android-activity
 
 A copy of the crates.io release `i-slint-backend-android-activity 1.18.1`
-with two fixes, both proposed upstream against Slint's master:
+with three fixes, as merged upstream into Slint's master:
 
-- **The cursor follows the keyboard.** Gboard moves the cursor with
-  `InputConnection.setSelection()`, for example when sliding over the space
-  bar. Upstream only reports text replacements to Rust, so the cursor
-  stayed put. `SlintEditable.updateSelection()` and the `setSelection()`
-  override in `java/SlintAndroidJavaHelper.java`, and
-  `callback_update_selection` in `javahelper.rs`.
-- **The cut/copy/paste bar sits next to the selection.**
-  `onGetContentRect()` handed Android window coordinates where it expects
-  view coordinates, so the bar sat one status bar lower, on the text.
-  The old `top < 0` workaround is gone: with view coordinates, Android
-  already places the bar below a selection that is partly above the view.
-
-Everything else is unchanged; `diff -r` against the registry copy shows
-only these two fixes, plus the call to `select_word_on_long_press` in the
-long-press timer (`androidwindowadapter.rs`), which needs the core below.
-Upstream: slint-ui/slint#14205 (keyboard), #14206 (selection bar), and
-the long-press call is part of #14208 (see i-slint-core).
+- **The cursor follows the keyboard** (slint-ui/slint#14205, merge 5b528c1).
+  Gboard moves the cursor with `InputConnection.setSelection()`, for example
+  when sliding over the space bar; upstream only reported text replacements.
+  `SlintEditable.updateSelection()` and the `setSelection()` override in
+  `java/SlintAndroidJavaHelper.java`, `callback_update_selection` in
+  `javahelper.rs` (through `TextInput::set_selection_offsets`). Master
+  refactored the Java file since 1.18.1, so this is a hand port: 1.18.1
+  keeps `mPreeditStart`/`mPreeditEnd`, and `hadPreedit` is read from them
+  where master has a `mHasPreedit` field.
+- **The cut/copy/paste bar sits next to the selection** (#14206, merge
+  d5a600a). `onGetContentRect()` hands Android view coordinates instead of
+  window coordinates; the old `top < 0` workaround is gone.
+- **A long press selects by words** (#14208, merge 7cb5f71). The long-press
+  timer in `androidwindowadapter.rs` calls
+  `TextInput::select_word_on_long_press` (see i-slint-core).
 
 The Java helper is compiled into the APK (the crate's `build.rs` runs
 javac and d8), so a change here is a change to the shipped app: run the
@@ -29,16 +27,17 @@ repro probe after touching it.
 
 ## i-slint-core
 
-A copy of the crates.io release `i-slint-core 1.18.1` with one addition in
-`items/text.rs`: `TextInput::select_word_on_long_press()`. A long press
-selected the word, but the held finger kept the character drag mode, so
-the slightest move pulled the selection end to the finger. The function
-switches a held press to word drag mode, as a double click does. `diff -r`
-against the registry copy shows only this function. Upstream:
-slint-ui/slint#14208, together with the backend call.
+A copy of the crates.io release `i-slint-core 1.18.1` with, in
+`items/text.rs`, the core parts of the same merges:
 
-Both crates are compiled into the APK: run the repro probe after touching
-either.
+- `TextInput::select_word_on_long_press()` (#14208): a held long press
+  switches to word drag mode as a double click does; a held double or
+  triple press keeps its selection; nothing is selected at a line break or
+  behind the end of the text.
+- `set_selection_offsets()` keeps the cursor visible while it moves (#14205).
+
+`diff -r` against the registry copies shows only these. Both crates are
+compiled into the APK: run the repro probe after touching either.
 
 Delete these directories and the `[patch.crates-io]` entries in the
 workspace `Cargo.toml` once a Slint release carries all three fixes; both

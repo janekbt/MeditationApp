@@ -40,6 +40,11 @@ On Android, a text field SHALL move its cursor or selection to where the keyboar
 - **THEN** the cursor moves and the digits stay as they were
 - **MANUAL** on the FP5.
 
+#### Scenario: Moving the cursor while a word is still being composed
+- **WHEN** the user types part of a word (Gboard underlines it) and slides over the space bar before finishing it
+- **THEN** the suggestions keep matching the underlined word, and the word is written once, where it was typed
+- **MANUAL** on the FP5: the composing range lives in Gboard; upstream's #14205 as merged reports it with each selection change.
+
 ### Requirement: The copy bar sits next to the selection
 On Android, the cut/copy/paste bar SHALL appear above the selected text, or below it when there's no room above, never on it.
 
@@ -62,11 +67,21 @@ On Android, after a long press selects a word, moving the held finger SHALL exte
 - **MANUAL** on the FP5 and the API 35 emulator: the long press is Android-only. Upstream the core part has an automated test (task 1.1).
 
 #### Scenario: The finger drifts before the long press fires
-- **WHEN** the user presses a word and the finger drifts a few pixels, even into the next word, before the long press fires
-- **THEN** the word where the press started is selected, not a part of it and not the next one
-- **MANUAL** same devices; found in the review. Upstream it's a step of the same automated test.
+- **WHEN** the user presses a word and the finger drifts a few pixels before the long press fires
+- **THEN** the selection starts at the word where the press started and reaches the word under the finger: within the same word only that word, into the next word both words, as upstream merged it
+- **MANUAL** same devices; upstream's `text_input_long_press` test covers the core part.
 
 #### Scenario: The finger moves on to the next word
 - **WHEN** the user long-presses a word and drags right into the next word
 - **THEN** the selection covers both whole words; dragging back left over the first word keeps the first word selected
+- **MANUAL** same devices.
+
+#### Scenario: A long press on an empty line or after the last word
+- **WHEN** the user long-presses an empty line in a multi-line field, or behind the end of the text
+- **THEN** no word is selected and the press goes on like a plain press: the cursor sits where the finger is
+- **MANUAL** on the FP5 and the API 35 emulator; upstream's `text_input_long_press` test covers the core part.
+
+#### Scenario: A double tap that is then held
+- **WHEN** the user double-taps a word and keeps the finger down until the long press fires
+- **THEN** the word from the double tap stays selected, and it does not grow
 - **MANUAL** same devices.
