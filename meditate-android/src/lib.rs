@@ -26,6 +26,8 @@ mod keychain;
 mod about;
 #[cfg(target_os = "android")]
 mod insets;
+#[cfg(target_os = "android")]
+mod system_colors;
 // pub (like `app`): host builds keep its tests without dead code.
 pub mod theme;
 #[cfg(any(target_os = "android", test))]

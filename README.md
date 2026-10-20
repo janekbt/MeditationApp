@@ -59,7 +59,7 @@ Linux:
 
 ### Preferences
 - Daily goal; CSV backup and restore, Insight Timer import, Nextcloud sync settings, delete all sessions
-- On Android, pick an accent colour
+- On Android, follow the system colours (Android 14+) or pick an accent colour
 - Labels, presets, bell sounds and vibration patterns are managed from the timer setup
 
 ### Android app
@@ -70,7 +70,7 @@ Linux:
 ### General
 - Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese) — on Linux and Android alike
 - Keyboard shortcuts for the common actions on Linux
-- Dark-mode and high-contrast safe; follows your system accent colour on Linux — on Android, pick from six accent colours in the app; the Log's label colours follow the accent
+- Dark-mode and high-contrast safe; follows your system accent colour on Linux, and your wallpaper's colours on Android 14 and later, or pick from six accent colours in the app; the Log's label colours follow the accent
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
   - Log file lives at `~/.var/app/io.github.janekbt.Meditate/data/meditate/diagnostics.log` on Flatpak, `~/.local/share/meditate/diagnostics.log` otherwise — useful when the About dialog itself can't be opened
 

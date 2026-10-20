@@ -17,6 +17,8 @@
 
 use slint::Color;
 
+use crate::MaterialSchemes;
+
 /// Accent catalogue: (name, seed hue in degrees). Index 0 is the
 /// baseline blue — selecting it restores the untouched shipped
 /// schemes rather than a regenerated approximation.
@@ -188,6 +190,179 @@ fn to_hsl(c: Color) -> (f32, f32, f32) {
     (60.0 * h, d / (1.0 - (2.0 * l - 1.0).abs()), l)
 }
 
+/// The accent picked in Preferences: the system's colour scheme or
+/// one of `ACCENTS`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accent {
+    System,
+    Fixed(usize),
+}
+
+/// The accent a stored `android_accent` value stands for. A pick
+/// made since System exists is stored as `system` or `+N`; a plain
+/// `N` (or no value) is from before, and turns into System where the
+/// phone has a scheme.
+pub fn picked_accent(stored: &str, has_system: bool) -> Accent {
+    let fixed = |n: &str| Accent::Fixed(n.parse().ok().filter(|&i| i < ACCENTS.len()).unwrap_or(0));
+    match stored.strip_prefix('+') {
+        Some(n) => fixed(n),
+        None if has_system => Accent::System,
+        None => fixed(stored),
+    }
+}
+
+/// The value to store for `accent`. The previous release reads `+N`
+/// as N and `system` as Blue.
+pub fn stored_value(accent: Accent) -> String {
+    match accent {
+        Accent::System => "system".to_string(),
+        Accent::Fixed(i) => format!("+{i}"),
+    }
+}
+
+/// The picker's circles, in order.
+pub fn accent_row(has_system: bool) -> Vec<Accent> {
+    has_system
+        .then_some(Accent::System)
+        .into_iter()
+        .chain((0..ACCENTS.len()).map(Accent::Fixed))
+        .collect()
+}
+
+/// The circle `stored` rings in the row for `has_system`.
+pub fn accent_ring(stored: &str, has_system: bool) -> usize {
+    let picked = picked_accent(stored, has_system);
+    accent_row(has_system).iter().position(|a| *a == picked).unwrap_or(0)
+}
+
+/// The Material 3 roles Android 14+ reports, as `(MaterialScheme field,
+/// light resource, dark resource)`. Inverse roles come from the
+/// tonal palettes, the surface tint is the primary; shadow and scrim
+/// have no system colour.
+macro_rules! system_roles {
+    ($m:ident) => {
+        $m! {
+            primary "system_primary_light" "system_primary_dark";
+            surfaceTint "system_primary_light" "system_primary_dark";
+            onPrimary "system_on_primary_light" "system_on_primary_dark";
+            primaryContainer "system_primary_container_light" "system_primary_container_dark";
+            onPrimaryContainer "system_on_primary_container_light" "system_on_primary_container_dark";
+            secondary "system_secondary_light" "system_secondary_dark";
+            onSecondary "system_on_secondary_light" "system_on_secondary_dark";
+            secondaryContainer "system_secondary_container_light" "system_secondary_container_dark";
+            onSecondaryContainer "system_on_secondary_container_light" "system_on_secondary_container_dark";
+            tertiary "system_tertiary_light" "system_tertiary_dark";
+            onTertiary "system_on_tertiary_light" "system_on_tertiary_dark";
+            tertiaryContainer "system_tertiary_container_light" "system_tertiary_container_dark";
+            onTertiaryContainer "system_on_tertiary_container_light" "system_on_tertiary_container_dark";
+            error "system_error_light" "system_error_dark";
+            onError "system_on_error_light" "system_on_error_dark";
+            errorContainer "system_error_container_light" "system_error_container_dark";
+            onErrorContainer "system_on_error_container_light" "system_on_error_container_dark";
+            background "system_background_light" "system_background_dark";
+            onBackground "system_on_background_light" "system_on_background_dark";
+            surface "system_surface_light" "system_surface_dark";
+            onSurface "system_on_surface_light" "system_on_surface_dark";
+            surfaceVariant "system_surface_variant_light" "system_surface_variant_dark";
+            onSurfaceVariant "system_on_surface_variant_light" "system_on_surface_variant_dark";
+            outline "system_outline_light" "system_outline_dark";
+            outlineVariant "system_outline_variant_light" "system_outline_variant_dark";
+            inverseSurface "system_neutral1_800" "system_neutral1_100";
+            inverseOnSurface "system_neutral1_50" "system_neutral1_800";
+            inversePrimary "system_accent1_200" "system_accent1_600";
+            primaryFixed "system_primary_fixed" "system_primary_fixed";
+            onPrimaryFixed "system_on_primary_fixed" "system_on_primary_fixed";
+            primaryFixedDim "system_primary_fixed_dim" "system_primary_fixed_dim";
+            onPrimaryFixedVariant "system_on_primary_fixed_variant" "system_on_primary_fixed_variant";
+            secondaryFixed "system_secondary_fixed" "system_secondary_fixed";
+            onSecondaryFixed "system_on_secondary_fixed" "system_on_secondary_fixed";
+            secondaryFixedDim "system_secondary_fixed_dim" "system_secondary_fixed_dim";
+            onSecondaryFixedVariant "system_on_secondary_fixed_variant" "system_on_secondary_fixed_variant";
+            tertiaryFixed "system_tertiary_fixed" "system_tertiary_fixed";
+            onTertiaryFixed "system_on_tertiary_fixed" "system_on_tertiary_fixed";
+            tertiaryFixedDim "system_tertiary_fixed_dim" "system_tertiary_fixed_dim";
+            onTertiaryFixedVariant "system_on_tertiary_fixed_variant" "system_on_tertiary_fixed_variant";
+            surfaceDim "system_surface_dim_light" "system_surface_dim_dark";
+            surfaceBright "system_surface_bright_light" "system_surface_bright_dark";
+            surfaceContainerLowest "system_surface_container_lowest_light" "system_surface_container_lowest_dark";
+            surfaceContainerLow "system_surface_container_low_light" "system_surface_container_low_dark";
+            surfaceContainer "system_surface_container_light" "system_surface_container_dark";
+            surfaceContainerHigh "system_surface_container_high_light" "system_surface_container_high_dark";
+            surfaceContainerHighest "system_surface_container_highest_light" "system_surface_container_highest_dark";
+        }
+    };
+}
+
+macro_rules! define_system_schemes {
+    ($($material:ident $light:literal $dark:literal;)*) => {
+        /// `baseline` with every role the system reports, `None` unless it
+        /// reports all of them; shadow and scrim stay as shipped.
+        pub fn system_schemes<E>(
+            baseline: &MaterialSchemes,
+            mut lookup: impl FnMut(&str) -> Result<Option<Color>, E>,
+        ) -> Result<Option<MaterialSchemes>, E> {
+            let mut schemes = baseline.clone();
+            $(
+                let (Some(light), Some(dark)) = (lookup($light)?, lookup($dark)?) else {
+                    return Ok(None);
+                };
+                schemes.light.$material = light;
+                schemes.dark.$material = dark;
+            )*
+            Ok(Some(schemes))
+        }
+    };
+}
+system_roles!(define_system_schemes);
+
+/// The scheme for `accent`: Blue is the shipped baseline verbatim,
+/// the other colours regenerate the accent families over the baseline
+/// neutrals, and System is the phone's (from `system_schemes`).
+pub fn accent_schemes(baseline: &MaterialSchemes, accent: Accent, system: Option<&MaterialSchemes>) -> MaterialSchemes {
+    let idx = match (accent, system) {
+        (Accent::System, Some(system)) => return system.clone(),
+        (Accent::Fixed(idx), _) if idx > 0 && idx < ACCENTS.len() => idx,
+        _ => return baseline.clone(),
+    };
+    let hue = ACCENTS[idx].1;
+    let mut schemes = baseline.clone();
+    for (scheme, dark) in [
+        (&mut schemes.light, false),
+        (&mut schemes.dark, true),
+    ] {
+        let f = accent_fields(hue, dark);
+        scheme.primary = f.primary;
+        scheme.surfaceTint = f.primary;
+        scheme.onPrimary = f.on_primary;
+        scheme.primaryContainer = f.primary_container;
+        scheme.onPrimaryContainer = f.on_primary_container;
+        scheme.secondary = f.secondary;
+        scheme.onSecondary = f.on_secondary;
+        scheme.secondaryContainer = f.secondary_container;
+        scheme.onSecondaryContainer = f.on_secondary_container;
+        scheme.tertiary = f.tertiary;
+        scheme.onTertiary = f.on_tertiary;
+        scheme.tertiaryContainer = f.tertiary_container;
+        scheme.onTertiaryContainer = f.on_tertiary_container;
+        scheme.inversePrimary = f.inverse_primary;
+        scheme.primaryFixed = f.primary_fixed;
+        scheme.onPrimaryFixed = f.on_primary_fixed;
+        scheme.primaryFixedDim = f.primary_fixed_dim;
+        scheme.onPrimaryFixedVariant = f.on_primary_fixed_variant;
+        scheme.secondaryFixed = f.secondary_fixed;
+        scheme.onSecondaryFixed = f.on_secondary_fixed;
+        scheme.secondaryFixedDim = f.secondary_fixed_dim;
+        scheme.onSecondaryFixedVariant =
+            f.on_secondary_fixed_variant;
+        scheme.tertiaryFixed = f.tertiary_fixed;
+        scheme.onTertiaryFixed = f.on_tertiary_fixed;
+        scheme.tertiaryFixedDim = f.tertiary_fixed_dim;
+        scheme.onTertiaryFixedVariant =
+            f.on_tertiary_fixed_variant;
+    }
+    schemes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +437,129 @@ mod tests {
     fn catalogue_has_six_named_accents_blue_first() {
         assert_eq!(ACCENTS.len(), 6);
         assert_eq!(ACCENTS[0].0, "Blue");
+    }
+
+    #[test]
+    fn a_missing_pick_is_system_where_the_system_has_a_scheme() {
+        assert_eq!(picked_accent("", true), Accent::System);
+    }
+
+    #[test]
+    fn a_missing_pick_is_blue_without_a_system_scheme() {
+        assert_eq!(picked_accent("", false), Accent::Fixed(0));
+    }
+
+    #[test]
+    fn the_system_circle_comes_first_only_with_a_system_scheme() {
+        use Accent::*;
+        let fixed = [Fixed(0), Fixed(1), Fixed(2), Fixed(3), Fixed(4), Fixed(5)];
+        assert_eq!(accent_row(false), fixed);
+        let mut with_system = vec![System];
+        with_system.extend(fixed);
+        assert_eq!(accent_row(true), with_system);
+    }
+
+    #[test]
+    fn picking_stores_values_the_previous_release_reads() {
+        assert_eq!(stored_value(Accent::System), "system");
+        assert_eq!(stored_value(Accent::Fixed(1)), "+1");
+        // The previous release reads with `parse().unwrap_or(0)`.
+        assert_eq!("+1".parse::<usize>(), Ok(1));
+        assert!("system".parse::<usize>().is_err());
+        assert_eq!(picked_accent("+1", true), Accent::Fixed(1));
+        assert_eq!(picked_accent("system", true), Accent::System);
+    }
+
+    #[test]
+    fn a_synced_old_pick_reads_like_an_old_pick() {
+        assert_eq!(picked_accent("2", false), Accent::Fixed(2));
+        assert_eq!(picked_accent("2", true), Accent::System);
+    }
+
+    #[test]
+    fn a_system_pick_shows_blue_without_a_system_scheme() {
+        let picked = picked_accent("system", false);
+        assert_eq!(picked, Accent::Fixed(0));
+        assert_eq!(accent_row(false).iter().position(|a| *a == picked), Some(0));
+    }
+
+    #[test]
+    fn an_old_pick_is_system_where_the_system_has_a_scheme() {
+        for old in ["0", "4", "9", "x"] {
+            assert_eq!(picked_accent(old, true), Accent::System, "{old}");
+        }
+    }
+
+    #[test]
+    fn a_pick_made_now_is_kept() {
+        assert_eq!(picked_accent("+2", true), Accent::Fixed(2));
+        assert_eq!(picked_accent("+0", true), Accent::Fixed(0));
+        assert_eq!(picked_accent("+2", false), Accent::Fixed(2));
+        assert_eq!("+2".parse::<usize>(), Ok(2));
+    }
+
+    #[test]
+    fn an_old_pick_below_android_14_keeps_its_colour() {
+        assert_eq!(picked_accent("4", false), Accent::Fixed(4));
+        assert_eq!(picked_accent("9", false), Accent::Fixed(0));
+        assert_eq!(picked_accent("+9", true), Accent::Fixed(0));
+    }
+
+    /// A distinct colour per resource name.
+    fn fake(name: &str) -> Color {
+        let h = name.bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
+        Color::from_argb_encoded(0xff00_0000 | (h & 0x00ff_ffff))
+    }
+
+    fn read(baseline: &MaterialSchemes, lookup: impl Fn(&str) -> Option<Color>) -> Option<MaterialSchemes> {
+        system_schemes(baseline, |n| Ok::<_, ()>(lookup(n))).unwrap()
+    }
+
+    #[test]
+    fn the_system_scheme_takes_every_role_from_the_system() {
+        let mut baseline = MaterialSchemes::default();
+        baseline.light.shadow = Color::from_rgb_u8(1, 2, 3);
+        baseline.dark.scrim = Color::from_rgb_u8(4, 5, 6);
+        let s = read(&baseline, |n| Some(fake(n))).expect("all roles reported");
+        assert_eq!(s.light.primary, fake("system_primary_light"));
+        assert_eq!(s.dark.primary, fake("system_primary_dark"));
+        assert_eq!(s.light.surfaceTint, fake("system_primary_light"));
+        assert_eq!(s.light.onSurfaceVariant, fake("system_on_surface_variant_light"));
+        assert_eq!(s.dark.surfaceContainerHighest, fake("system_surface_container_highest_dark"));
+        assert_eq!(s.light.inverseSurface, fake("system_neutral1_800"));
+        assert_eq!(s.light.inverseOnSurface, fake("system_neutral1_50"));
+        assert_eq!(s.dark.inverseOnSurface, fake("system_neutral1_800"));
+        assert_eq!(s.light.inversePrimary, fake("system_accent1_200"));
+        assert_eq!(s.dark.inversePrimary, fake("system_accent1_600"));
+        assert_eq!(s.light.primaryFixed, fake("system_primary_fixed"));
+        assert_eq!(s.dark.onTertiaryFixedVariant, fake("system_on_tertiary_fixed_variant"));
+        assert_eq!(s.light.shadow, Color::from_rgb_u8(1, 2, 3));
+        assert_eq!(s.dark.scrim, Color::from_rgb_u8(4, 5, 6));
+    }
+
+    #[test]
+    fn a_missing_role_means_no_system_scheme() {
+        let baseline = MaterialSchemes::default();
+        assert!(read(&baseline, |n| (n != "system_outline_dark").then(|| fake(n))).is_none());
+        assert_eq!(system_schemes(&baseline, |_| Err("jni")).err(), Some("jni"));
+    }
+
+    #[test]
+    fn the_ring_marks_the_accent_that_shows() {
+        assert_eq!(accent_ring("4", true), 0);
+        assert_eq!(accent_ring("+2", true), 3);
+        assert_eq!(accent_ring("system", true), 0);
+        assert_eq!(accent_ring("4", false), 4);
+        assert_eq!(accent_ring("system", false), 0);
+    }
+
+    #[test]
+    fn system_puts_every_role_on_the_material_scheme() {
+        let baseline = MaterialSchemes::default();
+        let system = read(&baseline, |n| Some(fake(n))).unwrap();
+        assert_eq!(accent_schemes(&baseline, Accent::System, Some(&system)), system);
+        // Without a scheme, System keeps the shipped colours.
+        assert_eq!(accent_schemes(&baseline, Accent::System, None), baseline);
+        assert_eq!(accent_schemes(&baseline, Accent::Fixed(0), Some(&system)), baseline);
     }
 }

@@ -3685,61 +3685,18 @@ fn apply_system_insets(ui: &MainWindow) {
 
 /// Apply the persisted accent to MaterialPalette.schemes (P8) and
 /// the Log's label palettes.
-/// Index 0 restores the shipped baseline verbatim; other indices
-/// regenerate the accent families over the baseline neutrals.
-/// `baseline` is the untouched shipped MaterialSchemes captured
-/// once at startup.
-fn apply_accent(ui: &MainWindow, baseline: &MaterialSchemes, idx: usize) {
-    let schemes = accent_schemes(baseline, idx);
+/// Blue restores the shipped baseline verbatim; the other colours
+/// regenerate the accent families over the baseline neutrals; System
+/// takes every role from the phone. `baseline` is the untouched
+/// shipped MaterialSchemes captured once at startup.
+fn apply_accent(ui: &MainWindow, baseline: &MaterialSchemes, accent: theme::Accent, system: Option<&MaterialSchemes>) {
+    let schemes = theme::accent_schemes(baseline, accent, system);
     let palette = |primary, dark| -> slint::ModelRc<slint::Color> {
         std::rc::Rc::new(slint::VecModel::from(theme::label_palette(primary, dark).to_vec())).into()
     };
     ui.set_label_palette_light(palette(schemes.light.primary, false));
     ui.set_label_palette_dark(palette(schemes.dark.primary, true));
     ui.global::<MaterialPalette>().set_schemes(schemes);
-}
-
-fn accent_schemes(baseline: &MaterialSchemes, idx: usize) -> MaterialSchemes {
-    if idx == 0 || idx >= theme::ACCENTS.len() {
-        return baseline.clone();
-    }
-    let hue = theme::ACCENTS[idx].1;
-    let mut schemes = baseline.clone();
-    for (scheme, dark) in [
-        (&mut schemes.light, false),
-        (&mut schemes.dark, true),
-    ] {
-        let f = theme::accent_fields(hue, dark);
-        scheme.primary = f.primary;
-        scheme.surfaceTint = f.primary;
-        scheme.onPrimary = f.on_primary;
-        scheme.primaryContainer = f.primary_container;
-        scheme.onPrimaryContainer = f.on_primary_container;
-        scheme.secondary = f.secondary;
-        scheme.onSecondary = f.on_secondary;
-        scheme.secondaryContainer = f.secondary_container;
-        scheme.onSecondaryContainer = f.on_secondary_container;
-        scheme.tertiary = f.tertiary;
-        scheme.onTertiary = f.on_tertiary;
-        scheme.tertiaryContainer = f.tertiary_container;
-        scheme.onTertiaryContainer = f.on_tertiary_container;
-        scheme.inversePrimary = f.inverse_primary;
-        scheme.primaryFixed = f.primary_fixed;
-        scheme.onPrimaryFixed = f.on_primary_fixed;
-        scheme.primaryFixedDim = f.primary_fixed_dim;
-        scheme.onPrimaryFixedVariant = f.on_primary_fixed_variant;
-        scheme.secondaryFixed = f.secondary_fixed;
-        scheme.onSecondaryFixed = f.on_secondary_fixed;
-        scheme.secondaryFixedDim = f.secondary_fixed_dim;
-        scheme.onSecondaryFixedVariant =
-            f.on_secondary_fixed_variant;
-        scheme.tertiaryFixed = f.tertiary_fixed;
-        scheme.onTertiaryFixed = f.on_tertiary_fixed;
-        scheme.tertiaryFixedDim = f.tertiary_fixed_dim;
-        scheme.onTertiaryFixedVariant =
-            f.on_tertiary_fixed_variant;
-    }
-    schemes
 }
 
 /// The live Setup mode from the two-way-bound mode chip — the
@@ -9380,39 +9337,45 @@ fn build_ui() -> MainWindow {
     {
         let baseline: MaterialSchemes =
             ui.global::<MaterialPalette>().get_schemes();
-        let swatches: Vec<slint::Color> = (0..theme::ACCENTS.len())
-            .map(|i| theme::swatch(i, baseline.light.primary))
+        // Read per run: Android recreates the activity when the
+        // wallpaper colours change.
+        let system = android_app().and_then(|app| crate::system_colors::read(app, &baseline));
+        let has_system = system.is_some();
+        let row = theme::accent_row(has_system);
+        let swatches: Vec<slint::Color> = row
+            .iter()
+            .map(|accent| match accent {
+                theme::Accent::System => system.as_ref().map_or(baseline.light.primary, |s| s.light.primary),
+                theme::Accent::Fixed(i) => theme::swatch(*i, baseline.light.primary),
+            })
             .collect();
         ui.set_accent_swatches(
             std::rc::Rc::new(slint::VecModel::from(swatches)).into(),
         );
-        let idx: usize = read_global_setting("android_accent", "0")
-            .parse()
-            .unwrap_or(0);
-        ui.set_prefs_accent(idx as i32);
-        apply_accent(&ui, &baseline, idx);
+        ui.set_accent_has_system(has_system);
+        let accent = theme::picked_accent(&read_global_setting("android_accent", ""), has_system);
+        ui.set_prefs_accent(row.iter().position(|a| *a == accent).map_or(0, |i| i as i32));
+        apply_accent(&ui, &baseline, accent, system.as_ref());
 
         let weak = ui.as_weak();
         ui.on_accent_picked(move |i| {
             if let Some(ui) = weak.upgrade() {
-                let i = (i.max(0) as usize)
-                    .min(theme::ACCENTS.len() - 1);
+                let Some(&accent) = usize::try_from(i).ok().and_then(|i| row.get(i)) else {
+                    return;
+                };
                 // A failed save springs back without being applied.
-                if !write_global_setting(&ui, "android_accent", &i.to_string()) {
+                if !write_global_setting(&ui, "android_accent", &theme::stored_value(accent)) {
                     return;
                 }
                 {
-                    meditate_core::log(
-                        "theme.accent",
-                        &format!(
-                            "set {} ({})",
-                            i,
-                            theme::ACCENTS[i].0,
-                        ),
-                    );
+                    let name = match accent {
+                        theme::Accent::System => "System",
+                        theme::Accent::Fixed(i) => theme::ACCENTS[i].0,
+                    };
+                    meditate_core::log("theme.accent", &format!("set {} ({name})", theme::stored_value(accent)));
                 }
-                ui.set_prefs_accent(i as i32);
-                apply_accent(&ui, &baseline, i);
+                ui.set_prefs_accent(i);
+                apply_accent(&ui, &baseline, accent, system.as_ref());
             }
         });
     }
@@ -10071,7 +10034,7 @@ fn reload_setup(ui: &MainWindow) {
     load_setup_for_mode(ui, setup_session_mode(ui), &Cell::new(0));
     refresh_bell_rows(ui);
     refresh_boxbreath_cues(ui);
-    ui.set_prefs_accent(read_global_setting("android_accent", "0").parse().unwrap_or(0));
+    ui.set_prefs_accent(theme::accent_ring(&read_global_setting("android_accent", ""), ui.get_accent_has_system()) as i32);
     // Slint runs the Switches' change handlers after this timer, in the
     // same turn; clear the guard only on the next one.
     // Without a loop to post to, clearing it now beats blocking every

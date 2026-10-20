@@ -4696,6 +4696,19 @@ mod tests {
     }
 
     #[test]
+    fn only_a_pick_writes_the_accent() {
+        // A start that stored the accent it shows would sync `system`
+        // from every 14+ phone over another device's pick.
+        let code = ui_code();
+        let picked = handler(&code, "accent_picked");
+        let picked_at = code.find(picked).unwrap();
+        for (at, _) in code.match_indices("\"android_accent\"") {
+            let in_pick = (picked_at..picked_at + picked.len()).contains(&at);
+            assert!(in_pick || code[..at].ends_with("read_global_setting("), "accent written at byte {at}");
+        }
+    }
+
+    #[test]
     fn a_preset_that_fails_halfway_is_put_back() {
         // #191 review: core saves a preset's values one by one, so a
         // failure can leave half of it; "Save failed" then puts the

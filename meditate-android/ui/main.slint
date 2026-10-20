@@ -2236,9 +2236,10 @@ export component MainWindow inherits Window {
     // the tail of core's rolling diag log with Copy / Share.
     // Accent selection (P8): Rust rebuilds MaterialPalette.schemes
     // from the picked accent (persisted android-side setting).
-    // `accent-swatches` are the preview circles; index 0 = the
-    // baseline blue.
+    // `accent-swatches` are the preview circles in picker order; with
+    // `accent-has-system` the first one is System (the phone's scheme).
     in property <[color]> accent-swatches: [];
+    in property <bool> accent-has-system: false;
     // The Log's sixteen label colours per mode, set by Rust with the
     // accent (`theme::label_palette`).
     in property <[color]> label-palette-light: [];
@@ -7906,10 +7907,16 @@ export component MainWindow inherits Window {
                         for c[i] in root.accent-swatches : VerticalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 40px;
-                                height: 40px;
-                                border-radius: 20px;
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
                                 background: c;
+                                if i == 0 && root.accent-has-system : Image {
+                                    source: @image-url("assets/auto_fix.svg");
+                                    width: 18px;
+                                    height: 18px;
+                                    colorize: #ffffff;
+                                }
                                 // Selected ring — outline in the
                                 // on-surface colour so it reads on
                                 // every accent + theme.
