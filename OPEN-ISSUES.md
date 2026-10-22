@@ -32,7 +32,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
 | [x] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
-| [ ] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
+| [x] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
@@ -60,31 +60,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 ## N. Stats numbers
 
 ## O. Dates in other languages
-
-### #151 GTK: dates in English word order in every language
-- Where: `meditate-gtk/src/log/imp.rs:628-631, 1232-1237`; `stats/imp.rs:241, 358, 745-754`.
-- Problem: the patterns are fixed ("%b %-d", "%b %-d, %Y", "%b %d, %Y", "%A, %B %e"). German Log headers read "Okt 9, 2025", Chinese "10月 9, 2025", and the Russian heatmap's screen-reader name "Четверг, октября  9". Android uses locale skeletons.
-- Fix: make the patterns translatable msgids with a translator comment (nine translations each) and build the chart label from them.
-
-### #152 Android: Log dates use US month/day for English and untranslated languages
-- Where: `meditate-android/ui/main.slint:156-157`; `src/ui.rs:2405-2422`; test `app.rs:2212`.
-- Problem: day headers use `@tr("{1}/{0}")`, so en-GB (and Swedish, which falls back to English) shows 9 October as "10/9".
-- Fix: `locale_date(d, "MMMd")` / `"yMMMd"`; delete the two Tr entries and their po entries.
-
-### #153 Chinese charts label October to December "1"
-- Where: gtk `stats/imp.rs:759`; android `ui.rs:1697`.
-- Problem: the month letter is the first character of the month name, and Chinese month names start with digits ("10月", "11月", "12月").
-- Fix: GTK: take the leading digits when the name starts with one. Android: drop `take(1)` (narrow month names are already short).
-
-### #154 GTK: Portuguese weekday labels repeat
-- Where: `meditate-gtk/src/stats/imp.rs:764-775`.
-- Problem: cutting `%a` to 2 characters gives "se te qu qu se sá do".
-- Fix: drop `.chars().take(2)`, as Android does.
-
-### #116 The longest-session date has no year
-- Where: gtk `stats/imp.rs:356-367` ("%b %-d"); android `ui.rs:1925-1929` ("MMMd").
-- Problem: the insight is the lifetime longest session, so "1h 30m on Mar 3" can be from 2024.
-- Fix: use the Log header rule: with the year when `date_group_kind` is `EarlierYearOther` ("%b %-d, %Y" / "yMMMd"). Do it together with #151.
 
 ## P. GTK translations
 

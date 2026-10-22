@@ -7,6 +7,11 @@ pub const VERSION: &str = env!("APP_VERSION");
 pub const PKGDATADIR: &str = env!("PKGDATADIR");
 /// Install path where gettext finds compiled .mo translation catalogs.
 pub const LOCALEDIR: &str = env!("LOCALEDIR");
+/// Where the catalogs are at runtime: the LOCALEDIR env-var override
+/// (dev runs), else the install path.
+pub fn locale_dir() -> String {
+    std::env::var("LOCALEDIR").unwrap_or_else(|_| LOCALEDIR.to_string())
+}
 /// gettext text domain — matches the meson project name and the
 /// `meditate.mo` filename the i18n.gettext() target produces.
 pub const GETTEXT_DOMAIN: &str = "meditate";

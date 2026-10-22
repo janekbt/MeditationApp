@@ -117,7 +117,8 @@ are fine.
   or changed user-visible string gets all nine in the same change, in
   both apps where it appears.
 - Linux: `build-aux/update-translations.sh` only (never the host
-  meson targets), write `gettext("…")` directly, and run
+  meson targets), write `gettext("…")` directly (date patterns:
+  `date_pattern("…")` in `format.rs`), and run
   `cargo test -p meditate i18n::`. Android: add to
   `meditate-android/lang/<lang>/LC_MESSAGES/meditate-android.po`.
 - Check each touched file: `msgfmt --check -o /dev/null <file>`.

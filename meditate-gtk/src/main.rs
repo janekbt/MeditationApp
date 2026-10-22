@@ -93,8 +93,7 @@ fn setup_gettext() {
     use gettextrs::{bind_textdomain_codeset, bindtextdomain, setlocale, textdomain, LocaleCategory};
 
     setlocale(LocaleCategory::LcAll, "");
-    let locale_dir = std::env::var("LOCALEDIR")
-        .unwrap_or_else(|_| config::LOCALEDIR.to_string());
+    let locale_dir = config::locale_dir();
     if let Err(e) = bindtextdomain(config::GETTEXT_DOMAIN, locale_dir.as_str()) {
         let msg = format!("bindtextdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");

@@ -117,6 +117,8 @@ pub enum InsightKey {
     LongestSession {
         duration_secs: i64,
         start_unix: i64,
+        /// Its date shows the year: the session is from an earlier year.
+        with_year: bool,
     },
     NextMilestone {
         target: i64,
@@ -236,6 +238,7 @@ pub fn compute(input: &InsightInput, now_unix: i64, week_start_dow: i32) -> Vec<
         out.push(InsightKey::LongestSession {
             duration_secs,
             start_unix,
+            with_year: crate::format::date_shows_year(start_unix, now_unix),
         });
     }
 
@@ -445,6 +448,13 @@ mod tests {
         assert!(out.contains(&InsightKey::LongestSession {
             duration_secs: 3600,
             start_unix: 1_700_000_000,
+            with_year: false,
+        }));
+        let a_year_later = 1_700_000_000 + 400 * 86_400;
+        assert!(compute(&input, a_year_later, 1).contains(&InsightKey::LongestSession {
+            duration_secs: 3600,
+            start_unix: 1_700_000_000,
+            with_year: true,
         }));
     }
 
@@ -498,6 +508,7 @@ mod tests {
         let longest = InsightKey::LongestSession {
             duration_secs: 1800,
             start_unix: 1_700_000_000,
+            with_year: false,
         };
         let milestone = InsightKey::NextMilestone {
             target: 25,
@@ -531,7 +542,7 @@ mod tests {
         );
         assert_eq!(InsightKey::PreferredTime { bucket: HourBucket::Morning, pct: 50 }.glyph(), "◔");
         assert_eq!(InsightKey::TypicalSession { duration_secs: 600 }.glyph(), "≈");
-        assert_eq!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0 }.glyph(), "◆");
+        assert_eq!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0, with_year: false }.glyph(), "◆");
         assert_eq!(InsightKey::NextMilestone { target: 10, remaining: 1 }.glyph(), "⚑");
         assert_eq!(InsightKey::DailyRhythm { avg_secs: 600 }.glyph(), "◷");
         assert_eq!(InsightKey::NoData.glyph(), "✦");
@@ -541,7 +552,7 @@ mod tests {
     fn is_accent_only_for_streak_record_and_longest_session() {
         assert!(InsightKey::CurrentStreak { days: 7, is_record: true, best: 7 }.is_accent());
         assert!(!InsightKey::CurrentStreak { days: 3, is_record: false, best: 7 }.is_accent());
-        assert!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0 }.is_accent());
+        assert!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0, with_year: false }.is_accent());
         // Every other variant is neutral.
         assert!(!InsightKey::WeekOverWeek { pct: 0, this_secs: 0, last_secs: 0 }.is_accent());
         assert!(!InsightKey::DailyRhythm { avg_secs: 600 }.is_accent());

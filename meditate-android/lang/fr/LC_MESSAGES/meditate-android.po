@@ -824,12 +824,6 @@ msgstr "Aujourd’hui"
 msgid "Yesterday"
 msgstr "Hier"
 
-msgid "{1}/{0}"
-msgstr "{0}/{1}"
-
-msgid "{1}/{0}/{2}"
-msgstr "{0}/{1}/{2}"
-
 msgid "Rename Sound"
 msgstr "Renommer le son"
 

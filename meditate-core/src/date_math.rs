@@ -172,6 +172,14 @@ pub fn x_label_kind(i: usize, days: u32, months: &[u32]) -> XLabelKind {
     }
 }
 
+/// A `MonthLetter` label from the locale's month name: its leading
+/// number when it starts with one (Chinese "10月" is "10", not "1"),
+/// else its first character.
+pub fn month_initial(name: &str) -> String {
+    let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() { name.chars().take(1).collect() } else { digits }
+}
+
 /// Period selector for the stats chart. `days()` returns how many
 /// trailing calendar days the chart should cover. Persisted to
 /// settings as the `as_db_str` form so the toggle survives restart.
@@ -326,6 +334,15 @@ pub fn chart_unit_for_days(days: u32) -> ChartUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_month_label_keeps_a_leading_number() {
+        assert_eq!(month_initial("10月"), "10");
+        assert_eq!(month_initial("11月"), "11");
+        assert_eq!(month_initial("12月"), "12");
+        assert_eq!(month_initial("Янв"), "Я");
+        assert_eq!(month_initial("Jan"), "J");
+    }
 
     #[test]
     fn chart_y_axis_ticks_floors_max_at_one() {

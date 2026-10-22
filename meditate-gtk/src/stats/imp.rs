@@ -232,13 +232,9 @@ impl StatsView {
             if c.is_today { cell.add_css_class("today"); }
 
             // Accessible name — without this the ★ reads as "black star"
-            // and empty cells announce nothing useful. %A/%B/%e render
-            // through the active locale via glib::DateTime, so
-            // translators only own the sentence framing.
-            let date_dt = crate::time::glib_datetime_from_iso(&c.date_iso);
-            let readable = date_dt
-                .as_ref()
-                .and_then(|d| d.format("%A, %B %e").ok()).map_or_else(|| c.date_iso.clone(), |s| s.to_string());
+            // and empty cells announce nothing useful.
+            let readable = crate::time::glib_datetime_from_iso(&c.date_iso)
+                .map_or_else(|| c.date_iso.clone(), |d| crate::format::heatmap_date(&d));
             let name = if c.is_goal_exceeded() {
                 gettext("{date} — goal exceeded, {mins} minutes")
                     .replace("{date}", &readable)
@@ -353,10 +349,9 @@ impl StatsView {
                     .replace("{duration}", &format_hm_secs(*duration_secs));
                 (gettext("Typical session"), body)
             }
-            InsightKey::LongestSession { duration_secs, start_unix } => {
+            InsightKey::LongestSession { duration_secs, start_unix, with_year } => {
                 let when = glib::DateTime::from_unix_local(*start_unix).ok()
-                    .and_then(|d| d.format("%b %-d").ok())
-                    .map(|s| s.to_string());
+                    .map(|d| crate::format::short_date(&d, *with_year));
                 let body = match when {
                     Some(d) => gettext("{duration} on {date}")
                         .replace("{duration}", &format_hm_secs(*duration_secs))
@@ -719,43 +714,34 @@ fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
         .map(|(d, _)| d[5..7].parse().unwrap_or(0))
         .collect();
     let date_str = &data[i].0;
-    let month: u32 = date_str[5..7].parse().unwrap_or(0);
-    let day_num: u32 = date_str[8..10].parse().unwrap_or(0);
-    // %b is the locale's abbreviated month; auto-translates via LC_TIME.
-    let month_short = |m: u32| -> String {
-        glib::DateTime::new(&glib::TimeZone::local(), 2000, m as i32, 1, 0, 0, 0.0)
-            .ok()
-            .and_then(|dt| dt.format("%b").ok())
-            .map(|s| s.to_string())
-            .unwrap_or_default()
-    };
+    let date = crate::time::glib_datetime_from_iso(date_str);
     match meditate_core::date_math::x_label_kind(i, days, &months) {
-        XLabelKind::Weekday => weekday_for(date_str),
-        XLabelKind::MonthShortDay => format!("{} {}", month_short(month), day_num),
-        XLabelKind::MonthLetter => {
-            // First char of the locale's abbreviated month — Japanese
-            // "1月" → "1", Russian "Янв" → "Я", English "Jan" → "J".
-            // Same pattern as `month_short` above, just truncated.
-            month_short(month).chars().next().map(|c| c.to_string()).unwrap_or_default()
-        }
+        // %a whole: cutting it repeats labels (Portuguese "se te qu qu se").
+        XLabelKind::Weekday => date
+            .and_then(|d| d.format("%a").ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+        XLabelKind::MonthShortDay => date
+            .map(|d| crate::format::short_date(&d, false))
+            .unwrap_or_default(),
+        XLabelKind::MonthLetter => date
+            .and_then(|d| d.format("%b").ok())
+            .map(|s| meditate_core::date_math::month_initial(&s))
+            .unwrap_or_default(),
         XLabelKind::Empty => String::new(),
     }
-}
-
-fn weekday_for(date_str: &str) -> String {
-    let y: i32 = date_str[0..4].parse().unwrap_or(2000);
-    let m: i32 = date_str[5..7].parse().unwrap_or(1);
-    let d: i32 = date_str[8..10].parse().unwrap_or(1);
-    // %a is the locale's abbreviated weekday ("Mo"/"Di"/"Mi" on de_DE,
-    // "Mon"/"Tue"/… on en_US). Truncate so horizontal labels stay narrow.
-    glib::DateTime::new(&glib::TimeZone::local(), y, m, d, 0, 0, 0.0)
-        .ok()
-        .and_then(|dt| dt.format("%a").ok())
-        .map(|s| s.chars().take(2).collect::<String>())
-        .unwrap_or_default()
 }
 
 // HmKey-rendering shims live in `crate::format`; this view imports them.
 use crate::format::{format_hm_compact, format_hm_mins, format_hm_secs};
 use meditate_core::goal::GoalStatus;
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_weekday_label_is_the_whole_short_name() {
+        let monday = glib::DateTime::from_local(2026, 10, 19, 0, 0, 0.0).unwrap();
+        let week = [("2026-10-19".to_string(), 0)];
+        assert_eq!(super::x_label_text(&week, 0, 7), monday.format("%a").unwrap().to_string());
+    }
+}

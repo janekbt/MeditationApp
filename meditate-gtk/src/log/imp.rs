@@ -669,12 +669,7 @@ fn date_group_display(unix_secs: i64) -> String {
             let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
                 return String::new();
             };
-            // %b is the locale abbreviated month; no msgid needed.
-            let fmt = match kind {
-                DateGroupKey::SameYearOther => "%b %-d",
-                _ => "%b %-d, %Y",
-            };
-            dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
+            crate::format::short_date(&dt, kind == DateGroupKey::EarlierYearOther)
         }
     }
 }
@@ -1320,8 +1315,7 @@ impl LogView {
 fn format_date(unix_secs: i64) -> String {
     glib::DateTime::from_unix_local(unix_secs)
         .ok()
-        .and_then(|dt| dt.format("%b %d, %Y").ok())
-        .map(|gs| gs.to_string())
+        .map(|dt| crate::format::short_date(&dt, true))
         .unwrap_or_default()
 }
 

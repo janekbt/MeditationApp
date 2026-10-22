@@ -807,12 +807,6 @@ msgstr "今天"
 msgid "Yesterday"
 msgstr "昨天"
 
-msgid "{1}/{0}"
-msgstr "{1}月{0}日"
-
-msgid "{1}/{0}/{2}"
-msgstr "{2}年{1}月{0}日"
-
 msgid "Rename Sound"
 msgstr "重命名声音"
 

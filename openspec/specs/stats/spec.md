@@ -88,7 +88,7 @@ The year chart SHALL show one bar per calendar month, from the same month last y
 
 #### Scenario: Seen on both devices
 - **WHEN** the maintainer opens the year chart in both apps
-- **THEN** both show 12 bars with one letter per month and no repeated month
+- **THEN** both show 12 bars with one letter per month, in Chinese the month's number, and no repeated month
 - **MANUAL** the bars and their labels are drawn by each app
 
 ### Requirement: The best streak counts no future days
@@ -106,3 +106,16 @@ The Stats tile with the best streak SHALL be captioned "Best streak", in full in
 - **WHEN** the maintainer opens Stats on a 360 px wide phone in each of the ten languages, and on the laptop
 - **THEN** the tile reads "Best streak" or its translation in full, on one or two lines
 - **MANUAL** a layout check by eye; the caption wraps instead of clipping
+
+### Requirement: The longest session names its year when it is from an earlier year
+The longest-session insight SHALL show the year of its date when the session is from an earlier calendar year, and no year otherwise.
+
+#### Scenario: A longest session from last year
+- **WHEN** the longest session started on 3 March 2025 and today is 22 October 2026, or it started on 3 March 2026
+- **THEN** the first date carries its year and the second does not
+- **TEST** `meditate-core/src/format.rs::the_longest_session_names_its_year_only_from_an_earlier_year`
+
+#### Scenario: Seen in both apps
+- **WHEN** the maintainer's longest session is from an earlier year
+- **THEN** the insight on Linux and on the phone shows the date with its year
+- **MANUAL** the insight text is rendered by each app

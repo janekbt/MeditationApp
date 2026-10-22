@@ -11,6 +11,7 @@ i18n.gettext(
     # generation still completes.
     '--keyword=_',
     '--keyword=gettext',
+    '--keyword=date_pattern',
     '--keyword=C_:1c,2',
     '--keyword=NC_:1c,2',
   ],

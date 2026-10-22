@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-19 19:38+0200\n"
+"POT-Creation-Date: 2026-10-22 10:17+0200\n"
 "PO-Revision-Date: 2026-04-20 18:15+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Spanish\n"
@@ -90,7 +90,7 @@ msgstr "Salir"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:722
+#: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
 #: src/presets.rs:695 src/timer/imp.rs:2582 src/timer/imp.rs:3788
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
@@ -214,7 +214,7 @@ msgstr "Segundos"
 msgid "min"
 msgstr "min"
 
-#: src/bells.rs:478 src/log/imp.rs:892 src/timer/imp.rs:3891
+#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3891
 msgid "Minutes"
 msgstr "Minutos"
 
@@ -348,6 +348,23 @@ msgstr[1] "{n} h"
 #, rust-format
 msgid "{h} {m}"
 msgstr "{h} {m}"
+
+#. Date with year, as a GLib date format: %b short month, %-d day without padding, %Y year. Put them in your language's order.
+#: src/format.rs:134
+msgid "%b %-d, %Y"
+msgstr "%-d %b %Y"
+
+#. Date without year, as a GLib date format: %b short month, %-d day without padding. Put them in your language's order.
+#: src/format.rs:137
+msgid "%b %-d"
+msgstr "%-d %b"
+
+#. / The date a screen reader speaks for a heatmap cell
+#. / ("Thursday, October 9").
+#. Date a screen reader speaks, as a GLib date format: %A weekday, %B month, %-d day without padding (%-m month number). Put them in your language's order.
+#: src/format.rs:146
+msgid "%A, %B %-d"
+msgstr "%A, %-d de %B"
 
 #: src/guided.rs:104
 msgid "Choose Guided Meditation"
@@ -678,88 +695,88 @@ msgstr "Hoy"
 msgid "Yesterday"
 msgstr "Ayer"
 
-#: src/log/imp.rs:689 src/log/imp.rs:691
+#: src/log/imp.rs:684 src/log/imp.rs:686
 #, rust-format
 msgid "1 session"
 msgid_plural "{n} sessions"
 msgstr[0] "{n} sesión"
 msgstr[1] "{n} sesiones"
 
-#: src/log/imp.rs:879 src/timer/imp.rs:3884
+#: src/log/imp.rs:874 src/timer/imp.rs:3884
 msgid "Hours"
 msgstr "Horas"
 
-#: src/log/imp.rs:912
+#: src/log/imp.rs:907
 msgid "Date"
 msgstr "Fecha"
 
-#: src/log/imp.rs:929
+#: src/log/imp.rs:924
 msgid "Pick a Date"
 msgstr "Elegir fecha"
 
-#: src/log/imp.rs:954
+#: src/log/imp.rs:949
 msgid "Hour"
 msgstr "Hora"
 
-#: src/log/imp.rs:959
+#: src/log/imp.rs:954
 msgid "Minute"
 msgstr "Minuto"
 
-#: src/log/imp.rs:973 data/ui/timer_view.blp:358
+#: src/log/imp.rs:968 data/ui/timer_view.blp:358
 msgid "Selected"
 msgstr "Seleccionada"
 
-#: src/log/imp.rs:988 data/ui/timer_view.blp:352 data/ui/window.blp:107
+#: src/log/imp.rs:983 data/ui/timer_view.blp:352 data/ui/window.blp:107
 msgid "Label"
 msgstr "Etiqueta"
 
-#: src/log/imp.rs:989 data/ui/timer_view.blp:353
+#: src/log/imp.rs:984 data/ui/timer_view.blp:353
 msgid "Tag this session"
 msgstr "Etiqueta esta sesión"
 
-#: src/log/imp.rs:1047 src/window/imp.rs:432
+#: src/log/imp.rs:1042 src/window/imp.rs:432
 msgid "Note (optional)"
 msgstr "Nota (opcional)"
 
-#: src/log/imp.rs:1067 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
+#: src/log/imp.rs:1062 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
 #: data/ui/timer_view.blp:481
 msgid "Duration"
 msgstr "Duración"
 
-#: src/log/imp.rs:1073
+#: src/log/imp.rs:1068
 msgid "Start time"
 msgstr "Hora de inicio"
 
-#: src/log/imp.rs:1102
+#: src/log/imp.rs:1097
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: src/log/imp.rs:1106 src/preferences.rs:342
+#: src/log/imp.rs:1101 src/preferences.rs:342
 msgid "_Save"
 msgstr "_Guardar"
 
-#: src/log/imp.rs:1106
+#: src/log/imp.rs:1101
 msgid "_Add"
 msgstr "_Añadir"
 
-#: src/log/imp.rs:1150 src/log/imp.rs:1157
+#: src/log/imp.rs:1145 src/log/imp.rs:1152
 msgid "Edit Session"
 msgstr "Editar sesión"
 
-#: src/log/imp.rs:1150 src/log/imp.rs:1157 data/ui/log_view.blp:18
+#: src/log/imp.rs:1145 src/log/imp.rs:1152 data/ui/log_view.blp:18
 #: data/ui/window.blp:117
 msgid "Add Session"
 msgstr "Añadir sesión"
 
-#: src/log/imp.rs:1178 src/timer/imp.rs:3973
+#: src/log/imp.rs:1173 src/timer/imp.rs:3973
 msgid "(none — pick one)"
 msgstr "(ninguna — elige una)"
 
-#: src/log/imp.rs:1277 src/timer/imp.rs:2543
+#: src/log/imp.rs:1272 src/timer/imp.rs:2543
 msgid "Couldn't save session — storage error"
 msgstr "No se pudo guardar la sesión — error de almacenamiento"
 
-#: src/log/imp.rs:1282 src/timer/imp.rs:2561
+#: src/log/imp.rs:1277 src/timer/imp.rs:2561
 msgid "Couldn't save session — storage unavailable"
 msgstr "No se pudo guardar la sesión — almacenamiento no disponible"
 
@@ -1261,153 +1278,153 @@ msgstr "Faltan {duration} hoy"
 msgid "Daily goal: {pct}% — {done} of {goal}"
 msgstr "Meta diaria: {pct} % — {done} de {goal}"
 
-#: src/stats/imp.rs:243
+#: src/stats/imp.rs:239
 #, rust-format
 msgid "{date} — goal exceeded, {mins} minutes"
 msgstr "{date} — meta superada, {mins} minutos"
 
-#: src/stats/imp.rs:247
+#: src/stats/imp.rs:243
 #, rust-format
 msgid "{date} — {mins} minutes"
 msgstr "{date} — {mins} minutos"
 
-#: src/stats/imp.rs:251
+#: src/stats/imp.rs:247
 #, rust-format
 msgid "{date} — no sessions"
 msgstr "{date} — sin sesiones"
 
-#: src/stats/imp.rs:304
+#: src/stats/imp.rs:300
 #, rust-format
 msgid "1 day — new record"
 msgid_plural "{n} days — new record"
 msgstr[0] "1 día: ¡nuevo récord!"
 msgstr[1] "{n} días: ¡nuevo récord!"
 
-#: src/stats/imp.rs:308
+#: src/stats/imp.rs:304
 #, rust-format
 msgid "1 day · best was {best}"
 msgid_plural "{n} days · best was {best}"
 msgstr[0] "1 día · el récord es {best}"
 msgstr[1] "{n} días · el récord es {best}"
 
-#: src/stats/imp.rs:315
+#: src/stats/imp.rs:311
 msgid "1 day · keep going"
 msgstr "1 día · sigue así"
 
-#: src/stats/imp.rs:317
+#: src/stats/imp.rs:313
 msgid "Current streak"
 msgstr "Racha actual"
 
-#: src/stats/imp.rs:321
+#: src/stats/imp.rs:317
 #, rust-format
 msgid "{pct}% up vs last week ({this} vs {last})"
 msgstr "{pct} % más que la semana pasada ({this} frente a {last})"
 
-#: src/stats/imp.rs:323
+#: src/stats/imp.rs:319
 #, rust-format
 msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "{pct} % menos que la semana pasada ({this} frente a {last})"
 
-#: src/stats/imp.rs:329
+#: src/stats/imp.rs:325
 msgid "This week's practice"
 msgstr "Práctica de esta semana"
 
-#: src/stats/imp.rs:333
+#: src/stats/imp.rs:329
 msgid "Practising more"
 msgstr "Más práctica"
 
-#: src/stats/imp.rs:335
+#: src/stats/imp.rs:331
 msgid "Practising less"
 msgstr "Menos práctica"
 
-#: src/stats/imp.rs:337
+#: src/stats/imp.rs:333
 #, rust-format
 msgid "{pct}% vs the 30 days before ({this} vs {last})"
 msgstr "{pct} % frente a los 30 días anteriores ({this} frente a {last})"
 
-#: src/stats/imp.rs:345
+#: src/stats/imp.rs:341
 #, rust-format
 msgid "{pct}% of sessions are in the morning"
 msgstr "El {pct} % de las sesiones son por la mañana"
 
-#: src/stats/imp.rs:346
+#: src/stats/imp.rs:342
 #, rust-format
 msgid "{pct}% of sessions are in the afternoon"
 msgstr "El {pct} % de las sesiones son por la tarde"
 
-#: src/stats/imp.rs:347
+#: src/stats/imp.rs:343
 #, rust-format
 msgid "{pct}% of sessions are in the evening"
 msgstr "El {pct} % de las sesiones son por la noche"
 
-#: src/stats/imp.rs:349
+#: src/stats/imp.rs:345
 msgid "Preferred time"
 msgstr "Momento preferido"
 
-#: src/stats/imp.rs:352
+#: src/stats/imp.rs:348
 #, rust-format
 msgid "About {duration}"
 msgstr "Unos {duration}"
 
-#: src/stats/imp.rs:354
+#: src/stats/imp.rs:350
 msgid "Typical session"
 msgstr "Sesión típica"
 
-#: src/stats/imp.rs:361
+#: src/stats/imp.rs:356
 #, rust-format
 msgid "{duration} on {date}"
 msgstr "{duration} el {date}"
 
-#: src/stats/imp.rs:366
+#: src/stats/imp.rs:361
 msgid "Longest session"
 msgstr "Sesión más larga"
 
-#: src/stats/imp.rs:370
+#: src/stats/imp.rs:365
 #, rust-format
 msgid "1 session to your {target}th"
 msgid_plural "{n} sessions to your {target}th"
 msgstr[0] "1 sesión para llegar a {target}"
 msgstr[1] "{n} sesiones para llegar a {target}"
 
-#: src/stats/imp.rs:376
+#: src/stats/imp.rs:371
 msgid "Next milestone"
 msgstr "Próximo hito"
 
-#: src/stats/imp.rs:379
+#: src/stats/imp.rs:374
 #, rust-format
 msgid "{duration} average over last 7 days"
 msgstr "{duration} de media en los últimos 7 días"
 
-#: src/stats/imp.rs:381
+#: src/stats/imp.rs:376
 msgid "Daily rhythm"
 msgstr "Ritmo diario"
 
-#: src/stats/imp.rs:384
+#: src/stats/imp.rs:379
 msgid "No sessions yet"
 msgstr "Aún no hay sesiones"
 
-#: src/stats/imp.rs:385
+#: src/stats/imp.rs:380
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Completa una meditación para ver análisis aquí"
 
-#: src/stats/imp.rs:436 data/ui/stats_view.blp:182
+#: src/stats/imp.rs:431 data/ui/stats_view.blp:182
 msgid "Minutes / Day"
 msgstr "Minutos / día"
 
-#: src/stats/imp.rs:437
+#: src/stats/imp.rs:432
 msgid "Minutes / Week"
 msgstr "Minutos / semana"
 
-#: src/stats/imp.rs:438
+#: src/stats/imp.rs:433
 msgid "Minutes / Month"
 msgstr "Minutos / mes"
 
-#: src/stats/imp.rs:552
+#: src/stats/imp.rs:547
 #, rust-format
 msgid "{duration} · 1 session"
 msgstr "{duration} · 1 sesión"
 
-#: src/stats/imp.rs:555
+#: src/stats/imp.rs:550
 #, rust-format
 msgid "{duration} · {count} sessions"
 msgstr "{duration} · {count} sesiones"

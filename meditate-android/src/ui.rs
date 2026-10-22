@@ -2114,7 +2114,7 @@ fn chart_x_label(
             .map(|d| locale_date(d, "MMMd", "%b %-d"))
             .unwrap_or_default(),
         XLabelKind::MonthLetter => parse()
-            .map(|d| locale_date(d, "MMMMM", "%b").chars().take(1).collect())
+            .map(|d| meditate_core::date_math::month_initial(&locale_date(d, "MMMMM", "%b")))
             .unwrap_or_default(),
     }
 }
@@ -2324,21 +2324,13 @@ fn render_insight(
             tr.invoke_ins_typical_body(hm(*duration_secs).into())
                 .to_string(),
         ),
-        InsightKey::LongestSession { duration_secs, start_unix } => {
-            use chrono::TimeZone;
-            let when = chrono::Local
-                .timestamp_opt(*start_unix, 0)
-                .single()
-                .map(|d| locale_date(d.date_naive(), "MMMd", "%b %-d"));
-            let body = match when {
-                Some(d) => tr
-                    .invoke_ins_longest_body(
-                        hm(*duration_secs).into(),
-                        d.into(),
-                    )
-                    .to_string(),
-                None => hm(*duration_secs),
-            };
+        InsightKey::LongestSession { duration_secs, start_unix, with_year } => {
+            let body = tr
+                .invoke_ins_longest_body(
+                    hm(*duration_secs).into(),
+                    short_date(app::local_date(*start_unix), *with_year).into(),
+                )
+                .to_string();
             (tr.invoke_ins_longest_title().to_string(), body)
         }
         InsightKey::NextMilestone { target, remaining } => (
@@ -2742,6 +2734,15 @@ fn week_start_dow() -> i32 {
     WEEK_START.lock().ok().and_then(|g| *g).unwrap_or(1)
 }
 
+/// The phone's short date ("9. Okt."), with the year when asked.
+fn short_date(d: chrono::NaiveDate, with_year: bool) -> String {
+    if with_year {
+        locale_date(d, "yMMMd", "%b %-d, %Y")
+    } else {
+        locale_date(d, "MMMd", "%b %-d")
+    }
+}
+
 /// `d` written the phone's way for an ICU skeleton; chrono's English
 /// `fallback` if Android can't say.
 fn locale_date(d: chrono::NaiveDate, skeleton: &str, fallback: &str) -> String {
@@ -2784,21 +2785,14 @@ fn format_time_of_day(start_unix: i64) -> String {
 }
 
 /// Date-section header text for the Log feed: "Today" /
-/// "Yesterday", else the day as numbers through a translatable
-/// pattern. Mirrors GTK's date_group_display (core decides the kind).
+/// "Yesterday", else the phone's short date. Mirrors GTK's
+/// date_group_display (core decides the kind).
 fn day_header_text(ui: &MainWindow, header: app::DayHeader) -> slint::SharedString {
     let tr = ui.global::<Tr>();
     match header {
         app::DayHeader::Today => tr.invoke_today(),
         app::DayHeader::Yesterday => tr.invoke_yesterday(),
-        app::DayHeader::DayMonth { day, month } => {
-            tr.invoke_day_month(day.to_string().into(), month.to_string().into())
-        }
-        app::DayHeader::DayMonthYear { day, month, year } => tr.invoke_day_month_year(
-            day.to_string().into(),
-            month.to_string().into(),
-            year.to_string().into(),
-        ),
+        app::DayHeader::Date { date, with_year } => short_date(date, with_year).into(),
     }
 }
 

@@ -736,10 +736,25 @@ pub fn date_group_kind(unix_secs: i64, now_unix: i64) -> DateGroupKey {
     }
 }
 
+/// Whether a date shown on its own (the longest-session insight)
+/// carries its year: the Log header rule, only for an earlier year.
+pub fn date_shows_year(unix_secs: i64, now_unix: i64) -> bool {
+    date_group_kind(unix_secs, now_unix) == DateGroupKey::EarlierYearOther
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_macros::assert_matches;
+
+    #[test]
+    fn the_longest_session_names_its_year_only_from_an_earlier_year() {
+        use chrono::TimeZone;
+        let at = |y, m, d| chrono::Local.with_ymd_and_hms(y, m, d, 12, 0, 0).unwrap().timestamp();
+        let now = at(2026, 10, 22);
+        assert!(date_shows_year(at(2025, 3, 3), now));
+        assert!(!date_shows_year(at(2026, 3, 3), now));
+    }
 
     #[test]
     fn format_time_zero_shows_double_zero() {

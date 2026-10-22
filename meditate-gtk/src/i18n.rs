@@ -112,12 +112,15 @@ mod tests {
     /// Every `gettext("…")` / `ngettext("…", "…", n)` msgid in `code`.
     fn msgids(code: &str) -> Vec<String> {
         let mut out = Vec::new();
-        for name in ["gettext(", "ngettext("] {
+        for name in ["gettext(", "ngettext(", "date_pattern("] {
             for (at, _) in code.match_indices(name) {
                 if code[..at].chars().next_back().is_some_and(is_ident) {
                     continue;
                 }
                 let mut rest = code[at + name.len()..].trim_start();
+                if !rest.starts_with('"') {
+                    continue; // `fn date_pattern(msgid: &str)` itself
+                }
                 let forms = if name == "ngettext(" { 2 } else { 1 };
                 for _ in 0..forms {
                     let (value, len) = string_literal(rest);
@@ -322,10 +325,16 @@ mod tests {
         }
     }
 
-    /// Every plural translation of a po file: (msgid, msgid_plural, msgstr[i]).
-    fn plural_translations(po: &str) -> Vec<(String, String, Vec<String>)> {
+    /// Every live entry of a po file as its (keyword, text) fields.
+    /// Fuzzy entries are left out: msgfmt drops them, so they don't
+    /// translate anything at runtime.
+    fn po_entries(po: &str) -> Vec<Vec<(String, String)>> {
         let mut out = Vec::new();
-        for entry in po.split("\n\n").filter(|e| !e.contains("\n#~ ") && !e.starts_with("#~ ")) {
+        let live = |e: &&str| {
+            !e.contains("\n#~ ") && !e.starts_with("#~ ")
+                && !e.lines().any(|l| l.starts_with("#,") && l.contains("fuzzy"))
+        };
+        for entry in po.split("\n\n").filter(live) {
             let mut fields: Vec<(String, String)> = Vec::new();
             for line in entry.lines() {
                 if let Some((key, rest)) = line.split_once(' ') {
@@ -340,6 +349,25 @@ mod tests {
                     }
                 }
             }
+            out.push(fields);
+        }
+        out
+    }
+
+    fn languages() -> Vec<String> {
+        std::fs::read_to_string(crate_dir().join("po/LINGUAS"))
+            .unwrap()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(String::from)
+            .collect()
+    }
+
+    /// Every plural translation of a po file: (msgid, msgid_plural, msgstr[i]).
+    fn plural_translations(po: &str) -> Vec<(String, String, Vec<String>)> {
+        let mut out = Vec::new();
+        for fields in po_entries(po) {
             let get = |k: &str| fields.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
             if let (Some(id), Some(plural)) = (get("msgid"), get("msgid_plural")) {
                 let forms = (0..).map_while(|i| get(&format!("msgstr[{i}]"))).collect();
@@ -353,9 +381,9 @@ mod tests {
     /// must show the count, or those counts render a wrong "1".
     #[test]
     fn plural_forms_for_several_counts_show_the_count() {
-        let linguas = std::fs::read_to_string(crate_dir().join("po/LINGUAS")).unwrap();
         let mut offenders = Vec::new();
-        for lang in linguas.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        for lang in languages() {
+            let lang = lang.as_str();
             let po = std::fs::read_to_string(crate_dir().join(format!("po/{lang}.po"))).unwrap();
             for (id, plural, forms) in plural_translations(&po) {
                 if !plural.contains("{n}") {
@@ -370,5 +398,54 @@ mod tests {
             }
         }
         assert!(offenders.is_empty(), "put {{n}} in these forms: {offenders:#?}");
+    }
+
+    /// The date patterns (`format::short_date`, `format::heatmap_date`)
+    /// in every language: a valid GLib pattern with an unpadded day,
+    /// the year exactly when English has one, day before month except
+    /// in Chinese, which writes year, month, day.
+    #[test]
+    fn every_language_writes_dates_in_its_own_order() {
+        const PATTERNS: [&str; 3] = ["%b %-d", "%b %-d, %Y", "%A, %B %-d"];
+        const ALLOWED: [&str; 7] = ["%b", "%B", "%-m", "%-d", "%Y", "%A", "%a"];
+        let dt = glib::DateTime::from_local(2025, 10, 9, 12, 0, 0.0).unwrap();
+        let mut offenders = Vec::new();
+        for lang in languages() {
+            let po = std::fs::read_to_string(crate_dir().join(format!("po/{lang}.po"))).unwrap();
+            let entries = po_entries(&po);
+            for id in PATTERNS {
+                let get = |fields: &Vec<(String, String)>, k: &str| {
+                    fields.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone())
+                };
+                let msgstr = entries
+                    .iter()
+                    .find(|f| get(f, "msgid").as_deref() == Some(id))
+                    .and_then(|f| get(f, "msgstr"))
+                    .unwrap_or_default();
+                let at = |specs: &[&str]| specs.iter().filter_map(|c| msgstr.find(c)).min();
+                let specs: Vec<&str> = msgstr
+                    .match_indices('%')
+                    .map(|(i, _)| {
+                        let len = if msgstr[i + 1..].starts_with('-') { 3 } else { 2 };
+                        msgstr.get(i..i + len).unwrap_or(&msgstr[i..])
+                    })
+                    .collect();
+                let (day, month, year) = (at(&["%-d"]), at(&["%b", "%B", "%-m"]), at(&["%Y"]));
+                let ordered = match (day, month) {
+                    (Some(d), Some(m)) if lang == "zh_CN" => m < d && year.is_none_or(|y| y < m),
+                    (Some(d), Some(m)) => d < m,
+                    _ => false,
+                };
+                let fine = !msgstr.is_empty()
+                    && specs.iter().all(|c| ALLOWED.contains(c))
+                    && year.is_some() == id.contains("%Y")
+                    && ordered
+                    && dt.format(&msgstr).is_ok();
+                if !fine {
+                    offenders.push(format!("{lang}: {id:?} -> {msgstr:?}"));
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "date patterns to fix: {offenders:#?}");
     }
 }
