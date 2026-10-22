@@ -56,3 +56,11 @@ On the phone, the Box Breath counter SHALL show the length of the running sessio
 - **WHEN** a 10-minute session runs, Setup changes to 20 minutes through a sync, and the user pauses and resumes
 - **THEN** the counter reads ".. / 10:00" and the session ends at 10:00
 - **TEST** `meditate-android/src/app.rs::the_box_breath_counter_reads_the_running_session`
+
+### Requirement: Android's breath dot follows the rounded square without jumps
+On Android the Box Breath dot SHALL travel along the rounded square's outline, each phase ending where the next one starts.
+
+#### Scenario: Phase boundaries and corners
+- **WHEN** the dot reaches the end of In, Hold, Out and Hold
+- **THEN** it stands where the next phase starts, on the outline, and halfway through a corner it lies on the corner's arc
+- **TEST** `meditate-android/src/app.rs::breath_dot_path_has_no_jumps`

@@ -1,7 +1,8 @@
 //! In-memory `WebDav` impl for tests. Models a flat key-value store of
-//! `path → bytes` plus implicit directories — directories don't need
-//! to be MKCOL'd before files inside them are PUT, which mirrors what
-//! Nextcloud's WebDAV layer does in practice for the path tree we use.
+//! `path → bytes` plus implicit directories: directories don't need
+//! to be MKCOL'd before files inside them are PUT, and MKCOL never
+//! fails. Nextcloud is stricter; the orchestrator tests' `StrictWebDav`
+//! models its folder answers.
 //!
 //! `Clone`-friendly via `Arc<Mutex<...>>` so two `Sync` instances
 //! standing in for two devices can share the same "remote".
@@ -35,7 +36,7 @@ impl FakeWebDav {
     }
 }
 
-fn norm(path: &str) -> String {
+pub(crate) fn norm(path: &str) -> String {
     // Treat leading slashes as optional and idempotent so callers don't
     // have to be picky about the exact form ("/x", "x", "/x/" all
     // address the same thing for path-prefix purposes).

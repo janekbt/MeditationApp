@@ -1675,28 +1675,35 @@ mod tests {
     }
 
     #[test]
-    fn sync_does_not_trigger_remote_data_lost_after_an_explicit_wipe_known_remote_files() {
-        // The "push local to remote" recovery path: after the user
-        // resolves the dialog by saying "push my local up", the shell
-        // calls `wipe_known_remote_files` and re-runs sync. The next
-        // sync sees an empty remote and an empty known set →
-        // precondition false → no trigger.
+    fn push_local_recovery_reuploads_every_old_session() {
+        // "Push My Data" after a wiped server: the next sync raises no
+        // "data lost" and uploads the sessions, sounds and guided files
+        // synced before the wipe.
         let (db, fs) = setup();
-        insert_session(&db, "first", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
-        for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
-        }
-        // Operator action: clear the dedup tracker.
-        db.wipe_known_remote_files().unwrap();
-        // Mark events un-synced so push has work to do.
-        for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
+        let (sounds, guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        insert_session(&db, "2026-01-01T08:00:00", 100);
+        let bell = seed_custom_bell_sound(&db, sounds.path(), "Gong", b"RIFF", "wav");
+        db.insert_guided_file_with_uuid(GUIDE, "Body scan", "/x/b.ogg", 600, false).unwrap();
+        std::fs::write(guided.path().join(format!("{GUIDE}.ogg")), b"OggS").unwrap();
+        let sync = Sync::new(&db, &fs, "Meditate", sounds.path().into(), guided.path().into());
+        sync.sync().unwrap();
+        assert!(db.pending_events().unwrap().is_empty(), "sanity: the first sync uploaded everything");
+        for path in fs.paths() {
+            fs.delete(&path).unwrap();
         }
 
-        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync();
-        assert!(result.is_ok(),
-            "after wipe_known_remote_files the next sync must succeed; got {result:?}");
+        settings::prepare_push_local_recovery(&db).unwrap();
+        let result = sync.sync();
+        assert!(result.is_ok(), "the sync after the recovery must succeed; got {result:?}");
+
+        let peer = Database::open_in_memory().unwrap();
+        let (peer_sounds, peer_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        Sync::new(&peer, &fs, "Meditate", peer_sounds.path().into(), peer_guided.path().into()).sync().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&peer).unwrap();
+        assert_eq!(sessions.len(), 1, "a fresh device gets the old session");
+        assert_eq!(sessions[0].1.duration_secs, 100);
+        assert!(peer_sounds.path().join(format!("{bell}.wav")).exists(), "and the sound");
+        assert!(peer_guided.path().join(format!("{GUIDE}.ogg")).exists(), "and the guided file");
     }
 
     #[test]
@@ -1832,6 +1839,84 @@ mod tests {
 
     const GUIDE: &str = "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a";
     const BELL: &str = "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d";
+
+    /// Folders as Nextcloud keeps them, unlike `FakeWebDav`: MKCOL on an
+    /// existing folder is 405, and MKCOL, PUT or MOVE into a missing
+    /// folder is 409 (both `Conflict`); listing a missing folder is 404.
+    struct StrictWebDav {
+        inner: FakeWebDav,
+        dirs: std::sync::Mutex<std::collections::HashSet<String>>,
+    }
+    impl StrictWebDav {
+        fn new() -> Self {
+            Self { inner: FakeWebDav::new(), dirs: std::sync::Mutex::new(std::collections::HashSet::from(["/".to_string()])) }
+        }
+        fn parent_exists(&self, p: &str) -> bool {
+            let p = crate::sync::fake::norm(p);
+            let parent = p.rsplit_once('/').map_or("", |(dir, _)| dir);
+            self.dirs.lock().unwrap().contains(if parent.is_empty() { "/" } else { parent })
+        }
+    }
+    impl WebDav for StrictWebDav {
+        fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+            if !self.dirs.lock().unwrap().contains(&crate::sync::fake::norm(p)) {
+                return Err(WebDavError::NotFound);
+            }
+            self.inner.list_collection(p)
+        }
+        fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.inner.get(p, max_bytes) }
+        fn put(&self, p: &str, body: &[u8]) -> WebDavResult<()> {
+            if !self.parent_exists(p) {
+                return Err(WebDavError::Conflict);
+            }
+            self.inner.put(p, body)
+        }
+        fn mkcol(&self, p: &str) -> WebDavResult<()> {
+            if !self.parent_exists(p) || !self.dirs.lock().unwrap().insert(crate::sync::fake::norm(p)) {
+                return Err(WebDavError::Conflict);
+            }
+            Ok(())
+        }
+        fn delete(&self, p: &str) -> WebDavResult<()> { self.inner.delete(p) }
+        fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+            if !self.parent_exists(to) {
+                return Err(WebDavError::Conflict);
+            }
+            self.inner.move_to(from, to)
+        }
+    }
+
+    #[test]
+    fn two_syncs_with_audio_files_work_against_a_strict_server() {
+        // The second sync creates folders that exist already; Nextcloud
+        // refuses that, and sync must take it as "already there".
+        let (db, _) = setup();
+        let (sounds, guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let server = StrictWebDav::new();
+        let mut uuids = Vec::new();
+        for round in 0..2 {
+            insert_session(&db, &format!("2026-01-0{}T08:00:00+00:00", round + 1), 60);
+            uuids.push(seed_custom_bell_sound(&db, sounds.path(), &format!("Gong {round}"), b"RIFF", "wav") + ".wav");
+            let guide = uuid::Uuid::new_v4().to_string();
+            db.insert_guided_file_with_uuid(&guide, &format!("Talk {round}"), "/x/t.ogg", 600, false).unwrap();
+            std::fs::write(guided.path().join(format!("{guide}.ogg")), b"OggS").unwrap();
+            uuids.push(guide + ".ogg");
+            Sync::new(&db, &server, "Meditate", sounds.path().into(), guided.path().into())
+                .sync()
+                .unwrap_or_else(|e| panic!("sync {round} failed: {e:?}"));
+        }
+
+        let peer = Database::open_in_memory().unwrap();
+        let (peer_sounds, peer_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        Sync::new(&peer, &server, "Meditate", peer_sounds.path().into(), peer_guided.path().into())
+            .sync()
+            .unwrap();
+        assert_eq!(crate::db::list_sessions_from_db(&peer).unwrap().len(), 2);
+        for name in &uuids {
+            let dir = if name.ends_with(".wav") { &peer_sounds } else { &peer_guided };
+            assert!(dir.path().join(name).exists(), "{name} reached the new device");
+        }
+    }
 
     #[test]
     fn a_file_the_server_refuses_waits_for_retry_and_the_rest_syncs() {
@@ -2386,32 +2471,72 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pull_drops_files_over_10mb_cap() {
-        // Inbound size cap mirrors the import side. A peer that
-        // somehow pushed a >10MB file (maybe via direct WebDAV
-        // upload outside the app) should NOT have it land locally.
-        let (db_src, fs) = setup();
+    /// Counts the downloads refused for being over the caller's limit.
+    struct CountsTooLarge {
+        inner: FakeWebDav,
+        refused: std::sync::atomic::AtomicUsize,
+    }
+    impl WebDav for CountsTooLarge {
+        fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> { self.inner.list_collection(p) }
+        fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
+            let got = self.inner.get(p, max_bytes);
+            if matches!(got, Err(WebDavError::ResponseTooLarge { .. })) {
+                self.refused.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            got
+        }
+        fn put(&self, p: &str, body: &[u8]) -> WebDavResult<()> { self.inner.put(p, body) }
+        fn mkcol(&self, p: &str) -> WebDavResult<()> { self.inner.mkcol(p) }
+        fn delete(&self, p: &str) -> WebDavResult<()> { self.inner.delete(p) }
+        fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.inner.move_to(from, to) }
+    }
+
+    /// Push a small custom sound, then replace its file on the server
+    /// with `size` bytes (put there outside the app) and sync a fresh
+    /// peer. Returns the server, the peer's db and sounds dir, the uuid.
+    fn sync_sound_resized_on_server(size: usize) -> (CountsTooLarge, Database, tempfile::TempDir, String) {
+        let db_src = Database::open_in_memory().unwrap();
+        let server = CountsTooLarge { inner: FakeWebDav::new(), refused: Default::default() };
         let tmp_src = tempfile::tempdir().unwrap();
-        let big = vec![0u8; (10 * 1024 * 1024) + 1];
-        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Big", &big, "wav");
-        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
+        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Big", b"AUDIO", "wav");
+        Sync::new(&db_src, &server, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
             .push().unwrap();
+        server.put(&format!("/Meditate/sounds/{uuid}.wav"), &vec![0u8; size]).unwrap();
 
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
-            .pull().unwrap();
+        Sync::new(&db_peer, &server, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
+            .sync()
+            .expect("the sync succeeds without the file");
+        (server, db_peer, tmp_peer, uuid)
+    }
 
-        // Row replicated but the file isn't saved.
-        assert!(!db_peer.list_bell_sounds().unwrap().is_empty());
-        assert!(
-            !tmp_peer.path().join(format!("{uuid}.wav")).exists(),
-            "10MB+ file must be dropped on pull",
-        );
-        // Mark the uuid known? No — a future pull might try again
-        // when the user reduces the file. Don't record known unless
-        // the file actually landed.
+    #[test]
+    fn pull_drops_a_sound_just_over_the_cap() {
+        // Under the download limit, so the bytes arrive; the 10 MB cap
+        // must still keep them off the disk and out of the known set,
+        // so a later sync retries once the file is replaced.
+        let (server, db_peer, tmp_peer, uuid) = sync_sound_resized_on_server(10 * 1024 * 1024 + 1);
+        assert_eq!(server.refused.load(std::sync::atomic::Ordering::SeqCst), 0, "the bytes were read");
+        assert!(!db_peer.list_bell_sounds().unwrap().is_empty(), "the row still replicates");
+        let local = tmp_peer.path().join(format!("{uuid}.wav"));
+        assert!(!local.exists(), "10 MB + 1 byte must be dropped");
+        assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+
+        server.put(&format!("/Meditate/sounds/{uuid}.wav"), b"SMALL").unwrap();
+        Sync::new(&db_peer, &server, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
+            .sync()
+            .unwrap();
+        assert_eq!(std::fs::read(&local).unwrap(), b"SMALL", "a later sync tries again");
+    }
+
+    #[test]
+    fn pull_skips_a_sound_too_large_to_download() {
+        // Over the 11 MB download limit: the GET stops reading, and the
+        // sync goes on without the file.
+        let (server, db_peer, tmp_peer, uuid) = sync_sound_resized_on_server(12 * 1024 * 1024);
+        assert_eq!(server.refused.load(std::sync::atomic::Ordering::SeqCst), 1, "the download was cut off");
+        assert!(!tmp_peer.path().join(format!("{uuid}.wav")).exists());
         assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
     }
 

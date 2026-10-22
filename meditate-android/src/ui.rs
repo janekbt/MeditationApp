@@ -2437,67 +2437,6 @@ fn push_session_length_to_ui(ui: &MainWindow, total_secs: u32) {
     ui.set_setup_minutes(((total_secs % 3600) / 60) as i32);
 }
 
-/// Position on a rounded-rect perimeter for the given phase +
-/// intra-phase progress `t ∈ [0, 1]`. `pad` is the inset, `side`
-/// the square's side length, `radius` the corner radius.
-///
-/// Each phase covers one full edge (the straight middle) plus
-/// the quarter-arc at its trailing corner, so consecutive phases
-/// connect tangentially and the dot follows the visible rounded
-/// outline instead of cutting through the corner with a sharp
-/// 90° pivot (which is what core's `Phase::perimeter_point` does
-/// — that one is a pure axis-aligned path, used by the GTK shell
-/// as-is).
-///
-/// Path per phase, all clockwise from the bottom-left corner:
-/// * `In`      — left edge bottom→top + top-left arc
-/// * `HoldIn`  — top edge left→right  + top-right arc
-/// * `Out`     — right edge top→bottom + bottom-right arc
-/// * `HoldOut` — bottom edge right→left + bottom-left arc
-fn rounded_perimeter_point(
-    phase: meditate_core::breath::Phase,
-    t: f64,
-    pad: f64,
-    side: f64,
-    radius: f64,
-) -> (f64, f64) {
-    use meditate_core::breath::Phase;
-    use std::f64::consts::FRAC_PI_2;
-    let t = t.clamp(0.0, 1.0);
-    let straight_len = (side - 2.0 * radius).max(0.0);
-    let arc_len = FRAC_PI_2 * radius;
-    let total = straight_len + arc_len;
-    let s = t * total;
-    // Returns (cx, cy, start_angle) for the trailing arc of each
-    // phase. Arc sweeps `FRAC_PI_2` from start_angle clockwise.
-    let arc_param = |phase: Phase| -> (f64, f64, f64) {
-        match phase {
-            // Top-left corner: angle sweeps π → 3π/2.
-            Phase::In => (pad + radius, pad + radius, std::f64::consts::PI),
-            // Top-right corner: 3π/2 → 2π.
-            Phase::HoldIn => (pad + side - radius, pad + radius, 3.0 * FRAC_PI_2),
-            // Bottom-right corner: 0 → π/2.
-            Phase::Out => (pad + side - radius, pad + side - radius, 0.0),
-            // Bottom-left corner: π/2 → π.
-            Phase::HoldOut => (pad + radius, pad + side - radius, FRAC_PI_2),
-        }
-    };
-    if s < straight_len {
-        // Straight portion of this phase's edge.
-        match phase {
-            Phase::In => (pad, pad + side - radius - s),
-            Phase::HoldIn => (pad + radius + s, pad),
-            Phase::Out => (pad + side, pad + radius + s),
-            Phase::HoldOut => (pad + side - radius - s, pad + side),
-        }
-    } else {
-        let arc_t = ((s - straight_len) / arc_len).clamp(0.0, 1.0);
-        let (cx, cy, start_angle) = arc_param(phase);
-        let angle = start_angle + arc_t * FRAC_PI_2;
-        (cx + radius * angle.cos(), cy + radius * angle.sin())
-    }
-}
-
 /// Push the four phase seconds into the Slint `bb-*` properties.
 /// Called on launch + after every stepper-driven mutation so the
 /// tiles stay in sync with the in-memory pattern.
@@ -2577,80 +2516,6 @@ fn load_log_page(
     (rows, full)
 }
 
-/// Group an already-ordered (newest-first) flat list of
-/// sessions into day sections. Pure function — no DB / no
-/// global state — so the pagination handler can call it on
-/// every "Load more" press over the cumulative loaded list.
-/// `hidden_ids` is the set of rowids currently being deleted
-/// (the in-flight undo-toast window) — they're skipped during
-/// grouping so section counts/totals stay consistent with the
-/// rendered cards. Mirrors GTK's `set_visible(false)` on the
-/// card widget — the row stays in `loaded_log_sessions` (so the
-/// undo path can restore it) but doesn't show up in the
-/// rendered feed until the snackbar dismisses without Undo.
-fn group_log_sessions(
-    rows: &[(i64, meditate_core::db::Session)],
-    label_name_by_id: &std::collections::HashMap<i64, String>,
-    label_places: &std::collections::HashMap<i64, usize>,
-    guided_names: &std::collections::HashMap<String, String>,
-    hidden_ids: &std::collections::HashSet<i64>,
-) -> Vec<LogDaySectionData> {
-    let mut sections: Vec<LogDaySectionData> = Vec::new();
-    for (rowid, s) in rows {
-        if hidden_ids.contains(rowid) { continue; }
-        // Day, header and card time all come from the start instant in
-        // the device's current zone, as in GTK. The stored wall-clock
-        // text disagrees with them after a time-zone change.
-        let start_unix = s.start_unix();
-        let date_key = meditate_core::format::date_group_key(start_unix);
-        let label_name = s
-            .label_id
-            .and_then(|id| label_name_by_id.get(&id).cloned())
-            .unwrap_or_default();
-        let color_index = s
-            .label_id
-            .filter(|_| !label_name.is_empty())
-            .and_then(|id| label_places.get(&id))
-            .map_or(-1, |p| *p as i32);
-        let item = LogCardItemData {
-            id: *rowid as i32,
-            minutes: meditate_core::format::log_card_minutes(
-                s.duration_secs as i64,
-            ) as i32,
-            time_of_day: format_time_of_day(start_unix),
-            label_name,
-            guided_name: meditate_core::db::guided_file_name_for(
-                s.guided_file_uuid.as_ref().map(|u| u.as_str()),
-                s.guided_file_name.as_deref(),
-                guided_names,
-            )
-            .unwrap_or_default()
-            .to_string(),
-            note: truncate_note_for_card(
-                s.notes.as_deref().unwrap_or_default(),
-            ),
-            color_index,
-        };
-        let duration_secs_i64 = i64::from(s.duration_secs);
-        if let Some(last) = sections.last_mut() {
-            if last.date_key == date_key {
-                last.count += 1;
-                last.total_secs += meditate_core::format::log_card_total_secs(duration_secs_i64);
-                last.items.push(item);
-                continue;
-            }
-        }
-        sections.push(LogDaySectionData {
-            date_key,
-            start_unix,
-            count: 1,
-            total_secs: meditate_core::format::log_card_total_secs(duration_secs_i64),
-            items: vec![item],
-        });
-    }
-    sections
-}
-
 /// Load the label name lookup once per refresh. Cheap (a few
 /// rows) and keeps the grouping fn free of DB access.
 fn load_label_name_map() -> std::collections::HashMap<i64, String> {
@@ -2679,52 +2544,15 @@ fn load_guided_file_names() -> std::collections::HashMap<String, String> {
     meditate_core::db::guided_file_names_from_db(&db).unwrap_or_default()
 }
 
-struct LogCardItemData {
-    id: i32,
-    minutes: i32,
-    time_of_day: String,
-    label_name: String,
-    guided_name: String,
-    note: String,
-    color_index: i32,
-}
-
-struct LogDaySectionData {
-    date_key: String,
-    /// When the section's first session started; its header is
-    /// rendered from this (core's Today / Yesterday / date).
-    start_unix: i64,
-    count: i64,
-    total_secs: i64,
-    items: Vec<LogCardItemData>,
-}
-
-/// Truncate a session note to ~120 characters + "…" so a long
-/// rant doesn't unbound-expand its Log card. Slint's `overflow:
-/// elide` doesn't reliably clip multi-line wrapped Text against
-/// a `max-height`, so we cap at the data level instead. GTK's
-/// `lines: 2; ellipsize: end` solves the same problem at the
-/// view layer; an Android-only deviation that yields the same
-/// outcome.
-fn truncate_note_for_card(note: &str) -> String {
-    const MAX_CHARS: usize = 120;
-    let chars: Vec<char> = note.chars().collect();
-    if chars.len() <= MAX_CHARS {
-        return note.to_string();
-    }
-    let mut head: String = chars.into_iter().take(MAX_CHARS - 1).collect();
-    head.push('…');
-    head
-}
-
-/// Extract the time-of-day portion ("14:32") from a local-ISO
-/// string ("2026-05-15T14:32:18+02:00"). Skips the date prefix
-/// and TZ offset suffix; safe for malformed inputs (returns "").
 /// System clock convention, cached per `android_main` run (a
 /// changed system setting is picked up on the next app start —
 /// Mutex not OnceLock so an activity recreate refreshes it).
 static CLOCK_FORMAT: std::sync::Mutex<Option<app::ClockFormat>> =
     std::sync::Mutex::new(None);
+
+fn clock_format() -> app::ClockFormat {
+    CLOCK_FORMAT.lock().ok().and_then(|g| g.clone()).unwrap_or(app::ClockFormat::H24)
+}
 
 /// Locale first weekday (1 = Mon … 7 = Sun), cached like CLOCK_FORMAT.
 static WEEK_START: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
@@ -2769,18 +2597,6 @@ fn render_mini_stat(n: i64) -> String {
             app::group_digits(v, &sep)
         }
     }
-}
-
-fn format_time_of_day(start_unix: i64) -> String {
-    let Some(key) = meditate_core::format::time_of_day_key(start_unix) else {
-        return String::new();
-    };
-    let fmt = CLOCK_FORMAT
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .unwrap_or(app::ClockFormat::H24);
-    app::render_time_of_day(key, &fmt)
 }
 
 /// Date-section header text for the Log feed: "Today" /
@@ -2982,7 +2798,9 @@ fn render_log_feed(
     let label_map = load_label_name_map();
     let label_places = load_label_color_places();
     let guided_names = load_guided_file_names();
-    let sections = group_log_sessions(&loaded.borrow(), &label_map, &label_places, &guided_names, &hidden);
+    let sections = app::group_log_sessions(
+        &loaded.borrow(), &label_map, &label_places, &guided_names, &hidden, &clock_format(),
+    );
     push_log_sections_to_ui(ui, sections);
 }
 
@@ -2993,7 +2811,7 @@ fn render_log_feed(
 /// — does not touch the DB.
 fn push_log_sections_to_ui(
     ui: &MainWindow,
-    sections: Vec<LogDaySectionData>,
+    sections: Vec<app::LogDaySectionData>,
 ) {
     let now_unix = meditate_core::time::unix_now();
     let items: Vec<LogDaySection> = sections
@@ -4262,13 +4080,8 @@ fn build_ui() -> MainWindow {
     }
     // The Edit Session time row reads like the Log's times.
     ui.on_render_time(|hour, minute| {
-        let fmt = CLOCK_FORMAT
-            .lock()
-            .ok()
-            .and_then(|g| g.clone())
-            .unwrap_or(app::ClockFormat::H24);
         let key = meditate_core::format::TimeOfDayKey { hour: hour as u8, minute: minute as u8 };
-        app::render_time_of_day(key, &fmt).into()
+        app::render_time_of_day(key, &clock_format()).into()
     });
     if let Some(app) = android_app() {
         // Without the regional step, pt-BR/zh-CN users fell back
@@ -5205,7 +5018,7 @@ fn build_ui() -> MainWindow {
                         // `border-radius: 20px` on the frame
                         // Rectangle so the dot trajectory hugs the
                         // visible corners instead of cutting them.
-                        let (x, y) = rounded_perimeter_point(
+                        let (x, y) = app::rounded_perimeter_point(
                             info.phase, t, 12.0, 196.0, 20.0,
                         );
                         ui.set_bb_running_active(true);

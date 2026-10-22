@@ -383,12 +383,14 @@ mod tests {
         let db = fresh();
         // Authoring a label emits a `label_insert` event.
         db.insert_label("focus").unwrap();
-        let pending_before_recovery = db.pending_events().unwrap().len();
-        assert!(pending_before_recovery >= 1,
-            "sanity: authoring must create a pending event");
+        db.insert_label("calm").unwrap();
+        let ids: Vec<i64> = db.pending_events().unwrap().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids.len(), 2, "sanity: each label emits one event");
+        db.mark_events_synced(&ids).unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
         prepare_push_local_recovery(&db).unwrap();
-        assert_eq!(db.pending_events().unwrap().len(), pending_before_recovery,
-            "recovery must leave events in pending state");
+        assert_eq!(db.pending_events().unwrap().len(), 2,
+            "recovery must put every synced event back up for upload");
     }
 
     #[test]

@@ -35,7 +35,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
 | [x] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
-| [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
+| [x] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
 | [ ] | S. Cleanup | #58, #61, #85, #87, #157, #167, #171, #175, #197 | dead code, wrong comments |
 | [ ] | T. Text that doesn't fit | #159 | information the user can't see |
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
@@ -91,21 +91,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Fix: `Err(e) => !matches!(e, Unconfigured | PasswordMissing | OpenDb(_))`.
 
 ## R. Tests
-
-### #91 Sync tests that pass for the wrong reason
-- Push local: `prepare_push_local_recovery_flags_all_events_unsynced` (`sync/settings.rs:290-301`) never marks events synced first, and the orchestrator test's "mark events un-synced" loop (`orchestrator.rs:1687`) deletes from an empty listing. Dropping `flag_all_events_unsynced` keeps both green. Mark events synced before the recovery; in the orchestrator test call `prepare_push_local_recovery` and assert that a fresh peer gets the old session.
-- Pull size cap: `pull_drops_files_over_10mb_cap` (`orchestrator.rs:2233-2259`) never reaches the pull cap, because push refuses the file first. Put the 10 MB + 1 byte body straight on the fake server. The `ResponseTooLarge` branch needs a body over 11 MB.
-- Folders: `FakeWebDav` (`fake.rs:47-84`) creates parents implicitly, accepts MKCOL on an existing folder and lists a missing folder as empty. Removing the `Conflict` tolerance in `ensure_*_dir_exists` (`orchestrator.rs:649-678, 863-868`) stays green, while Nextcloud would answer 405 or 409. Add a strict wrapper in the tests and a two-round sync test with a custom sound and a guided file.
-
-### #138 Android: ui.rs logic has no behaviour tests
-- Where: `lib.rs` (`mod ui` builds only for Android); `ui.rs:2092, 2231, 2337`; source-text tests in `app.rs` (e.g. 1562, 2516-2527).
-- Problem: `group_log_sessions`, `truncate_note_for_card` and `rounded_perimeter_point` never run in a test. Changing `last.count += 1` to `+= 2` passes every test, while renaming a local variable fails one.
-- Fix: move these pure helpers (and `LogDaySectionData`) into app.rs and test them with real inputs, passing the clock format in. Drop the matching source-text assertions. This is not the rejected ui.rs split.
-
-### #150 No test ties most JNI signatures to their Kotlin methods
-- Where: the bridges in `meditate-android/src/` (haptics, screen, insets, keychain, widget, about, service); existing pins at `app.rs:1752, 1880`.
-- Problem: renaming or retyping one of those Kotlin methods turns the call into a logged NoSuchMethodError: bells, vibration, the keychain or the service stop silently, and `cargo test` stays green.
-- Fix: one table test that checks each Rust signature string against the matching full `fun` line in the Kotlin file.
 
 ## S. Cleanup
 

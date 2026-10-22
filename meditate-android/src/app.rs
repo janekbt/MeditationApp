@@ -858,6 +858,307 @@ impl Notice {
     }
 }
 
+pub struct LogCardItemData {
+    pub id: i32,
+    pub minutes: i32,
+    pub time_of_day: String,
+    pub label_name: String,
+    pub guided_name: String,
+    pub note: String,
+    pub color_index: i32,
+}
+
+pub struct LogDaySectionData {
+    pub date_key: String,
+    /// When the section's first session started; its header is
+    /// rendered from this (core's Today / Yesterday / date).
+    pub start_unix: i64,
+    pub count: i64,
+    pub total_secs: i64,
+    pub items: Vec<LogCardItemData>,
+}
+
+/// Group an already-ordered (newest-first) flat list of
+/// sessions into day sections. Pure function — no DB / no
+/// global state — so the pagination handler can call it on
+/// every "Load more" press over the cumulative loaded list.
+/// `hidden_ids` is the set of rowids currently being deleted
+/// (the in-flight undo-toast window) — they're skipped during
+/// grouping so section counts/totals stay consistent with the
+/// rendered cards. Mirrors GTK's `set_visible(false)` on the
+/// card widget — the row stays in `loaded_log_sessions` (so the
+/// undo path can restore it) but doesn't show up in the
+/// rendered feed until the snackbar dismisses without Undo.
+pub fn group_log_sessions(
+    rows: &[(i64, meditate_core::db::Session)],
+    label_name_by_id: &std::collections::HashMap<i64, String>,
+    label_places: &std::collections::HashMap<i64, usize>,
+    guided_names: &std::collections::HashMap<String, String>,
+    hidden_ids: &std::collections::HashSet<i64>,
+    clock: &ClockFormat,
+) -> Vec<LogDaySectionData> {
+    let mut sections: Vec<LogDaySectionData> = Vec::new();
+    for (rowid, s) in rows {
+        if hidden_ids.contains(rowid) { continue; }
+        // Day, header and card time all come from the start instant in
+        // the device's current zone, as in GTK. The stored wall-clock
+        // text disagrees with them after a time-zone change.
+        let start_unix = s.start_unix();
+        let date_key = meditate_core::format::date_group_key(start_unix);
+        let label_name = s
+            .label_id
+            .and_then(|id| label_name_by_id.get(&id).cloned())
+            .unwrap_or_default();
+        let color_index = s
+            .label_id
+            .filter(|_| !label_name.is_empty())
+            .and_then(|id| label_places.get(&id))
+            .map_or(-1, |p| *p as i32);
+        let item = LogCardItemData {
+            id: *rowid as i32,
+            minutes: meditate_core::format::log_card_minutes(
+                s.duration_secs as i64,
+            ) as i32,
+            time_of_day: meditate_core::format::time_of_day_key(start_unix)
+                .map(|key| render_time_of_day(key, clock))
+                .unwrap_or_default(),
+            label_name,
+            guided_name: meditate_core::db::guided_file_name_for(
+                s.guided_file_uuid.as_ref().map(|u| u.as_str()),
+                s.guided_file_name.as_deref(),
+                guided_names,
+            )
+            .unwrap_or_default()
+            .to_string(),
+            note: truncate_note_for_card(
+                s.notes.as_deref().unwrap_or_default(),
+            ),
+            color_index,
+        };
+        let duration_secs_i64 = i64::from(s.duration_secs);
+        if let Some(last) = sections.last_mut() {
+            if last.date_key == date_key {
+                last.count += 1;
+                last.total_secs += meditate_core::format::log_card_total_secs(duration_secs_i64);
+                last.items.push(item);
+                continue;
+            }
+        }
+        sections.push(LogDaySectionData {
+            date_key,
+            start_unix,
+            count: 1,
+            total_secs: meditate_core::format::log_card_total_secs(duration_secs_i64),
+            items: vec![item],
+        });
+    }
+    sections
+}
+
+/// Truncate a session note to ~120 characters + "…" so a long
+/// rant doesn't unbound-expand its Log card. Slint's `overflow:
+/// elide` doesn't reliably clip multi-line wrapped Text against
+/// a `max-height`, so we cap at the data level instead. GTK's
+/// `lines: 2; ellipsize: end` solves the same problem at the
+/// view layer; an Android-only deviation that yields the same
+/// outcome.
+fn truncate_note_for_card(note: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let chars: Vec<char> = note.chars().collect();
+    if chars.len() <= MAX_CHARS {
+        return note.to_string();
+    }
+    let mut head: String = chars.into_iter().take(MAX_CHARS - 1).collect();
+    head.push('…');
+    head
+}
+
+/// Position on a rounded-rect perimeter for the given phase +
+/// intra-phase progress `t ∈ [0, 1]`. `pad` is the inset, `side`
+/// the square's side length, `radius` the corner radius.
+///
+/// Each phase covers one full edge (the straight middle) plus
+/// the quarter-arc at its trailing corner, so consecutive phases
+/// connect tangentially and the dot follows the visible rounded
+/// outline instead of cutting through the corner with a sharp
+/// 90° pivot (which is what core's `Phase::perimeter_point` does
+/// — that one is a pure axis-aligned path, used by the GTK shell
+/// as-is).
+///
+/// Path per phase, all clockwise from the bottom-left corner:
+/// * `In`      — left edge bottom→top + top-left arc
+/// * `HoldIn`  — top edge left→right  + top-right arc
+/// * `Out`     — right edge top→bottom + bottom-right arc
+/// * `HoldOut` — bottom edge right→left + bottom-left arc
+pub fn rounded_perimeter_point(
+    phase: meditate_core::breath::Phase,
+    t: f64,
+    pad: f64,
+    side: f64,
+    radius: f64,
+) -> (f64, f64) {
+    use meditate_core::breath::Phase;
+    use std::f64::consts::FRAC_PI_2;
+    let t = t.clamp(0.0, 1.0);
+    let straight_len = (side - 2.0 * radius).max(0.0);
+    let arc_len = FRAC_PI_2 * radius;
+    let total = straight_len + arc_len;
+    let s = t * total;
+    // Returns (cx, cy, start_angle) for the trailing arc of each
+    // phase. Arc sweeps `FRAC_PI_2` from start_angle clockwise.
+    let arc_param = |phase: Phase| -> (f64, f64, f64) {
+        match phase {
+            // Top-left corner: angle sweeps π → 3π/2.
+            Phase::In => (pad + radius, pad + radius, std::f64::consts::PI),
+            // Top-right corner: 3π/2 → 2π.
+            Phase::HoldIn => (pad + side - radius, pad + radius, 3.0 * FRAC_PI_2),
+            // Bottom-right corner: 0 → π/2.
+            Phase::Out => (pad + side - radius, pad + side - radius, 0.0),
+            // Bottom-left corner: π/2 → π.
+            Phase::HoldOut => (pad + radius, pad + side - radius, FRAC_PI_2),
+        }
+    };
+    if s < straight_len {
+        // Straight portion of this phase's edge.
+        match phase {
+            Phase::In => (pad, pad + side - radius - s),
+            Phase::HoldIn => (pad + radius + s, pad),
+            Phase::Out => (pad + side, pad + radius + s),
+            Phase::HoldOut => (pad + side - radius - s, pad + side),
+        }
+    } else {
+        let arc_t = ((s - straight_len) / arc_len).clamp(0.0, 1.0);
+        let (cx, cy, start_angle) = arc_param(phase);
+        let angle = start_angle + arc_t * FRAC_PI_2;
+        (cx + radius * angle.cos(), cy + radius * angle.sin())
+    }
+}
+
+#[cfg(test)]
+mod log_feed_tests {
+    use super::*;
+    use meditate_core::db::{Session, SessionMode, SessionUuid};
+    use std::collections::{HashMap, HashSet};
+
+    fn session(start_iso: &str, secs: u32) -> Session {
+        Session {
+            start_iso: start_iso.into(),
+            duration_secs: secs,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: SessionUuid::new(""),
+            guided_file_uuid: None,
+            guided_file_name: None,
+        }
+    }
+
+    fn group(rows: &[(i64, Session)], hidden: &[i64], clock: &ClockFormat) -> Vec<LogDaySectionData> {
+        let hidden: HashSet<i64> = hidden.iter().copied().collect();
+        group_log_sessions(rows, &HashMap::new(), &HashMap::new(), &HashMap::new(), &hidden, clock)
+    }
+
+    #[test]
+    fn log_groups_sessions_by_start_day() {
+        let rows = [
+            (3, session("2026-03-11T12:00:00", 20 * 60)),
+            (2, session("2026-03-11T12:00:00", 10 * 60 + 20)),
+            (1, session("2026-03-10T12:00:00", 5 * 60)),
+        ];
+        // The total sums what the cards show: 10:20 counts as 10 minutes.
+        let days = group(&rows, &[], &ClockFormat::H24);
+        let summary: Vec<(&str, i64, i64, Vec<i32>)> = days
+            .iter()
+            .map(|d| (d.date_key.as_str(), d.count, d.total_secs, d.items.iter().map(|c| c.id).collect()))
+            .collect();
+        assert_eq!(summary, [("2026-03-11", 2, 30 * 60, vec![3, 2]), ("2026-03-10", 1, 5 * 60, vec![1])]);
+        assert_eq!(days[0].items[1].minutes, 10);
+        assert!(group(&[], &[], &ClockFormat::H24).is_empty());
+    }
+
+    #[test]
+    fn log_card_time_follows_the_clock_format() {
+        let rows = [(2, session("2026-03-11T21:05:00", 600)), (1, session("2026-03-11T09:05:00", 600))];
+        let h12 = ClockFormat::H12 { am: "AM".into(), pm: "PM".into() };
+        let times = |clock: &ClockFormat| -> Vec<String> {
+            group(&rows, &[], clock)[0]
+                .items
+                .iter()
+                .map(|c| c.time_of_day.clone())
+                .collect()
+        };
+        assert_eq!(times(&ClockFormat::H24), ["21:05", "09:05"]);
+        assert_eq!(times(&h12), ["9:05 PM", "9:05 AM"]);
+    }
+
+    #[test]
+    fn log_hides_a_session_waiting_for_undo() {
+        let rows = [
+            (2, session("2026-03-11T12:00:00", 10 * 60)),
+            (1, session("2026-03-11T12:00:00", 5 * 60)),
+        ];
+        let days = group(&rows, &[2], &ClockFormat::H24);
+        assert_eq!(days.len(), 1);
+        assert_eq!((days[0].count, days[0].total_secs), (1, 5 * 60));
+        assert_eq!(days[0].items.iter().map(|c| c.id).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn log_card_shows_label_colour_and_guided_name() {
+        let mut labelled = session("2026-03-11T12:00:00", 600);
+        labelled.label_id = Some(7);
+        labelled.guided_file_uuid = Some("g-1".into());
+        labelled.guided_file_name = Some("Old name".into());
+        let mut orphan = session("2026-03-11T12:00:00", 600);
+        orphan.label_id = Some(9); // label deleted since
+        let rows = [(2, labelled), (1, orphan)];
+        let days = group_log_sessions(
+            &rows,
+            &HashMap::from([(7, "Walking".to_string())]),
+            &HashMap::from([(7, 3), (9, 4)]),
+            &HashMap::from([("g-1".to_string(), "Body scan".to_string())]),
+            &HashSet::new(),
+            &ClockFormat::H24,
+        );
+        let cards = &days[0].items;
+        assert_eq!((cards[0].label_name.as_str(), cards[0].color_index), ("Walking", 3));
+        assert_eq!(cards[0].guided_name, "Body scan");
+        assert_eq!((cards[1].label_name.as_str(), cards[1].color_index), ("", -1));
+        assert_eq!(cards[1].guided_name, "");
+    }
+
+    #[test]
+    fn long_notes_are_shortened_for_the_card() {
+        assert_eq!(truncate_note_for_card("short"), "short");
+        let exact = "ä".repeat(120);
+        assert_eq!(truncate_note_for_card(&exact), exact);
+        assert_eq!(truncate_note_for_card(&"ä".repeat(121)), format!("{}…", "ä".repeat(119)));
+    }
+
+    fn close(a: (f64, f64), b: (f64, f64)) -> bool {
+        (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9
+    }
+
+    #[test]
+    fn breath_dot_path_has_no_jumps() {
+        use meditate_core::breath::Phase;
+        let at = |phase, t| rounded_perimeter_point(phase, t, 10.0, 100.0, 20.0);
+        let order = [Phase::In, Phase::HoldIn, Phase::Out, Phase::HoldOut];
+        let ends = [(30.0, 10.0), (110.0, 30.0), (90.0, 110.0), (10.0, 90.0)];
+        assert!(close(at(Phase::In, 0.0), (10.0, 90.0)));
+        for (i, phase) in order.into_iter().enumerate() {
+            assert!(close(at(phase, 1.0), ends[i]), "{phase:?} ends at {:?}", at(phase, 1.0));
+            let next = order[(i + 1) % 4];
+            assert!(close(at(next, 0.0), ends[i]), "{next:?} starts where {phase:?} ended");
+        }
+        // Straight 60 + quarter arc 10π; the arc's middle lies on the
+        // circle of radius 20 around the top-left corner's centre.
+        let mid = at(Phase::In, (60.0 + 5.0 * std::f64::consts::PI) / (60.0 + 10.0 * std::f64::consts::PI));
+        let r = ((mid.0 - 30.0).powi(2) + (mid.1 - 30.0).powi(2)).sqrt();
+        assert!((r - 20.0).abs() < 1e-9 && mid.0 < 30.0 && mid.1 < 30.0, "{mid:?}");
+    }
+}
+
 #[cfg(test)]
 mod local_folder_tests {
     use super::*;
@@ -1207,7 +1508,6 @@ mod tests {
         assert!(lib.contains("meditate_core::insights::input_from_db(&db, today)"));
         assert!(lib.contains("meditate_core::goal::today_from_db(&db, today)"));
         assert!(!lib.contains("total_secs_since_from_db"));
-        assert!(lib.contains("last.total_secs += meditate_core::format::log_card_total_secs("));
         assert!(lib.contains("ui.set_streak_text("));
         // The trend compares rolling 30-day windows, and says so.
         assert!(slint.contains("@tr(\"{}% vs the 30 days before ({} vs {})\""));
@@ -2744,9 +3044,6 @@ mod tests {
         let render = lib.find("fn render_log_feed(").unwrap();
         assert!(lib[render..render + 1200].contains("load_guided_file_names()"));
         assert!(lib.contains("meditate_core::db::guided_file_names_from_db(&db)"));
-        let group = lib.find("fn group_log_sessions(").unwrap();
-        let group = &lib[group..group + 2500];
-        assert!(group.contains("meditate_core::db::guided_file_name_for("));
         assert!(lib.contains("guided_name: it.guided_name.into(),"));
     }
 
@@ -2846,20 +3143,6 @@ mod tests {
         assert!(save.contains("populate_pattern_chooser(&ui, &ticked);"));
         assert!(!save.contains("populate_pattern_chooser(&ui, &uuid);"));
         assert!(save.contains("ui.set_ie_pattern_name(name.clone().into());"));
-    }
-
-    #[test]
-    fn log_days_cards_and_headers_agree() {
-        // Grouping used the stored date and cards the stored time,
-        // but headers the start instant in today's zone: after a
-        // time-zone change a 23:30 card sat under the next day.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("fn group_log_sessions(").unwrap();
-        let group = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
-        assert!(group.contains("meditate_core::format::date_group_key(start_unix)"));
-        assert!(group.contains("format_time_of_day(start_unix)"));
-        assert!(!group.contains("start_iso.get(..10)"));
     }
 
     #[test]
@@ -4782,5 +5065,265 @@ mod tests {
         // A name clash never clears up: no second offer.
         let clash = branch.find("DuplicateGuidedFile(").expect("a clash arm");
         assert!(clash < branch.find("Some(app::PendingUndo::GuidedDelete(f))").unwrap());
+    }
+}
+
+/// Rust calls Kotlin by name and JNI signature; a renamed or retyped
+/// Kotlin method only shows up as a logged NoSuchMethodError on the
+/// phone, so each call is pinned to its `@JvmStatic fun` line.
+#[cfg(test)]
+mod jni_tests {
+    const CTX: &str = "Landroid/content/Context;";
+    const ACTIVITY: &str = "Landroid/app/Activity;";
+
+    /// (Rust file, class constant, method, JNI signature)
+    const CALLS: &[(&str, &str, &str, &str)] = &[
+        ("about", "ABOUT_CLASS_DOTTED", "formatDate", "(Ljava/lang/String;III)Ljava/lang/String;"),
+        ("about", "ABOUT_CLASS_DOTTED", "firstDayOfWeek", "()I"),
+        ("about", "ABOUT_CLASS_DOTTED", "localeTag", "()Ljava/lang/String;"),
+        ("about", "ABOUT_CLASS_DOTTED", "groupingSeparator", "()Ljava/lang/String;"),
+        ("about", "ABOUT_CLASS_DOTTED", "versionName", "(Landroid/content/Context;)Ljava/lang/String;"),
+        ("about", "ABOUT_CLASS_DOTTED", "timeFormat", "(Landroid/content/Context;)Ljava/lang/String;"),
+        ("about", "ABOUT_CLASS_DOTTED", "openUrl", "(Landroid/content/Context;Ljava/lang/String;)V"),
+        ("about", "ABOUT_CLASS_DOTTED", "copyText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+        ("about", "ABOUT_CLASS_DOTTED", "shareText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "play", "(Landroid/content/Context;Ljava/lang/String;I[F)J"),
+        ("audio", "AUDIO_CLASS_DOTTED", "playBell", "(Landroid/content/Context;ILjava/lang/String;I[F)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "setVolume", "(Landroid/content/Context;I[F)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "alarmSteps", "(Landroid/content/Context;)[F"),
+        ("audio", "AUDIO_CLASS_DOTTED", "recoverAlarmVolume", "(Landroid/content/Context;)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "stop", "(Landroid/content/Context;)V"),
+        ("guided", "PICKER_CLASS_DOTTED", "openExport", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+        ("guided", "PICKER_CLASS_DOTTED", "openFor", "(Landroid/content/Context;Ljava/lang/String;[Ljava/lang/String;)V"),
+        ("guided", "PLAYER_CLASS_DOTTED", "startAudio", "(Landroid/content/Context;Ljava/lang/String;)Z"),
+        ("guided", "PLAYER_CLASS_DOTTED", "pauseAudio", "(Landroid/content/Context;)V"),
+        ("guided", "PLAYER_CLASS_DOTTED", "resumeAudio", "(Landroid/content/Context;)V"),
+        ("guided", "PLAYER_CLASS_DOTTED", "stopAudio", "(Landroid/content/Context;)V"),
+        ("guided", "IMPORT_CLASS_DOTTED", "startImport", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;J)V"),
+        ("guided", "LOCAL_CLASS_DOTTED", "scan", "(Landroid/content/Context;Ljava/lang/String;)V"),
+        ("guided", "LOCAL_CLASS_DOTTED", "readLengths", "(Landroid/content/Context;Ljava/lang/String;[J[Ljava/lang/String;)V"),
+        ("guided", "LOCAL_CLASS_DOTTED", "documentAddress", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
+        ("haptics", "HAPTICS_CLASS_DOTTED", "hasAmplitudeControl", "(Landroid/content/Context;)Z"),
+        ("haptics", "HAPTICS_CLASS_DOTTED", "vibrateWaveform", "(Landroid/content/Context;[J[I)V"),
+        ("haptics", "HAPTICS_CLASS_DOTTED", "cancel", "(Landroid/content/Context;)V"),
+        ("insets", "INSETS_CLASS_DOTTED", "getInsets", "(Landroid/app/Activity;)Ljava/lang/String;"),
+        ("keychain", "KEYCHAIN_CLASS_DOTTED", "storePassword", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z"),
+        ("keychain", "KEYCHAIN_CLASS_DOTTED", "readPassword", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
+        ("screen", "SCREEN_CLASS_DOTTED", "setKeepAwake", "(Landroid/app/Activity;Z)V"),
+        ("widget", "WIDGET_CLASS_DOTTED", "refresh", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "start", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "stop", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "stopLeftover", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "pause", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "resume", "(Landroid/content/Context;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "notifyComplete", "(Landroid/content/Context;Ljava/lang/String;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "clearComplete", "(Landroid/content/Context;)V"),
+    ];
+
+    fn source(rel: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    }
+
+    /// The Rust file without its tests.
+    fn code(file: &str) -> String {
+        let text = source(&format!("src/{file}.rs"));
+        text.split("#[cfg(test)]").next().unwrap().to_string()
+    }
+
+    /// Every string literal in `text`, in order.
+    fn literals(text: &str) -> Vec<&str> {
+        text.split('"').skip(1).step_by(2).collect()
+    }
+
+    fn jni_type(kotlin: &str) -> String {
+        match kotlin.trim().trim_end_matches('?') {
+            "Context" => CTX.into(),
+            "Activity" => ACTIVITY.into(),
+            "String" => "Ljava/lang/String;".into(),
+            "Int" => "I".into(),
+            "Long" => "J".into(),
+            "Boolean" => "Z".into(),
+            "FloatArray" => "[F".into(),
+            "LongArray" => "[J".into(),
+            "IntArray" => "[I".into(),
+            "Array<String>" => "[Ljava/lang/String;".into(),
+            other => panic!("no JNI type for Kotlin `{other}`"),
+        }
+    }
+
+    /// The JNI signature of `@JvmStatic fun <method>(…)` in `kotlin`.
+    fn kotlin_signature(kotlin: &str, method: &str) -> Option<String> {
+        let head = format!("fun {method}(");
+        let at = kotlin.match_indices(&head).map(|(at, _)| at).find(|&at| {
+            // The nearest line above that is not a comment or blank.
+            kotlin[..at]
+                .lines()
+                .rev()
+                .skip(1)
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.starts_with("//"))
+                .is_some_and(|l| l == "@JvmStatic")
+        })?;
+        let rest = &kotlin[at + head.len()..];
+        let close = rest.find(')')?;
+        let params: String = rest[..close]
+            .split(',')
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| jni_type(p.split_once(':').expect("name: Type").1.split('=').next().unwrap()))
+            .collect();
+        let after = rest[close + 1..].trim_start();
+        let ret = match after.strip_prefix(':') {
+            Some(r) => jni_type(r.split(['=', '{']).next().unwrap()),
+            None => "V".into(),
+        };
+        Some(format!("({params}){ret}"))
+    }
+
+    #[test]
+    fn every_jni_call_matches_its_kotlin_method() {
+        for &(file, constant, method, signature) in CALLS {
+            let rust = code(file);
+            let decl = format!("const {constant}: &str =");
+            let at = rust.find(&decl).unwrap_or_else(|| panic!("{file}.rs: {decl}"));
+            let class_path = literals(&rust[at..])[0];
+            let class = class_path.strip_prefix("io.github.janekbt.Meditate.").expect(class_path);
+
+            let kotlin = source(&format!("kotlin/{class}.kt"));
+            assert!(kotlin.contains("package io.github.janekbt.Meditate\n"), "{class}.kt package");
+            assert!(
+                kotlin.contains(&format!("\nobject {class} "))
+                    || (kotlin.contains(&format!("\nclass {class} ")) && kotlin.contains("companion object {")),
+                "{class}.kt declares no static {class}",
+            );
+            assert_eq!(
+                kotlin_signature(&kotlin, method).as_deref(),
+                Some(signature),
+                "{class}.{method}: Kotlin and Rust disagree",
+            );
+        }
+    }
+
+    /// Parameters a JNI signature takes after a leading Context or
+    /// Activity, which every helper passes itself.
+    fn extra_params(signature: &str) -> usize {
+        let params = &signature[1..signature.find(')').unwrap()];
+        let params = params
+            .strip_prefix(CTX)
+            .or_else(|| params.strip_prefix(ACTIVITY))
+            .unwrap_or(params);
+        let (mut n, mut chars) = (0, params.chars());
+        while let Some(c) = chars.next() {
+            match c {
+                '[' => continue,
+                'L' => {
+                    chars.by_ref().find(|&c| c == ';');
+                    n += 1;
+                }
+                _ => n += 1,
+            }
+        }
+        n
+    }
+
+    /// Arguments after `app, "method"` in the call starting at `rest`.
+    fn extra_args(rest: &str) -> usize {
+        let mut depth = 0;
+        let mut commas = 0;
+        for c in rest.chars() {
+            match c {
+                '(' | '[' => depth += 1,
+                ')' | ']' if depth == 0 => break,
+                ')' | ']' => depth -= 1,
+                ',' if depth == 0 => commas += 1,
+                _ => {}
+            }
+        }
+        commas
+    }
+
+    /// Every (class constant, method, signature) the file's code calls:
+    /// literal calls directly, helpers taking `method: &str` through
+    /// their callers, the signature picked by the caller's argument count.
+    fn rust_calls(rust: &str) -> Vec<(String, String, String)> {
+        let starts: Vec<usize> = rust
+            .match_indices("\nfn ")
+            .chain(rust.match_indices("\npub fn "))
+            .map(|(at, _)| at)
+            .collect();
+        let fns: Vec<&str> = starts
+            .iter()
+            .map(|&at| {
+                let end = starts.iter().copied().filter(|&s| s > at).min().unwrap_or(rust.len());
+                &rust[at..end]
+            })
+            .collect();
+        let name = |body: &str| body.split("fn ").nth(1).unwrap().split(['(', '<']).next().unwrap().to_string();
+        let mut calls = Vec::new();
+        let mut helpers: Vec<(String, String, Vec<String>)> = Vec::new();
+        for body in &fns {
+            let Some(class) = body
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .find(|w| w.ends_with("_CLASS_DOTTED"))
+            else {
+                continue;
+            };
+            let mut sigs = Vec::new();
+            for (at, _) in body.match_indices("call_static_method(") {
+                let window = &body[at..at + body[at..].find("&[").unwrap()];
+                let lits = literals(window);
+                let sig = lits.iter().find(|l| l.starts_with('(')).expect("a signature literal").to_string();
+                match lits.iter().find(|l| !l.starts_with('(')) {
+                    Some(method) => calls.push((class.to_string(), method.to_string(), sig)),
+                    None => sigs.push(sig),
+                }
+            }
+            if !sigs.is_empty() {
+                helpers.push((name(body), class.to_string(), sigs));
+            }
+        }
+        // A helper that hands `method` on to another inherits its signatures.
+        for body in &fns {
+            if !body.contains("method: &str") {
+                continue;
+            }
+            for (inner, class, sigs) in helpers.clone() {
+                if body.contains(&format!("{inner}(app, method")) && name(body) != inner {
+                    helpers.push((name(body), class, sigs));
+                }
+            }
+        }
+        for (helper, class, sigs) in &helpers {
+            for (at, m) in rust.match_indices(&format!("{helper}(app, \"")) {
+                let rest = &rust[at + m.len()..];
+                let method = &rest[..rest.find('"').unwrap()];
+                let args = extra_args(&rest[method.len() + 1..]);
+                let fitting: Vec<&String> = sigs.iter().filter(|s| extra_params(s) == args).collect();
+                assert_eq!(fitting.len(), 1, "{helper}(app, \"{method}\") with {args} arguments: {sigs:?}");
+                calls.push((class.clone(), method.to_string(), fitting[0].clone()));
+            }
+        }
+        calls.sort();
+        calls.dedup();
+        calls
+    }
+
+    #[test]
+    fn the_jni_table_lists_exactly_the_rust_calls() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let file = path.file_stem().unwrap().to_str().unwrap().to_string();
+            if path.extension().is_none_or(|e| e != "rs") || file == "app" {
+                continue;
+            }
+            let mut table: Vec<(String, String, String)> = CALLS
+                .iter()
+                .filter(|r| r.0 == file)
+                .map(|r| (r.1.to_string(), r.2.to_string(), r.3.to_string()))
+                .collect();
+            table.sort();
+            assert_eq!(rust_calls(&code(&file)), table, "{file}.rs and the JNI table disagree");
+        }
     }
 }
