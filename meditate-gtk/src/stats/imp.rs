@@ -4,7 +4,7 @@ use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
 use glib::clone;
 
-use crate::i18n::gettext;
+use crate::i18n::{gettext, ngettext};
 
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ impl StatsView {
 
         // Accessible name for the Cairo-drawn ring — no intrinsic text for
         // screen readers to fall back on.
-        let ring_name = gettext("Daily goal: {pct}% — {done} of {goal}")
+        let ring_name = gettext("Daily goal: {pct}%, {done} of {goal}")
             .replace("{pct}", &g.display_pct.to_string())
             .replace("{done}", &format_hm_mins(g.today_mins))
             .replace("{goal}", &format_hm_mins(g.goal_mins));
@@ -236,15 +236,15 @@ impl StatsView {
             let readable = crate::time::glib_datetime_from_iso(&c.date_iso)
                 .map_or_else(|| c.date_iso.clone(), |d| crate::format::heatmap_date(&d));
             let name = if c.is_goal_exceeded() {
-                gettext("{date} — goal exceeded, {mins} minutes")
+                gettext("{date}: goal exceeded, {mins} minutes")
                     .replace("{date}", &readable)
                     .replace("{mins}", &c.mins.to_string())
             } else if c.mins > 0 {
-                gettext("{date} — {mins} minutes")
+                gettext("{date}: {mins} minutes")
                     .replace("{date}", &readable)
                     .replace("{mins}", &c.mins.to_string())
             } else {
-                gettext("{date} — no sessions")
+                gettext("{date}: no sessions")
                     .replace("{date}", &readable)
             };
             cell.update_property(&[gtk::accessible::Property::Label(&name)]);
@@ -297,7 +297,7 @@ impl StatsView {
         let (title, body) = match &key {
             InsightKey::CurrentStreak { days, is_record, best } => {
                 let body = if *is_record {
-                    ngettext("1 day — new record", "{n} days — new record", *days )
+                    ngettext("1 day, new record", "{n} days, new record", *days )
                         .replace("{n}", &days.to_string())
                 } else if *best > *days {
                     ngettext(
@@ -513,7 +513,11 @@ impl StatsView {
             .unwrap_or((0, 0, 0));
 
         self.mini_streak_value.set_label(
-            &if streak == 0 { "–".to_string() } else { format!("{streak}d") }
+            &if streak == 0 {
+                "–".to_string()
+            } else {
+                crate::format::days_text(streak)
+            }
         );
         self.mini_total_value.set_label(&format_hm_compact(total));
         self.mini_sessions_value.set_label(
@@ -541,16 +545,9 @@ impl StatsView {
         self.label_totals_section.set_visible(true);
 
         for (name, total_secs, n) in totals {
-            // Two-form plural split, matching preferences.rs's
-            // pluralize_sessions — catalogs carry both msgids.
-            let subtitle = if n == 1 {
-                gettext("{duration} · 1 session")
-                    .replace("{duration}", &format_hm_secs(total_secs))
-            } else {
-                gettext("{duration} · {count} sessions")
-                    .replace("{duration}", &format_hm_secs(total_secs))
-                    .replace("{count}", &n.to_string())
-            };
+            let subtitle = ngettext("{duration} · 1 session", "{duration} · {n} sessions", n as u32)
+                .replace("{n}", &n.to_string())
+                .replace("{duration}", &format_hm_secs(total_secs));
             let row = adw::ActionRow::builder()
                 .title(&name)
                 .subtitle(&subtitle)

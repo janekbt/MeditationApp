@@ -2423,13 +2423,13 @@ impl TimerView {
         if app.active_window().is_some_and(|w| w.is_active()) {
             return;
         }
-        let n = gtk::gio::Notification::new("Meditation Complete");
+        let n = gtk::gio::Notification::new(&gettext("Meditation Complete"));
         let target = self
             .core_session
             .borrow()
             .as_ref()
             .map_or(0, meditate_core::session::Session::completion_duration_secs);
-        n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
+        n.set_body(Some(&gettext("Session: {duration}").replace("{duration}", &format_time(Duration::from_secs(target)))));
         app.send_notification(Some("timer-done"), &n);
     }
 
@@ -2540,7 +2540,7 @@ impl TimerView {
                             .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                         {
                             win.add_toast(adw::Toast::new(&gettext(
-                                "Couldn't save session — storage error",
+                                "Couldn't save session: storage error",
                             )));
                         }
                         return;
@@ -2558,7 +2558,7 @@ impl TimerView {
                             .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                         {
                             win.add_toast(adw::Toast::new(&gettext(
-                                "Couldn't save session — storage unavailable",
+                                "Couldn't save session: storage unavailable",
                             )));
                         }
                         return;
@@ -3970,7 +3970,7 @@ impl TimerView {
         // We still update its subtitle so it's correct the moment
         // the user expands the row.
         let subtitle = if active {
-            self.resolve_label_for_mode(mode).map_or_else(|| gettext("(none — pick one)"), |l| l.name)
+            self.resolve_label_for_mode(mode).map_or_else(|| gettext("(none, pick one)"), |l| l.name)
         } else {
             gettext("Off")
         };
@@ -4417,7 +4417,7 @@ impl TimerView {
         let labels = self.phase_value_labels.borrow();
         for (i, val) in vals.iter().enumerate() {
             if let Some(l) = labels[i].as_ref() {
-                l.set_label(&format!("{val}s"));
+                l.set_label(&crate::format::secs_text(&val.to_string()));
             }
         }
     }

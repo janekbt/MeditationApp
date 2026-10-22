@@ -2991,7 +2991,7 @@ mod tests {
             assert!(!slint.contains(&format!("caption: \"{w}\"")), "{w}");
         }
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        for literal in ["\"Breathe in\"", "\"Breathe out\"", "\"{} copy\"", "\"Meditate diagnostics log\"", "older entries truncated"] {
+        for literal in ["\"Breathe in\"", "\"Breathe out\"", "\"{} copy\"", "\"Meditate diagnostics log\"", "older entries truncated", "\"{streak}d\""] {
             assert!(!lib.contains(literal), "{literal}");
         }
         let widget = std::fs::read_to_string(root.join("android/app/src/main/res/layout/widget_root.xml")).unwrap();

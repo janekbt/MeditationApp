@@ -200,7 +200,7 @@ impl MeditateWindow {
         content.append(&time_label);
         content.append(&self.end_controls());
 
-        self.push_running_page_with_content("Meditating", content);
+        self.push_running_page_with_content(&gettext("Meditating"), content);
     }
 
     /// Build the Box-Breath running page: session-countdown strip at top,
@@ -653,7 +653,7 @@ impl MeditateWindow {
                 btn.add_css_class("warning");
                 btn.set_tooltip_text(Some(
                     &format!("{}\n{}",
-                        gettext("Last sync failed — click to retry"),
+                        gettext("Last sync failed, click to retry"),
                         detail)));
             }
             SyncIndicatorState::NotUploaded(files) => {

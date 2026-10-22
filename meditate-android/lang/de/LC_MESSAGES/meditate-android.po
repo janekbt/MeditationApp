@@ -1169,3 +1169,8 @@ msgstr "Speichert die Sitzung ohne Nachfrage, wenn die Zeit um ist"
 
 msgid "Session saved"
 msgstr "Sitzung gespeichert"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} T."
+msgstr[1] "{n} T."

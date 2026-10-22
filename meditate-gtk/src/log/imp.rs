@@ -1170,7 +1170,7 @@ impl LogView {
                     .and_then(std::result::Result::ok)
                     .unwrap_or_default();
                 row.set_subtitle(&labels.iter().find(|l| l.id == id)
-                    .map_or_else(|| gettext("(none — pick one)"), |l| l.name.clone()));
+                    .map_or_else(|| gettext("(none, pick one)"), |l| l.name.clone()));
             });
         }
 
@@ -1269,12 +1269,12 @@ impl LogView {
                         Some(Ok(())) => {}
                         Some(Err(e)) => {
                             meditate_core::log("log.edit.save.failed", &e.to_string());
-                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session — storage error")));
+                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session: storage error")));
                             return;
                         }
                         None => {
                             meditate_core::log("log.edit.save.failed", "database unavailable");
-                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session — storage unavailable")));
+                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session: storage unavailable")));
                             return;
                         }
                     }

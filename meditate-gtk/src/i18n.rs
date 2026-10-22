@@ -325,7 +325,8 @@ mod tests {
         }
     }
 
-    /// Every live entry of a po file as its (keyword, text) fields.
+    /// Every live entry of a po file as its (keyword, text) fields, with
+    /// each `#:` reference line as a ("#:", refs) field.
     /// Fuzzy entries are left out: msgfmt drops them, so they don't
     /// translate anything at runtime.
     fn po_entries(po: &str) -> Vec<Vec<(String, String)>> {
@@ -337,6 +338,10 @@ mod tests {
         for entry in po.split("\n\n").filter(live) {
             let mut fields: Vec<(String, String)> = Vec::new();
             for line in entry.lines() {
+                if let Some(refs) = line.strip_prefix("#: ") {
+                    fields.push(("#:".to_string(), refs.to_string()));
+                    continue;
+                }
                 if let Some((key, rest)) = line.split_once(' ') {
                     if key.starts_with("msg") && rest.starts_with('"') {
                         fields.push((key.to_string(), string_literal(rest).0));
@@ -447,5 +452,86 @@ mod tests {
             }
         }
         assert!(offenders.is_empty(), "date patterns to fix: {offenders:#?}");
+    }
+
+    /// Every text of the template, with a translation in every language
+    /// (each plural form filled in).
+    #[test]
+    fn every_language_translates_every_text() {
+        let template = template_msgids();
+        let mut offenders = Vec::new();
+        for lang in languages() {
+            let po = std::fs::read_to_string(crate_dir().join(format!("po/{lang}.po"))).unwrap();
+            let translated: BTreeSet<String> = po_entries(&po)
+                .into_iter()
+                .filter(|f| {
+                    let strs: Vec<_> = f.iter().filter(|(k, _)| k.starts_with("msgstr")).collect();
+                    !strs.is_empty() && strs.iter().all(|(_, v)| !v.is_empty())
+                })
+                .flat_map(|f| f.into_iter().filter(|(k, _)| k.starts_with("msgid")).map(|(_, v)| v))
+                .collect();
+            for id in template.iter().filter(|id| !id.is_empty()) {
+                if !translated.contains(id) {
+                    offenders.push(format!("{lang}: {id:?}"));
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "translate these: {offenders:#?}");
+    }
+
+    /// No text and no translation uses the long dash. The published
+    /// release notes (references below `<releases>` in the metainfo)
+    /// stay as they shipped.
+    #[test]
+    fn no_text_uses_the_long_dash() {
+        let metainfo = "data/io.github.janekbt.Meditate.metainfo.xml.in";
+        let releases = std::fs::read_to_string(crate_dir().join(metainfo))
+            .unwrap()
+            .lines()
+            .position(|l| l.contains("<releases>"))
+            .unwrap()
+            + 1;
+        let release_note = |r: &str| {
+            r.strip_prefix(metainfo)
+                .and_then(|l| l.strip_prefix(':')?.parse::<usize>().ok())
+                .is_some_and(|line| line > releases)
+        };
+        let mut offenders = Vec::new();
+        let files = std::iter::once("po/meditate.pot".to_string())
+            .chain(languages().into_iter().map(|l| format!("po/{l}.po")));
+        for file in files {
+            let po = std::fs::read_to_string(crate_dir().join(&file)).unwrap();
+            for fields in po_entries(&po) {
+                let refs: Vec<&str> = fields.iter().filter(|(k, _)| k == "#:").flat_map(|(_, v)| v.split(' ')).collect();
+                if !refs.is_empty() && refs.iter().all(|r| release_note(r)) {
+                    continue;
+                }
+                for (key, text) in &fields {
+                    if key.starts_with("msg") && text.contains('—') {
+                        offenders.push(format!("{file}: {text:?}"));
+                    }
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "use a comma or colon: {offenders:#?}");
+    }
+
+    /// Texts that showed English in every language, or a fixed unit.
+    #[test]
+    fn visible_text_goes_through_translation() {
+        let code: String = rust_sources().iter().map(|p| code_of(p)).collect();
+        for literal in [
+            "Notification::new(\"Meditation Complete\"",
+            "\"Session: {}\"",
+            "with_content(\"Meditating\"",
+            "Some(\"CSV files\")",
+            "(up to {} for this duration)",
+            "\"{val}s\"",
+            "\"{secs:.1}s\"",
+            "\"{streak}d\"",
+            "gettext(\"{duration} · 1 session\")",
+        ] {
+            assert!(!code.contains(literal), "{literal}");
+        }
     }
 }

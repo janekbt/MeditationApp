@@ -195,13 +195,7 @@ pub fn push_pattern_editor(
     )));
     // Subtitle communicates the dynamic cap. Adjustment refuses
     // values past it, but the user needs to see *why*.
-    let points_subtitle_for = |max: u32| {
-        format!("{} (up to {} for this duration)",
-            gettext("Min 100 ms between points"),
-            max,
-        )
-    };
-    points_row.set_subtitle(&points_subtitle_for(initial_max_points));
+    points_row.set_subtitle(&points_subtitle(initial_max_points));
 
     shape_group.add(&duration_row);
     shape_group.add(&points_row);
@@ -422,11 +416,7 @@ pub fn push_pattern_editor(
         if adj.value() > f64::from(new_max) {
             adj.set_value(f64::from(new_max));
         }
-        points_row_for_dur.set_subtitle(&format!(
-            "{} (up to {} for this duration)",
-            gettext("Min 100 ms between points"),
-            new_max,
-        ));
+        points_row_for_dur.set_subtitle(&points_subtitle(new_max));
         area_for_dur.queue_draw();
     });
 
@@ -764,7 +754,11 @@ fn draw_chart(
 }
 
 fn format_seconds(secs: f64) -> String {
-    format!("{secs:.1}s")
+    crate::format::secs_text(&format!("{secs:.1}"))
+}
+
+fn points_subtitle(max: u32) -> String {
+    gettext("Min 100 ms between points (up to {max} for this duration)").replace("{max}", &max.to_string())
 }
 
 #[cfg(test)]

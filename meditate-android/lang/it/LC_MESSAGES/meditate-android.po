@@ -1169,3 +1169,8 @@ msgstr "Salva la sessione senza chiedere quando il tempo è scaduto"
 
 msgid "Session saved"
 msgstr "Sessione salvata"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} g"
+msgstr[1] "{n} g"

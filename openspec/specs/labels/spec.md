@@ -56,7 +56,7 @@ Saving a session whose selected label was deleted meanwhile SHALL save it withou
 
 #### Scenario: The desktop shows the deleted label as gone
 - **WHEN** the user comes back from the chooser after deleting the selected label
-- **THEN** the label row shows "(none — pick one)" instead of the old name
+- **THEN** the label row shows "(none, pick one)" instead of the old name
 - **TEST** `meditate-gtk/src/labels.rs::label_rows_reread_their_label_when_shown_again`
 
 ### Requirement: A label renamed elsewhere while deleted here keeps its sessions

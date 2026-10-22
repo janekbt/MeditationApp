@@ -163,6 +163,7 @@ export global Tr {
     // keeps both units, as the Edit Session row always showed them.
     public pure function n-hours(n: int) -> string { return @tr("{n}h" | "{n}h" % n); }
     public pure function n-mins(n: int) -> string { return @tr("{n}m" | "{n}m" % n); }
+    public pure function n-days(n: int) -> string { return @tr("{n}d" | "{n}d" % n); }
     public pure function hm(h: int, m: int) -> string { return root.n-hours(h) + " " + root.n-mins(m); }
     public pure function secs(value: string) -> string { return @tr("{}s", value); }
     public pure function day-caption(n: int, total: string) -> string { return @tr("{n} session · {0}" | "{n} sessions · {0}" % n, total); }

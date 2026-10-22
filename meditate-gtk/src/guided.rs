@@ -758,9 +758,9 @@ fn build_guided_file_row(
             vec!["flat", "circular"]
         })
         .tooltip_text(if file.is_starred {
-            gettext("Unstar — remove from home list")
+            gettext("Unstar: remove from home list")
         } else {
-            gettext("Star — show in home list")
+            gettext("Star: show in home list")
         })
         .valign(gtk::Align::Center)
         .build();

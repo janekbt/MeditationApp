@@ -37,6 +37,16 @@ pub fn render_hm(key: HmKey) -> String {
     }
 }
 
+/// A number of seconds with the unit, "4s" / "4 с" (Android's msgid).
+pub fn secs_text(value: &str) -> String {
+    gettext("{}s").replace("{}", value)
+}
+
+/// A number of days with the unit, "5d" / "5 T.".
+pub fn days_text(n: u32) -> String {
+    ngettext("{n}d", "{n}d", n).replace("{n}", &n.to_string())
+}
+
 fn secs_to_duration(secs: i64) -> Duration {
     Duration::from_secs(secs.max(0) as u64)
 }

@@ -1197,3 +1197,9 @@ msgstr "Zapisuje sesję bez pytania, gdy czas minie"
 
 msgid "Session saved"
 msgstr "Sesja zapisana"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} dn."
+msgstr[1] "{n} dn."
+msgstr[2] "{n} dn."

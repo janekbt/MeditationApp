@@ -33,7 +33,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
 | [x] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
 | [x] | O. Dates in other languages | #151, #152, #153, #154, #116 | wrong date order and labels |
-| [ ] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
+| [x] | P. GTK translations | #56, #81, #64, #155, #156 | mixed languages |
 | [ ] | Q. Sync efficiency (after G and J) | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | R. Tests | #91, #138, #150 | tests that cannot catch the bug |
 | [ ] | S. Cleanup | #58, #61, #85, #87, #157, #167, #171, #175, #197 | dead code, wrong comments |
@@ -62,31 +62,6 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 ## O. Dates in other languages
 
 ## P. GTK translations
-
-### #56 GTK: the completion notification is English and copied twice
-- Where: `meditate-gtk/src/timer/imp.rs:2797-2809` and `2972-2980`; `preferences.rs:636` (`"CSV files"` filter).
-- Problem: "Meditation Complete" and "Session: …" have no gettext; the same block is in `transition_running_to_overtime` and `finish_breath_session`. The import filter name is unwrapped while export wraps it.
-- Fix: one `send_done_notification` helper with gettext; wrap the filter name; all nine translations.
-
-### #81 GTK: the running page and the vibration editor show English
-- Where: `meditate-gtk/src/window/imp.rs:192, 194, 197, 199, 215, 253, 502`; `vibration_editor.rs:199, 423`.
-- Problem: "Pause", "Stop", their tooltips, the overtime tooltip, "Meditating" and "Box Breathing" have no gettext; in German one page says "Stopp", the other "Stop". The editor shows "Mind. 100 ms zwischen Punkten (up to 24 for this duration)".
-- Fix: wrap them (Pause, Stop, Pause Timer, Stop and Save Session, Box Breathing already exist). New msgids for "Meditating", the overtime tooltip and one full sentence "Min 100 ms between points (up to {max} for this duration)", with all nine translations.
-
-### #64 GTK: 14 user-visible strings use the long dash
-- Where: e.g. `timer/imp.rs` and `log/imp.rs:1189` ("Couldn't save session — storage error"), `window/imp.rs:677`, `stats/imp.rs:181-304`, `guided.rs:733/735`, `preferences.rs:68`, `bells.rs:484`, sync error texts at `sync_runner.rs:66-69` ("—" and "→").
-- Fix: rephrase with comma or colon, update msgids and the .po files.
-- Also in the translations alone: `ru.po:1080, 1085, 1090, 1108` ("{pct} % сессий — утром", "{duration} — {date}"), the Russian metainfo description and 4 Russian release notes, and 1 Polish release note. Rephrase those msgstrs with a comma or colon.
-
-### #155 Unit suffixes skip translation
-- Where: gtk `timer/imp.rs:4229` ("{val}s"), `vibration_editor.rs:767-769` ("{secs:.1}s"), `stats/imp.rs:538` and android `ui.rs:1490` ("{streak}d").
-- Problem: Russian GTK shows "4s" where Android shows "4 с", and every language shows "5d".
-- Fix: GTK reuses Android's "{}s" msgid (its translations exist); add a plural pair for "{n}d" in both apps. Decimal commas are a separate matter.
-
-### #156 GTK: the By-label session count builds its plural by hand
-- Where: `meditate-gtk/src/stats/imp.rs:566-575`.
-- Problem: it picks between "1 session" and "{count} sessions"; Russian and Polish need three forms (the translators worked around it).
-- Fix: reuse `ngettext("1 session", "{n} sessions", n)` as `section_caption_text` does; delete the two msgids and fix the comment that names `pluralize_sessions`.
 
 ## Q. Sync efficiency (after G and J)
 

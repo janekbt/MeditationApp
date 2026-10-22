@@ -1141,3 +1141,7 @@ msgstr "时间到时直接保存会话，不再询问"
 
 msgid "Session saved"
 msgstr "已保存会话"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n}天"

@@ -65,7 +65,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .unwrap_or(DAILY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
         .title(gettext("Daily goal"))
-        .subtitle(gettext("Minutes per day — drives the ring on the Stats tab"))
+        .subtitle(gettext("Minutes per day, shown as the ring on the Stats tab"))
         .adjustment(&gtk::Adjustment::new(
             current_goal_mins as f64,
             DAILY_GOAL_MIN as f64,
@@ -635,7 +635,7 @@ where F: FnOnce(&std::path::Path) -> Result<meditate_core::data_io::ParsedImport
         .title(title)
         .build();
     let filter = gtk::FileFilter::new();
-    filter.set_name(Some("CSV files"));
+    filter.set_name(Some(&gettext("CSV files")));
     filter.add_suffix("csv");
     file_dialog.set_default_filter(Some(&filter));
 

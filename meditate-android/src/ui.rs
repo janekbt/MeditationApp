@@ -1905,11 +1905,10 @@ fn refresh_stats(ui: &MainWindow) {
 
     ui.set_stat_streak(
         if streak == 0 {
-            "–".to_string()
+            "–".into()
         } else {
-            format!("{streak}d")
-        }
-        .into(),
+            ui.global::<Tr>().invoke_n_days(i32::try_from(streak).unwrap_or(i32::MAX))
+        },
     );
     ui.set_stat_total(
         render_hm(ui, meditate_core::format::hm_compact_key(

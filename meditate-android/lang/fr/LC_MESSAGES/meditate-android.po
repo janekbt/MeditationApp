@@ -1169,3 +1169,8 @@ msgstr "Enregistre la séance sans demander quand le temps est écoulé"
 
 msgid "Session saved"
 msgstr "Séance enregistrée"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} j"
+msgstr[1] "{n} j"

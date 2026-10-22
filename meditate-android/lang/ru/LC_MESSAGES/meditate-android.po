@@ -1197,3 +1197,9 @@ msgstr "Сохраняет сессию без вопросов, когда вр
 
 msgid "Session saved"
 msgstr "Сессия сохранена"
+
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} дн."
+msgstr[1] "{n} дн."
+msgstr[2] "{n} дн."

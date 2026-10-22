@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-22 10:17+0200\n"
+"POT-Creation-Date: 2026-10-22 11:36+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -277,7 +277,7 @@ msgstr "Trillen"
 msgid "Both"
 msgstr "Beide"
 
-#: src/bells.rs:669 src/vibration_editor.rs:235 data/ui/timer_view.blp:463
+#: src/bells.rs:669 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
 #: data/ui/timer_view.blp:565 data/ui/timer_view.blp:646
 #: data/ui/timer_view.blp:694 data/ui/timer_view.blp:742
 #: data/ui/timer_view.blp:790
@@ -348,20 +348,34 @@ msgstr[1] "{n}u"
 msgid "{h} {m}"
 msgstr "{h} {m}"
 
+#. / A number of seconds with the unit, "4s" / "4 с" (Android's msgid).
+#: src/format.rs:42
+#, rust-format
+msgid "{}s"
+msgstr "{} s"
+
+#. / A number of days with the unit, "5d" / "5 T.".
+#: src/format.rs:47
+#, rust-format
+msgid "{n}d"
+msgid_plural "{n}d"
+msgstr[0] "{n} d"
+msgstr[1] "{n} d"
+
 #. Date with year, as a GLib date format: %b short month, %-d day without padding, %Y year. Put them in your language's order.
-#: src/format.rs:134
+#: src/format.rs:144
 msgid "%b %-d, %Y"
 msgstr "%-d %b %Y"
 
 #. Date without year, as a GLib date format: %b short month, %-d day without padding. Put them in your language's order.
-#: src/format.rs:137
+#: src/format.rs:147
 msgid "%b %-d"
 msgstr "%-d %b"
 
 #. / The date a screen reader speaks for a heatmap cell
 #. / ("Thursday, October 9").
 #. Date a screen reader speaks, as a GLib date format: %A weekday, %B month, %-d day without padding (%-m month number). Put them in your language's order.
-#: src/format.rs:146
+#: src/format.rs:156
 msgid "%A, %B %-d"
 msgstr "%A %-d %B"
 
@@ -432,12 +446,12 @@ msgid "Create new guided file…"
 msgstr "Nieuw begeleid bestand aanmaken…"
 
 #: src/guided.rs:761
-msgid "Unstar — remove from home list"
-msgstr "Uit favorieten — van startlijst verwijderen"
+msgid "Unstar: remove from home list"
+msgstr "Uit favorieten: van startlijst verwijderen"
 
 #: src/guided.rs:763
-msgid "Star — show in home list"
-msgstr "Favoriet — tonen in startlijst"
+msgid "Star: show in home list"
+msgstr "Favoriet: tonen in startlijst"
 
 #: src/guided.rs:789 src/guided.rs:963 src/labels.rs:198 src/labels.rs:322
 #: src/presets.rs:381 src/presets.rs:504 src/sounds.rs:344 src/sounds.rs:921
@@ -450,12 +464,12 @@ msgid "Delete file"
 msgstr "Bestand verwijderen"
 
 #: src/guided.rs:865 src/guided.rs:882 src/guided.rs:907
-#: src/vibration_editor.rs:245 src/vibration_editor.rs:563
-#: src/vibration_editor.rs:595
+#: src/vibration_editor.rs:239 src/vibration_editor.rs:553
+#: src/vibration_editor.rs:585
 msgid "Preview"
 msgstr "Voorbeeld"
 
-#: src/guided.rs:891 src/sounds.rs:308 src/vibration_editor.rs:583
+#: src/guided.rs:891 src/sounds.rs:308 src/vibration_editor.rs:573
 #: src/vibrations.rs:318 src/volume_row.rs:78
 msgid "Stop preview"
 msgstr "Voorbeeld stoppen"
@@ -767,16 +781,16 @@ msgid "Add Session"
 msgstr "Sessie toevoegen"
 
 #: src/log/imp.rs:1173 src/timer/imp.rs:3973
-msgid "(none — pick one)"
-msgstr "(geen — kies er een)"
+msgid "(none, pick one)"
+msgstr "(geen, kies er een)"
 
 #: src/log/imp.rs:1272 src/timer/imp.rs:2543
-msgid "Couldn't save session — storage error"
-msgstr "Kan sessie niet opslaan — opslagfout"
+msgid "Couldn't save session: storage error"
+msgstr "Kan sessie niet opslaan: opslagfout"
 
 #: src/log/imp.rs:1277 src/timer/imp.rs:2561
-msgid "Couldn't save session — storage unavailable"
-msgstr "Kan sessie niet opslaan — opslag niet beschikbaar"
+msgid "Couldn't save session: storage unavailable"
+msgstr "Kan sessie niet opslaan: opslag niet beschikbaar"
 
 #: src/preferences.rs:25 data/ui/shortcuts.ui:24
 msgid "Preferences"
@@ -795,8 +809,8 @@ msgid "Daily goal"
 msgstr "Dagdoel"
 
 #: src/preferences.rs:68
-msgid "Minutes per day — drives the ring on the Stats tab"
-msgstr "Minuten per dag — stuurt de ring op het tabblad Statistieken"
+msgid "Minutes per day, shown as the ring on the Stats tab"
+msgstr "Minuten per dag, getoond als de ring op het tabblad Statistieken"
 
 #: src/preferences.rs:100
 msgid "Data"
@@ -968,7 +982,7 @@ msgstr "_Alles verwijderen"
 msgid "Export Session Log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:537
+#: src/preferences.rs:537 src/preferences.rs:638
 msgid "CSV files"
 msgstr "CSV-bestanden"
 
@@ -1273,30 +1287,30 @@ msgstr "Vandaag nog {duration} te gaan"
 #. screen readers to fall back on.
 #: src/stats/imp.rs:181
 #, rust-format
-msgid "Daily goal: {pct}% — {done} of {goal}"
-msgstr "Dagdoel: {pct}% — {done} van {goal}"
+msgid "Daily goal: {pct}%, {done} of {goal}"
+msgstr "Dagdoel: {pct}%, {done} van {goal}"
 
 #: src/stats/imp.rs:239
 #, rust-format
-msgid "{date} — goal exceeded, {mins} minutes"
-msgstr "{date} — doel overschreden, {mins} minuten"
+msgid "{date}: goal exceeded, {mins} minutes"
+msgstr "{date}: doel overschreden, {mins} minuten"
 
 #: src/stats/imp.rs:243
 #, rust-format
-msgid "{date} — {mins} minutes"
-msgstr "{date} — {mins} minuten"
+msgid "{date}: {mins} minutes"
+msgstr "{date}: {mins} minuten"
 
 #: src/stats/imp.rs:247
 #, rust-format
-msgid "{date} — no sessions"
-msgstr "{date} — geen sessies"
+msgid "{date}: no sessions"
+msgstr "{date}: geen sessies"
 
 #: src/stats/imp.rs:300
 #, rust-format
-msgid "1 day — new record"
-msgid_plural "{n} days — new record"
-msgstr[0] "1 dag — nieuw record"
-msgstr[1] "{n} dagen — nieuw record"
+msgid "1 day, new record"
+msgid_plural "{n} days, new record"
+msgstr[0] "1 dag, nieuw record"
+msgstr[1] "{n} dagen, nieuw record"
 
 #: src/stats/imp.rs:304
 #, rust-format
@@ -1417,15 +1431,12 @@ msgstr "Minuten / week"
 msgid "Minutes / Month"
 msgstr "Minuten / maand"
 
-#: src/stats/imp.rs:547
+#: src/stats/imp.rs:548
 #, rust-format
 msgid "{duration} · 1 session"
-msgstr "{duration} · 1 sessie"
-
-#: src/stats/imp.rs:550
-#, rust-format
-msgid "{duration} · {count} sessions"
-msgstr "{duration} · {count} sessies"
+msgid_plural "{duration} · {n} sessions"
+msgstr[0] "{duration} · 1 sessie"
+msgstr[1] "{duration} · {n} sessies"
 
 #: src/timer/imp.rs:1155
 msgid "Meditation session running"
@@ -1470,6 +1481,15 @@ msgstr "Opslaan"
 #: src/timer/imp.rs:2369 src/timer/imp.rs:2623 src/window/imp.rs:420
 msgid "Discard"
 msgstr "Verwijderen"
+
+#: src/timer/imp.rs:2426
+msgid "Meditation Complete"
+msgstr "Meditatie voltooid"
+
+#: src/timer/imp.rs:2432
+#, rust-format
+msgid "Session: {duration}"
+msgstr "Sessie: {duration}"
 
 #: src/timer/imp.rs:2581
 msgid "Session saved"
@@ -1620,31 +1640,32 @@ msgstr "Vorm"
 msgid "Points"
 msgstr "Punten"
 
-#: src/vibration_editor.rs:200 src/vibration_editor.rs:427
-msgid "Min 100 ms between points"
-msgstr "Min. 100 ms tussen punten"
-
-#: src/vibration_editor.rs:258
+#: src/vibration_editor.rs:252
 msgid "Bar"
 msgstr "Staven"
 
-#: src/vibration_editor.rs:264 data/ui/stats_view.blp:198
+#: src/vibration_editor.rs:258 data/ui/stats_view.blp:198
 msgid "Line"
 msgstr "Lijn"
 
-#: src/vibration_editor.rs:296
+#: src/vibration_editor.rs:290
 msgid "This device doesn't support vibration. Patterns sync to phones."
 msgstr ""
 "Dit apparaat ondersteunt geen trillen. Patronen worden naar telefoons "
 "gesynchroniseerd."
 
-#: src/vibration_editor.rs:323 src/vibrations.rs:354
+#: src/vibration_editor.rs:317 src/vibrations.rs:354
 msgid "Edit pattern"
 msgstr "Patroon bewerken"
 
-#: src/vibration_editor.rs:325
+#: src/vibration_editor.rs:319
 msgid "New pattern"
 msgstr "Nieuw patroon"
+
+#: src/vibration_editor.rs:761
+#, rust-format
+msgid "Min 100 ms between points (up to {max} for this duration)"
+msgstr "Min. 100 ms tussen punten (tot {max} voor deze duur)"
 
 #: src/vibrations.rs:51
 msgid "Choose Vibration Pattern"
@@ -1682,6 +1703,10 @@ msgstr ""
 msgid "Volume"
 msgstr "Volume"
 
+#: src/window/imp.rs:203
+msgid "Meditating"
+msgstr "Bezig met mediteren"
+
 #: src/window/imp.rs:222 src/window/imp.rs:411
 msgid "Box Breathing"
 msgstr "Vierkante ademhaling"
@@ -1703,8 +1728,8 @@ msgid "Syncing with Nextcloud…"
 msgstr "Synchroniseren met Nextcloud…"
 
 #: src/window/imp.rs:656
-msgid "Last sync failed — click to retry"
-msgstr "Laatste synchronisatie mislukt — klik om opnieuw te proberen"
+msgid "Last sync failed, click to retry"
+msgstr "Laatste synchronisatie mislukt, klik om opnieuw te proberen"
 
 #: src/window/imp.rs:668
 msgid "Some files weren't uploaded, click to retry"
@@ -2665,6 +2690,10 @@ msgstr ""
 msgid "Initial release."
 msgstr "Eerste uitgave."
 
+#, rust-format
+#~ msgid "{duration} · {count} sessions"
+#~ msgstr "{duration} · {count} sessies"
+
 #~ msgid "Guided mode with your own audio files"
 #~ msgstr "Begeleide modus met je eigen audiobestanden"
 
@@ -2788,10 +2817,6 @@ msgstr "Eerste uitgave."
 
 #~ msgid "Quick Presets"
 #~ msgstr "Snelle instellingen"
-
-#, fuzzy
-#~ msgid "Session duration"
-#~ msgstr "Sessie verwijderd"
 
 #~ msgid "Completion sound"
 #~ msgstr "Eindgeluid"
