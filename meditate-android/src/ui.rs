@@ -6395,6 +6395,9 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // The room above the keyboard closes the keyboard through Android (#11).
+    ui.global::<KeyboardArea>().on_hide(hide_soft_keyboard);
+
     // Preferences: the Bluetooth wake-up lead-in, read as each bell
     // starts; its length is stepped in hundredths and stored in ms.
     ui.global::<Hundredths>().on_parse(|text| super::app::parse_hundredths(&text).unwrap_or(-1));

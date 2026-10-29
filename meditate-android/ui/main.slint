@@ -41,6 +41,22 @@ export { MaterialWindowAdapter, DatePickerAdapter, MaterialPalette, MaterialSche
 // pipeline as the inline @tr() literals. The functions are the
 // "typed keys": Rust passes data, the catalogue owns wording +
 // plural forms. Grouped by surface.
+// The room above the on-screen keyboard, from MainWindow: modal cards
+// center above `bottom` (the keyboard's top, or the window's bottom
+// without one), not above `top` (below the status bar); a card too tall
+// for that keeps its buttons above `bottom` first, and one taller than
+// the room (landscape) starts at the window's top. `hide()` closes
+// the keyboard through Android (ui.rs `hide_soft_keyboard`).
+export global KeyboardArea {
+    in-out property <length> top;
+    in-out property <length> bottom;
+    callback hide();
+    // A modal card's y for its height `h`.
+    public pure function card-y(h: length) -> length {
+        return max(0px, min(root.top, root.bottom - h), (root.bottom - h) / 2);
+    }
+}
+
 // Typed seconds into hundredths ("1,25" or "1.25"), -1 when not a
 // number (app::parse_hundredths).
 export global Hundredths {
@@ -595,7 +611,7 @@ component VerticalSpinBox {
             color: MaterialPalette.on-surface;
             horizontal-alignment: center;
             vertical-alignment: center;
-            accepted => { self.clear-focus(); }
+            accepted => { self.clear-focus(); KeyboardArea.hide(); }
             changed has-focus => {
                 if (self.has-focus) {
                     // Empty the field on tap so typing replaces the
@@ -1348,6 +1364,13 @@ component ConfirmDialog inherits Rectangle {
     callback cancel();
     callback confirm();
 
+    // Enter in the dialog's field: what the confirm button does.
+    public function accept() {
+        if (root.confirm-enabled) {
+            root.confirm();
+        }
+    }
+
     background: MaterialPalette.scrim.with-alpha(0.32);
     ScrimArea {
         tapped => { root.cancel(); }
@@ -1355,7 +1378,7 @@ component ConfirmDialog inherits Rectangle {
 
     Rectangle {
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+        y: KeyboardArea.card-y(self.height);
         width: min(320px, root.width - 32px);
         height: card.preferred-height;
         background: MaterialPalette.surface-container-high;
@@ -1589,7 +1612,7 @@ component StepperRow inherits Rectangle {
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         color: MaterialPalette.on-surface;
-                        accepted => { self.clear-focus(); }
+                        accepted => { self.clear-focus(); KeyboardArea.hide(); }
                         changed has-focus => {
                             if (self.has-focus) {
                                 // Empty on tap so typing replaces the
@@ -2098,6 +2121,34 @@ export enum Modal {
 }
 
 export component MainWindow inherits Window {
+    // Feed KeyboardArea: the room above the keyboard (#11).
+    function feed-keyboard() {
+        KeyboardArea.bottom = root.height - root.virtual-keyboard-size.height;
+        KeyboardArea.top = root.status-bar-inset + 16px;
+    }
+    init => { root.feed-keyboard(); }
+    changed height => { root.feed-keyboard(); }
+    changed virtual-keyboard-size => { root.feed-keyboard(); }
+    changed status-bar-inset => { root.feed-keyboard(); }
+    // The keyboard goes with every dialog, however it closes.
+    changed modal => {
+        if (root.modal == Modal.none) {
+            KeyboardArea.hide();
+        }
+    }
+    pure function goal-valid() -> bool {
+        return root.goal-dialog-text.is-float()
+            && root.goal-dialog-text.to-float() >= root.goal-min-mins
+            && root.goal-dialog-text.to-float() <= root.goal-max-mins;
+    }
+    // The Daily Goal dialog's Set, from its button or Enter.
+    function set-goal() {
+        if (root.goal-valid()) {
+            root.prefs-goal-mins = Math.round(root.goal-dialog-text.to-float());
+            root.goal-committed();
+            root.modal = Modal.none;
+        }
+    }
     in-out property <Modal> modal;
     title: @tr("Meditate");
     background: MaterialPalette.surface;
@@ -5629,7 +5680,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(320px, root.width - 32px);
             height: filter-card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -5708,7 +5759,7 @@ export component MainWindow inherits Window {
         // to the scrim's full height.
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(320px, root.width - 32px);
             height: card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -7145,13 +7196,15 @@ export component MainWindow inherits Window {
     // existing labels. The validation closure lives Rust-side and
     // writes back to `create-label-valid` on every keystroke via
     // the `create-label-changed` callback.
-    if root.modal == Modal.create-label : ConfirmDialog {
+    if root.modal == Modal.create-label : create-label-dialog := ConfirmDialog {
         title: @tr("Create Label");
         confirm-text: @tr("Create");
         confirm-enabled: root.create-label-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.create-label-confirm(); }
         TextField {
+            accepted => { create-label-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Label name");
             text <=> root.create-label-text;
             edited(text) => { root.create-label-changed(text); }
@@ -7165,13 +7218,15 @@ export component MainWindow inherits Window {
     // enabled since the unchanged name is a valid Ok). Rust
     // tracks the row's id via `rename-label-id` so the live
     // validator can pass it as `except_id`.
-    if root.modal == Modal.rename-label : ConfirmDialog {
+    if root.modal == Modal.rename-label : rename-label-dialog := ConfirmDialog {
         title: @tr("Rename Label");
         confirm-text: @tr("Rename");
         confirm-enabled: root.rename-label-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.rename-label-confirm(); }
         TextField {
+            accepted => { rename-label-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Label name");
             text <=> root.rename-label-text;
             edited(text) => { root.rename-label-changed(text); }
@@ -7199,13 +7254,15 @@ export component MainWindow inherits Window {
     // (non-empty + no case-insensitive collision). Declared after
     // every chooser (incl. the preset overlay) so it z-stacks on
     // top — declare-overlays-last rule.
-    if root.modal == Modal.create-preset : ConfirmDialog {
+    if root.modal == Modal.create-preset : create-preset-dialog := ConfirmDialog {
         title: @tr("Create Preset");
         confirm-text: @tr("Create");
         confirm-enabled: root.create-preset-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.create-preset-confirm(); }
         TextField {
+            accepted => { create-preset-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Preset name");
             text <=> root.create-preset-text;
             edited(text) => { root.create-preset-changed(text); }
@@ -7226,13 +7283,15 @@ export component MainWindow inherits Window {
     // Mirrors GTK's `present_rename_preset_dialog`: pre-filled
     // name, Cancel/Rename, Rename gated on Rust live validation
     // (own-uuid name exception so an unchanged name stays valid).
-    if root.modal == Modal.rename-preset : ConfirmDialog {
+    if root.modal == Modal.rename-preset : rename-preset-dialog := ConfirmDialog {
         title: @tr("Rename Preset");
         confirm-text: @tr("Rename");
         confirm-enabled: root.rename-preset-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.rename-preset-confirm(); }
         TextField {
+            accepted => { rename-preset-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Preset name");
             text <=> root.rename-preset-text;
             edited(text) => { root.rename-preset-changed(text); }
@@ -7265,7 +7324,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(280px, root.width - 32px);
             height: prep-card.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -8258,7 +8317,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(320px, root.width - 32px);
             height: guided-import-card.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -8289,6 +8348,8 @@ export component MainWindow inherits Window {
                     text <=> root.guided-import-text;
                     enabled: !root.guided-import-busy;
                     edited(text) => { root.guided-import-changed(text); }
+                    accepted => { if (root.guided-import-valid) { root.guided-import-confirm(); } }
+                    init => { self.select-all(); self.focus(); }
                 }
 
                 HorizontalLayout {
@@ -8361,13 +8422,15 @@ export component MainWindow inherits Window {
     // ── Bell-sound rename + delete dialogs (modal) ─────────────
     // Over the bell-sound chooser (declared after it). Mirror GTK's
     // sounds.rs present_rename_dialog / present_delete_dialog.
-    if root.modal == Modal.bell-rename : ConfirmDialog {
+    if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {
         title: @tr("Rename Sound");
         confirm-text: @tr("Rename");
         confirm-enabled: root.bell-rename-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.bell-rename-confirm(); }
         TextField {
+            accepted => { bell-rename-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Name");
             text <=> root.bell-rename-text;
             edited(text) => { root.bell-rename-changed(text); }
@@ -8431,13 +8494,15 @@ export component MainWindow inherits Window {
     // page. Live-validated (non-empty + no case-insensitive
     // collision EXCEPting this row's own uuid, so an unchanged
     // name stays valid). Mirrors GTK's `present_rename_dialog`.
-    if root.modal == Modal.guided-rename : ConfirmDialog {
+    if root.modal == Modal.guided-rename : guided-rename-dialog := ConfirmDialog {
         title: @tr("Rename Guided File");
         confirm-text: @tr("Rename");
         confirm-enabled: root.guided-rename-valid;
         cancel => { root.modal = Modal.none; }
         confirm => { root.guided-rename-confirm(); }
         TextField {
+            accepted => { guided-rename-dialog.accept(); }
+            init => { self.select-all(); self.focus(); }
             label: @tr("Track name");
             text <=> root.guided-rename-text;
             edited(text) => { root.guided-rename-changed(text); }
@@ -8455,7 +8520,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(280px, root.width - 32px);
             height: goal-card.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -8484,6 +8549,8 @@ export component MainWindow inherits Window {
                     label: @tr("Minutes ({}–{})", root.goal-min-mins, root.goal-max-mins);
                     input-type: InputType.number;
                     text <=> root.goal-dialog-text;
+                    accepted => { root.set-goal(); }
+                    init => { self.select-all(); self.focus(); }
                 }
 
                 HorizontalLayout {
@@ -8496,15 +8563,8 @@ export component MainWindow inherits Window {
                     }
                     TextButton {
                         text: @tr("Set");
-                        enabled: root.goal-dialog-text.is-float()
-                            && root.goal-dialog-text.to-float() >= root.goal-min-mins
-                            && root.goal-dialog-text.to-float() <= root.goal-max-mins;
-                        clicked => {
-                            root.prefs-goal-mins = Math.round(
-                                root.goal-dialog-text.to-float());
-                            root.goal-committed();
-                            root.modal = Modal.none;
-                        }
+                        enabled: root.goal-valid();
+                        clicked => { root.set-goal(); }
                     }
                 }
             }
@@ -8534,7 +8594,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(340px, root.width - 32px);
             height: recovery-card.preferred-height;
             background: MaterialPalette.surface-container-high;
@@ -8620,7 +8680,7 @@ export component MainWindow inherits Window {
 
         Rectangle {
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: KeyboardArea.card-y(self.height);
             width: min(340px, root.width - 32px);
             height: conflict-card.preferred-height;
             background: MaterialPalette.surface-container-high;

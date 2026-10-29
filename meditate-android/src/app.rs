@@ -1336,6 +1336,60 @@ mod tests {
         b[..b.find('}').unwrap()].trim()
     }
 
+    /// #11: the keyboard covered half a dialog and Enter did nothing.
+    /// Every modal card centers above the keyboard (below the status
+    /// bar), Enter confirms a single-field dialog while its button is
+    /// enabled, Enter in a number field takes the number and closes the
+    /// keyboard, and the keyboard closes with every dialog.
+    #[test]
+    fn dialogs_center_above_the_keyboard() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("export global KeyboardArea {"));
+        // The window feeds it: its height less the keyboard's (the
+        // position is in screen coordinates in split screen).
+        assert!(slint.contains("KeyboardArea.bottom = root.height - root.virtual-keyboard-size.height;"));
+        assert!(slint.contains("KeyboardArea.top = root.status-bar-inset + 16px;"));
+        for watch in ["changed height =>", "changed virtual-keyboard-size =>", "changed status-bar-inset =>"] {
+            assert!(slint.contains(watch), "{watch}");
+        }
+        // Centered above the keyboard, below the status bar; a card too tall
+        // keeps its buttons above the keyboard first.
+        assert!(slint.contains("return max(0px, min(root.top, root.bottom - h), (root.bottom - h) / 2);"));
+        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 8, "every modal card");
+        assert_eq!(slint.matches("y: (parent.height - self.height) / 2;").count(), 3, "only the volume slider's bars and thumb");
+        // Enter confirms, while the button would.
+        assert!(slint.contains("public function accept() {\n        if (root.confirm-enabled) {\n            root.confirm();"));
+        assert_eq!(slint.matches("-dialog.accept(); }").count(), 6, "the six name dialogs");
+        // The field is disabled while converting, as the button is gone then.
+        assert!(slint.contains("accepted => { if (root.guided-import-valid) { root.guided-import-confirm(); } }"));
+        assert!(slint.contains("accepted => { root.set-goal(); }"));
+        // Those eight fields take the focus as their dialog opens; a
+        // pre-filled one selects its text, so typing replaces it (as GTK).
+        // The field's own init: the next one after its anchor.
+        let opens = |anchor: &str| {
+            let tail = &slint[slint.find(anchor).unwrap_or_else(|| panic!("{anchor}"))..];
+            &tail[tail.find("init => {").unwrap()..]
+        };
+        // Selected before it takes the focus, so the keyboard gets the
+        // selection with the focus, in one message (empty fields select nothing).
+        let line = "init => { self.select-all(); self.focus(); }";
+        for anchor in [
+            "create-label-dialog := ConfirmDialog {", "rename-label-dialog := ConfirmDialog {",
+            "create-preset-dialog := ConfirmDialog {", "rename-preset-dialog := ConfirmDialog {",
+            "bell-rename-dialog := ConfirmDialog {", "guided-rename-dialog := ConfirmDialog {",
+            "text <=> root.guided-import-text;", "text <=> root.goal-dialog-text;",
+        ] {
+            assert!(opens(anchor).starts_with(line), "{anchor}");
+        }
+        assert_eq!(slint.matches(line).count(), 8, "only these eight");
+        // Number fields: take the number, close the keyboard.
+        assert_eq!(slint.matches("accepted => { self.clear-focus(); KeyboardArea.hide(); }").count(), 2, "spin box and stepper row");
+        assert!(slint.contains("changed modal => {\n        if (root.modal == Modal.none) {\n            KeyboardArea.hide();"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("ui.global::<KeyboardArea>().on_hide(hide_soft_keyboard);"));
+    }
+
     /// Preferences has a Bluetooth group right after Bells: the
     /// explanation, the lead-in switch, its length in hundredths of a
     /// second revealed by the switch, and Test as a Play/Stop pill.
@@ -1862,7 +1916,8 @@ mod tests {
             })
             .collect();
         assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "label-conflict"]);
-        assert_eq!(slint.matches(": ConfirmDialog {").count(), 16);
+        // Ten plain, six with an id for Enter in their field (#11).
+        assert_eq!(slint.matches(" ConfirmDialog {").count(), 16);
     }
 
     #[test]
@@ -3287,7 +3342,7 @@ mod tests {
 
         // Dialogs, modal over the chooser (declared after it).
         let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
-        for d in ["if root.modal == Modal.bell-rename : ConfirmDialog {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
+        for d in ["if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
             assert!(slint.find(d).expect(d) > chooser, "{d}");
         }
         let del = slint.find("if root.modal == Modal.bell-delete : ConfirmDialog {").unwrap();
@@ -3295,7 +3350,7 @@ mod tests {
         assert!(del.contains("@tr(\"Delete Sound?\")"));
         assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
         assert!(del.contains("root.bell-delete-confirm();"));
-        let ren = slint.find("if root.modal == Modal.bell-rename : ConfirmDialog {").unwrap();
+        let ren = slint.find("if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {").unwrap();
         let ren = &slint[ren..ren + 2500];
         assert!(ren.contains("@tr(\"Rename Sound\")"));
         assert!(ren.contains("confirm-enabled: root.bell-rename-valid;"));
