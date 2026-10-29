@@ -1672,6 +1672,12 @@ component RevealStepper inherits Rectangle {
 // maps touch positions without the minimum (at 5..100 the far end
 // yields 95). Here the whole bar is the touch target — tap to jump,
 // drag anywhere to slide — and values snap to `step`.
+// A finger on a volume slider: the pages holding one don't scroll
+// until it lifts, so a drag that drifts up or down stays on the slider (#199).
+global SliderTouch {
+    in-out property <bool> held;
+}
+
 component VolumeSlider inherits Rectangle {
     in property <float> minimum: 0;
     in property <float> maximum: 100;
@@ -1729,18 +1735,35 @@ component VolumeSlider inherits Rectangle {
         border-radius: 2px;
         background: MaterialPalette.primary;
     }
+    // Frees the page once Slint has finished the up or cancel: the lift
+    // also sends a move, which the page would read as one swipe from
+    // where the finger landed.
+    // ponytail: works around Slint's Flickable keeping its press while
+    // not interactive; drop the timer once Flickable clears it on release.
+    free-page := Timer {
+        interval: 0ms;
+        running: false;
+        triggered => {
+            self.stop();
+            SliderTouch.held = false;
+        }
+    }
     TouchArea {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
+                SliderTouch.held = true;
+                free-page.stop();
                 root.pressed-value = root.value;
                 root.set-from-x(self.mouse-x);
             }
             if event.kind == PointerEventKind.cancel {
                 root.value = root.pressed-value;
                 root.value-changed(root.value);
+                free-page.start();
             }
             if event.kind == PointerEventKind.up {
                 root.released(root.value);
+                free-page.start();
             }
         }
         moved => {
@@ -3277,6 +3300,7 @@ export component MainWindow inherits Window {
             height: 100%;
             content-width: self.width;
             content-height: setup-stack.preferred-height;
+            interactive: !SliderTouch.held;
 
             setup-stack := VerticalLayout {
             padding-left: 24px;
@@ -6107,6 +6131,7 @@ export component MainWindow inherits Window {
         Flickable {
             content-width: self.width;
             content-height: max(self.height, ie-scroll.preferred-height);
+            interactive: !SliderTouch.held;
 
             // A tap anywhere outside the inputs lets go of a typed
             // number. Declared behind the form so rows keep their taps.

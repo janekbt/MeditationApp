@@ -1314,20 +1314,53 @@ mod tests {
         ));
     }
 
+    /// `main.slint` and its `VolumeSlider` component, for the source checks below.
+    fn volume_slider_source() -> (String, String) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component VolumeSlider inherits Rectangle {").unwrap();
+        let slider = slint[at..at + slint[at..].find("\n}\n").unwrap()].to_string();
+        (slint, slider)
+    }
+
+    /// The body of the slider's `if event.kind == PointerEventKind.<kind>` branch.
+    fn pointer_branch<'a>(slider: &'a str, kind: &str) -> &'a str {
+        let b = &slider[slider.find(&format!("PointerEventKind.{kind} {{")).unwrap() + kind.len() + 19..];
+        b[..b.find('}').unwrap()].trim()
+    }
+
+    #[test]
+    fn a_touched_volume_slider_holds_the_page_still() {
+        // #199: a drag that drifted up or down let the page take the
+        // touch and the slider snapped back. The touch handover only
+        // happens on the phone, so this checks the wiring.
+        let (slint, slider) = volume_slider_source();
+        // Held before anything else on down. Up and cancel free it only
+        // once Slint has finished that event: the lift also sends a move
+        // the page would read as a swipe from where the finger landed.
+        assert!(pointer_branch(&slider, "down").starts_with("SliderTouch.held = true;\n                free-page.stop();"), "down holds the page, and an earlier lift's pending free can't free it");
+        let up = pointer_branch(&slider, "up");
+        assert!(up.starts_with("root.released(root.value);"), "up saves the value");
+        assert!(up.ends_with("free-page.start();"), "up frees it after the event");
+        assert!(pointer_branch(&slider, "cancel").ends_with("free-page.start();"), "cancel frees it after the event");
+        assert!(slider.contains(
+            "free-page := Timer {\n        interval: 0ms;\n        running: false;\n        triggered => {\n            self.stop();\n            SliderTouch.held = false;"
+        ));
+        assert_eq!(slider.matches("SliderTouch.held = false;").count(), 1);
+        // The setup page and the interval bell editor, the only pages with a volume slider.
+        for page in ["setup-stack.preferred-height;", "max(self.height, ie-scroll.preferred-height);"] {
+            assert!(slint.contains(&format!("content-height: {page}\n            interactive: !SliderTouch.held;")), "{page}");
+        }
+    }
+
     #[test]
     fn a_cancelled_volume_drag_puts_the_slider_back() {
         // #144: when the page takes over a drag, the slider got a cancel
         // it ignored and kept showing a value that was never saved.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        let at = slint.find("component VolumeSlider inherits Rectangle {").unwrap();
-        let slider = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        let (_, slider) = volume_slider_source();
         assert!(slider.contains("root.pressed-value = root.value;"), "down remembers the value");
-        assert!(slider.contains(
-            "if event.kind == PointerEventKind.cancel {\n                root.value = root.pressed-value;\n                root.value-changed(root.value);"
-        ));
-        let cancel = &slider[slider.find("PointerEventKind.cancel").unwrap()..];
-        assert!(!cancel[..cancel.find('}').unwrap()].contains("released"), "a cancel saves nothing");
+        assert!(pointer_branch(&slider, "cancel").starts_with("root.value = root.pressed-value;\n                root.value-changed(root.value);"));
+        assert!(!pointer_branch(&slider, "cancel").contains("released"), "a cancel saves nothing");
     }
 
     /// The Session and Bells rows exist once for all three modes, so
