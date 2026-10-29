@@ -120,6 +120,17 @@ pub fn stop(app: &AndroidApp) {
     }
 }
 
+/// Whether the preview still plays (it ends on its own, or the player
+/// stops it when headphones are plugged in or pulled). True when the
+/// player can't be asked, so the pill waits out the sound's length.
+pub fn preview_playing(app: &AndroidApp) -> bool {
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
+        env.call_static_method(class, "previewPlaying", "()Z", &[])?.z()
+    })
+    .unwrap_or(true)
+}
+
 fn invoke_play(
     app: &AndroidApp,
     path: &str,

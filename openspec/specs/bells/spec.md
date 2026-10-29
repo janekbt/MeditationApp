@@ -129,9 +129,14 @@ On the phone, a bell preview SHALL play only while its editor is open and a soun
 - **THEN** "Playback failed" shows and the row keeps its Play button
 - **TEST** `meditate-android/src/app.rs::a_preview_that_cannot_play_says_so`
 
+#### Scenario: A preview cut short shows Play again
+- **WHEN** a volume or sound-chooser preview stops before its end because headphones were plugged in or pulled
+- **THEN** its Stop turns back into Play within a quarter second, not only after the sound's length; a preview that ends on its own reverts the same way, at the latest after its length
+- **TEST** `meditate-android/src/app.rs::a_preview_cut_short_shows_play_again`
+
 #### Scenario: Seen on the phone
-- **WHEN** the maintainer drags Volume and presses Back
-- **THEN** the sound stops at once
+- **WHEN** the maintainer drags Volume and presses Back; plays a long preview and plugs in or pulls headphones
+- **THEN** the sound stops at once; the preview stops and its button shows Play again
 - **MANUAL** sound needs a speaker
 
 ### Requirement: A volume drag the page takes over changes nothing
@@ -317,7 +322,7 @@ While a finger rests on a bell's volume slider, the page SHALL not scroll, so a 
 - **MANUAL** touch handover between slider and page only happens on the phone
 
 ### Requirement: On Android bells play as media unless set to play as an alarm
-On Android, every bell and volume preview SHALL play as media, where music would play: only in connected headphones, else on the speaker, at a media step the app sets for the bell's volume and puts back afterwards. With "Play Bells as Alarm" on in Preferences (default off) they SHALL play as an alarm as before, which rings on every device.
+On Android, every bell and volume preview SHALL play as media, where music would play: only in connected headphones, else on the speaker, at a media step the app sets for the bell's volume and puts back afterwards. With "Play Bells as Alarm" on in Preferences (default off) they SHALL play as an alarm, which rings on every device, aimed at the same headphones media would play on, so with headphones they ring only there too (from Android 9; before it, on the speaker and the headphones at once); without headphones on the speaker.
 
 #### Scenario: The switch until set and after it
 - **WHEN** the setting was never written; it was turned on; it holds text that isn't true or false; it was turned off
@@ -339,12 +344,17 @@ On Android, every bell and volume preview SHALL play as media, where music would
 - **THEN** it plays with media audio attributes, the media stream is held at its step like the alarm stream and put back when nothing rings (also after a crash), and it stops when its output changes (headphones pulled or plugged in); the step is put back on the output it was set on, and only while that output is current
 - **TEST** `meditate-android/src/alarm_volume.rs::a_media_bell_holds_the_media_step_and_puts_it_back`
 
+#### Scenario: The alarm path in the player
+- **WHEN** a bell or preview plays with the switch on
+- **THEN** it plays with alarm audio attributes at the alarm step as before, is aimed at the headphones media plays on when there are any (else Android's own alarm route; only alarm players are aimed, media keeps Android's own route), and stops when its output changes (headphones pulled or plugged in), like a media bell
+- **TEST** `meditate-android/src/alarm_volume.rs::an_alarm_bell_plays_only_in_the_headphones`
+
 #### Scenario: The Bells group in Preferences
 - **WHEN** Preferences is opened on Android; the switch is turned on; the app is restarted
 - **THEN** a Bells group right after Stats shows the explanation under its heading and the switch off; on after the tap; still on after the restart; on Linux there is no such row
 - **TEST** `meditate-android/src/app.rs::the_bells_group_holds_the_alarm_switch`; Android **MANUAL** on the FP5 for the layout at 360 px in German
 
-#### Scenario: Bells as media on the FP5
-- **WHEN** the switch is off and a session with a starting, interval and end bell runs with wired headphones, with Bluetooth headphones, with none; headphones are pulled while a bell rings, and plugged in while one rings on the speaker; the switch is on with headphones connected
-- **THEN** with headphones the bells ring only there and the speaker stays silent; without headphones they ring on the speaker; the same preset rings equally loud each time; the media volume is back where it was after each bell; pulling or plugging in headphones stops the bell, and both outputs' media volume is back afterwards; switched on, the bell rings on the speaker and in the headphones as before
+#### Scenario: Bells on the FP5, as media and as an alarm
+- **WHEN** the switch is off and a session with a starting, interval and end bell runs with wired headphones, with Bluetooth headphones, with none; headphones are pulled while a bell rings, and plugged in while one rings on the speaker; the switch is on and the same is done again
+- **THEN** with headphones the bells ring only there and the speaker stays silent; without headphones they ring on the speaker; the same preset rings equally loud each time; the media volume is back where it was after each bell; pulling or plugging in headphones stops the bell, and both outputs' media volume is back afterwards; switched on, the same holds as an alarm, at the alarm volume, which is back where it was after each bell
 - **MANUAL** on the FP5: routing and loudness only exist on a device

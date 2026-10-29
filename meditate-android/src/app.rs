@@ -4975,6 +4975,23 @@ mod tests {
         assert!(back[at..at + 120].contains("ui.invoke_interval_editor_cancel();"));
     }
 
+    /// The player stops a preview when headphones are plugged in or
+    /// pulled; its pill must not keep showing Stop until the sound's
+    /// length runs out. Both pills ask the player every 250 ms.
+    #[test]
+    fn a_preview_cut_short_shows_play_again() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateAudio.kt")).unwrap();
+        assert!(kotlin.contains("fun previewPlaying(): Boolean = synchronized(lock) { preview != null }"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let ends = &lib[lib.find("fn when_preview_ends(left_ms: i64, done: impl FnOnce() + 'static) {").unwrap()..];
+        let ends = &ends[..ends.find("\n}\n").unwrap()];
+        assert!(ends.contains("const POLL_MS: i64 = 250;"));
+        assert!(ends.contains("if left > 0 && android_app().is_some_and(audio::preview_playing) {"));
+        assert_eq!(lib.matches("when_preview_ends(dur_ms, ").count(), 2, "the volume row and the sound chooser");
+        assert_eq!(lib.matches("Duration::from_millis(dur_ms as u64)").count(), 1, "only the vibration pattern waits out its length: no player to ask");
+    }
+
     #[test]
     fn a_preview_that_cannot_play_says_so() {
         // #141: a sound whose file hasn't arrived showed "Stop" in silence.
@@ -5156,6 +5173,7 @@ mod jni_tests {
         ("audio", "AUDIO_CLASS_DOTTED", "headphoneSteps", "(Landroid/content/Context;)[F"),
         ("audio", "AUDIO_CLASS_DOTTED", "recoverAlarmVolume", "(Landroid/content/Context;)V"),
         ("audio", "AUDIO_CLASS_DOTTED", "stop", "(Landroid/content/Context;)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "previewPlaying", "()Z"),
         ("guided", "PICKER_CLASS_DOTTED", "openExport", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
         ("guided", "PICKER_CLASS_DOTTED", "openFor", "(Landroid/content/Context;Ljava/lang/String;[Ljava/lang/String;)V"),
         ("guided", "PLAYER_CLASS_DOTTED", "startAudio", "(Landroid/content/Context;Ljava/lang/String;)Z"),

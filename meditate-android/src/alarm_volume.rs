@@ -257,18 +257,18 @@ mod tests {
         let start = &start[..start.find("\n    }\n").unwrap()];
         // As media the headphone curve when media goes to headphones now,
         // else the stream's own; the output is read once per bell.
-        assert!(start.contains("val hold = if (asMedia) media else alarm\n        val out = hold.route(app)"));
-        assert!(start.contains("levelFor(hold, out != SPEAKER && out.isNotEmpty(), step, gains, headStep, headGains)"));
-        assert!(kotlin.contains("if (head) Level(hold, headStep, headGains, head = true) else Level(hold, step, gains)"));
+        assert!(start.contains("val hold = if (asMedia) media else alarm\n        val phones = headphones(app)\n        val out = outOf(phones)"));
+        assert!(start.contains("levelFor(hold, out, step, gains, headStep, headGains)"));
+        assert!(kotlin.contains("if (hold === media && out != SPEAKER) Level(hold, out, headStep, headGains) else Level(hold, out, step, gains)"));
         assert!(start.contains("mp.setAudioAttributes(hold.attrs)"));
-        assert!(start.contains("if (!hold.raised) hold.output = out"));
+        assert!(start.contains("if (!hold.raised) hold.output = if (hold === media) out else \"\""));
         // Each output keeps its own saved step: a bell on the speaker
         // never overwrites the step kept for headphones that went away.
         assert!(kotlin.contains("fun keyRestore(out: String) = if (out.isEmpty()) restoreKey else \"$restoreKey/$out\""));
         assert!(kotlin.contains("fun keySet(out: String) = if (out.isEmpty()) setKey else \"$setKey/$out\""));
         assert!(!kotlin.contains("KEY_MEDIA_OUTPUT") && !kotlin.contains("stale"));
-        // Android routes the bell itself; no focus, so music neither pauses nor ducks.
-        assert!(!kotlin.contains("setPreferredDevice") && !kotlin.contains("requestAudioFocus"));
+        // Android routes a media bell itself; no focus, so music neither pauses nor ducks.
+        assert!(!kotlin.contains("requestAudioFocus"));
         // The output it was set on: only there the step is put back.
         let apply = &kotlin[kotlin.find("private fun applyLocked(").unwrap()..];
         let apply = &apply[..apply.find("\n    }\n").unwrap()];
@@ -286,18 +286,20 @@ mod tests {
         assert!(!kotlin.contains("edit().clear()"), "never every key at once");
         // Headphones pulled or plugged in: the media bells stop.
         assert!(kotlin.contains("override fun onAudioDevicesAdded(") && kotlin.contains("override fun onAudioDevicesRemoved("));
-        assert!(kotlin.contains("if (route(app) != media.output) levels.filterValues { it.hold === media }.keys.toList().forEach { mp -> finishedLocked(app, mp) }"));
+        assert!(kotlin.contains("levels.filterValues { it.out != now }.keys.toList().forEach { mp -> finishedLocked(app, mp) }"));
         // An output coming back gets its kept step back at once, also
         // after a restart (the watch starts with the recovery).
-        assert!(kotlin.contains("if (!media.raised) { restoreSaved(app, media); return }"));
+        assert!(kotlin.contains("if (!media.raised) restoreSaved(app, media)"));
         let recover = &kotlin[kotlin.find("fun recoverAlarmVolume(").unwrap()..];
         assert!(recover[..recover.find("\n    }\n").unwrap()].contains("watchLocked(context.applicationContext)"));
         // A drag only moves a preview still on the stream the switch picks now.
         let drag = &kotlin[kotlin.find("fun setVolume(").unwrap()..];
         let drag = &drag[..drag.find("\n    }\n").unwrap()];
         assert!(drag.contains("if ((old.hold === media) != asMedia) return"));
+        assert!(drag.contains("levelFor(old.hold, old.out, step, gains, headStep, headGains)"));
         // The speaker as an output has its own key, so a step set there is put back there.
-        assert!(kotlin.contains("private fun route(context: Context): String = headphones(context)?.let { key(it) } ?: SPEAKER"));
+        assert!(kotlin.contains("private fun route(context: Context): String = outOf(headphones(context))"));
+        assert!(kotlin.contains("private fun outOf(phones: AudioDeviceInfo?): String = phones?.let { key(it) } ?: SPEAKER"));
         // Both curves read at startup, both streams recovered after a crash.
         assert!(kotlin.contains("fun mediaSteps(context: Context): FloatArray"));
         assert!(kotlin.contains("steps(context, AudioManager.STREAM_MUSIC, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, \"mediaSteps\")"));
@@ -306,5 +308,31 @@ mod tests {
         assert!(recover[..recover.find("\n    }\n").unwrap()].contains("holds.forEach { restoreSaved(context.applicationContext, it) }"));
         // No lead-in noise in this change.
         assert!(!kotlin.contains("AudioTrack") && !kotlin.contains("lead"));
+    }
+
+    /// With "Play Bells as Alarm" a bell still plays as an alarm, aimed
+    /// at the headphones media plays on, so it rings only there; it stops
+    /// when its output changes, like a media bell.
+    #[test]
+    fn an_alarm_bell_plays_only_in_the_headphones() {
+        let kotlin = source("kotlin/MeditateAudio.kt");
+        let start = &kotlin[kotlin.find("private fun startLocked(").unwrap()..];
+        let start = &start[..start.find("\n    }\n").unwrap()];
+        // Only the alarm is aimed, from Android 9 (API 28 has the call);
+        // media keeps Android's own route. A refused aim leaves the alarm
+        // route and says so in the log.
+        assert!(start.contains("if (hold === alarm && phones != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {\n                if (!mp.setPreferredDevice(phones)) Log.w(TAG, "));
+        assert_eq!(kotlin.matches("setPreferredDevice").count(), 1, "nothing else is aimed");
+        // Android drops the aim on a player without its file (device test 2026-10-29).
+        let aim = start.find("mp.setPreferredDevice(phones)").unwrap();
+        assert!(start.find("mp.setDataSource(path)").unwrap() < aim && aim < start.find("mp.prepare()").unwrap());
+        // The alarm on the speaker's curve and its one pair of keys, as before.
+        assert!(kotlin.contains("Hold(AudioManager.STREAM_ALARM, attrs, \"alarm_restore_index\", \"alarm_set_index\") { \"\" }"));
+        // Every bell is watched and stops when its own output goes.
+        assert!(start.contains("            watchLocked(app)\n"));
+        assert!(!start.contains("if (hold === media) watchLocked(app)"));
+        let changed = &kotlin[kotlin.find("private fun outputChanged(").unwrap()..];
+        let changed = &changed[..changed.find("\n    }\n").unwrap()];
+        assert!(changed.contains("val now = route(app)"));
     }
 }

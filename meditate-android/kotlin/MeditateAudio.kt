@@ -14,10 +14,11 @@
 // would play: only to connected headphones, else to the speaker.
 // "Play Bells as Alarm" (Preferences) uses USAGE_ALARM +
 // CONTENT_TYPE_SONIFICATION instead, for devices where media bells
-// fail: alarms ring on every device, but on the speaker and the
-// headphones at once. The app only reads that
-// route to pick the curve; it neither aims the player nor asks for
-// audio focus, so music from another app keeps playing.
+// fail: alarms ring on every device, but Android plays them on the
+// speaker and the headphones at once, so from Android 9 an alarm bell
+// is aimed at the headphones media would play on. A media bell keeps
+// Android's own route; the app only reads it to pick the curve. No
+// audio focus is asked for, so music from another app keeps playing.
 //
 // Bell volumes are absolute (meditate_core::bell_volume): while bells
 // play, their stream (alarm or media) sits at the step the loudest of
@@ -76,10 +77,9 @@ object MeditateAudio {
         fun keySet(out: String) = if (out.isEmpty()) setKey else "$setKey/$out"
     }
 
-    // Each live player's stream, step and its gain at every stream
-    // step (meditate_core::bell_volume::AlarmLevel), and whether it took
-    // the headphone curve.
-    private class Level(val hold: Hold, val step: Int, val gains: FloatArray, val head: Boolean = false)
+    // Each live player's stream, the output it started on, its step and
+    // its gain at every stream step (meditate_core::bell_volume::AlarmLevel).
+    private class Level(val hold: Hold, val out: String, val step: Int, val gains: FloatArray)
     private val levels = HashMap<MediaPlayer, Level>()
 
     // meditate_core::session::FireChannel, as numbered by the Rust
@@ -178,12 +178,15 @@ object MeditateAudio {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) "${device.type}/${device.address}" else "${device.type}"
 
     // The output media plays on now: headphones, or the speaker.
-    private fun route(context: Context): String = headphones(context)?.let { key(it) } ?: SPEAKER
+    private fun route(context: Context): String = outOf(headphones(context))
 
-    // Headphones pulled or plugged in under a media bell: it stops at
-    // once, as Android would move it to the other output at a step meant
-    // for this one. A failed register leaves the bells working; only
-    // devices coming and going go unnoticed until the next try.
+    private fun outOf(phones: AudioDeviceInfo?): String = phones?.let { key(it) } ?: SPEAKER
+
+    // Headphones pulled or plugged in under a bell: it stops at once,
+    // whatever its stream, as Android would move it to the other output
+    // at a step meant for this one, or ring it where it shouldn't. A
+    // failed register leaves the bells working; only devices coming and
+    // going go unnoticed until the next try.
     private var watching = false
 
     private fun watchLocked(app: Context) {
@@ -197,8 +200,10 @@ object MeditateAudio {
     private fun outputChanged(app: Context) {
         synchronized(lock) {
             // An output coming back gets the step kept for it.
-            if (!media.raised) { restoreSaved(app, media); return }
-            if (route(app) != media.output) levels.filterValues { it.hold === media }.keys.toList().forEach { mp -> finishedLocked(app, mp) }
+            if (!media.raised) restoreSaved(app, media)
+            if (levels.isEmpty()) return
+            val now = route(app)
+            levels.filterValues { it.out != now }.keys.toList().forEach { mp -> finishedLocked(app, mp) }
         }
     }
 
@@ -210,12 +215,19 @@ object MeditateAudio {
         asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray,
     ): MediaPlayer? {
         val hold = if (asMedia) media else alarm
-        val out = hold.route(app)
-        val level = levelFor(hold, out != SPEAKER && out.isNotEmpty(), step, gains, headStep, headGains)
+        val phones = headphones(app)
+        val out = outOf(phones)
+        val level = levelFor(hold, out, step, gains, headStep, headGains)
         val mp = MediaPlayer()
         try {
             mp.setAudioAttributes(hold.attrs)
             mp.setDataSource(path)
+            // Android rings an alarm on the speaker too; aimed at the
+            // headphones it rings only there. Only a player with its file
+            // takes the aim.
+            if (hold === alarm && phones != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                if (!mp.setPreferredDevice(phones)) Log.w(TAG, "alarm not aimed at ${phones.type}")
+            }
             mp.setOnCompletionListener {
                 synchronized(lock) { finishedLocked(app, mp) }
             }
@@ -225,8 +237,8 @@ object MeditateAudio {
                 true
             }
             mp.prepare()
-            if (!hold.raised) hold.output = out
-            if (hold === media) watchLocked(app)
+            if (!hold.raised) hold.output = if (hold === media) out else ""
+            watchLocked(app)
             levels[mp] = level
             applyLocked(app, hold)
             mp.start()
@@ -241,8 +253,8 @@ object MeditateAudio {
 
     // A bell's level: in headphones on the headphone curve, else on its
     // stream's own (the alarm, or media on the speaker).
-    private fun levelFor(hold: Hold, head: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray) =
-        if (head) Level(hold, headStep, headGains, head = true) else Level(hold, step, gains)
+    private fun levelFor(hold: Hold, out: String, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray) =
+        if (hold === media && out != SPEAKER) Level(hold, out, headStep, headGains) else Level(hold, out, step, gains)
 
     // One player ended on its own: drop it from its slot, and put the
     // alarm volume back once nothing else is ringing.
@@ -265,7 +277,7 @@ object MeditateAudio {
             // The switch changed (a sync) since the preview started: its
             // steps are for the other stream.
             if ((old.hold === media) != asMedia) return
-            levels[mp] = levelFor(old.hold, old.head, step, gains, headStep, headGains)
+            levels[mp] = levelFor(old.hold, old.out, step, gains, headStep, headGains)
             applyLocked(context.applicationContext, old.hold)
         }
     }
@@ -319,6 +331,11 @@ object MeditateAudio {
             watchLocked(context.applicationContext)
         }
     }
+
+    // Whether the preview still plays: it ends on its own, or stops when
+    // headphones are plugged in or pulled.
+    @JvmStatic
+    fun previewPlaying(): Boolean = synchronized(lock) { preview != null }
 
     // Stop everything: the preview and every session bell.
     @JvmStatic

@@ -7502,30 +7502,20 @@ fn build_ui() -> MainWindow {
                         }
                         ui.set_bell_preview_uuid(id.into());
 
-                        // Revert the pill when the clip finishes —
-                        // the Android analogue of GTK reverting the
-                        // Play icon on the MediaFile's notify::ended.
-                        // `play()` returned the clip length;
+                        // Revert the pill when the clip ends or is cut
+                        // short, the Android analogue of GTK reverting
+                        // the Play icon on the MediaFile's notify::ended.
                         // `timer_should_revert` no-ops if the user
                         // already stopped it / started another
                         // (generation guard).
-                        if dur_ms > 0 {
-                            let weak2 = weak.clone();
-                            slint::Timer::single_shot(
-                                std::time::Duration::from_millis(dur_ms as u64),
-                                move || {
-                                    if BELL_PREVIEW
-                                        .with_borrow_mut(|p| p.timer_should_revert(generation))
-                                    {
-                                        if let Some(ui) = weak2.upgrade() {
-                                            ui.set_bell_preview_uuid(
-                                                slint::SharedString::new(),
-                                            );
-                                        }
-                                    }
-                                },
-                            );
-                        }
+                        let weak2 = weak.clone();
+                        when_preview_ends(dur_ms, move || {
+                            if BELL_PREVIEW.with_borrow_mut(|p| p.timer_should_revert(generation)) {
+                                if let Some(ui) = weak2.upgrade() {
+                                    ui.set_bell_preview_uuid(slint::SharedString::new());
+                                }
+                            }
+                        });
                     }
                     meditate_core::preview::PreviewAction::StopOnly => {
                         if let Some(app) = android_app() {
@@ -10031,7 +10021,7 @@ fn play_volume_preview(
     ui.set_volume_previewing(if dur_ms > 0 { slot.into() } else { slint::SharedString::new() });
     if dur_ms > 0 {
         let weak = ui.as_weak();
-        slint::Timer::single_shot(std::time::Duration::from_millis(dur_ms as u64), move || {
+        when_preview_ends(dur_ms, move || {
             if VOLUME_PREVIEW_GEN.with(std::cell::Cell::get) == generation {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_volume_previewing(slint::SharedString::new());
@@ -10039,6 +10029,22 @@ fn play_volume_preview(
             }
         });
     }
+}
+
+/// Run `done` once the preview has ended: on its own, or cut short by
+/// the player (headphones plugged in or pulled). Asked every 250 ms, and
+/// done at the latest after the sound's `left_ms`.
+fn when_preview_ends(left_ms: i64, done: impl FnOnce() + 'static) {
+    const POLL_MS: i64 = 250;
+    let wait = left_ms.clamp(0, POLL_MS);
+    slint::Timer::single_shot(Duration::from_millis(wait as u64), move || {
+        let left = left_ms - wait;
+        if left > 0 && android_app().is_some_and(audio::preview_playing) {
+            when_preview_ends(left, done);
+        } else {
+            done();
+        }
+    });
 }
 
 /// The volume of the bell the sound chooser is open for (targets as
