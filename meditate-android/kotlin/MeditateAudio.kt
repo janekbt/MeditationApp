@@ -36,7 +36,9 @@ package io.github.janekbt.Meditate
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
@@ -91,6 +93,19 @@ object MeditateAudio {
     private const val PREFS = "meditate_audio"
     private const val SPEAKER = "speaker"
 
+    // Wake-up lead-in (Preferences): before a bell on a Bluetooth output,
+    // core's noise and its silence (meditate_core::lead_in, at this rate)
+    // play on the bell's own stream and output; the bell starts where
+    // they finished playing. Bells due meanwhile on that output wait for
+    // the same noise. LATE_MS after the planned end they start anyway.
+    private const val LEAD_RATE = 48000
+    // meditate_core::lead_in::LATE_MS: a cold A2DP link stalls the track before it plays.
+    private const val LATE_MS = 5000L
+    private class Lead(val track: AudioTrack, val out: String, val until: Long) {
+        val waiting = mutableListOf<MediaPlayer>()
+    }
+    private val leads = mutableListOf<Lead>()
+
     private val attrs = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ALARM)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -118,42 +133,47 @@ object MeditateAudio {
     private val holds = listOf(alarm, media)
 
     @JvmStatic
-    // Returns the clip duration in ms (0 if unknown / on
-    // failure). Rust uses it to schedule the preview pill's
+    // Returns the clip duration plus its lead-in wait in ms (0 if
+    // unknown / on failure). Rust uses it to bound the preview pill's
     // auto-revert — the Android equivalent of GTK reverting the
     // Play icon on the MediaFile's notify::ended.
-    fun play(context: Context, path: String, asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray): Long {
+    fun play(
+        context: Context, path: String,
+        asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray, lead: ShortArray,
+    ): Long {
         val app = context.applicationContext
         synchronized(lock) {
             // A new preview replaces the old one; the stream stays raised.
             releasePreviewLocked()
-            val mp = startLocked(app, path, asMedia, step, gains, headStep, headGains) ?: return 0L
+            val (mp, wait) = startLocked(app, path, asMedia, step, gains, headStep, headGains, lead) ?: return 0L
             preview = mp
             // Valid after prepare(); -1 for unseekable/live
             // streams (not the case for our bundled OGGs).
-            return mp.duration.toLong().coerceAtLeast(0L)
+            return mp.duration.toLong().coerceAtLeast(0L) + wait
         }
     }
 
     // A session bell on core's channel (CHANNEL_*). Starting and End
     // replace their own previous bell only; Interval bells stack.
+    // Returns the ms it waits for its lead-in, for its vibration.
     @JvmStatic
     fun playBell(
         context: Context, channel: Int, path: String,
-        asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray,
-    ) {
+        asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray, lead: ShortArray,
+    ): Long {
         val app = context.applicationContext
         synchronized(lock) {
             when (channel) {
                 CHANNEL_STARTING -> { releasePlayer(starting); starting = null }
                 CHANNEL_END -> { releasePlayer(end); end = null }
             }
-            val mp = startLocked(app, path, asMedia, step, gains, headStep, headGains) ?: return
+            val (mp, wait) = startLocked(app, path, asMedia, step, gains, headStep, headGains, lead) ?: return 0L
             when (channel) {
                 CHANNEL_STARTING -> starting = mp
                 CHANNEL_END -> end = mp
                 else -> intervals.add(mp)
             }
+            return wait
         }
     }
 
@@ -209,11 +229,12 @@ object MeditateAudio {
 
     // Prepare and start a player at its level: as an alarm, or as media
     // on the curve of where media plays now. It forgets itself and
-    // releases when it ends. Null when the file won't play.
+    // releases when it ends. With its lead-in wait in ms; null when the
+    // file won't play.
     private fun startLocked(
         app: Context, path: String,
-        asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray,
-    ): MediaPlayer? {
+        asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray, lead: ShortArray,
+    ): Pair<MediaPlayer, Long>? {
         val hold = if (asMedia) media else alarm
         val phones = headphones(app)
         val out = outOf(phones)
@@ -241,14 +262,72 @@ object MeditateAudio {
             watchLocked(app)
             levels[mp] = level
             applyLocked(app, hold)
-            mp.start()
-            return mp
+            val wait = if (phones != null && phones.type in bluetooth && lead.isNotEmpty()) leadLocked(hold, phones, out, lead, mp) else null
+            if (wait == null) mp.start()
+            return mp to (wait ?: 0L)
         } catch (e: Exception) {
             Log.w(TAG, "play failed path=$path: $e")
             releasePlayer(mp)
             settleLocked(app)
             return null
         }
+    }
+
+    // Hold `mp` back for a lead-in on `out`: join the one running there,
+    // or play core's samples on a track of its own. The ms it waits; null
+    // when the track won't play (the bell starts at once, without one).
+    private fun leadLocked(hold: Hold, phones: AudioDeviceInfo, out: String, lead: ShortArray, mp: MediaPlayer): Long? {
+        val now = android.os.SystemClock.elapsedRealtime()
+        // Past its planned end it is late, not over: the bell still waits.
+        leads.firstOrNull { it.out == out }?.let { it.waiting.add(mp); return (it.until - now).coerceAtLeast(0L) }
+        var made: AudioTrack? = null
+        return runCatching {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(hold.attrs)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(LEAD_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                        .build(),
+                )
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(lead.size * 2)
+                .build()
+            made = track
+            check(track.write(lead, 0, lead.size) == lead.size) { "short write" }
+            if (!track.setPreferredDevice(phones)) Log.w(TAG, "lead-in not aimed at ${phones.type}")
+            val wait = lead.size / 2 * 1000L / LEAD_RATE
+            val l = Lead(track, out, now + wait)
+            l.waiting.add(mp)
+            leads.add(l)
+            track.setNotificationMarkerPosition(lead.size / 2)
+            track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                override fun onMarkerReached(t: AudioTrack) = synchronized(lock) { wakeLocked(l) }
+                override fun onPeriodicNotification(t: AudioTrack) {}
+            }, main)
+            main.postDelayed({ synchronized(lock) { wakeLocked(l) } }, wait + LATE_MS)
+            track.play()
+            wait
+        }.getOrElse {
+            Log.w(TAG, "lead-in failed: $it")
+            leads.removeAll { it.track === made }
+            releaseTrack(made)
+            null
+        }
+    }
+
+    // A lead-in played out (or ran late): its bells start, its noise goes.
+    private fun wakeLocked(l: Lead) {
+        if (!leads.remove(l)) return
+        releaseTrack(l.track)
+        l.waiting.forEach { if (levels.containsKey(it)) runCatching { it.start() } }
+    }
+
+    private fun releaseTrack(t: AudioTrack?) {
+        t ?: return
+        runCatching { t.stop() }
+        runCatching { t.release() }
     }
 
     // A bell's level: in headphones on the headphone curve, else on its
@@ -364,6 +443,7 @@ object MeditateAudio {
     private fun releasePlayer(mp: MediaPlayer?) {
         mp ?: return
         levels.remove(mp)
+        leads.filter { it.waiting.remove(mp) && it.waiting.isEmpty() }.forEach { leads.remove(it); releaseTrack(it.track) }
         runCatching { if (mp.isPlaying) mp.stop() }
         runCatching { mp.release() }
     }

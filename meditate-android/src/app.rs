@@ -42,6 +42,13 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// Typed seconds ("1,25" or "1.25") in hundredths, for the lead-in
+/// stepper; `None` when it isn't a number.
+pub fn parse_hundredths(text: &str) -> Option<i32> {
+    let secs: f64 = text.trim().replace(',', ".").parse().ok()?;
+    secs.is_finite().then(|| (secs * 100.0).round() as i32)
+}
+
 /// Slint's code for a running-page button (`EndButtonView.kind`).
 pub fn end_button_code(button: meditate_core::session::EndButton) -> i32 {
     use meditate_core::session::EndButton as B;
@@ -1329,6 +1336,59 @@ mod tests {
         b[..b.find('}').unwrap()].trim()
     }
 
+    /// Preferences has a Bluetooth group right after Bells: the
+    /// explanation, the lead-in switch, its length in hundredths of a
+    /// second revealed by the switch, and Test as a Play/Stop pill.
+    #[test]
+    fn the_bluetooth_group_holds_the_lead_in() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let bells = slint.find("title: @tr(\"Play Bells as Alarm\");").unwrap();
+        let bt = bells + slint[bells..].find("text: @tr(\"Bluetooth\");").unwrap();
+        let data = slint.find("text: @tr(\"Data\");").unwrap();
+        assert!(bt < data, "right after Bells");
+        let group = &slint[bt..data];
+        assert!(group.contains("@tr(\"Bluetooth devices fall asleep after 30 to 60 seconds of silence."));
+        assert!(group.contains("title: @tr(\"Wake-up Lead-in for Bluetooth\");"));
+        assert!(group.contains("checked <=> root.prefs-lead-in-on;"));
+        assert!(group.contains("toggled(value) => { root.lead-in-toggled(value); }"));
+        assert!(group.contains("shown: root.prefs-lead-in-on;"));
+        assert!(group.contains("label: @tr(\"Length (Seconds)\");"));
+        assert!(group.contains("value <=> root.prefs-lead-in-hundredths;"));
+        assert!(group.contains("min-value: 10;") && group.contains("max-value: 500;"));
+        assert!(group.contains("hundredths: true;"));
+        assert!(group.contains("edited => { root.lead-in-length-changed(root.prefs-lead-in-hundredths); }"));
+        assert!(group.contains("text: @tr(\"Test\");"));
+        assert!(group.contains("playing: root.volume-previewing == \"lead-in-test\";"));
+        assert!(group.contains("clicked => { root.lead-in-test(); }"));
+        // The stepper shows and takes "1,00" (the catalogue's decimal sign).
+        assert!(slint.contains("input-type: root.hundredths ? InputType.decimal : InputType.number;"));
+        assert!(slint.contains("let typed = Hundredths.parse(input.text);"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let load = &lib[lib.find("fn load_lead_in(ui: &MainWindow) {").unwrap()..];
+        let load = &load[..load.find("\n}\n").unwrap()];
+        assert!(load.contains("ui.set_prefs_lead_in_on(") && load.contains("ui.set_prefs_lead_in_hundredths("));
+        // On open, and again after a failed save (reload_setup).
+        assert!(lib.contains("ui.set_prefs_bells_as_alarm(bells_as_alarm());\n                load_lead_in(&ui);"));
+        let reload = &lib[lib.find("fn reload_setup(").unwrap()..];
+        assert!(reload[..reload.find("\n}\n").unwrap()].contains("load_lead_in(ui);"));
+        assert!(lib.contains("meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_KEY,"));
+        assert!(lib.contains("&meditate_core::settings_keys::lead_in_ms(f64::from(hundredths) / 100.0).to_string(),"));
+        assert!(lib.contains("play_volume_preview(&ui, \"lead-in-test\", meditate_core::seeds::BUNDLED_WOODBLOCK_UUID, meditate_core::bell_volume::BellVolume::default());"));
+        assert!(lib.contains("ui.global::<Hundredths>().on_parse(|text| super::app::parse_hundredths(&text).unwrap_or(-1));"));
+    }
+
+    #[test]
+    fn typed_seconds_become_hundredths() {
+        assert_eq!(super::parse_hundredths("1,25"), Some(125));
+        assert_eq!(super::parse_hundredths(" 1.5 "), Some(150));
+        assert_eq!(super::parse_hundredths("2"), Some(200));
+        assert_eq!(super::parse_hundredths("0,125"), Some(13));
+        assert_eq!(super::parse_hundredths("x"), None);
+        assert_eq!(super::parse_hundredths(""), None);
+        assert_eq!(super::parse_hundredths("inf"), None);
+    }
+
     /// #10: Preferences has a Bells group right after Stats with the
     /// explanation under its heading and the switch, which loads the
     /// saved value on open and saves a tap through the synced settings.
@@ -2591,7 +2651,7 @@ mod tests {
         }
         assert!(kotlin.contains("fun playBell(\n        context: Context, channel: Int, path: String,"));
         assert!(kotlin.contains("private val intervals = mutableListOf<MediaPlayer>()"), "interval bells stack");
-        let preview = kotlin.find("fun play(context: Context, path: String, asMedia: Boolean,").unwrap();
+        let preview = kotlin.find("fun play(\n        context: Context, path: String,\n        asMedia: Boolean,").unwrap();
         let preview = &kotlin[preview..preview + kotlin[preview..].find("\n    }\n").unwrap()];
         assert!(preview.contains("releasePreviewLocked()") && !preview.contains("releaseAllLocked"),
             "a preview replaces only the preview");
@@ -2968,7 +3028,7 @@ mod tests {
         let stepper = component("StepperRow");
         assert!(stepper.contains("in property <string> subtitle;"), "subtitle line");
         assert!(stepper.contains("TextInput {"), "typeable readout");
-        assert!(stepper.contains("input-type: InputType.number;"), "numeric IME");
+        assert!(stepper.contains("input-type: root.hundredths ? InputType.decimal : InputType.number;"), "numeric IME");
         assert!(stepper.contains("public function commit()"), "flushable");
         assert!(stepper.contains("self.text = \"\";"), "tap empties the field so typing replaces the number");
         assert!(stepper.contains("Math.max(root.min-value,"), "clamped to min");
@@ -3782,8 +3842,9 @@ mod tests {
         let pill = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(pill.contains("width: max(60px, max(play-label.preferred-width, stop-label.preferred-width) + 24px);"));
         assert!(!slint.contains("width: 60px;"), "no fixed-width pill left");
-        // The choosers use play/pause icons since #145; only the volume row's Stop is a pill.
-        assert_eq!(slint.matches("PreviewPill {").count(), 1, "volume row");
+        // The choosers use play/pause icons since #145; only the volume
+        // row's Stop and the lead-in's Test are pills.
+        assert_eq!(slint.matches("PreviewPill {").count(), 2, "volume row, lead-in Test");
     }
 
     #[test]
@@ -4975,6 +5036,30 @@ mod tests {
         assert!(back[at..at + 120].contains("ui.invoke_interval_editor_cancel();"));
     }
 
+    /// A session bell's vibration waits for its sound: with a lead-in
+    /// the bell rings late by the wait the player returns. Every bell
+    /// and preview passes the lead-in samples (empty while it is off).
+    #[test]
+    fn a_bell_vibrates_when_its_sound_starts() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("let wait = if route.signal_mode.includes_sound() {"));
+        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())"));
+        assert!(lib.contains("slint::Timer::single_shot(Duration::from_millis(wait as u64), move || {"));
+        // A Stop meanwhile drops the waiting buzz.
+        assert!(lib.contains("if SIGNAL_GEN.get() != generation {"));
+        assert!(lib.contains("if matches!(effect, Effect::StopActiveSignals) {\n            SIGNAL_GEN.set(SIGNAL_GEN.get().wrapping_add(1));"));
+        assert_eq!(lib.matches("audio::play(app, ").count(), lib.matches(", &lead_in())").count() - 1, "every preview passes the lead-in");
+        let lead = &lib[lib.find("fn lead_in() -> Vec<i16> {").unwrap()..];
+        let lead = &lead[..lead.find("\n}\n").unwrap()];
+        // The database is free again before the samples are made.
+        assert!(lead.contains("let ms = lock_db().and_then(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(&db));"));
+        assert!(lead.contains("ms.map_or_else(Vec::new, |ms| meditate_core::lead_in::samples(ms, meditate_core::lead_in::RATE))"));
+        let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateAudio.kt")).unwrap();
+        assert!(kotlin.contains("private const val LEAD_RATE = 48000"));
+        assert!(std::fs::read_to_string(root.join("../meditate-core/src/lead_in.rs")).unwrap().contains("pub const RATE: u32 = 48000;"));
+    }
+
     /// The player stops a preview when headphones are plugged in or
     /// pulled; its pill must not keep showing Stop until the sound's
     /// length runs out. Both pills ask the player every 250 ms.
@@ -4987,7 +5072,10 @@ mod tests {
         let ends = &lib[lib.find("fn when_preview_ends(left_ms: i64, done: impl FnOnce() + 'static) {").unwrap()..];
         let ends = &ends[..ends.find("\n}\n").unwrap()];
         assert!(ends.contains("const POLL_MS: i64 = 250;"));
-        assert!(ends.contains("if left > 0 && android_app().is_some_and(audio::preview_playing) {"));
+        // Asked until it stops, also past its length (a late lead-in);
+        // the length bounds it only when the player can't be asked.
+        assert!(ends.contains("Some(true) => when_preview_ends(left, done),"));
+        assert!(ends.contains("None if left > 0 => when_preview_ends(left, done),"));
         assert_eq!(lib.matches("when_preview_ends(dur_ms, ").count(), 2, "the volume row and the sound chooser");
         assert_eq!(lib.matches("Duration::from_millis(dur_ms as u64)").count(), 1, "only the vibration pattern waits out its length: no player to ask");
     }
@@ -5165,8 +5253,8 @@ mod jni_tests {
         ("about", "ABOUT_CLASS_DOTTED", "openUrl", "(Landroid/content/Context;Ljava/lang/String;)V"),
         ("about", "ABOUT_CLASS_DOTTED", "copyText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
         ("about", "ABOUT_CLASS_DOTTED", "shareText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
-        ("audio", "AUDIO_CLASS_DOTTED", "play", "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F)J"),
-        ("audio", "AUDIO_CLASS_DOTTED", "playBell", "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "play", "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F[S)J"),
+        ("audio", "AUDIO_CLASS_DOTTED", "playBell", "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F[S)J"),
         ("audio", "AUDIO_CLASS_DOTTED", "setVolume", "(Landroid/content/Context;ZI[FI[F)V"),
         ("audio", "AUDIO_CLASS_DOTTED", "alarmSteps", "(Landroid/content/Context;)[F"),
         ("audio", "AUDIO_CLASS_DOTTED", "mediaSteps", "(Landroid/content/Context;)[F"),
@@ -5226,6 +5314,7 @@ mod jni_tests {
             "Long" => "J".into(),
             "Boolean" => "Z".into(),
             "FloatArray" => "[F".into(),
+            "ShortArray" => "[S".into(),
             "LongArray" => "[J".into(),
             "IntArray" => "[I".into(),
             "Array<String>" => "[Ljava/lang/String;".into(),

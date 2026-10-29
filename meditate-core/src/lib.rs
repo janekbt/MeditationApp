@@ -62,6 +62,7 @@ pub mod goal;
 pub mod guided;
 pub mod insights;
 pub mod labels;
+pub mod lead_in;
 pub mod local_folder;
 pub mod naming;
 pub mod preset_config;

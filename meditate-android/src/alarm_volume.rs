@@ -167,7 +167,7 @@ mod tests {
         assert!(lib.contains("fn bell_levels(volume: meditate_core::bell_volume::BellVolume) -> alarm_volume::Levels {"));
         assert!(lib.contains("alarm_volume::levels(volume, !bells_as_alarm())"));
         assert!(lib.contains("lock_db().is_some_and(|db| meditate_core::settings_keys::bells_as_alarm_from_db(&db))"));
-        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume));"));
+        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())"));
         assert!(lib.contains("audio::set_volume(app, &bell_levels(volume));"));
         assert!(!lib.contains("alarm_volume::level("), "no play site skips the switch");
         assert!(!lib.contains("bell_gain"), "the global bell gain is gone");
@@ -186,13 +186,13 @@ mod tests {
     #[test]
     fn the_level_reaches_the_media_player() {
         let audio = source("src/audio.rs");
-        assert!(audio.contains("pub fn play(app: &AndroidApp, path: &str, level: &Levels) -> i64"));
-        assert!(audio.contains("\"(Landroid/content/Context;Ljava/lang/String;ZI[FI[F)J\""));
-        assert!(audio.contains("\"(Landroid/content/Context;ILjava/lang/String;ZI[FI[F)V\""));
+        assert!(audio.contains("pub fn play(app: &AndroidApp, path: &str, level: &Levels, lead: &[i16]) -> i64"));
+        assert!(audio.contains("\"(Landroid/content/Context;Ljava/lang/String;ZI[FI[F[S)J\""));
+        assert!(audio.contains("\"(Landroid/content/Context;ILjava/lang/String;ZI[FI[F[S)J\""));
         assert!(audio.contains("\"(Landroid/content/Context;ZI[FI[F)V\""));
         let kotlin = source("kotlin/MeditateAudio.kt");
         assert!(kotlin.contains(
-            "fun play(context: Context, path: String, asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray): Long"
+            "asMedia: Boolean, step: Int, gains: FloatArray, headStep: Int, headGains: FloatArray, lead: ShortArray,\n    ): Long {"
         ));
         assert!(kotlin.contains("mp.setVolume(gain, gain)"));
     }
@@ -306,8 +306,6 @@ mod tests {
         assert!(kotlin.contains("steps(context, AudioManager.STREAM_MUSIC, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, \"headphoneSteps\")"));
         let recover = &kotlin[kotlin.find("fun recoverAlarmVolume(").unwrap()..];
         assert!(recover[..recover.find("\n    }\n").unwrap()].contains("holds.forEach { restoreSaved(context.applicationContext, it) }"));
-        // No lead-in noise in this change.
-        assert!(!kotlin.contains("AudioTrack") && !kotlin.contains("lead"));
     }
 
     /// With "Play Bells as Alarm" a bell still plays as an alarm, aimed
@@ -322,7 +320,7 @@ mod tests {
         // media keeps Android's own route. A refused aim leaves the alarm
         // route and says so in the log.
         assert!(start.contains("if (hold === alarm && phones != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {\n                if (!mp.setPreferredDevice(phones)) Log.w(TAG, "));
-        assert_eq!(kotlin.matches("setPreferredDevice").count(), 1, "nothing else is aimed");
+        assert_eq!(kotlin.matches("setPreferredDevice").count(), 2, "only the alarm player and the lead-in noise are aimed");
         // Android drops the aim on a player without its file (device test 2026-10-29).
         let aim = start.find("mp.setPreferredDevice(phones)").unwrap();
         assert!(start.find("mp.setDataSource(path)").unwrap() < aim && aim < start.find("mp.prepare()").unwrap());
@@ -334,5 +332,52 @@ mod tests {
         let changed = &kotlin[kotlin.find("private fun outputChanged(").unwrap()..];
         let changed = &changed[..changed.find("\n    }\n").unwrap()];
         assert!(changed.contains("val now = route(app)"));
+    }
+
+    /// With the wake-up lead-in on, a bell to a Bluetooth output waits
+    /// for core's noise to play out on its own stream and output; a bell
+    /// due meanwhile joins it; nothing waits forever.
+    #[test]
+    fn a_bluetooth_bell_waits_for_its_lead_in() {
+        let kotlin = source("kotlin/MeditateAudio.kt");
+        let start = &kotlin[kotlin.find("private fun startLocked(").unwrap()..];
+        let start = &start[..start.find("\n    }\n").unwrap()];
+        // Only Bluetooth outputs wait, and only with samples to play.
+        assert!(start.contains("val wait = if (phones != null && phones.type in bluetooth && lead.isNotEmpty()) leadLocked(hold, phones, out, lead, mp) else null"));
+        assert!(start.contains("if (wait == null) mp.start()"));
+        assert!(start.contains("return mp to (wait ?: 0L)"));
+        // After the stream is at the bell's step, so the noise plays there.
+        assert!(start.find("applyLocked(app, hold)").unwrap() < start.find("val wait =").unwrap());
+        let lead = &kotlin[kotlin.find("private fun leadLocked(").unwrap()..];
+        let lead = &lead[..lead.find("\n    }\n").unwrap()];
+        // A lead-in running on the same output is joined.
+        assert!(lead.contains("leads.firstOrNull { it.out == out }?.let { it.waiting.add(mp); return (it.until - now).coerceAtLeast(0L) }"));
+        // Its own track: the bell's attributes, aimed at the device.
+        assert!(lead.contains(".setAudioAttributes(hold.attrs)"));
+        assert!(lead.contains("track.setPreferredDevice(phones)"));
+        assert!(lead.contains(".setTransferMode(AudioTrack.MODE_STATIC)"));
+        // The bell starts where the samples really finished playing.
+        assert!(lead.contains("track.setNotificationMarkerPosition(lead.size / 2)"));
+        assert!(lead.contains("override fun onMarkerReached(t: AudioTrack) = synchronized(lock) { wakeLocked(l) }"));
+        // And at the planned time plus a margin if the marker never comes.
+        assert!(lead.contains("main.postDelayed({ synchronized(lock) { wakeLocked(l) } }, wait + LATE_MS)"));
+        // Generous: a cold A2DP link stalls the track's head before it plays.
+        assert!(kotlin.contains("private const val LATE_MS = 5000L"));
+        assert!(source("../meditate-core/src/lead_in.rs").contains("pub const LATE_MS: u32 = 5000;"), "the same as core's");
+        // A refused aim is logged; a short write can't reach the marker.
+        assert!(lead.contains("if (!track.setPreferredDevice(phones)) Log.w(TAG, \"lead-in not aimed at ${phones.type}\")"));
+        assert!(lead.contains("check(track.write(lead, 0, lead.size) == lead.size) { \"short write\" }"));
+        // A track that won't play: the bell starts at once, only logged.
+        assert!(lead.contains("Log.w(TAG, \"lead-in failed: $it\")"));
+        let wake = &kotlin[kotlin.find("private fun wakeLocked(").unwrap()..];
+        let wake = &wake[..wake.find("\n    }\n").unwrap()];
+        assert!(wake.contains("if (!leads.remove(l)) return"));
+        assert!(wake.contains("l.waiting.forEach { if (levels.containsKey(it)) runCatching { it.start() } }"));
+        // A released bell leaves its lead-in; the last one ends the noise.
+        let release = &kotlin[kotlin.find("private fun releasePlayer(").unwrap()..];
+        let release = &release[..release.find("\n    }\n").unwrap()];
+        assert!(release.contains("leads.filter { it.waiting.remove(mp) && it.waiting.isEmpty() }.forEach { leads.remove(it); releaseTrack(it.track) }"));
+        // The preview's length includes its wait, for the pill.
+        assert!(kotlin.contains("return mp.duration.toLong().coerceAtLeast(0L) + wait"));
     }
 }

@@ -253,9 +253,62 @@ pub fn bells_as_alarm_from_db(db: &Database) -> bool {
     read_bool(db, BELLS_AS_ALARM_KEY, false)
 }
 
+/// Bluetooth wake-up lead-in (Preferences): a soft noise before each
+/// bell on a Bluetooth output wakes the device first. Off until set.
+pub const BLUETOOTH_WAKE_LEAD_IN_KEY: &str = "bluetooth_wake_lead_in";
+/// The lead-in's length in ms, 100 to 5000 in steps of 10; 100 until set.
+pub const BLUETOOTH_WAKE_LEAD_IN_MS_KEY: &str = "bluetooth_wake_lead_in_ms";
+
+pub fn bluetooth_wake_lead_in_from_db(db: &Database) -> bool {
+    read_bool(db, BLUETOOTH_WAKE_LEAD_IN_KEY, false)
+}
+
+pub fn bluetooth_wake_lead_in_ms_from_db(db: &Database) -> u32 {
+    lead_in_ms(f64::from(read_u32(db, BLUETOOTH_WAKE_LEAD_IN_MS_KEY, 100)) / 1000.0)
+}
+
+/// The lead-in a bell plays: its length in ms while it is on, else none.
+pub fn bluetooth_wake_lead_in(db: &Database) -> Option<u32> {
+    bluetooth_wake_lead_in_from_db(db).then(|| bluetooth_wake_lead_in_ms_from_db(db))
+}
+
+/// The stored length for `secs` as typed or stepped: clamped to 0.10 to
+/// 5.00 s and rounded half up to 10 ms.
+pub fn lead_in_ms(secs: f64) -> u32 {
+    // A NaN from a bad field would pass `clamp` and cast to 0.
+    let ms = if secs.is_nan() { 100 } else { (secs * 1000.0).round().clamp(f64::from(crate::lead_in::MIN_MS), f64::from(crate::lead_in::MAX_MS)) as u32 };
+    (ms + 5) / 10 * 10
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lead_in_is_off_and_a_tenth_of_a_second_until_set() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!bluetooth_wake_lead_in_from_db(&db));
+        assert_eq!(bluetooth_wake_lead_in_ms_from_db(&db), 100);
+        assert_eq!(bluetooth_wake_lead_in(&db), None, "what a bell plays: nothing while off");
+        db.set_setting("bluetooth_wake_lead_in", "true").unwrap();
+        assert!(bluetooth_wake_lead_in_from_db(&db));
+        assert_eq!(bluetooth_wake_lead_in(&db), Some(100));
+        assert_eq!(lead_in_ms(1.234), 1230);
+        assert_eq!(lead_in_ms(1.235), 1240);
+        assert_eq!(lead_in_ms(0.05), 100);
+        assert_eq!(lead_in_ms(7.0), 5000);
+        assert_eq!(lead_in_ms(f64::NAN), 100);
+        db.set_setting("bluetooth_wake_lead_in_ms", "1230").unwrap();
+        assert_eq!(bluetooth_wake_lead_in_ms_from_db(&db), 1230);
+        db.set_setting("bluetooth_wake_lead_in_ms", "9000").unwrap();
+        assert_eq!(bluetooth_wake_lead_in_ms_from_db(&db), 5000, "a synced value out of range");
+        db.set_setting("bluetooth_wake_lead_in_ms", "abc").unwrap();
+        assert_eq!(bluetooth_wake_lead_in_ms_from_db(&db), 100);
+        // The first attempt's key, maybe still in synced data, is not read.
+        let fresh = Database::open_in_memory().unwrap();
+        fresh.set_setting("bluetooth_lead_in", "true").unwrap();
+        assert!(!bluetooth_wake_lead_in_from_db(&fresh));
+    }
 
     #[test]
     fn bells_play_as_an_alarm_once_turned_on() {

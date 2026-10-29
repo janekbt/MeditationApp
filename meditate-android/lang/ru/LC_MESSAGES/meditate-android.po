@@ -1209,3 +1209,22 @@ msgstr "Если колокола у тебя не воспроизводятс�
 
 msgid "Play Bells as Alarm"
 msgstr "Воспроизводить колокола как будильник"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Предварительное пробуждение Bluetooth"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "Устройства Bluetooth засыпают после 30–60 секунд тишины. Просыпаясь, они глотают начало колокола, а короткие колокола целиком. Предварительное пробуждение будит их заранее тихим шумом; каждому устройству нужно своё время. Перед каждой проверкой подождите 30–60 секунд:\nНет колокола: увеличьте длительность.\nШум, потом колокол: уменьшите длительность.\nТолько колокол: всё верно."
+
+msgid "Test"
+msgstr "Проверка"
+
+msgid "Length (Seconds)"
+msgstr "Длительность (секунды)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"

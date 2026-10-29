@@ -214,6 +214,9 @@ pub struct TimerView {
     /// cancel any pattern still playing — so newest-wins overlap
     /// behaviour is automatic.
     current_vibration: RefCell<Option<crate::vibration::PatternPlayback>>,
+    /// Bumped by every stop of the signals: a vibration still waiting
+    /// for its bell's lead-in is dropped.
+    signal_gen: Cell<u64>,
     /// Cookie returned by `gtk::Application::inhibit` while a session
     /// is running and the active mode's keep-screen-awake toggle is
     /// on. 0 means "no inhibit held". Released on every `timer-stopped`
@@ -4097,6 +4100,7 @@ impl TimerView {
     /// alive). The decision *when* to stop signals belongs to
     /// Session — see the variant's doc-comment in core.
     fn stop_active_signals(&self) {
+        self.signal_gen.set(self.signal_gen.get().wrapping_add(1));
         crate::sound::stop_all();
         // Dropping the handle cancels the pattern.
         self.current_vibration.borrow_mut().take();
@@ -4144,24 +4148,19 @@ impl TimerView {
     ) {
         let app = app_cache.get_or_insert_with(|| self.get_app());
         let Some(app) = app.as_ref() else { return; };
-        if route.signal_mode.includes_sound() {
+        let wait = if route.signal_mode.includes_sound() {
             match route.channel {
-                FireChannel::Interval => {
-                    crate::sound::play_interval_sound(route.sound_uuid, route.volume, app);
-                }
-                FireChannel::Starting => {
-                    crate::sound::play_starting_uuid(route.sound_uuid, route.volume, app);
-                }
-                FireChannel::End => {
-                    crate::sound::play_end_bell_uuid(route.sound_uuid, route.volume, app);
-                }
+                FireChannel::Interval => crate::sound::play_interval_sound(route.sound_uuid, route.volume, app),
+                FireChannel::Starting => crate::sound::play_starting_uuid(route.sound_uuid, route.volume, app),
+                FireChannel::End => crate::sound::play_end_bell_uuid(route.sound_uuid, route.volume, app),
             }
-        }
-        let handle = if route.signal_mode.includes_vibration() && app.has_haptic() {
+        } else {
+            std::time::Duration::ZERO
+        };
+        let pattern = if route.signal_mode.includes_vibration() && app.has_haptic() {
             app.with_db(|db| db.find_vibration_pattern_by_uuid(route.vibration_pattern_uuid))
                 .and_then(std::result::Result::ok)
                 .flatten()
-                .map(|pattern| crate::vibration::PatternPlayback::play(app, &pattern))
         } else {
             None
         };
@@ -4170,10 +4169,29 @@ impl TimerView {
             &format!(
                 "signal_mode={} fired={}",
                 route.signal_mode.as_db_str(),
-                handle.is_some(),
+                pattern.is_some(),
             ),
         );
-        crate::vibration::replace_playback(&mut self.current_vibration.borrow_mut(), handle);
+        match pattern {
+            // With a lead-in the sound starts late; the buzz waits for it.
+            Some(pattern) if !wait.is_zero() => {
+                let generation = self.signal_gen.get();
+                let this = self.obj().downgrade();
+                let app = app.clone();
+                glib::timeout_add_local_once(wait, move || {
+                    let Some(this) = this.upgrade() else { return };
+                    if this.imp().signal_gen.get() != generation {
+                        return;
+                    }
+                    let handle = crate::vibration::PatternPlayback::play(&app, &pattern);
+                    crate::vibration::replace_playback(&mut this.imp().current_vibration.borrow_mut(), Some(handle));
+                });
+            }
+            pattern => {
+                let handle = pattern.map(|pattern| crate::vibration::PatternPlayback::play(app, &pattern));
+                crate::vibration::replace_playback(&mut self.current_vibration.borrow_mut(), handle);
+            }
+        }
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {

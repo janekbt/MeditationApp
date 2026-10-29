@@ -1180,3 +1180,22 @@ msgstr "Se hai problemi con campane che non suonano, puoi attivare questa opzion
 
 msgid "Play Bells as Alarm"
 msgstr "Riproduci le campane come sveglia"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Preavviso di risveglio per Bluetooth"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "I dispositivi Bluetooth si addormentano dopo 30-60 secondi di silenzio. Al risveglio perdono l'inizio di una campana, e le campane brevi del tutto. Il preavviso li sveglia prima con un leggero fruscio; ogni dispositivo richiede un tempo diverso. Attendi 30-60 secondi prima di ogni prova:\nNessuna campana: aumenta la durata.\nFruscio, poi campana: riduci la durata.\nSolo la campana: giusto."
+
+msgid "Test"
+msgstr "Prova"
+
+msgid "Length (Seconds)"
+msgstr "Durata (secondi)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"

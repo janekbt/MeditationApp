@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
-use gtk::prelude::*;
+use std::time::Duration;
+use gtk::{glib, prelude::*};
 
 use crate::application::MeditateApplication;
 use crate::db::BellSound;
@@ -35,6 +36,17 @@ thread_local! {
     /// shouldn't spam toasts; one notification per process tells the
     /// user "something's wrong with audio" without repeated yells.
     static AUDIO_ERROR_TOASTED: Cell<bool> = const { Cell::new(false) };
+    /// The Bluetooth wake-up lead-in playing now, with the bells waiting
+    /// for its end.
+    static LEAD: RefCell<Option<Lead>> = const { RefCell::new(None) };
+}
+
+/// A lead-in noise and the bells that start when it has played out.
+struct Lead {
+    noise: gtk::MediaFile,
+    waiting: Vec<gtk::MediaFile>,
+    /// When its bells are due (`glib::monotonic_time`, µs).
+    until: i64,
 }
 
 /// Play the bell `uuid` once at `volume` in the preview slot — what a
@@ -57,7 +69,7 @@ pub fn restart_preview(media: &gtk::MediaFile, volume: BellVolume) -> bool {
     }
     media.set_volume(volume.relative_gain());
     media.seek(0);
-    media.set_playing(true);
+    start(media);
     true
 }
 
@@ -100,11 +112,12 @@ pub fn stop_all() {
             m.set_playing(false);
         }
     });
-    PREVIEW_MEDIA.with(|cell| {
-        if let Some(m) = cell.replace(None) {
-            m.set_playing(false);
+    LEAD.with(|cell| {
+        if let Some(lead) = cell.take() {
+            lead.noise.set_playing(false);
         }
     });
+    stop_preview();
 }
 
 /// Play a bell-sound row as a preview. Used by the bell-sound
@@ -124,9 +137,11 @@ pub fn play_preview(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
     PREVIEW_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
             old.set_playing(false);
+            // One still waiting for its lead-in never played; its row hears it.
+            old.notify("playing");
         }
     });
-    media.set_playing(true);
+    start(&media);
     media
 }
 
@@ -166,9 +181,19 @@ pub fn play_preview_for_guided_file(file: &crate::db::GuidedFile) -> gtk::MediaF
 /// Stop the active preview, if any. Called by the chooser page
 /// when it pops so a preview doesn't outlast the user's choice.
 pub fn stop_preview() {
-    PREVIEW_MEDIA.with(|cell| {
-        if let Some(m) = cell.replace(None) {
-            m.set_playing(false);
+    let Some(m) = PREVIEW_MEDIA.with(|cell| cell.replace(None)) else { return };
+    m.set_playing(false);
+    // A preview stopped while it waits never played; its button still hears it.
+    m.notify("playing");
+    // A session bell waiting on the same noise keeps it.
+    LEAD.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let idle = cell.as_mut().is_some_and(|lead| {
+            lead.waiting.retain(|w| w != &m);
+            lead.waiting.is_empty()
+        });
+        if let Some(lead) = idle.then(|| cell.take()).flatten() {
+            lead.noise.set_playing(false);
         }
     });
 }
@@ -243,8 +268,7 @@ fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
 }
 
 fn surface_audio_error_toast() {
-    let Some(app) = gtk::gio::Application::default() else { return; };
-    let Ok(app) = app.downcast::<MeditateApplication>() else { return; };
+    let Some(app) = app() else { return; };
     let Some(win) = app
         .active_window()
         .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
@@ -284,55 +308,25 @@ pub fn preload_end_bell(app: &MeditateApplication, mode: meditate_core::SessionM
     });
 }
 
-/// Play the starting bell at session start. No-op if the master
-/// toggle is off or the configured uuid doesn't resolve. Uses
-/// STARTING_MEDIA so the existing end-sound preload in CURRENT_MEDIA
-/// isn't disturbed.
-pub fn play_starting_sound(app: &MeditateApplication) {
-    let active = app
-        .with_db(|db| meditate_core::read_bool(db.core(), "starting_bell_active", false))
-        .unwrap_or(false);
-    if !active {
-        return;
-    }
-    let uuid = app
-        .with_db(|db| db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-        .and_then(std::result::Result::ok)
-        .unwrap_or_default();
-    let Some(sound) = lookup_bell_sound_by_uuid(app, &uuid) else {
-        return;
-    };
-    let volume = app
-        .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::Starting))
-        .unwrap_or_default();
-    let media = media_for_bell_sound(&sound, volume);
-    STARTING_MEDIA.with(|cell| {
-        if let Some(old) = cell.replace(Some(media.clone())) {
-            old.set_playing(false);
-        }
-    });
-    media.set_playing(true);
-}
-
 /// Play the end bell by an explicit `uuid` — the post-migration
 /// path where the Session's `FireEndBell` effect carries the
 /// resolved sound uuid. Loads on the spot (no pre-warm reuse;
 /// that's reserved for the `play_end_bell` entry the gtk app
 /// preloads against the user's currently-configured uuid).
-pub fn play_end_bell_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
+pub fn play_end_bell_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) -> Duration {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
-        return;
+        return Duration::ZERO;
     };
     let media = media_for_bell_sound(&sound, volume);
-    swap_and_play(media);
+    swap_and_play(media)
 }
 
 /// Play the starting bell by an explicit `uuid`. Mirror of
 /// `play_end_bell_uuid` but routed through `STARTING_MEDIA` so the
 /// pre-warmed end-bell pipeline in `CURRENT_MEDIA` isn't disturbed.
-pub fn play_starting_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
+pub fn play_starting_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) -> Duration {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
-        return;
+        return Duration::ZERO;
     };
     let media = media_for_bell_sound(&sound, volume);
     STARTING_MEDIA.with(|cell| {
@@ -340,7 +334,7 @@ pub fn play_starting_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplicat
             old.set_playing(false);
         }
     });
-    media.set_playing(true);
+    start(&media)
 }
 
 /// Play a bell during the running session — interval/fixed bells
@@ -350,9 +344,9 @@ pub fn play_starting_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplicat
 /// via notify::ended once playback finishes. No-op if the uuid
 /// doesn't resolve (e.g., a deleted custom that's still referenced
 /// by a stale active_bells snapshot).
-pub fn play_interval_sound(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
+pub fn play_interval_sound(uuid: &str, volume: BellVolume, app: &MeditateApplication) -> Duration {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
-        return;
+        return Duration::ZERO;
     };
     let media = media_for_bell_sound(&sound, volume);
 
@@ -364,19 +358,155 @@ pub fn play_interval_sound(uuid: &str, volume: BellVolume, app: &MeditateApplica
         }
     });
     INTERVAL_MEDIA.with(|cell| cell.borrow_mut().push(media.clone()));
-    media.set_playing(true);
+    start(&media)
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 
-fn swap_and_play(media: gtk::MediaFile) {
+fn swap_and_play(media: gtk::MediaFile) -> Duration {
     CURRENT_MEDIA.with(|cell| {
         let old = cell.replace(Some(media.clone()));
         if let Some(m) = old {
             m.set_playing(false);
         }
     });
-    media.set_playing(true);
+    start(&media)
+}
+
+/// Start `media`, after the wake-up lead-in when one is due. Returns
+/// how long it waits, for its vibration.
+fn start(media: &gtk::MediaFile) -> Duration {
+    // A preview still ringing (restarted by its slider) waits silent too.
+    media.set_playing(false);
+    lead_in(media).unwrap_or_else(|| {
+        media.set_playing(true);
+        Duration::ZERO
+    })
+}
+
+fn app() -> Option<MeditateApplication> {
+    gtk::gio::Application::default().and_then(|a| a.downcast::<MeditateApplication>().ok())
+}
+
+/// Hold `media` back for the lead-in when it is on and the default
+/// output is Bluetooth: join the one running, or play core's noise.
+/// The wait; none when it starts at once (off, another output, or the
+/// noise can't play: only logged, the bell rings without it).
+fn lead_in(media: &gtk::MediaFile) -> Option<Duration> {
+    let app = app()?;
+    let ms = app.with_db(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(db.core())).flatten()?;
+    if !default_output_is_bluetooth() {
+        return None;
+    }
+    let now = glib::monotonic_time();
+    let left = |until: i64| Duration::from_micros(u64::try_from(until - now).unwrap_or(0));
+    let joined = LEAD.with(|cell| {
+        cell.borrow_mut().as_mut().map(|lead| {
+            lead.waiting.push(media.clone());
+            left(lead.until)
+        })
+    });
+    if joined.is_some() {
+        return joined;
+    }
+    // GTK's player takes files, not memory: one file per length; the
+    // version changes with `lead_in::samples`.
+    let path = glib::user_cache_dir().join("meditate").join(format!("lead-in-v4-{ms}.wav"));
+    if !path.exists() {
+        // Written aside and moved in, so a cut-off write is never reused.
+        let part = path.with_extension("part");
+        let written = std::fs::create_dir_all(path.parent().unwrap_or(&path))
+            .and_then(|()| std::fs::write(&part, meditate_core::lead_in::wav(&meditate_core::lead_in::samples(ms, meditate_core::lead_in::RATE), meditate_core::lead_in::RATE)))
+            .and_then(|()| std::fs::rename(&part, &path));
+        if let Err(e) = written {
+            meditate_core::log("sound.lead_in", &format!("writing {} failed: {e}", path.display()));
+            return None;
+        }
+        forget_other_lead_ins(&path);
+    }
+    let noise = gtk::MediaFile::for_file(&gtk::gio::File::for_path(&path));
+    noise.connect_error_notify(|m| {
+        if let Some(err) = m.error() {
+            meditate_core::log("sound.lead_in", &format!("noise failed: {err}"));
+            wake(m);
+        }
+    });
+    // The bell starts where the noise and its silence ended, or late.
+    noise.connect_ended_notify(|m| if m.is_ended() { wake(m); });
+    let wait = Duration::from_millis(u64::from(ms + meditate_core::lead_in::GAP_MS));
+    let late = noise.clone();
+    glib::timeout_add_local_once(wait + Duration::from_millis(u64::from(meditate_core::lead_in::LATE_MS)), move || wake(&late));
+    noise.set_playing(true);
+    let until = now + i64::try_from(wait.as_micros()).unwrap_or(i64::MAX);
+    LEAD.with(|cell| cell.replace(Some(Lead { noise, waiting: vec![media.clone()], until })));
+    Some(wait)
+}
+
+/// Delete the cached noise files of other lengths and older versions:
+/// each length tried while tuning would otherwise stay, up to 1 MB each.
+fn forget_other_lead_ins(keep: &std::path::Path) {
+    let Some(dir) = keep.parent().and_then(|d| std::fs::read_dir(d).ok()) else { return };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        if path != keep && name.to_string_lossy().starts_with("lead-in-") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// The lead-in `noise` played out (or ran late, or failed): its bells
+/// start. A noise stopped or replaced meanwhile wakes nothing.
+fn wake(noise: &gtk::MediaFile) {
+    let Some(lead) = LEAD.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.as_ref().is_some_and(|lead| &lead.noise == noise) { cell.take() } else { None }
+    }) else {
+        return;
+    };
+    lead.noise.set_playing(false);
+    for m in &lead.waiting {
+        // Stopped or replaced meanwhile: stays silent.
+        if held(m) {
+            m.set_playing(true);
+        }
+    }
+}
+
+/// Whether `media` is still in one of the slots.
+fn held(media: &gtk::MediaFile) -> bool {
+    let is = |cell: &RefCell<Option<gtk::MediaFile>>| cell.borrow().as_ref() == Some(media);
+    PREVIEW_MEDIA.with(is)
+        || CURRENT_MEDIA.with(is)
+        || STARTING_MEDIA.with(is)
+        || INTERVAL_MEDIA.with(|cell| cell.borrow().contains(media))
+}
+
+/// Whether the default sound output is Bluetooth, asked from GStreamer
+/// each time so a changed output counts at once.
+fn default_output_is_bluetooth() -> bool {
+    use gstreamer::prelude::{DeviceExt, DeviceMonitorExt, DeviceMonitorExtManual};
+    if let Err(e) = gstreamer::init() {
+        meditate_core::log("sound.lead_in", &format!("gstreamer init failed: {e}"));
+        return false;
+    }
+    let monitor = gstreamer::DeviceMonitor::new();
+    monitor.add_filter(Some("Audio/Sink"), None);
+    if let Err(e) = monitor.start() {
+        meditate_core::log("sound.lead_in", &format!("device monitor failed: {e}"));
+        return false;
+    }
+    let default = monitor
+        .devices()
+        .iter()
+        .filter_map(|d| d.properties())
+        .find(|p| p.get::<bool>("is-default").unwrap_or(false));
+    monitor.stop();
+    let Some(p) = default else {
+        meditate_core::log("sound.lead_in", "no default sink found");
+        return false;
+    };
+    meditate_core::lead_in::is_bluetooth_sink(p.get::<&str>("device.api").ok(), p.get::<&str>("node.name").ok())
 }
 
 #[cfg(test)]
@@ -404,7 +534,60 @@ mod tests {
         assert!(body.contains(".error().is_some()"), "a failed player is rebuilt");
         assert!(body.find("return false").unwrap() < body.find("seek(0)").unwrap());
         assert!(body.contains("PREVIEW_MEDIA"), "only the player still previewing");
-        assert!(body.find("seek(0)").unwrap() < body.find("set_playing(true)").unwrap());
+        assert!(body.find("seek(0)").unwrap() < body.find("start(media)").unwrap());
+    }
+
+    /// With the wake-up lead-in on and a Bluetooth default output, a
+    /// bell waits for core's noise to reach its end of stream (its
+    /// silence included); a bell due meanwhile joins it; Stop ends both;
+    /// the vibration waits as long as the sound.
+    #[test]
+    fn the_lead_in_plays_before_a_bluetooth_bell() {
+        let src = source("src/sound.rs");
+        let start = fn_body(&src, "start");
+        assert!(start.contains("lead_in(media).unwrap_or_else(|| {\n        media.set_playing(true);"));
+        // A preview still ringing (restarted by its slider) waits silent too.
+        assert!(start.find("media.set_playing(false);").unwrap() < start.find("lead_in(media)").unwrap());
+        let lead = fn_body(&src, "lead_in");
+        assert!(lead.contains("let ms = app.with_db(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(db.core())).flatten()?;"));
+        assert!(lead.contains("if !default_output_is_bluetooth() {"));
+        // Only the current length's file stays in the cache.
+        assert!(lead.contains("forget_other_lead_ins(&path);"));
+        assert!(lead.contains("lead.waiting.push(media.clone());"), "a running lead-in is joined");
+        assert!(lead.contains("meditate_core::lead_in::wav(&meditate_core::lead_in::samples(ms, meditate_core::lead_in::RATE), meditate_core::lead_in::RATE)"));
+        assert!(lead.contains("format!(\"lead-in-v4-{ms}.wav\")"));
+        // The bell starts where the noise and its silence ended, or late.
+        assert!(lead.contains("noise.connect_ended_notify(|m| if m.is_ended() { wake(m); });"));
+        assert!(lead.contains("glib::timeout_add_local_once(wait + Duration::from_millis(u64::from(meditate_core::lead_in::LATE_MS)), move || wake(&late));"));
+        // A late timer of an old noise never wakes a newer one.
+        assert!(fn_body(&src, "wake").contains("if cell.as_ref().is_some_and(|lead| &lead.noise == noise) { cell.take() } else { None }"));
+        assert!(fn_body(&src, "wake").contains("if held(m) {\n            m.set_playing(true);"));
+        // Stop ends the noise; closing a chooser drops only its preview.
+        assert!(fn_body(&src, "stop_all").contains("if let Some(lead) = cell.take() {"));
+        let stop = fn_body(&src, "stop_preview");
+        assert!(stop.contains("lead.waiting.retain(|w| w != &m);"));
+        // A preview stopped while it waits never played; its button still hears it.
+        assert!(stop.contains("m.notify(\"playing\");"));
+        assert!(fn_body(&src, "play_preview").contains("old.notify(\"playing\");"), "a replaced waiting preview too");
+        let bt = fn_body(&src, "default_output_is_bluetooth");
+        assert!(bt.contains(".find(|p| p.get::<bool>(\"is-default\").unwrap_or(false))"));
+        assert!(bt.contains("meditate_core::lead_in::is_bluetooth_sink("));
+        // Not finding the output is logged, never silent.
+        assert!(bt.contains("meditate_core::log(\"sound.lead_in\", \"no default sink found\");"));
+        // Every bell returns its wait, and the vibration waits for it.
+        for name in ["play_starting_uuid", "play_end_bell_uuid", "play_interval_sound"] {
+            assert!(fn_body(&src, name).contains("-> Duration {"), "{name}");
+        }
+        let fire = source("src/timer/imp.rs");
+        let fire = &fire[fire.find("fn dispatch_fire_route(").unwrap()..];
+        let fire = &fire[..fire.find("\n    }\n").unwrap()];
+        assert!(fire.contains("let wait = if route.signal_mode.includes_sound() {"));
+        assert!(fire.contains("glib::timeout_add_local_once(wait, move || {"));
+        // A Stop meanwhile drops the waiting buzz.
+        assert!(fire.contains("if this.imp().signal_gen.get() != generation {"));
+        let stop = source("src/timer/imp.rs");
+        let stop = &stop[stop.find("fn stop_active_signals(&self) {").unwrap()..];
+        assert!(stop[..stop.find("\n    }\n").unwrap()].contains("self.signal_gen.set(self.signal_gen.get().wrapping_add(1));"));
     }
 
     /// Every bundled bell this build seeds has a built-in file, found by
@@ -480,7 +663,8 @@ mod tests {
             })
             .collect();
         assert!(
-            creators.iter().all(|f| ["media_for_bell_sound", "play_preview_for_guided_file"].contains(f)),
+            // The lead-in noise plays at its own fixed level, not a bell's.
+            creators.iter().all(|f| ["media_for_bell_sound", "play_preview_for_guided_file", "lead_in"].contains(f)),
             "MediaFile created outside media_for_bell_sound: {creators:?}",
         );
         assert!(

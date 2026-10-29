@@ -1151,3 +1151,22 @@ msgstr "如果遇到铃声不播放的问题，可以开启此选项。铃声将
 
 msgid "Play Bells as Alarm"
 msgstr "将铃声作为闹钟播放"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{}.{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "蓝牙唤醒预备"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "蓝牙设备在静音 30 到 60 秒后会进入休眠。唤醒时会吞掉铃声的开头，短铃声甚至完全听不到。唤醒预备会先用轻柔的噪声唤醒设备；每台设备所需时间不同。每次测试前请等待 30 到 60 秒：\n没有铃声：增加时长。\n先有噪声再有铃声：缩短时长。\n只有铃声：正好。"
+
+msgid "Test"
+msgstr "测试"
+
+msgid "Length (Seconds)"
+msgstr "时长（秒）"
+
+msgid "Bluetooth"
+msgstr "蓝牙"

@@ -1180,3 +1180,22 @@ msgstr "Als je problemen hebt met bellen die niet afspelen, kun je deze optie aa
 
 msgid "Play Bells as Alarm"
 msgstr "Bellen als alarm afspelen"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Wekaanloop voor Bluetooth"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "Bluetooth-apparaten vallen na 30 tot 60 seconden stilte in slaap. Bij het wakker worden slikken ze het begin van een bel in, korte bellen zelfs helemaal. De wekaanloop wekt ze vooraf met een zacht geruis; elk apparaat heeft daar een andere tijd voor nodig. Wacht voor elke test 30 tot 60 seconden:\nGeen bel: lengte verhogen.\nGeruis, dan bel: lengte verlagen.\nAlleen de bel: klopt."
+
+msgid "Test"
+msgstr "Test"
+
+msgid "Length (Seconds)"
+msgstr "Lengte (seconden)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"

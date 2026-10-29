@@ -1180,3 +1180,22 @@ msgstr "Se você tem problemas com sinos que não tocam, pode ativar esta opçã
 
 msgid "Play Bells as Alarm"
 msgstr "Tocar sinos como alarme"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Pré-despertar para Bluetooth"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "Dispositivos Bluetooth adormecem após 30 a 60 segundos de silêncio. Ao despertar, engolem o início de um sino, e sinos curtos por inteiro. O pré-despertar os acorda antes com um ruído suave; cada dispositivo precisa de um tempo diferente. Espere de 30 a 60 segundos antes de cada teste:\nSem sino: aumente a duração.\nRuído, depois sino: diminua a duração.\nSó o sino: certo."
+
+msgid "Test"
+msgstr "Teste"
+
+msgid "Length (Seconds)"
+msgstr "Duração (segundos)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"

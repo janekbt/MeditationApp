@@ -353,6 +353,12 @@ fn notify_if_complete(state: &app::AppState, effects: &[meditate_core::session::
     service::notify_complete(app, &meditate_core::format::format_time(Duration::from_secs(secs)));
 }
 
+thread_local! {
+    /// Bumped by every StopActiveSignals: a vibration still waiting for
+    /// its bell's lead-in is dropped.
+    static SIGNAL_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Run portable core `Session` effects through the Android native
 /// layer — the direct analogue of GTK's
 /// `dispatch_session_effects` / `dispatch_fire_route`.
@@ -374,6 +380,7 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     let Some(app) = android_app() else { return; };
     for effect in effects {
         if matches!(effect, Effect::StopActiveSignals) {
+            SIGNAL_GEN.set(SIGNAL_GEN.get().wrapping_add(1));
             audio::stop(app);
             haptics::cancel(app);
         }
@@ -383,12 +390,14 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             guided::stop(app);
         }
         let Some(route) = effect.fire_route() else { continue; };
-        if route.signal_mode.includes_sound() {
+        let wait = if route.signal_mode.includes_sound() {
             let path = bell_sound_path(route.sound_uuid);
             // Each bell rings on its core channel's own slot, so it
             // doesn't cut off the others (GTK sound.rs).
-            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume));
-        }
+            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())
+        } else {
+            0
+        };
         if route.signal_mode.includes_vibration() {
             if let Some(db) = lock_db() {
                 if let Ok(Some(p)) =
@@ -399,8 +408,15 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
                 {
                     let env =
                         meditate_core::vibration::build_master_envelope(&p);
-                    haptics::cancel(app);
-                    haptics::vibrate_waveform(app, &env);
+                    // With a lead-in the sound starts late; the buzz waits for it.
+                    let generation = SIGNAL_GEN.get();
+                    slint::Timer::single_shot(Duration::from_millis(wait as u64), move || {
+                        if SIGNAL_GEN.get() != generation {
+                            return;
+                        }
+                        haptics::cancel(app);
+                        haptics::vibrate_waveform(app, &env);
+                    });
                 }
             }
         }
@@ -6379,6 +6395,41 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Preferences: the Bluetooth wake-up lead-in, read as each bell
+    // starts; its length is stepped in hundredths and stored in ms.
+    ui.global::<Hundredths>().on_parse(|text| super::app::parse_hundredths(&text).unwrap_or(-1));
+    {
+        let weak = ui.as_weak();
+        ui.on_lead_in_toggled(move |v| {
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
+                meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_KEY,
+                meditate_core::settings_keys::format_bool(v),
+            );
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_lead_in_length_changed(move |hundredths| {
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
+                meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_MS_KEY,
+                &meditate_core::settings_keys::lead_in_ms(f64::from(hundredths) / 100.0).to_string(),
+            );
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_lead_in_test(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            if ui.get_volume_previewing() == "lead-in-test" {
+                stop_volume_preview(&ui);
+            } else {
+                play_volume_preview(&ui, "lead-in-test", meditate_core::seeds::BUNDLED_WOODBLOCK_UUID, meditate_core::bell_volume::BellVolume::default());
+            }
+        });
+    }
+
     // Preferences: bells as an alarm (#10), read as each bell starts.
     {
         let weak = ui.as_weak();
@@ -7490,7 +7541,7 @@ fn build_ui() -> MainWindow {
                             let path = bell_sound_path(&id);
                             // At the volume of the bell being chosen for.
                             let volume = chooser_bell_volume(&ui, bell_chooser_target.get());
-                            dur_ms = audio::play(app, &path, &bell_levels(volume));
+                            dur_ms = audio::play(app, &path, &bell_levels(volume), &lead_in());
                         }
                         // Nothing plays (its file hasn't arrived, say):
                         // no silent Stop.
@@ -8740,6 +8791,7 @@ fn build_ui() -> MainWindow {
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
                 ui.set_prefs_bells_as_alarm(bells_as_alarm());
+                load_lead_in(&ui);
                 if let Some(app) = android_app() {
                     ui.set_about_version(
                         about::version_name(app).into(),
@@ -9844,6 +9896,7 @@ fn reload_setup(ui: &MainWindow) {
     refresh_boxbreath_cues(ui);
     ui.set_prefs_accent(theme::accent_ring(&read_global_setting("android_accent", ""), ui.get_accent_has_system()) as i32);
     ui.set_prefs_bells_as_alarm(bells_as_alarm());
+    load_lead_in(ui);
     // Slint runs the Switches' change handlers after this timer, in the
     // same turn; clear the guard only on the next one.
     // Without a loop to post to, clearing it now beats blocking every
@@ -9998,6 +10051,20 @@ fn bell_levels(volume: meditate_core::bell_volume::BellVolume) -> alarm_volume::
     alarm_volume::levels(volume, !bells_as_alarm())
 }
 
+/// The wake-up lead-in's samples while it is on in Preferences, else
+/// none; read as each bell starts.
+fn lead_in() -> Vec<i16> {
+    let ms = lock_db().and_then(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(&db));
+    ms.map_or_else(Vec::new, |ms| meditate_core::lead_in::samples(ms, meditate_core::lead_in::RATE))
+}
+
+/// Show the stored lead-in switch and length in Preferences.
+fn load_lead_in(ui: &MainWindow) {
+    let Some(db) = lock_db() else { return };
+    ui.set_prefs_lead_in_on(meditate_core::settings_keys::bluetooth_wake_lead_in_from_db(&db));
+    ui.set_prefs_lead_in_hundredths((meditate_core::settings_keys::bluetooth_wake_lead_in_ms_from_db(&db) / 10) as i32);
+}
+
 /// "Play Bells as Alarm" in Preferences; off without a database.
 fn bells_as_alarm() -> bool {
     lock_db().is_some_and(|db| meditate_core::settings_keys::bells_as_alarm_from_db(&db))
@@ -10013,7 +10080,7 @@ fn play_volume_preview(
 ) {
     let Some(app) = android_app() else { return; };
     audio::stop(app);
-    let dur_ms = audio::play(app, &bell_sound_path(sound), &bell_levels(volume));
+    let dur_ms = audio::play(app, &bell_sound_path(sound), &bell_levels(volume), &lead_in());
     let generation = VOLUME_PREVIEW_GEN.with(|g| {
         g.set(g.get() + 1);
         g.get()
@@ -10032,17 +10099,18 @@ fn play_volume_preview(
 }
 
 /// Run `done` once the preview has ended: on its own, or cut short by
-/// the player (headphones plugged in or pulled). Asked every 250 ms, and
-/// done at the latest after the sound's `left_ms`.
+/// the player (headphones plugged in or pulled). Asked every 250 ms
+/// until it stops, also past its length (a lead-in that ran late); the
+/// sound's `left_ms` bounds it only when the player can't be asked.
 fn when_preview_ends(left_ms: i64, done: impl FnOnce() + 'static) {
     const POLL_MS: i64 = 250;
-    let wait = left_ms.clamp(0, POLL_MS);
+    let wait = if left_ms > 0 { left_ms.min(POLL_MS) } else { POLL_MS };
     slint::Timer::single_shot(Duration::from_millis(wait as u64), move || {
         let left = left_ms - wait;
-        if left > 0 && android_app().is_some_and(audio::preview_playing) {
-            when_preview_ends(left, done);
-        } else {
-            done();
+        match android_app().and_then(audio::preview_playing) {
+            Some(true) => when_preview_ends(left, done),
+            None if left > 0 => when_preview_ends(left, done),
+            _ => done(),
         }
     });
 }

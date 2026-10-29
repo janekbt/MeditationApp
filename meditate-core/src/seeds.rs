@@ -23,6 +23,8 @@ use crate::preset_config::{
 // constant rather than copy the literal.
 
 pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
+/// The woodblock, the shortest bell (0.3 s): the lead-in's Test plays it.
+pub const BUNDLED_WOODBLOCK_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c000b";
 pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
 pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
 

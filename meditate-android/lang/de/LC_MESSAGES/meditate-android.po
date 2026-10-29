@@ -1180,3 +1180,22 @@ msgstr "Wenn du Probleme mit Glocken hast, die nicht abgespielt werden, kannst d
 
 msgid "Play Bells as Alarm"
 msgstr "Glocken als Alarm abspielen"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Aufweckvorlauf für Bluetooth-Geräte"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "Bluetooth-Geräte schlafen nach 30 bis 60 Sekunden Stille ein. Beim Aufwachen verschlucken sie den Anfang einer Glocke, kurze Glocken auch ganz. Der Vorlauf weckt sie vorher mit einem leisen Rauschen; jedes Gerät braucht dafür unterschiedlich lange. Vor jedem Test 30 bis 60 Sekunden warten:\nKeine Glocke: Dauer erhöhen.\nRauschen, dann Glocke: Dauer verringern.\nNur die Glocke: passt."
+
+msgid "Test"
+msgstr "Test"
+
+msgid "Length (Seconds)"
+msgstr "Dauer (Sekunden)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"

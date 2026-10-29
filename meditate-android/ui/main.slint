@@ -41,11 +41,21 @@ export { MaterialWindowAdapter, DatePickerAdapter, MaterialPalette, MaterialSche
 // pipeline as the inline @tr() literals. The functions are the
 // "typed keys": Rust passes data, the catalogue owns wording +
 // plural forms. Grouped by surface.
+// Typed seconds into hundredths ("1,25" or "1.25"), -1 when not a
+// number (app::parse_hundredths).
+export global Hundredths {
+    pure callback parse(string) -> int;
+}
+
 export global Tr {
     // Snackbar / toasts
     public pure function applied(name: string) -> string { return @tr("'{}' applied", name); }
     public pure function deleted(name: string) -> string { return @tr("'{}' deleted", name); }
     public pure function preset-overridden() -> string { return @tr("Preset overridden"); }
+    // A length in hundredths of a second, "1.25" (StepperRow `hundredths`).
+    public pure function hundredths(value: int) -> string {
+        return @tr("decimal number" => "{}.{}", Math.floor(value / 100), (Math.mod(value, 100) < 10 ? "0" : "") + Math.mod(value, 100));
+    }
     // Box Breath running phase label
     public pure function breathe-in() -> string { return @tr("Breathe in"); }
     public pure function hold() -> string { return @tr("Hold"); }
@@ -1472,6 +1482,10 @@ component StepperRow inherits Rectangle {
     // the new unit.
     in property <bool> has-unit;
     in-out property <int> unit;
+    // The value is hundredths, shown and typed as seconds with two decimals.
+    in property <bool> hundredths;
+    // The user changed the value (− / + or typed); not an outside set.
+    callback edited();
 
     public function commit() {
         root.commit-text();
@@ -1483,15 +1497,27 @@ component StepperRow inherits Rectangle {
     public function release() {
         input.clear-focus();
     }
+    pure function shown() -> string {
+        return root.hundredths ? Tr.hundredths(root.value) : "" + root.value;
+    }
     function sync-text() {
-        input.text = "" + root.value;
+        input.text = root.shown();
     }
     function commit-text() {
-        if (input.text.is-float()) {
+        let before = root.value;
+        if (root.hundredths) {
+            let typed = Hundredths.parse(input.text);
+            if (typed >= 0) {
+                root.value = Math.max(root.min-value, Math.min(root.max-value, typed));
+            }
+        } else if (input.text.is-float()) {
             root.value = Math.max(root.min-value,
                 Math.min(root.max-value, Math.round(input.text.to-float())));
         }
         root.sync-text();
+        if (root.value != before) {
+            root.edited();
+        }
     }
     // The initial `text:` binding severs on the first user edit, so
     // a value set from outside (the editor opening on another bell)
@@ -1545,6 +1571,7 @@ component StepperRow inherits Rectangle {
                         root.commit-text();
                         if (root.value > root.min-value) {
                             root.value -= 1;
+                            root.edited();
                         }
                     }
                 }
@@ -1556,8 +1583,8 @@ component StepperRow inherits Rectangle {
                         : transparent;
 
                     input := TextInput {
-                        text: root.value;
-                        input-type: InputType.number;
+                        text: root.shown();
+                        input-type: root.hundredths ? InputType.decimal : InputType.number;
                         font-size: 18px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -1583,6 +1610,7 @@ component StepperRow inherits Rectangle {
                         root.commit-text();
                         if (root.value < root.max-value) {
                             root.value += 1;
+                            root.edited();
                         }
                     }
                 }
@@ -1598,6 +1626,7 @@ component StepperRow inherits Rectangle {
                     changed => {
                         root.commit-text();
                         root.value = Math.max(root.min-value, Math.min(root.max-value, root.value));
+                        root.edited();
                     }
                 }
             }
@@ -1620,6 +1649,8 @@ component RevealStepper inherits Rectangle {
     in property <int> max-value;
     in property <bool> has-unit;
     in-out property <int> unit;
+    in property <bool> hundredths;
+    callback edited();
 
     public function commit() {
         stepper.commit();
@@ -1661,6 +1692,8 @@ component RevealStepper inherits Rectangle {
                     max-value: root.max-value;
                     has-unit: root.has-unit;
                     unit <=> root.unit;
+                    hundredths: root.hundredths;
+                    edited => { root.edited(); }
                 }
             }
         }
@@ -2227,6 +2260,12 @@ export component MainWindow inherits Window {
     // Bells as an alarm instead of as media (#10).
     in-out property <bool> prefs-bells-as-alarm: false;
     callback bells-as-alarm-toggled(bool);
+    // The Bluetooth wake-up lead-in, its length in hundredths of a second.
+    in-out property <bool> prefs-lead-in-on: false;
+    in-out property <int> prefs-lead-in-hundredths: 10;
+    callback lead-in-toggled(bool);
+    callback lead-in-length-changed(int);
+    callback lead-in-test();
     // Bell volumes (issue #1): every bell has its own Volume row
     // under its Sound row. Range and steps come from core
     // (meditate_core::bell_volume) via Rust; the values are seeded
@@ -7871,6 +7910,60 @@ export component MainWindow inherits Window {
                     title: @tr("Play Bells as Alarm");
                     checked <=> root.prefs-bells-as-alarm;
                     toggled(value) => { root.bells-as-alarm-toggled(value); }
+                }
+            }
+
+            Text {
+                text: @tr("Bluetooth");
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: @tr("Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right.");
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                SwitchRow {
+                    title: @tr("Wake-up Lead-in for Bluetooth");
+                    checked <=> root.prefs-lead-in-on;
+                    toggled(value) => { root.lead-in-toggled(value); }
+                }
+                RevealStepper {
+                    shown: root.prefs-lead-in-on;
+                    label: @tr("Length (Seconds)");
+                    value <=> root.prefs-lead-in-hundredths;
+                    min-value: 10;
+                    max-value: 500;
+                    hundredths: true;
+                    edited => { root.lead-in-length-changed(root.prefs-lead-in-hundredths); }
+                }
+                // The woodblock as a bell would ring, with the lead-in.
+                Rectangle {
+                    height: 64px;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        Text {
+                            text: @tr("Test");
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            PreviewPill {
+                                playing: root.volume-previewing == "lead-in-test";
+                                clicked => { root.lead-in-test(); }
+                            }
+                        }
+                    }
                 }
             }
 

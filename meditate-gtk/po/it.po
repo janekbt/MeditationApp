@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-22 11:36+0200\n"
+"POT-Creation-Date: 2026-10-29 20:52+0100\n"
 "PO-Revision-Date: 2026-04-20 18:22+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Italian\n"
@@ -91,7 +91,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
-#: src/presets.rs:695 src/timer/imp.rs:2582 src/timer/imp.rs:3788
+#: src/presets.rs:695 src/timer/imp.rs:2585 src/timer/imp.rs:3791
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "Annulla"
@@ -122,11 +122,11 @@ msgstr "Questa campana non suonerà più durante le sessioni."
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:898 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:595 src/preferences.rs:669 src/presets.rs:441
+#: src/preferences.rs:681 src/preferences.rs:755 src/presets.rs:441
 #: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
-#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2622
-#: src/timer/imp.rs:3917 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
+#: src/timer/imp.rs:3920 src/vibration_editor.rs:129 src/vibrations.rs:546
 #: src/vibrations.rs:639
 msgid "Cancel"
 msgstr "Annulla"
@@ -214,7 +214,7 @@ msgstr "Secondi"
 msgid "min"
 msgstr "min"
 
-#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3891
+#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3894
 msgid "Minutes"
 msgstr "Minuti"
 
@@ -261,20 +261,20 @@ msgstr "Aggiunto all’intervallo dopo ogni rintocco"
 msgid "Type"
 msgstr "Tipo"
 
-#: src/bells.rs:631 src/bells.rs:651 src/timer/imp.rs:1581
-#: src/timer/imp.rs:1655 src/timer/imp.rs:1737 data/ui/timer_view.blp:625
+#: src/bells.rs:631 src/bells.rs:651 src/timer/imp.rs:1584
+#: src/timer/imp.rs:1658 src/timer/imp.rs:1740 data/ui/timer_view.blp:625
 #: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
 #: data/ui/timer_view.blp:769
 msgid "Sound"
 msgstr "Suono"
 
-#: src/bells.rs:635 src/timer/imp.rs:1585 src/timer/imp.rs:1657
-#: src/timer/imp.rs:1739
+#: src/bells.rs:635 src/timer/imp.rs:1588 src/timer/imp.rs:1660
+#: src/timer/imp.rs:1742
 msgid "Vibration"
 msgstr "Vibrazione"
 
-#: src/bells.rs:639 src/timer/imp.rs:1589 src/timer/imp.rs:1659
-#: src/timer/imp.rs:1741
+#: src/bells.rs:639 src/timer/imp.rs:1592 src/timer/imp.rs:1662
+#: src/timer/imp.rs:1744
 msgid "Both"
 msgstr "Entrambi"
 
@@ -309,7 +309,7 @@ msgstr "Errore di lettura"
 msgid "Database error"
 msgstr "Errore del database"
 
-#: src/data_io.rs:33 src/preferences.rs:439
+#: src/data_io.rs:33 src/preferences.rs:525
 msgid "Database unavailable"
 msgstr "Database non disponibile"
 
@@ -319,7 +319,7 @@ msgid "«{name}» is already taken"
 msgstr "«{name}» è già in uso"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:435 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:521 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Salvataggio non riuscito"
 
@@ -396,7 +396,7 @@ msgstr "Il file scelto non ha un percorso locale"
 msgid "This file has no audio track"
 msgstr "Questo file non ha una traccia audio"
 
-#: src/guided.rs:164 src/timer/imp.rs:3590
+#: src/guided.rs:164 src/timer/imp.rs:3593
 msgid "Couldn't read audio file"
 msgstr "Impossibile leggere il file audio"
 
@@ -408,7 +408,7 @@ msgstr "Nome della traccia"
 msgid "A guided file with this name already exists."
 msgstr "Esiste già un file guidato con questo nome."
 
-#: src/guided.rs:200 src/preferences.rs:133 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:219 src/sounds.rs:501
 msgid "Import"
 msgstr "Importa"
 
@@ -607,7 +607,7 @@ msgstr[1] "{n} file"
 msgid "{n}%"
 msgstr "{n}%"
 
-#: src/local_folder.rs:263 src/timer/imp.rs:3454
+#: src/local_folder.rs:263 src/timer/imp.rs:3457
 msgid "Unstar"
 msgstr "Rimuovi stella"
 
@@ -715,7 +715,7 @@ msgid_plural "{n} sessions"
 msgstr[0] "{n} sessione"
 msgstr[1] "{n} sessioni"
 
-#: src/log/imp.rs:874 src/timer/imp.rs:3884
+#: src/log/imp.rs:874 src/timer/imp.rs:3887
 msgid "Hours"
 msgstr "Ore"
 
@@ -764,7 +764,7 @@ msgstr "Ora di inizio"
 msgid "_Cancel"
 msgstr "_Annulla"
 
-#: src/log/imp.rs:1101 src/preferences.rs:342
+#: src/log/imp.rs:1101 src/preferences.rs:428
 msgid "_Save"
 msgstr "_Salva"
 
@@ -781,15 +781,15 @@ msgstr "Modifica sessione"
 msgid "Add Session"
 msgstr "Aggiungi sessione"
 
-#: src/log/imp.rs:1173 src/timer/imp.rs:3973
+#: src/log/imp.rs:1173 src/timer/imp.rs:3976
 msgid "(none, pick one)"
 msgstr "(nessuna, scegline una)"
 
-#: src/log/imp.rs:1272 src/timer/imp.rs:2543
+#: src/log/imp.rs:1272 src/timer/imp.rs:2546
 msgid "Couldn't save session: storage error"
 msgstr "Impossibile salvare la sessione: errore di archiviazione"
 
-#: src/log/imp.rs:1277 src/timer/imp.rs:2561
+#: src/log/imp.rs:1277 src/timer/imp.rs:2564
 msgid "Couldn't save session: storage unavailable"
 msgstr "Impossibile salvare la sessione: archiviazione non disponibile"
 
@@ -813,63 +813,98 @@ msgstr "Obiettivo giornaliero"
 msgid "Minutes per day, shown as the ring on the Stats tab"
 msgstr "Minuti al giorno, mostrati come anello nella scheda Statistiche"
 
-#: src/preferences.rs:100
+#: src/preferences.rs:101
+msgid "Bluetooth"
+msgstr "Bluetooth"
+
+#: src/preferences.rs:102
+msgid ""
+"Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, "
+"they swallow the start of a bell, short bells even entirely. The lead-in "
+"wakes them first with a soft noise; each device needs a different time for "
+"this. Wait 30 to 60 seconds before each test:\n"
+"No bell: increase the length.\n"
+"Noise, then bell: decrease the length.\n"
+"Only the bell: just right."
+msgstr "I dispositivi Bluetooth si addormentano dopo 30-60 secondi di silenzio. Al risveglio perdono l'inizio di una campana, e le campane brevi del tutto. Il preavviso li sveglia prima con un leggero fruscio; ogni dispositivo richiede un tempo diverso. Attendi 30-60 secondi prima di ogni prova:\nNessuna campana: aumenta la durata.\nFruscio, poi campana: riduci la durata.\nSolo la campana: giusto."
+
+#: src/preferences.rs:113
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Preavviso di risveglio per Bluetooth"
+
+#: src/preferences.rs:127
+msgid "Length (Seconds)"
+msgstr "Durata (secondi)"
+
+#: src/preferences.rs:149 src/preferences.rs:167
+msgid "Play"
+msgstr "Riproduci"
+
+#: src/preferences.rs:155 src/preferences.rs:162
+msgid "Stop"
+msgstr "Interrompi"
+
+#: src/preferences.rs:174
+msgid "Test"
+msgstr "Prova"
+
+#: src/preferences.rs:186
 msgid "Data"
 msgstr "Dati"
 
-#: src/preferences.rs:106
+#: src/preferences.rs:192
 msgid "Backup"
 msgstr "Backup"
 
-#: src/preferences.rs:107
+#: src/preferences.rs:193
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Esporta il registro delle sessioni in un file CSV o ripristinalo."
 
-#: src/preferences.rs:111
+#: src/preferences.rs:197
 msgid "Export session log"
 msgstr "Esporta registro sessioni"
 
-#: src/preferences.rs:112
+#: src/preferences.rs:198
 msgid "Save every session to a CSV file"
 msgstr "Salva tutte le sessioni in un file CSV"
 
-#: src/preferences.rs:118
+#: src/preferences.rs:204
 msgid "Export"
 msgstr "Esporta"
 
-#: src/preferences.rs:126
+#: src/preferences.rs:212
 msgid "Import from Meditate CSV"
 msgstr "Importa da CSV di Meditate"
 
-#: src/preferences.rs:127
+#: src/preferences.rs:213
 msgid "Restore sessions from a file exported above"
 msgstr "Ripristina le sessioni da un file esportato sopra"
 
-#: src/preferences.rs:143
+#: src/preferences.rs:229
 msgid "Migrate"
 msgstr "Migra"
 
-#: src/preferences.rs:144
+#: src/preferences.rs:230
 msgid "Import sessions from another meditation app."
 msgstr "Importa sessioni da un’altra app di meditazione."
 
-#: src/preferences.rs:148 src/preferences.rs:580
+#: src/preferences.rs:234 src/preferences.rs:666
 msgid "Import from Insight Timer"
 msgstr "Importa da Insight Timer"
 
-#: src/preferences.rs:149
+#: src/preferences.rs:235
 msgid "Upload an Insight Timer CSV export"
 msgstr "Carica un’esportazione CSV di Insight Timer"
 
-#: src/preferences.rs:155
+#: src/preferences.rs:241
 msgid "Import Insight Timer CSV"
 msgstr "Importa CSV di Insight Timer"
 
-#: src/preferences.rs:173
+#: src/preferences.rs:259
 msgid "Nextcloud Sync"
 msgstr "Sincronizzazione Nextcloud"
 
-#: src/preferences.rs:175
+#: src/preferences.rs:261
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -877,137 +912,137 @@ msgstr ""
 "Sincronizza sessioni, etichette e preferenze tra i tuoi dispositivi tramite "
 "il tuo server Nextcloud."
 
-#: src/preferences.rs:180
+#: src/preferences.rs:266
 msgid "Server URL"
 msgstr "URL del server"
 
-#: src/preferences.rs:184
+#: src/preferences.rs:270
 msgid "Username"
 msgstr "Nome utente"
 
-#: src/preferences.rs:187
+#: src/preferences.rs:273
 msgid "App password"
 msgstr "Password per app"
 
-#: src/preferences.rs:216
+#: src/preferences.rs:302
 msgid "Test connection"
 msgstr "Prova connessione"
 
-#: src/preferences.rs:217
+#: src/preferences.rs:303
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Verifica che URL e credenziali raggiungano il tuo Nextcloud."
 
-#: src/preferences.rs:221
+#: src/preferences.rs:307
 msgid "_Test"
 msgstr "_Prova"
 
-#: src/preferences.rs:266 src/preferences.rs:377
+#: src/preferences.rs:352 src/preferences.rs:463
 msgid "Enter URL and username"
 msgstr "Inserisci URL e nome utente"
 
-#: src/preferences.rs:270 src/preferences.rs:385
+#: src/preferences.rs:356 src/preferences.rs:471
 msgid "Enter a password"
 msgstr "Inserisci una password"
 
-#: src/preferences.rs:274 src/preferences.rs:389
+#: src/preferences.rs:360 src/preferences.rs:475
 msgid "Keyring read failed"
 msgstr "Lettura dal portachiavi non riuscita"
 
-#: src/preferences.rs:280 src/preferences.rs:381
+#: src/preferences.rs:366 src/preferences.rs:467
 msgid "URL must start with https://"
 msgstr "L'URL deve iniziare con https://"
 
-#: src/preferences.rs:314
+#: src/preferences.rs:400
 msgid "Connection OK"
 msgstr "Connessione riuscita"
 
-#: src/preferences.rs:315
+#: src/preferences.rs:401
 msgid "Authentication failed"
 msgstr "Autenticazione non riuscita"
 
-#: src/preferences.rs:316
+#: src/preferences.rs:402
 msgid "Not a WebDAV folder"
 msgstr "Non è una cartella WebDAV"
 
-#: src/preferences.rs:317
+#: src/preferences.rs:403
 msgid "Network error"
 msgstr "Errore di rete"
 
-#: src/preferences.rs:318
+#: src/preferences.rs:404
 msgid "Server error"
 msgstr "Errore del server"
 
-#: src/preferences.rs:323
+#: src/preferences.rs:409
 msgid "Test failed"
 msgstr "Prova non riuscita"
 
-#: src/preferences.rs:337
+#: src/preferences.rs:423
 msgid "Save sync settings"
 msgstr "Salva impostazioni di sincronizzazione"
 
-#: src/preferences.rs:338
+#: src/preferences.rs:424
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "URL e nome utente vengono salvati localmente; la password va nel tuo "
 "portachiavi."
 
-#: src/preferences.rs:416
+#: src/preferences.rs:502
 msgid "Keyring write failed"
 msgstr "Scrittura nel portachiavi non riuscita"
 
-#: src/preferences.rs:444
+#: src/preferences.rs:530
 msgid "Sync settings saved"
 msgstr "Impostazioni di sincronizzazione salvate"
 
-#: src/preferences.rs:453
+#: src/preferences.rs:539
 msgid "Danger Zone"
 msgstr "Zona pericolosa"
 
-#: src/preferences.rs:454
+#: src/preferences.rs:540
 msgid "These actions cannot be undone."
 msgstr "Queste azioni non possono essere annullate."
 
-#: src/preferences.rs:458
+#: src/preferences.rs:544
 msgid "Delete all sessions"
 msgstr "Elimina tutte le sessioni"
 
-#: src/preferences.rs:459
+#: src/preferences.rs:545
 msgid "Permanently remove every logged session"
 msgstr "Rimuove definitivamente ogni sessione registrata"
 
-#: src/preferences.rs:463
+#: src/preferences.rs:549
 msgid "_Delete All"
 msgstr "_Elimina tutto"
 
-#: src/preferences.rs:533
+#: src/preferences.rs:619
 msgid "Export Session Log"
 msgstr "Esporta registro sessioni"
 
-#: src/preferences.rs:537 src/preferences.rs:638
+#: src/preferences.rs:623 src/preferences.rs:724
 msgid "CSV files"
 msgstr "File CSV"
 
-#: src/preferences.rs:553
+#: src/preferences.rs:639
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "1 sessione esportata"
 msgstr[1] "{n} sessioni esportate"
 
-#: src/preferences.rs:557
+#: src/preferences.rs:643
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Esportazione non riuscita: {error}"
 
-#: src/preferences.rs:571
+#: src/preferences.rs:657
 msgid "Import Session Log"
 msgstr "Importa registro sessioni"
 
-#: src/preferences.rs:590
+#: src/preferences.rs:676
 msgid "Delete Every Session?"
 msgstr "Eliminare tutte le sessioni?"
 
-#: src/preferences.rs:591
+#: src/preferences.rs:677
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1015,57 +1050,57 @@ msgstr ""
 "Rimuove definitivamente tutte le sessioni dal registro. Esporta prima un "
 "backup se vuoi mantenere la cronologia."
 
-#: src/preferences.rs:596
+#: src/preferences.rs:682
 msgid "Delete All"
 msgstr "Elimina tutto"
 
-#: src/preferences.rs:607
+#: src/preferences.rs:693
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "1 sessione eliminata"
 msgstr[1] "{n} sessioni eliminate"
 
-#: src/preferences.rs:614
+#: src/preferences.rs:700
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Eliminazione non riuscita: {error}"
 
-#: src/preferences.rs:654 src/preferences.rs:716
+#: src/preferences.rs:740 src/preferences.rs:802
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Importazione non riuscita: {error}"
 
-#: src/preferences.rs:664
+#: src/preferences.rs:750
 msgid "Some Lines Can't Be Read"
 msgstr "Alcune righe non sono leggibili"
 
-#: src/preferences.rs:670
+#: src/preferences.rs:756
 msgid "Import the Rest"
 msgstr "Importa il resto"
 
-#: src/preferences.rs:683
+#: src/preferences.rs:769
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Riga {line}: l’ora di inizio non è leggibile."
 
-#: src/preferences.rs:684
+#: src/preferences.rs:770
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Riga {line}: la durata non è leggibile."
 
-#: src/preferences.rs:691
+#: src/preferences.rs:777
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "Anche {n} altra riga non è leggibile."
 msgstr[1] "Anche altre {n} righe non sono leggibili."
 
-#: src/preferences.rs:700
+#: src/preferences.rs:786
 msgid "Nothing in this file can be imported."
 msgstr "Non è possibile importare nulla da questo file."
 
-#: src/preferences.rs:709
+#: src/preferences.rs:795
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1197,7 +1232,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr "Cancella dati locali"
 
-#: src/sound.rs:256
+#: src/sound.rs:283
 msgid "Couldn't play bell sound"
 msgstr "Impossibile riprodurre il suono della campana"
 
@@ -1438,150 +1473,150 @@ msgid_plural "{duration} · {n} sessions"
 msgstr[0] "{duration} · 1 sessione"
 msgstr[1] "{duration} · {n} sessioni"
 
-#: src/timer/imp.rs:1155
+#: src/timer/imp.rs:1158
 msgid "Meditation session running"
 msgstr "Sessione di meditazione in corso"
 
-#: src/timer/imp.rs:1158
+#: src/timer/imp.rs:1161
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Impossibile tenere il computer attivo per le campane"
 
-#: src/timer/imp.rs:1774
+#: src/timer/imp.rs:1777
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Questo dispositivo non può vibrare, quindi non si sente nulla"
 
-#: src/timer/imp.rs:1775
+#: src/timer/imp.rs:1778
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Questo dispositivo non può vibrare, quindi si sente solo il suono"
 
-#: src/timer/imp.rs:1990
+#: src/timer/imp.rs:1993
 msgid "Paused"
 msgstr "In pausa"
 
-#: src/timer/imp.rs:2017 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2020 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Ore · Minuti"
 
-#: src/timer/imp.rs:2194
+#: src/timer/imp.rs:2197
 msgid "Couldn't start playback"
 msgstr "Impossibile avviare la riproduzione"
 
-#: src/timer/imp.rs:2365
+#: src/timer/imp.rs:2368
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/timer/imp.rs:2366
+#: src/timer/imp.rs:2369
 msgid "Resume"
 msgstr "Riprendi"
 
-#: src/timer/imp.rs:2367 src/vibration_editor.rs:130
+#: src/timer/imp.rs:2370 src/vibration_editor.rs:130
 msgid "Save"
 msgstr "Salva"
 
-#: src/timer/imp.rs:2369 src/timer/imp.rs:2623 src/window/imp.rs:420
+#: src/timer/imp.rs:2372 src/timer/imp.rs:2626 src/window/imp.rs:420
 msgid "Discard"
 msgstr "Scarta"
 
-#: src/timer/imp.rs:2426
+#: src/timer/imp.rs:2429
 msgid "Meditation Complete"
 msgstr "Meditazione completata"
 
-#: src/timer/imp.rs:2432
+#: src/timer/imp.rs:2435
 #, rust-format
 msgid "Session: {duration}"
 msgstr "Sessione: {duration}"
 
-#: src/timer/imp.rs:2581
+#: src/timer/imp.rs:2584
 msgid "Session saved"
 msgstr "Sessione salvata"
 
-#: src/timer/imp.rs:2613
+#: src/timer/imp.rs:2616
 msgid "Discard Session?"
 msgstr "Scartare la sessione?"
 
-#: src/timer/imp.rs:2614
+#: src/timer/imp.rs:2617
 msgid "Your note will be lost."
 msgstr "La nota verrà persa."
 
-#: src/timer/imp.rs:3204
+#: src/timer/imp.rs:3207
 msgid "Start your streak today"
 msgstr "Inizia oggi la tua serie"
 
-#: src/timer/imp.rs:3205 src/timer/imp.rs:3207
+#: src/timer/imp.rs:3208 src/timer/imp.rs:3210
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Serie di {n} giorno"
 msgstr[1] "Serie di {n} giorni"
 
-#: src/timer/imp.rs:3261
+#: src/timer/imp.rs:3264
 msgid "Tap Save Settings to create your first preset"
 msgstr "Tocca Salva per creare il tuo primo preset"
 
-#: src/timer/imp.rs:3336
+#: src/timer/imp.rs:3339
 msgid "No starred files"
 msgstr "Nessun file preferito"
 
-#: src/timer/imp.rs:3338
+#: src/timer/imp.rs:3341
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr ""
 "Tocca Apri file e poi Importa file, oppure aggiungi una stella a un file in "
 "Gestisci importazioni"
 
-#: src/timer/imp.rs:3432
+#: src/timer/imp.rs:3435
 msgid "not found"
 msgstr "non trovato"
 
-#: src/timer/imp.rs:3436
+#: src/timer/imp.rs:3439
 msgid "Local file"
 msgstr "File locale"
 
-#: src/timer/imp.rs:3468
+#: src/timer/imp.rs:3471
 msgid "File not found in the local folder"
 msgstr "File non trovato nella cartella locale"
 
-#: src/timer/imp.rs:3485
+#: src/timer/imp.rs:3488
 msgid "Reading length"
 msgstr "Lettura della durata"
 
-#: src/timer/imp.rs:3491 src/timer/imp.rs:3492
+#: src/timer/imp.rs:3494 src/timer/imp.rs:3495
 msgid "Local folder"
 msgstr "Cartella locale"
 
-#: src/timer/imp.rs:3498 data/ui/timer_view.blp:234
+#: src/timer/imp.rs:3501 data/ui/timer_view.blp:234
 msgid "No file selected"
 msgstr "Nessun file selezionato"
 
-#: src/timer/imp.rs:3500 data/ui/timer_view.blp:235
+#: src/timer/imp.rs:3503 data/ui/timer_view.blp:235
 msgid "Tap Open File or pick from list below"
 msgstr "Tocca Apri file o scegli dalla lista"
 
-#: src/timer/imp.rs:3508
+#: src/timer/imp.rs:3511
 msgid "Open New File"
 msgstr "Apri nuovo file"
 
-#: src/timer/imp.rs:3510 data/ui/timer_view.blp:251
+#: src/timer/imp.rs:3513 data/ui/timer_view.blp:251
 msgid "Open File"
 msgstr "Apri file"
 
-#: src/timer/imp.rs:3786
+#: src/timer/imp.rs:3789
 #, rust-format
 msgid "'{name}' applied"
 msgstr "«{name}» applicato"
 
-#: src/timer/imp.rs:3911
+#: src/timer/imp.rs:3914
 msgid "Custom Time"
 msgstr "Tempo personalizzato"
 
-#: src/timer/imp.rs:3912
+#: src/timer/imp.rs:3915
 msgid "Hours : Minutes"
 msgstr "Ore : Minuti"
 
-#: src/timer/imp.rs:3918
+#: src/timer/imp.rs:3921
 msgid "Set"
 msgstr "Imposta"
 
-#: src/timer/imp.rs:3975
+#: src/timer/imp.rs:3978
 msgid "Off"
 msgstr "Disattivata"
 
@@ -1592,43 +1627,43 @@ msgstr "Disattivata"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4240
+#: src/timer/imp.rs:4258
 #, rust-format
 msgid "Add {time} and Save"
 msgstr "Aggiungi {time} e salva"
 
-#: src/timer/imp.rs:4250
+#: src/timer/imp.rs:4268
 msgid "None enabled"
 msgstr "Nessuna attiva"
 
-#: src/timer/imp.rs:4251 src/timer/imp.rs:4252
+#: src/timer/imp.rs:4269 src/timer/imp.rs:4270
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} attiva"
 msgstr[1] "{n} attive"
 
-#: src/timer/imp.rs:4276 data/ui/timer_view.blp:607
+#: src/timer/imp.rs:4294 data/ui/timer_view.blp:607
 msgid "Inhale"
 msgstr "Inspira"
 
-#: src/timer/imp.rs:4277
+#: src/timer/imp.rs:4295
 msgid "Hold (full)"
 msgstr "Trattieni (pieno)"
 
-#: src/timer/imp.rs:4278 data/ui/timer_view.blp:703
+#: src/timer/imp.rs:4296 data/ui/timer_view.blp:703
 msgid "Exhale"
 msgstr "Espira"
 
-#: src/timer/imp.rs:4279
+#: src/timer/imp.rs:4297
 msgid "Hold (empty)"
 msgstr "Trattieni (vuoto)"
 
-#: src/timer/imp.rs:4341
+#: src/timer/imp.rs:4359
 msgid "Decrease"
 msgstr "Diminuisci"
 
-#: src/timer/imp.rs:4352
+#: src/timer/imp.rs:4370
 msgid "Increase"
 msgstr "Aumenta"
 
@@ -2723,9 +2758,6 @@ msgstr "Prima versione."
 
 #~ msgid "End at the planned duration"
 #~ msgstr "Termina alla durata prevista"
-
-#~ msgid "Stop"
-#~ msgstr "Interrompi"
 
 #~ msgid "Stop and Save Session"
 #~ msgstr "Ferma e salva la sessione"

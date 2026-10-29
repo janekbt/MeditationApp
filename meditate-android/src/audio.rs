@@ -28,15 +28,16 @@ const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 /// playing — preview and the session-end cue share one slot, so
 /// a new tap stops the previous like the GTK preview slot does.
 /// Failures are logged, never propagated (a missing file or a
-/// JNI hiccup must not break the session flow). Returns the clip
-/// duration in ms (0 if unknown / on failure) so the chooser
-/// preview can schedule its pill auto-revert; session-cue
-/// callers just ignore the value.
-pub fn play(app: &AndroidApp, path: &str, level: &Levels) -> i64 {
+/// JNI hiccup must not break the session flow). `lead` is the
+/// wake-up lead-in's samples, empty while it is off; the player plays
+/// them only before a Bluetooth output. Returns the clip duration plus
+/// its lead-in wait in ms (0 if unknown / on failure) so the preview
+/// can bound its pill auto-revert.
+pub fn play(app: &AndroidApp, path: &str, level: &Levels, lead: &[i16]) -> i64 {
     if path.is_empty() {
         return 0;
     }
-    match invoke_play(app, path, level) {
+    match invoke_play(app, path, level, lead) {
         Ok(ms) => ms,
         Err(e) => {
             meditate_core::log(
@@ -52,17 +53,19 @@ pub fn play(app: &AndroidApp, path: &str, level: &Levels) -> i64 {
 /// of core's `FireChannel`): it replaces only the previous bell on
 /// the same Starting / End slot, and interval bells stack, so bells
 /// no longer cut each other off. Failures are logged, never
-/// propagated.
-pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, level: &Levels) {
+/// propagated. Returns the ms the bell waits for its lead-in (`lead`
+/// as for `play`), so its vibration can wait too.
+pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, level: &Levels, lead: &[i16]) -> i64 {
     if path.is_empty() {
-        return;
+        return 0;
     }
-    if let Err(e) = invoke_play_bell(app, slot, path, level) {
+    invoke_play_bell(app, slot, path, level, lead).unwrap_or_else(|e| {
         meditate_core::log(
             "audio.play",
             &format!("play_bell FAILED slot={slot} path={path}: {e:?}"),
         );
-    }
+        0
+    })
 }
 
 /// Apply a new bell level to the preview ringing right now, if any.
@@ -121,33 +124,36 @@ pub fn stop(app: &AndroidApp) {
 }
 
 /// Whether the preview still plays (it ends on its own, or the player
-/// stops it when headphones are plugged in or pulled). True when the
-/// player can't be asked, so the pill waits out the sound's length.
-pub fn preview_playing(app: &AndroidApp) -> bool {
+/// stops it when headphones are plugged in or pulled); `None` when the
+/// player can't be asked.
+pub fn preview_playing(app: &AndroidApp) -> Option<bool> {
     crate::jni_call::with_env(app, |env, activity| {
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(class, "previewPlaying", "()Z", &[])?.z()
     })
-    .unwrap_or(true)
+    .ok()
 }
 
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
     level: &Levels,
+    lead: &[i16],
 ) -> Result<i64, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
         let gains = gains_array(env, &level.main)?;
         let head_gains = gains_array(env, &level.headphones)?;
+        let jlead = short_array(env, lead)?;
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         let ret = env.call_static_method(
             class,
             "play",
-            "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F)J",
+            "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F[S)J",
             &[
                 activity.into(), (&jpath).into(), level.as_media.into(),
                 level.main.step.into(), (&gains).into(), level.headphones.step.into(), (&head_gains).into(),
+                (&jlead).into(),
             ],
         )?;
 
@@ -160,23 +166,35 @@ fn invoke_play_bell(
     slot: i32,
     path: &str,
     level: &Levels,
-) -> Result<(), jni::errors::Error> {
+    lead: &[i16],
+) -> Result<i64, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
         let gains = gains_array(env, &level.main)?;
         let head_gains = gains_array(env, &level.headphones)?;
+        let jlead = short_array(env, lead)?;
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "playBell",
-            "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F)V",
+            "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F[S)J",
             &[
                 activity.into(), slot.into(), (&jpath).into(), level.as_media.into(),
                 level.main.step.into(), (&gains).into(), level.headphones.step.into(), (&head_gains).into(),
+                (&jlead).into(),
             ],
-        )?;
-        Ok(())
+        )?
+        .j()
     })
+}
+
+fn short_array<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    samples: &[i16],
+) -> Result<jni::objects::JShortArray<'local>, jni::errors::Error> {
+    let array = env.new_short_array(i32::try_from(samples.len()).unwrap_or(0))?;
+    env.set_short_array_region(&array, 0, samples)?;
+    Ok(array)
 }
 
 fn invoke_set_volume(app: &AndroidApp, level: &Levels) -> Result<(), jni::errors::Error> {

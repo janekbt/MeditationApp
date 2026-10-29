@@ -92,6 +92,98 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     stats_group.add(&goal_row);
 
     general_page.add(&stats_group);
+
+    // ── Bluetooth group ───────────────────────────────────────────────────────
+    // The wake-up lead-in: a soft noise before each bell on a Bluetooth
+    // output, read as each bell starts (`crate::sound`).
+
+    let bluetooth_group = adw::PreferencesGroup::builder()
+        .title(gettext("Bluetooth"))
+        .description(gettext("Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."))
+        .build();
+    use meditate_core::lead_in;
+    let ms = |ms: u32| f64::from(ms) / 1000.0;
+    let (lead_on, lead_ms) = app
+        .with_db(|db| {
+            (
+                meditate_core::settings_keys::bluetooth_wake_lead_in_from_db(db.core()),
+                meditate_core::settings_keys::bluetooth_wake_lead_in_ms_from_db(db.core()),
+            )
+        })
+        .unwrap_or((false, lead_in::MIN_MS));
+    let lead_switch = adw::SwitchRow::builder()
+        .title(gettext("Wake-up Lead-in for Bluetooth"))
+        .active(lead_on)
+        .build();
+    lead_switch.connect_active_notify(clone!(
+        #[weak] app,
+        move |row| {
+            let written = app.with_db_mut(|db| db.set_setting(
+                meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_KEY,
+                meditate_core::format_bool(row.is_active()),
+            ));
+            crate::db::write_ok(row, "lead_in.write", written, crate::db::Failed::Save);
+        }
+    ));
+    let length_row = adw::SpinRow::builder()
+        .title(gettext("Length (Seconds)"))
+        .adjustment(&gtk::Adjustment::new(f64::from(lead_ms) / 1000.0, ms(lead_in::MIN_MS), ms(lead_in::MAX_MS), 0.01, 0.10, 0.0))
+        .climb_rate(0.01)
+        .digits(2)
+        .build();
+    lead_switch.bind_property("active", &length_row, "sensitive").sync_create().build();
+    length_row.connect_notify_local(
+        Some("value"),
+        clone!(
+            #[weak] app,
+            move |row, _| {
+                let written = app.with_db_mut(|db| db.set_setting(
+                    meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_MS_KEY,
+                    &meditate_core::settings_keys::lead_in_ms(row.value()).to_string(),
+                ));
+                crate::db::write_ok(row, "lead_in.write", written, crate::db::Failed::Save);
+            }
+        ),
+    );
+    // The woodblock as a bell would ring, with the lead-in; Play turns
+    // into Stop while it waits and rings.
+    let test_button = gtk::Button::builder()
+        .label(gettext("Play"))
+        .valign(gtk::Align::Center)
+        .build();
+    let playing = std::rc::Rc::new(std::cell::Cell::new(false));
+    test_button.connect_clicked(clone!(
+        #[weak] app,
+        move |button| {
+            if playing.get() {
+                crate::sound::stop_preview();
+                return;
+            }
+            let Some(media) = crate::sound::play_bell_preview(&app, crate::db::BUNDLED_WOODBLOCK_UUID, meditate_core::bell_volume::BellVolume::default()) else {
+                return;
+            };
+            playing.set(true);
+            button.set_label(&gettext("Stop"));
+            let button = button.downgrade();
+            let playing = playing.clone();
+            media.connect_notify_local(Some("playing"), move |m, _| {
+                if !m.is_playing() {
+                    playing.set(false);
+                    if let Some(button) = button.upgrade() {
+                        button.set_label(&gettext("Play"));
+                    }
+                }
+            });
+        }
+    ));
+    let test_row = adw::ActionRow::builder()
+        .title(gettext("Test"))
+        .build();
+    test_row.add_suffix(&test_button);
+    bluetooth_group.add(&lead_switch);
+    bluetooth_group.add(&length_row);
+    bluetooth_group.add(&test_row);
+    general_page.add(&bluetooth_group);
     dialog.add(&general_page);
 
     // ── Data page ─────────────────────────────────────────────────────────────
@@ -734,3 +826,35 @@ fn refresh_main_window(app: &MeditateApplication) {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    fn source() -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/preferences.rs")).unwrap()
+    }
+
+    /// A Bluetooth group right after Statistics: the explanation as its
+    /// description, the switch, the length 0.10 to 5.00 s in 0.01 s
+    /// steps (usable only while the switch is on), and Test.
+    #[test]
+    fn the_bluetooth_group_holds_the_lead_in() {
+        let src = source();
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        let stats = code.find("general_page.add(&stats_group);").unwrap();
+        let bt = code.find("general_page.add(&bluetooth_group);").unwrap();
+        assert!(stats < bt && bt < code.find("dialog.add(&general_page);").unwrap(), "right after Statistics");
+        assert!(code.contains(".title(gettext(\"Bluetooth\"))"));
+        assert!(code.contains(".description(gettext(\"Bluetooth devices fall asleep after 30 to 60 seconds of silence."));
+        assert!(code.contains(".title(gettext(\"Wake-up Lead-in for Bluetooth\"))"));
+        assert!(code.contains(".title(gettext(\"Length (Seconds)\"))"));
+        assert!(code.contains("gtk::Adjustment::new(f64::from(lead_ms) / 1000.0, ms(lead_in::MIN_MS), ms(lead_in::MAX_MS), 0.01, 0.10, 0.0)"));
+        assert!(code.contains(".digits(2)"));
+        assert!(code.contains("lead_switch.bind_property(\"active\", &length_row, \"sensitive\").sync_create().build();"));
+        assert!(code.contains("meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_KEY,"));
+        assert!(code.contains("&meditate_core::settings_keys::lead_in_ms(row.value()).to_string(),"));
+        assert!(code.contains(".title(gettext(\"Test\"))"));
+        assert!(code.contains("crate::sound::play_bell_preview(&app, crate::db::BUNDLED_WOODBLOCK_UUID, meditate_core::bell_volume::BellVolume::default())"));
+        // Play / Stop from its own state, not from its translated label.
+        assert!(code.contains("if playing.get() {"));
+    }
+}

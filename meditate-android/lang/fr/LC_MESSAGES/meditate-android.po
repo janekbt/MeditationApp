@@ -1180,3 +1180,22 @@ msgstr "Si tu as des problèmes avec des cloches qui ne sonnent pas, tu peux act
 
 msgid "Play Bells as Alarm"
 msgstr "Lire les cloches comme alarme"
+
+msgctxt "decimal number"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgid "Wake-up Lead-in for Bluetooth"
+msgstr "Préréveil pour le Bluetooth"
+
+msgid "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, they swallow the start of a bell, short bells even entirely. The lead-in wakes them first with a soft noise; each device needs a different time for this. Wait 30 to 60 seconds before each test:\nNo bell: increase the length.\nNoise, then bell: decrease the length.\nOnly the bell: just right."
+msgstr "Les appareils Bluetooth s'endorment après 30 à 60 secondes de silence. En se réveillant, ils avalent le début d'une cloche, voire les cloches courtes en entier. Le préréveil les réveille avant avec un léger bruit ; chaque appareil a besoin d'un temps différent. Attendez 30 à 60 secondes avant chaque test :\nPas de cloche : augmentez la durée.\nBruit, puis cloche : réduisez la durée.\nSeulement la cloche : c'est bon."
+
+msgid "Test"
+msgstr "Test"
+
+msgid "Length (Seconds)"
+msgstr "Durée (secondes)"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"
