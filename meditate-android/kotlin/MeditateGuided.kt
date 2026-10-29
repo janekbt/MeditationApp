@@ -2,7 +2,8 @@
 // MediaPlayer slot from MeditateAudio's bell player: the guided
 // track is long-form spoken content (USAGE_MEDIA /
 // CONTENT_TYPE_SPEECH — normal media routing/ducking), whereas
-// the end-bell stays USAGE_ALARM. Driven from Rust (src/guided.rs)
+// the end-bell plays as a bell (media, or alarm with "Play Bells
+// as Alarm"). Driven from Rust (src/guided.rs)
 // via the app-classloader JNI path, in step with the session:
 // start on session start, pause/resume with it, stop on
 // stop/finish. On natural end (or error) it writes the

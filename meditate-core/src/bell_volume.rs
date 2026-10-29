@@ -13,7 +13,10 @@
 //!   step), whatever the user's alarm volume is. While a bell plays
 //!   the shell sets the stream to the step [`BellVolume::alarm_level`]
 //!   picks on the device's [`AlarmCurve`] and trims the bell by that
-//!   level's gain.
+//!   level's gain. With bells played as media, the same happens on the
+//!   media stream: on the speaker's media curve, or in headphones on
+//!   the media steps up to the hearing-safety step
+//!   ([`AlarmCurve::headphones`]).
 //! - The desktop can't set an absolute level without changing the
 //!   output volume of every app, so a level is relative: `MAX` is the
 //!   system volume and the bell is scaled by
@@ -128,6 +131,12 @@ pub struct AlarmCurve {
     db: Vec<f64>,
 }
 
+/// Android's hearing-safety limit for media on headphones: index 10
+/// (AOSP's `config_safe_media_volume_index`), which AudioService keeps
+/// whatever the device's step count. No public API reads the device's
+/// own value.
+const SAFE_MEDIA_STEP: i32 = 10;
+
 /// Where a bell puts the alarm stream and how much its player trims.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlarmLevel {
@@ -166,6 +175,15 @@ impl AlarmCurve {
             (0..count).map(|i| (i as f64 - (count - 1) as f64) * step_db).collect()
         };
         Self { first, db }
+    }
+
+    /// The media steps for headphones from the same kind of report, cut
+    /// at the hearing-safety step so a bell never asks for a step Android
+    /// would hold back behind its warning.
+    pub fn headphones(min: i32, max: i32, steps_db: &[f32]) -> Self {
+        let safe = SAFE_MEDIA_STEP.min(max);
+        let kept = usize::try_from(safe - min + 1).unwrap_or(0);
+        Self::from_report(min, safe, steps_db.get(..kept).unwrap_or(steps_db))
     }
 }
 
@@ -311,6 +329,21 @@ mod tests {
         let from_zero = AlarmCurve::from_report(0, 5, &[f32::NEG_INFINITY, -40.0, -30.0, -20.0, -10.0, 0.0]);
         assert_eq!(from_zero, even);
         assert_eq!(pct(0.0).alarm_level(&from_zero).step, 1);
+    }
+
+    #[test]
+    fn the_headphone_slider_stops_at_the_hearing_safety_step() {
+        // Media steps 0..=15, -60 dB to 0 dB evenly.
+        let report: Vec<f32> = (0..=15).map(|s| -60.0 + 4.0 * s as f32).collect();
+        let curve = AlarmCurve::headphones(0, 15, &report);
+        assert_eq!(pct(0.0).alarm_level(&curve).step, 1);
+        assert_eq!(pct(50.0).alarm_level(&curve).step, 6);
+        assert_eq!(pct(100.0).alarm_level(&curve).step, 10);
+        assert!(all_steps().all(|v| v.alarm_level(&curve).step <= 10));
+        // Android's limit is index 10 whatever the step count: a device
+        // with 30 media steps still warns above 10.
+        let fine = AlarmCurve::headphones(0, 30, &[]);
+        assert_eq!(pct(100.0).alarm_level(&fine).step, 10);
     }
 
     #[test]

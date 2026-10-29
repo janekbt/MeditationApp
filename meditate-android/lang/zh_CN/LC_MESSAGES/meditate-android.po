@@ -1145,3 +1145,9 @@ msgstr "已保存会话"
 msgid "{n}d"
 msgid_plural "{n}d"
 msgstr[0] "{n}天"
+
+msgid "If you have trouble with bells not playing, you can turn this option on. Bells then play on the alarm channel, which is the most reliable option."
+msgstr "如果遇到铃声不播放的问题，可以开启此选项。铃声将通过闹钟通道播放，这是最可靠的选项。"
+
+msgid "Play Bells as Alarm"
+msgstr "将铃声作为闹钟播放"

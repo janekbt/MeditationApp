@@ -2224,6 +2224,9 @@ export component MainWindow inherits Window {
     // the value drives the Stats ring (today's progress) + the
     // heatmap threshold (core goal::compute).
     in-out property <int> prefs-goal-mins: 20;
+    // Bells as an alarm instead of as media (#10).
+    in-out property <bool> prefs-bells-as-alarm: false;
+    callback bells-as-alarm-toggled(bool);
     // Bell volumes (issue #1): every bell has its own Volume row
     // under its Sound row. Range and steps come from core
     // (meditate_core::bell_volume) via Rust; the values are seeded
@@ -7846,6 +7849,28 @@ export component MainWindow inherits Window {
                         root.goal-dialog-text = "" + root.prefs-goal-mins;
                         root.modal = Modal.goal;
                     }
+                }
+            }
+
+            Text {
+                text: @tr("Bells");
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: @tr("If you have trouble with bells not playing, you can turn this option on. Bells then play on the alarm channel, which is the most reliable option.");
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                SwitchRow {
+                    title: @tr("Play Bells as Alarm");
+                    checked <=> root.prefs-bells-as-alarm;
+                    toggled(value) => { root.bells-as-alarm-toggled(value); }
                 }
             }
 

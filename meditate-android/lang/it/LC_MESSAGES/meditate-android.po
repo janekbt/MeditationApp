@@ -1174,3 +1174,9 @@ msgid "{n}d"
 msgid_plural "{n}d"
 msgstr[0] "{n} g"
 msgstr[1] "{n} g"
+
+msgid "If you have trouble with bells not playing, you can turn this option on. Bells then play on the alarm channel, which is the most reliable option."
+msgstr "Se hai problemi con campane che non suonano, puoi attivare questa opzione. Le campane suonano allora sul canale della sveglia, che è l'opzione più affidabile."
+
+msgid "Play Bells as Alarm"
+msgstr "Riproduci le campane come sveglia"

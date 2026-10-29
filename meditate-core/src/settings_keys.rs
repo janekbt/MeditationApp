@@ -243,9 +243,31 @@ pub fn set_breathing(
     db.set_setting("breathing_session_secs", &secs.to_string())
 }
 
+/// Android plays every bell as an alarm instead of as media (#10): on
+/// the speaker and in headphones at once, which rings on every device.
+/// Off until set: as media, only in connected headphones, else on the
+/// speaker.
+pub const BELLS_AS_ALARM_KEY: &str = "bells_as_alarm";
+
+pub fn bells_as_alarm_from_db(db: &Database) -> bool {
+    read_bool(db, BELLS_AS_ALARM_KEY, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bells_play_as_an_alarm_once_turned_on() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!bells_as_alarm_from_db(&db), "media until set");
+        db.set_setting("bells_as_alarm", "true").unwrap();
+        assert!(bells_as_alarm_from_db(&db));
+        db.set_setting("bells_as_alarm", "yes please").unwrap();
+        assert!(!bells_as_alarm_from_db(&db), "text that isn't a bool is media");
+        db.set_setting("bells_as_alarm", "false").unwrap();
+        assert!(!bells_as_alarm_from_db(&db));
+    }
 
     /// The whole point of these dispatchers is that no two modes
     /// share a key — otherwise the per-mode toggles would leak into

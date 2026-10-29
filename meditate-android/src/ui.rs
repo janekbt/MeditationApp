@@ -387,7 +387,7 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             let path = bell_sound_path(route.sound_uuid);
             // Each bell rings on its core channel's own slot, so it
             // doesn't cut off the others (GTK sound.rs).
-            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &alarm_volume::level(route.volume));
+            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume));
         }
         if route.signal_mode.includes_vibration() {
             if let Some(db) = lock_db() {
@@ -6379,6 +6379,18 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Preferences: bells as an alarm (#10), read as each bell starts.
+    {
+        let weak = ui.as_weak();
+        ui.on_bells_as_alarm_toggled(move |v| {
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
+                meditate_core::settings_keys::BELLS_AS_ALARM_KEY,
+                meditate_core::settings_keys::format_bool(v),
+            );
+        });
+    }
+
     // ── Box-Breath per-phase cues (B-7) ─────────────────────────
     // Master toggle + per-phase enable / Type / Sound / Pattern.
     // Cue firing is already wired (B-6); these only persist the
@@ -7478,7 +7490,7 @@ fn build_ui() -> MainWindow {
                             let path = bell_sound_path(&id);
                             // At the volume of the bell being chosen for.
                             let volume = chooser_bell_volume(&ui, bell_chooser_target.get());
-                            dur_ms = audio::play(app, &path, &alarm_volume::level(volume));
+                            dur_ms = audio::play(app, &path, &bell_levels(volume));
                         }
                         // Nothing plays (its file hasn't arrived, say):
                         // no silent Stop.
@@ -8737,6 +8749,7 @@ fn build_ui() -> MainWindow {
                     meditate_core::goal::daily_goal_mins_from_db(&db)
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
+                ui.set_prefs_bells_as_alarm(bells_as_alarm());
                 if let Some(app) = android_app() {
                     ui.set_about_version(
                         about::version_name(app).into(),
@@ -8981,7 +8994,7 @@ fn build_ui() -> MainWindow {
             if ui.get_volume_previewing() == slot {
                 if let Some(app) = android_app() {
                     let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
-                    audio::set_volume(app, &alarm_volume::level(volume));
+                    audio::set_volume(app, &bell_levels(volume));
                 }
             }
         }
@@ -9635,6 +9648,8 @@ fn android_main(android_app: slint::android::AndroidApp) {
     {
         let app = &android_app;
         alarm_volume::set_curve(audio::alarm_steps(app));
+        alarm_volume::set_media_curve(audio::media_steps(app));
+        alarm_volume::set_headphone_curve(audio::headphone_steps(app));
         audio::recover_alarm_volume(app);
         // No session survives a new screen; one recreated mid-session
         // left its service, notification, wake lock and track running.
@@ -9838,6 +9853,7 @@ fn reload_setup(ui: &MainWindow) {
     refresh_bell_rows(ui);
     refresh_boxbreath_cues(ui);
     ui.set_prefs_accent(theme::accent_ring(&read_global_setting("android_accent", ""), ui.get_accent_has_system()) as i32);
+    ui.set_prefs_bells_as_alarm(bells_as_alarm());
     // Slint runs the Switches' change handlers after this timer, in the
     // same turn; clear the guard only on the next one.
     // Without a loop to post to, clearing it now beats blocking every
@@ -9986,6 +10002,17 @@ fn stop_all_previews(ui: &MainWindow) {
     }
 }
 
+/// A bell's levels at `volume`, as media or, with "Play Bells as
+/// Alarm" on, as an alarm; read as each bell starts.
+fn bell_levels(volume: meditate_core::bell_volume::BellVolume) -> alarm_volume::Levels {
+    alarm_volume::levels(volume, !bells_as_alarm())
+}
+
+/// "Play Bells as Alarm" in Preferences; off without a database.
+fn bells_as_alarm() -> bool {
+    lock_db().is_some_and(|db| meditate_core::settings_keys::bells_as_alarm_from_db(&db))
+}
+
 /// Play `sound` at `volume` for the Volume row `slot`, showing its
 /// Stop pill until the bell ends.
 fn play_volume_preview(
@@ -9996,7 +10023,7 @@ fn play_volume_preview(
 ) {
     let Some(app) = android_app() else { return; };
     audio::stop(app);
-    let dur_ms = audio::play(app, &bell_sound_path(sound), &alarm_volume::level(volume));
+    let dur_ms = audio::play(app, &bell_sound_path(sound), &bell_levels(volume));
     let generation = VOLUME_PREVIEW_GEN.with(|g| {
         g.set(g.get() + 1);
         g.get()

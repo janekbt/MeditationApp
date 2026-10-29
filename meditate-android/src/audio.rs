@@ -18,6 +18,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
+use crate::alarm_volume::Levels;
 use meditate_core::bell_volume::AlarmLevel;
 
 const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
@@ -31,7 +32,7 @@ const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 /// duration in ms (0 if unknown / on failure) so the chooser
 /// preview can schedule its pill auto-revert; session-cue
 /// callers just ignore the value.
-pub fn play(app: &AndroidApp, path: &str, level: &AlarmLevel) -> i64 {
+pub fn play(app: &AndroidApp, path: &str, level: &Levels) -> i64 {
     if path.is_empty() {
         return 0;
     }
@@ -52,7 +53,7 @@ pub fn play(app: &AndroidApp, path: &str, level: &AlarmLevel) -> i64 {
 /// the same Starting / End slot, and interval bells stack, so bells
 /// no longer cut each other off. Failures are logged, never
 /// propagated.
-pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, level: &AlarmLevel) {
+pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, level: &Levels) {
     if path.is_empty() {
         return;
     }
@@ -65,7 +66,7 @@ pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, level: &AlarmLevel) {
 }
 
 /// Apply a new bell level to the preview ringing right now, if any.
-pub fn set_volume(app: &AndroidApp, level: &AlarmLevel) {
+pub fn set_volume(app: &AndroidApp, level: &Levels) {
     if let Err(e) = invoke_set_volume(app, level) {
         meditate_core::log("audio.play", &format!("set_volume FAILED: {e:?}"));
     }
@@ -75,20 +76,36 @@ pub fn set_volume(app: &AndroidApp, level: &AlarmLevel) {
 /// `[min, max, dB of each step...]` (no dB before Android 9); `None`
 /// on failure.
 pub fn alarm_steps(app: &AndroidApp) -> Option<Vec<f32>> {
-    match invoke_alarm_steps(app) {
+    report_steps(app, "alarmSteps")
+}
+
+/// The media stream's steps and their loudness on the speaker, as
+/// `alarm_steps` does for the alarm.
+pub fn media_steps(app: &AndroidApp) -> Option<Vec<f32>> {
+    report_steps(app, "mediaSteps")
+}
+
+/// The media stream's steps and their loudness in wired headphones,
+/// which stand for every kind of headphones.
+pub fn headphone_steps(app: &AndroidApp) -> Option<Vec<f32>> {
+    report_steps(app, "headphoneSteps")
+}
+
+fn report_steps(app: &AndroidApp, method: &str) -> Option<Vec<f32>> {
+    match invoke_steps(app, method) {
         Ok(steps) => {
-            meditate_core::log("audio.alarm_steps", &format!("{steps:?}"));
+            meditate_core::log("audio.steps", &format!("{method} {steps:?}"));
             Some(steps)
         }
         Err(e) => {
-            meditate_core::log("audio.alarm_steps", &format!("FAILED: {e:?}"));
+            meditate_core::log("audio.steps", &format!("{method} FAILED: {e:?}"));
             None
         }
     }
 }
 
-/// Put the user's alarm volume back if the app died while a bell had
-/// it raised.
+/// Put the user's alarm and media volume back if the app died while a
+/// bell had it raised.
 pub fn recover_alarm_volume(app: &AndroidApp) {
     if let Err(e) = invoke_no_arg(app, "recoverAlarmVolume") {
         meditate_core::log("audio.play", &format!("recoverAlarmVolume FAILED: {e:?}"));
@@ -106,17 +123,21 @@ pub fn stop(app: &AndroidApp) {
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
-    level: &AlarmLevel,
+    level: &Levels,
 ) -> Result<i64, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
-        let gains = gains_array(env, level)?;
+        let gains = gains_array(env, &level.main)?;
+        let head_gains = gains_array(env, &level.headphones)?;
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         let ret = env.call_static_method(
             class,
             "play",
-            "(Landroid/content/Context;Ljava/lang/String;I[F)J",
-            &[activity.into(), (&jpath).into(), level.step.into(), (&gains).into()],
+            "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F)J",
+            &[
+                activity.into(), (&jpath).into(), level.as_media.into(),
+                level.main.step.into(), (&gains).into(), level.headphones.step.into(), (&head_gains).into(),
+            ],
         )?;
 
         ret.j()
@@ -127,31 +148,39 @@ fn invoke_play_bell(
     app: &AndroidApp,
     slot: i32,
     path: &str,
-    level: &AlarmLevel,
+    level: &Levels,
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
-        let gains = gains_array(env, level)?;
+        let gains = gains_array(env, &level.main)?;
+        let head_gains = gains_array(env, &level.headphones)?;
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "playBell",
-            "(Landroid/content/Context;ILjava/lang/String;I[F)V",
-            &[activity.into(), slot.into(), (&jpath).into(), level.step.into(), (&gains).into()],
+            "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F)V",
+            &[
+                activity.into(), slot.into(), (&jpath).into(), level.as_media.into(),
+                level.main.step.into(), (&gains).into(), level.headphones.step.into(), (&head_gains).into(),
+            ],
         )?;
         Ok(())
     })
 }
 
-fn invoke_set_volume(app: &AndroidApp, level: &AlarmLevel) -> Result<(), jni::errors::Error> {
+fn invoke_set_volume(app: &AndroidApp, level: &Levels) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let gains = gains_array(env, level)?;
+        let gains = gains_array(env, &level.main)?;
+        let head_gains = gains_array(env, &level.headphones)?;
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "setVolume",
-            "(Landroid/content/Context;I[F)V",
-            &[activity.into(), level.step.into(), (&gains).into()],
+            "(Landroid/content/Context;ZI[FI[F)V",
+            &[
+                activity.into(), level.as_media.into(), level.main.step.into(), (&gains).into(),
+                level.headphones.step.into(), (&head_gains).into(),
+            ],
         )?;
         Ok(())
     })
@@ -167,13 +196,13 @@ fn gains_array<'local>(
     Ok(array)
 }
 
-fn invoke_alarm_steps(app: &AndroidApp) -> Result<Vec<f32>, jni::errors::Error> {
+fn invoke_steps(app: &AndroidApp, method: &str) -> Result<Vec<f32>, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         let ret = env
             .call_static_method(
                 class,
-                "alarmSteps",
+                method,
                 "(Landroid/content/Context;)[F",
                 &[activity.into()],
             )?

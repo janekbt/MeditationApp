@@ -1203,3 +1203,9 @@ msgid_plural "{n}d"
 msgstr[0] "{n} dn."
 msgstr[1] "{n} dn."
 msgstr[2] "{n} dn."
+
+msgid "If you have trouble with bells not playing, you can turn this option on. Bells then play on the alarm channel, which is the most reliable option."
+msgstr "Jeśli masz problem z dzwonkami, które się nie odtwarzają, możesz włączyć tę opcję. Dzwonki grają wtedy przez kanał alarmu, co jest najpewniejszą opcją."
+
+msgid "Play Bells as Alarm"
+msgstr "Odtwarzaj dzwonki jako alarm"

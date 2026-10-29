@@ -1329,6 +1329,31 @@ mod tests {
         b[..b.find('}').unwrap()].trim()
     }
 
+    /// #10: Preferences has a Bells group right after Stats with the
+    /// explanation under its heading and the switch, which loads the
+    /// saved value on open and saves a tap through the synced settings.
+    #[test]
+    fn the_bells_group_holds_the_alarm_switch() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let stats = slint.find("text: @tr(\"Stats\");").unwrap();
+        let bells = stats + slint[stats..].find("text: @tr(\"Bells\");").unwrap();
+        let data = slint.find("text: @tr(\"Data\");").unwrap();
+        assert!(bells < data, "right after Stats");
+        let group = &slint[bells..data];
+        assert!(group.contains("@tr(\"If you have trouble with bells not playing, you can turn this option on."));
+        assert!(group.contains("title: @tr(\"Play Bells as Alarm\");"));
+        assert!(group.contains("checked <=> root.prefs-bells-as-alarm;"));
+        assert!(group.contains("toggled(value) => { root.bells-as-alarm-toggled(value); }"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(lib.contains("ui.set_prefs_bells_as_alarm(bells_as_alarm());"));
+        assert!(lib.contains("ui.on_bells_as_alarm_toggled("));
+        // A failed save shows the stored value again, like the accent.
+        let reload = &lib[lib.find("fn reload_setup(").unwrap()..];
+        assert!(reload[..reload.find("\n}\n").unwrap()].contains("ui.set_prefs_bells_as_alarm("));
+        assert!(lib.contains("meditate_core::settings_keys::BELLS_AS_ALARM_KEY,\n                meditate_core::settings_keys::format_bool(v),"));
+    }
+
     #[test]
     fn a_touched_volume_slider_holds_the_page_still() {
         // #199: a drag that drifted up or down let the page take the
@@ -1369,7 +1394,9 @@ mod tests {
     #[test]
     fn setup_rows_are_shared_by_every_mode() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let whole = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        // The setup only: Preferences has a Bells group of its own (#10).
+        let slint = &whole[..whole.find("text: @tr(\"Stats\");").unwrap()];
         for once in [
             "text: @tr(\"Session\");",
             "text: @tr(\"Bells\");",
@@ -2562,14 +2589,15 @@ mod tests {
         for (name, slot) in [("CHANNEL_STARTING", 0), ("CHANNEL_END", 1), ("CHANNEL_INTERVAL", 2)] {
             assert!(kotlin.contains(&format!("const val {name} = {slot}")), "{name} must match bell_channel_slot");
         }
-        assert!(kotlin.contains("fun playBell(context: Context, channel: Int, path: String, step: Int, gains: FloatArray)"));
+        assert!(kotlin.contains("fun playBell(\n        context: Context, channel: Int, path: String,"));
         assert!(kotlin.contains("private val intervals = mutableListOf<MediaPlayer>()"), "interval bells stack");
-        let preview = kotlin.find("fun play(context: Context, path: String, step: Int, gains: FloatArray): Long").unwrap();
+        let preview = kotlin.find("fun play(context: Context, path: String, asMedia: Boolean,").unwrap();
         let preview = &kotlin[preview..preview + kotlin[preview..].find("\n    }\n").unwrap()];
         assert!(preview.contains("releasePreviewLocked()") && !preview.contains("releaseAllLocked"),
             "a preview replaces only the preview");
         let restore = kotlin.find("private fun settleLocked(").expect("restore only when all quiet");
-        assert!(kotlin[restore..restore + 200].contains("if (isIdleLocked())"));
+        // Each stream goes back once none of its own bells rings.
+        assert!(kotlin[restore..restore + 300].contains("if (levels.values.none { it.hold === hold }) restoreLocked(context, hold)"));
         let idle = kotlin.find("private fun isIdleLocked()").unwrap();
         let idle = &kotlin[idle..idle + kotlin[idle..].find("\n\n").unwrap()];
         for slot in ["preview == null", "starting == null", "end == null", "intervals.isEmpty()"] {
@@ -5120,10 +5148,12 @@ mod jni_tests {
         ("about", "ABOUT_CLASS_DOTTED", "openUrl", "(Landroid/content/Context;Ljava/lang/String;)V"),
         ("about", "ABOUT_CLASS_DOTTED", "copyText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
         ("about", "ABOUT_CLASS_DOTTED", "shareText", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
-        ("audio", "AUDIO_CLASS_DOTTED", "play", "(Landroid/content/Context;Ljava/lang/String;I[F)J"),
-        ("audio", "AUDIO_CLASS_DOTTED", "playBell", "(Landroid/content/Context;ILjava/lang/String;I[F)V"),
-        ("audio", "AUDIO_CLASS_DOTTED", "setVolume", "(Landroid/content/Context;I[F)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "play", "(Landroid/content/Context;Ljava/lang/String;ZI[FI[F)J"),
+        ("audio", "AUDIO_CLASS_DOTTED", "playBell", "(Landroid/content/Context;ILjava/lang/String;ZI[FI[F)V"),
+        ("audio", "AUDIO_CLASS_DOTTED", "setVolume", "(Landroid/content/Context;ZI[FI[F)V"),
         ("audio", "AUDIO_CLASS_DOTTED", "alarmSteps", "(Landroid/content/Context;)[F"),
+        ("audio", "AUDIO_CLASS_DOTTED", "mediaSteps", "(Landroid/content/Context;)[F"),
+        ("audio", "AUDIO_CLASS_DOTTED", "headphoneSteps", "(Landroid/content/Context;)[F"),
         ("audio", "AUDIO_CLASS_DOTTED", "recoverAlarmVolume", "(Landroid/content/Context;)V"),
         ("audio", "AUDIO_CLASS_DOTTED", "stop", "(Landroid/content/Context;)V"),
         ("guided", "PICKER_CLASS_DOTTED", "openExport", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),

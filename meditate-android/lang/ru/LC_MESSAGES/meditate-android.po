@@ -1203,3 +1203,9 @@ msgid_plural "{n}d"
 msgstr[0] "{n} дн."
 msgstr[1] "{n} дн."
 msgstr[2] "{n} дн."
+
+msgid "If you have trouble with bells not playing, you can turn this option on. Bells then play on the alarm channel, which is the most reliable option."
+msgstr "Если колокола у тебя не воспроизводятся, можно включить эту опцию. Тогда колокола звучат через канал будильника, а это самый надёжный вариант."
+
+msgid "Play Bells as Alarm"
+msgstr "Воспроизводить колокола как будильник"
