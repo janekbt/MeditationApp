@@ -1,0 +1,8 @@
+• Pierścień pokazuje sesję i jej dzwonki, liczone pod czasem
+• Zapisz obok Wstrzymaj
+• Przeciągnij szablony we własną kolejność
+• Dzwonki grają jak multimedia, tylko w słuchawkach: sprawdź ich głośność
+• Dźwięk budzenia Bluetooth przed każdym dzwonkiem
+• Steruj sesją z powiadomienia
+• Kolory systemu na Androidzie 14+, nowa ikona lotosu
+• Dziękujemy @marius-shark i @voidplayer!

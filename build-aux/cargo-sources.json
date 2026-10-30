@@ -4084,6 +4084,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/material-colors/material-colors-0.4.2.crate",
+        "sha256": "e226ffda362d5bc26bb8f730d637a0851eedfb05e35d92108c9d8b48d2e47941",
+        "dest": "cargo/vendor/material-colors-0.4.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"e226ffda362d5bc26bb8f730d637a0851eedfb05e35d92108c9d8b48d2e47941\", \"files\": {}}",
+        "dest": "cargo/vendor/material-colors-0.4.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/md-5/md-5-0.10.6.crate",
         "sha256": "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf",
         "dest": "cargo/vendor/md-5-0.10.6"

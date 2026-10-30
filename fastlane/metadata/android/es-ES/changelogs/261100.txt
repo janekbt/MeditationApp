@@ -1,0 +1,8 @@
+• Un anillo muestra la sesión y sus campanas, contadas bajo el tiempo
+• Guardar junto a Pausar
+• Ordena tus preajustes arrastrándolos
+• Las campanas suenan como multimedia, solo en los auriculares: revisa sus volúmenes
+• Sonido de activación Bluetooth antes de cada campana
+• Controla la sesión desde su notificación
+• Colores del sistema en Android 14+, nuevo icono de loto
+• ¡Gracias a @marius-shark y @voidplayer!

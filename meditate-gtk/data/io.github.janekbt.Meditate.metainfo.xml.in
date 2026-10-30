@@ -24,15 +24,15 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.10.2/meditate-gtk/data/screenshots/composite-timer.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-timer.png</image>
       <caption>Timer mode with presets and daily streak</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.10.2/meditate-gtk/data/screenshots/composite-stats.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-stats.png</image>
       <caption>Daily goal, 13-week heatmap and insights</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.10.2/meditate-gtk/data/screenshots/composite-log.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-log.png</image>
       <caption>Session log grouped by date, with labels and notes</caption>
     </screenshot>
   </screenshots>
@@ -88,6 +88,24 @@
   </content_rating>
 
   <releases>
+    <release version="26.11.0" date="2026-10-30">
+      <description translate="yes">
+        <p>A ring that shows the session and its bells, Save next to Pause, presets in your own order, and bells that stay in your headphones. Thank you to @marius-shark and @voidplayer, whose reports and ideas led to most of this release. On Android, bells now play as media instead of as an alarm, so they may sound louder or quieter than before: please check your bell volumes.</p>
+        <ul>
+          <li>Timer: a ring round the time fills with the session and shows each bell as a bead, and the bells are counted under the time, "2 of 5"</li>
+          <li>Save sits next to Pause, so you can end early in one tap; the session buttons stay in place</li>
+          <li>Presets: drag them into your own order on the Manage page; editing a preset's bell makes a new bell, so other presets keep theirs</li>
+          <li>Random interval bells ring around their own planned time instead of drifting from the last ring</li>
+          <li>Bluetooth: an optional wake-up lead-in, a soft noise before each bell, keeps sleeping headphones and speakers from swallowing it (Preferences)</li>
+          <li>Android: bells play as media, only in connected headphones; a switch in Preferences plays them as an alarm again, also only in the headphones</li>
+          <li>Android: control the session from its notification and the headphones' button</li>
+          <li>Android: follow the system colours on Android 14 and later, with a new lotus icon that takes them too</li>
+          <li>Android: dialogs stay above the keyboard and Enter confirms; the system bar symbols stay readable on light pages</li>
+          <li>Dates follow each language's own order; the Stats numbers agree with the Log and the Timer</li>
+          <li>Linux: GNOME 51 runtime</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.10.2" date="2026-10-18">
       <description translate="yes">
         <p>New ways to practise, most of them suggested by @voidplayer: thank you! Also a long round of fixes for sync, backups and the timer. Please update every device that syncs together: older versions read interval bells only in whole minutes.</p>

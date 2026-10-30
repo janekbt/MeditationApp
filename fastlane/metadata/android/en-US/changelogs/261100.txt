@@ -1,0 +1,8 @@
+• Ring shows the session and its bells, counted under the time
+• Save next to Pause
+• Drag presets into your own order
+• Bells play as media, only in headphones: please check your bell volumes
+• Bluetooth wake-up lead-in before each bell
+• Control the session from its notification
+• System colours on Android 14+, new lotus icon
+• Thanks to @marius-shark and @voidplayer!

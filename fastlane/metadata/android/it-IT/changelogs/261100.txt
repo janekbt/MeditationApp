@@ -1,0 +1,8 @@
+• Un anello mostra la sessione e le sue campane, contate sotto il tempo
+• Salva accanto a Pausa
+• Trascina i preset nel tuo ordine
+• Le campane suonano come media, solo nelle cuffie: controlla i loro volumi
+• Suono di risveglio Bluetooth prima di ogni campana
+• Controlla la sessione dalla notifica
+• Colori di sistema su Android 14+, nuova icona del loto
+• Grazie a @marius-shark e @voidplayer!

@@ -30,11 +30,11 @@ Linux:
 - Guided: play your own guided-meditation audio; the end bell rings when the track finishes. Imported files go into a library where you star the ones you use; files that aren't Ogg (WAV, MP3 and so on) are converted on import. Or link a local folder you manage yourself: browse it by folder or as one list sorted by name, length or plays, star files, and play them in place without copying (stays on that device)
 - Bells: an optional starting bell, interval bells (at fixed times, or repeating every so many seconds or minutes, randomised around each planned time or with gaps that grow on each ring), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor; on Android bells play as media, so with headphones they ring only there, or as an alarm for devices where they fail (Preferences); an optional wake-up lead-in, a soft noise before each bell, keeps sleeping Bluetooth headphones and speakers from swallowing it, in both apps
 - Optional preparation time before the starting bell
-- While a Timer or Guided session runs, a ring round the time fills with the session and shows each bell as a bead, and repeating bells are counted under the time ("2 of 5")
+- While a Timer or Guided session runs, a ring round the time fills with the session and shows each bell as a bead, and the bells, the starting and end bell included, are counted under the time ("2 of 5")
 - The computer or phone stays awake during a session so bells ring on time; keeping the screen on too is set per mode
 - Quick presets plus custom durations; drag presets into your own order on the Manage page; editing an interval bell a preset rings makes it a new bell, so the preset keeps ringing the bell it was saved with
 - Per-mode labels: each mode remembers the label you last used for it
-- One screen from start to end: pause, resume, save or discard right on the running page, with an optional note
+- One screen from start to end: pause, resume, save or discard right on the running page, with an optional note; Save sits next to Pause, so you can stop early in one tap
 - Auto-Finish per mode: a countdown saves itself when the time is up, with Undo
 - Daily streak and a system notification when you're away from the app
 

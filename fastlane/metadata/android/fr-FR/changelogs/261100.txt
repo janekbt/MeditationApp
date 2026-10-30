@@ -1,0 +1,8 @@
+• Un anneau montre la séance et ses cloches, comptées sous le temps
+• Enregistrer à côté de Pause
+• Glissez les préréglages dans votre ordre
+• Les cloches passent en média, seulement dans le casque : vérifiez leurs volumes
+• Son de réveil Bluetooth avant chaque cloche
+• Contrôlez la séance depuis sa notification
+• Couleurs du système sur Android 14+, nouvelle icône lotus
+• Merci à @marius-shark et @voidplayer !

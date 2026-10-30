@@ -1,0 +1,8 @@
+• Ein Ring zeigt die Sitzung und ihre Glocken, gezählt unter der Zeit
+• Speichern neben Pause
+• Voreinstellungen in eigene Reihenfolge ziehen
+• Glocken laufen als Medien, nur im Kopfhörer: bitte Glockenlautstärken prüfen
+• Bluetooth-Weckton vor jeder Glocke
+• Sitzung über die Benachrichtigung steuern
+• Systemfarben ab Android 14, neues Lotus-Symbol
+• Danke an @marius-shark und @voidplayer!

@@ -1,0 +1,8 @@
+• Een ring toont de sessie en haar bellen, geteld onder de tijd
+• Opslaan naast Pauzeren
+• Sleep voorinstellingen in je eigen volgorde
+• Bellen spelen als media, alleen in de koptelefoon: controleer je belvolumes
+• Bluetooth-wektoon voor elke bel
+• Bedien de sessie vanuit de melding
+• Systeemkleuren op Android 14+, nieuw lotuspictogram
+• Dank aan @marius-shark en @voidplayer!

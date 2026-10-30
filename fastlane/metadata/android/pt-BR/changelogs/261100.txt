@@ -1,0 +1,8 @@
+• Um anel mostra a sessão e seus sinos, contados sob o tempo
+• Salvar ao lado de Pausar
+• Arraste as predefinições na sua ordem
+• Os sinos tocam como mídia, só nos fones: confira os volumes dos sinos
+• Som de despertar Bluetooth antes de cada sino
+• Controle a sessão pela notificação
+• Cores do sistema no Android 14+, novo ícone de lótus
+• Obrigado a @marius-shark e @voidplayer!
