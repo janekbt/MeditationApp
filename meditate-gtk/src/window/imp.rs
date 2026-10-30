@@ -202,8 +202,8 @@ impl MeditateWindow {
     }
 
     /// The running time inside the bell ring (Timer countdown, Guided),
-    /// with the repeating bells' counters under it. Both follow the
-    /// session every quarter second, so a counter moves with its bell.
+    /// with the session's bell counter under it. Both follow the
+    /// session every quarter second, so the counter moves with each bell.
     fn bell_ring(&self, time_label: &gtk::Label) -> gtk::Box {
         use std::{cell::RefCell, rc::Rc};
         let block = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(16).build();
@@ -1202,7 +1202,8 @@ fn draw_bell_ring(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, w: i32, h: 
             // The running page is black.
             cr.set_source_rgb(0.0, 0.0, 0.0);
             let _ = cr.fill_preserve();
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+            // The track's colour until it rings.
+            cr.set_source_rgba(ar, ag, ab, 0.25);
             cr.set_line_width(2.0);
             let _ = cr.stroke();
         }

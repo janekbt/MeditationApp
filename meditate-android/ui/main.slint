@@ -363,7 +363,7 @@ export struct RingBead {
     rung: bool,
 }
 
-// A repeating bell's counter; `total` -1 shows the plain number.
+// The session's bell counter; `total` -1 shows the plain number.
 export struct BellCount {
     rung: int,
     total: int,
@@ -463,12 +463,14 @@ component WrapButton inherits Rectangle {
     in property <length> base-height: 40px;
     // The black session screen asks for the dark scheme (#15).
     in property <bool> dark;
-    // Red for an action that throws data away, as GTK's destructive-action.
+    // An action that throws data away, as GTK's flat destructive pill:
+    // red text on a faint tint of it. The light scheme's error is that
+    // mid red; the dark scheme's is pale pink.
     in property <bool> destructive;
-    property <color> error: root.dark ? MaterialPalette.schemes.dark.error : MaterialPalette.error;
-    property <color> primary: root.destructive ? root.error : root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
+    property <color> error: MaterialPalette.schemes.light.error;
+    property <color> primary: root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
     property <color> on-primary: root.dark ? MaterialPalette.schemes.dark.onPrimary : MaterialPalette.on-primary;
-    property <color> outline-color: root.destructive ? root.error : root.dark ? MaterialPalette.schemes.dark.outline : MaterialPalette.outline;
+    property <color> outline-color: root.dark ? MaterialPalette.schemes.dark.outline : MaterialPalette.outline;
     callback clicked;
 
     min-height: max(root.base-height, label.preferred-height + 16px);
@@ -476,7 +478,8 @@ component WrapButton inherits Rectangle {
     border-radius: min(self.height / 2, 28px);
     border-width: root.outline ? 1px : 0px;
     border-color: root.outline-color;
-    background: root.outline
+    background: root.destructive ? root.error.with-alpha(touch.pressed ? 0.25 : 0.15)
+        : root.outline
         ? (touch.pressed ? root.primary.with-alpha(MaterialPalette.state-layer-opacity-press) : transparent)
         : (touch.pressed ? root.primary.mix(root.on-primary, 1 - MaterialPalette.state-layer-opacity-press) : root.primary);
 
@@ -498,7 +501,7 @@ component WrapButton inherits Rectangle {
             vertical-alignment: center;
             font-size: 14px;
             font-weight: 500;
-            color: root.outline ? root.primary : root.on-primary;
+            color: root.destructive ? root.error : root.outline ? root.primary : root.on-primary;
         }
     }
 }
@@ -512,6 +515,8 @@ component BellRingView inherits Rectangle {
     in property <bool> start-filled;
     in property <[RingBead]> beads;
     property <color> accent: MaterialPalette.schemes.dark.primary;
+    // The faint track; a bead keeps its outline until it rings.
+    property <color> track: root.accent.with-alpha(0.25);
     // Room outside the track for the preparation's ring.
     property <length> inset: 22px;
     property <length> r: self.width / 2 - self.inset;
@@ -523,7 +528,7 @@ component BellRingView inherits Rectangle {
         height: self.width;
         border-width: 4px;
         border-radius: self.width / 2;
-        border-color: root.accent.with-alpha(0.25);
+        border-color: root.track;
     }
     if root.filled > 0 : Path {
         // A Path fits its viewbox into its size less the stroke width.
@@ -555,7 +560,7 @@ component BellRingView inherits Rectangle {
         border-radius: self.size / 2;
         background: bead.rung ? root.accent : MaterialPalette.schemes.dark.background;
         border-width: bead.rung ? 0px : 2px;
-        border-color: MaterialPalette.schemes.dark.outline;
+        border-color: root.track;
     }
     Rectangle {
         x: root.width / 2 - 9px;
@@ -565,7 +570,7 @@ component BellRingView inherits Rectangle {
         border-radius: 9px;
         background: root.start-filled ? root.accent : MaterialPalette.schemes.dark.background;
         border-width: root.start-filled ? 0px : 2px;
-        border-color: MaterialPalette.schemes.dark.outline;
+        border-color: root.track;
     }
     if root.prep >= 0 : Path {
         property <float> to: min(root.prep, 0.9999);
@@ -591,14 +596,13 @@ component BellRingView inherits Rectangle {
 }
 
 // One running-page button by core's code: 0 Pause, 1 Resume,
-// 2 Save, 3 Add, 4 Discard. Discard is the outline one.
+// 2 Save, 3 Add, 4 Discard. Discard is the red one.
 component EndButtonView inherits HorizontalLayout {
     in property <int> kind;
     in property <string> add-label;
     callback tapped(int);
     WrapButton {
         text: Tr.end-button(root.kind, root.add-label);
-        outline: root.kind == 4;
         base-height: 56px;
         dark: true;
         destructive: root.kind == 4;

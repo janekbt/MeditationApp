@@ -122,7 +122,8 @@ impl EndButtons {
 }
 
 /// What the running page draws around the time: the ring (a Timer
-/// countdown or a Guided session) and one counter per repeating bell.
+/// countdown or a Guided session) and the counter of all its bells,
+/// empty when no bell rings between the starting and the end bell.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BellRing {
     pub ring: Option<Ring>,
@@ -799,7 +800,8 @@ impl Session {
             (SessionPhase::Prep, true) => buttons(Resume, None, false),
             (_, true) => buttons(Resume, Some(Save), true),
             (SessionPhase::Overtime, false) => buttons(Save, Some(Add), true),
-            _ => buttons(Pause, None, false),
+            (SessionPhase::Prep, false) => buttons(Pause, None, false),
+            _ => buttons(Pause, Some(Save), false),
         }
     }
 
@@ -853,13 +855,18 @@ impl Session {
         let past_end = matches!(self.phase, SessionPhase::Overtime | SessionPhase::Stopped);
         let part = |secs: f64| end.map_or(0.0, |end| (secs / end as f64).min(1.0));
         let mut beads = Vec::new();
-        let mut counters = Vec::new();
+        // One count for every bell heard; none without bells between start and end.
+        let (mut rung, mut total, mut counted) = (0u32, 0u32, false);
         for bell in &self.bells {
             match &bell.schedule {
                 BellSchedule::Fixed { target_secs, fired } => {
-                    beads.push(Bead { at: part(*target_secs as f64), large: true, rung: *fired == Some(true) });
+                    let heard = *fired == Some(true);
+                    beads.push(Bead { at: part(*target_secs as f64), large: true, rung: heard });
+                    rung += u32::from(heard);
+                    total += 1;
+                    counted = true;
                 }
-                BellSchedule::Interval { base_secs, jitter_secs, step_secs, gaps, rang, .. } => {
+                BellSchedule::Interval { base_secs, step_secs, gaps, rang, .. } => {
                     // A bell with no time (old data) rings each second;
                     // a bead a second would say nothing.
                     if *base_secs == 0 && *step_secs == 0 {
@@ -884,15 +891,27 @@ impl Session {
                             continue;
                         }
                     }
-                    let total = (end.is_some() && !past_end).then_some(mine);
-                    let first = crate::bells::earliest_ring_secs(u64::from(*base_secs), *jitter_secs);
-                    counters.push((first, BellCounter { rung: rang.len() as u32, total }));
+                    rung += rang.len() as u32;
+                    total += mine;
+                    counted = true;
                 }
             }
         }
-        // Stable: two bells with the same earliest first ring keep the
-        // bell list's order.
-        counters.sort_by_key(|&(first, _)| first);
+        // The starting and end bells count too, once there are bells between them.
+        if counted {
+            if self.settings.starting_bell.is_some() {
+                rung += u32::from(!preparing);
+                total += 1;
+            }
+            if let (Some(end), Some(_)) = (end, &self.settings.end_bell) {
+                // Rang at the end of the countdown: overtime, or a stop that reached it.
+                let rang = self.phase == SessionPhase::Overtime || self.final_duration_secs.is_some_and(|d| d >= end);
+                rung += u32::from(rang);
+                total += 1;
+            }
+        }
+        let total = (end.is_some() && !past_end).then_some(total);
+        let counters = if counted { vec![BellCounter { rung, total }] } else { Vec::new() };
         let ring = end.map(|_| Ring {
             filled: if past_end { 1.0 } else { part(elapsed) },
             prep: preparing.then(|| {
@@ -902,7 +921,7 @@ impl Session {
             start_filled: !preparing,
             beads,
         });
-        BellRing { ring, counters: counters.into_iter().map(|(_, c)| c).collect() }
+        BellRing { ring, counters }
     }
 
     /// The whole-seconds value the running label should show right
@@ -2201,7 +2220,11 @@ mod tests {
         assert_eq!(shown(&s), row(Resume, None, false), "paused in preparation");
 
         let mut s = Session::start_running(timer_countdown_settings(60), t0);
-        assert_eq!(shown(&s), row(Pause, None, false), "running");
+        assert_eq!(shown(&s), row(Pause, Some(Save), false), "running");
+        let stopwatch = Session::start_running(timer_stopwatch_settings(), t0);
+        assert_eq!(shown(&stopwatch), row(Pause, Some(Save), false), "stopwatch running");
+        let breath = Session::start_running(box_breath_settings(Some(16)), t0);
+        assert_eq!(shown(&breath), row(Pause, Some(Save), false), "box breath running");
         let _ = s.pause(t0 + Duration::from_secs(5));
         assert_eq!(shown(&s), row(Resume, Some(Save), true), "paused");
         s.resume(t0 + Duration::from_secs(10));
@@ -2887,7 +2910,7 @@ mod tests {
                 Bead { at: 1680.0 / 1800.0, large: true, rung: false },
             ]
         );
-        assert_eq!(s.bell_ring(at(600)).counters, [], "one-off bells are not counted");
+        assert_eq!(s.bell_ring(at(600)).counters, [BellCounter { rung: 1, total: Some(2) }], "one-off bells count too");
     }
 
     #[test]
@@ -2960,26 +2983,48 @@ mod tests {
     }
 
     #[test]
-    fn the_counters_keep_their_order() {
-        let counter = |rung, total| BellCounter { rung, total: Some(total) };
+    fn the_counter_counts_every_bell() {
+        let counter = |rung, total| vec![BellCounter { rung, total: Some(total) }];
+        // Two repeating bells share one count: 2 of 5 and 1 of 4.
         let mut s = timer_with(1800, vec![every(420, 0, 0, Some(1800), 420), every(300, 0, 0, Some(1800), 300)]);
         for t in [300, 420, 600, 720] {
             s.tick(at(t));
         }
-        assert_eq!(s.bell_ring(at(720)).counters, [counter(2, 5), counter(1, 4)]);
+        assert_eq!(s.bell_ring(at(720)).counters, counter(3, 9));
 
-        // Every 5 min ±2 (earliest 3:00) stays ahead of every 4 min.
-        let mut s = timer_with(1800, vec![every(240, 0, 0, Some(1800), 240), every(300, 120, 0, Some(1800), 420)]);
-        s.tick(at(240));
-        assert_eq!(s.bell_ring(at(300)).counters, [counter(0, 6), counter(1, 7)]);
-        s.tick(at(420));
-        assert_eq!(s.bell_ring(at(430)).counters, [counter(1, 6), counter(1, 7)]);
+        // Starting bell, a one-off at 3:00, every 5 min, end bell: 4 of 8 at 12:00.
+        let settings = SessionSettings {
+            bells: vec![fixed_bell(180, "a"), every(300, 0, 0, Some(1800), 300)],
+            starting_bell: Some(cue_at(70.0)),
+            end_bell: Some(cue_at(70.0)),
+            ..timer_countdown_settings(1800)
+        };
+        let (mut s, _) = Session::start(settings.clone(), Duration::ZERO);
+        assert_eq!(s.bell_ring(at(0)).counters, counter(1, 8), "the starting bell rang");
+        for t in [180, 300, 600, 720] {
+            s.tick(at(t));
+        }
+        assert_eq!(s.bell_ring(at(720)).counters, counter(4, 8));
+        for t in [900, 1200, 1500, 1800] {
+            s.tick(at(t));
+        }
+        assert_eq!(s.bell_ring(at(1800)).counters, [BellCounter { rung: 8, total: None }], "the end bell rang");
 
-        // Same earliest first ring: the bell list decides.
-        let grows = || every(300, 0, 60, Some(1800), 300);
-        let flat = || every(300, 0, 0, Some(1800), 300);
-        assert_eq!(timer_with(1800, vec![grows(), flat()]).bell_ring(at(0)).counters, [counter(0, 4), counter(0, 5)]);
-        assert_eq!(timer_with(1800, vec![flat(), grows()]).bell_ring(at(0)).counters, [counter(0, 5), counter(0, 4)]);
+        // Saved early, at 10:00: the end bell never rings, however long the page stays.
+        let (mut early, _) = Session::start(settings.clone(), Duration::ZERO);
+        for t in [180, 300, 600] {
+            early.tick(at(t));
+        }
+        let _ = early.stop(at(600));
+        assert_eq!(early.bell_ring(at(1900)).counters[0].rung, 4, "start, 3:00, 5:00, 10:00");
+
+        // Preparation: the starting bell has not rung yet.
+        let (s, _) = Session::start(SessionSettings { prep_secs: Some(10), ..settings }, Duration::ZERO);
+        assert_eq!(s.bell_ring(at(5)).counters, counter(0, 8));
+
+        // Only starting and end bells: nothing to count between them.
+        let plain = SessionSettings { starting_bell: Some(cue_at(70.0)), end_bell: Some(cue_at(70.0)), ..timer_countdown_settings(1800) };
+        assert_eq!(Session::start(plain, Duration::ZERO).0.bell_ring(at(60)).counters, []);
     }
 
     #[test]
@@ -2987,13 +3032,15 @@ mod tests {
         let settings = SessionSettings {
             shape: SessionShape::TimerStopwatch,
             bells: vec![every(300, 0, 0, None, 300)],
+            starting_bell: Some(cue_at(70.0)),
             ..timer_countdown_settings(600)
         };
         let (mut s, _) = Session::start(settings, Duration::ZERO);
         for t in [300, 600, 720] {
             s.tick(at(t));
         }
-        assert_eq!(s.bell_ring(at(720)), BellRing { ring: None, counters: vec![BellCounter { rung: 2, total: None }] });
+        // The starting bell and two rings.
+        assert_eq!(s.bell_ring(at(720)), BellRing { ring: None, counters: vec![BellCounter { rung: 3, total: None }] });
     }
 
     #[test]

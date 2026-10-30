@@ -446,6 +446,16 @@ mod tests {
         assert!(guard < pause.find("self.cancel_tick()").unwrap(), "before anything is stopped");
     }
 
+    /// Save joins Pause once the session runs; the row only changed on
+    /// pause, resume and overtime, so after a preparation it stayed [Pause].
+    #[test]
+    fn save_joins_pause_when_preparation_ends() {
+        let imp = read("src/timer/imp.rs");
+        let prep = method(&imp, "    fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {");
+        let end = prep.find("CoreSessionEffect::EndPrep").expect("the end of preparation is noticed");
+        assert!(prep[end..].contains("self.refresh_end_buttons()"));
+    }
+
     /// A mode switch within 0.4 s of an End Bell drag saved the level
     /// into the new mode: the mode was read when the save ran.
     #[test]

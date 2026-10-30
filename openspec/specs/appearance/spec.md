@@ -109,7 +109,7 @@ Buttons that discard a session or delete data SHALL be drawn in the error colour
 
 #### Scenario: Discard on the session screen
 - **WHEN** a session runs, in light or dark mode
-- **THEN** Discard is an outlined pill with light red text and a red outline, and Pause stays in the accent colour
+- **THEN** Discard is a flat pill with red text on a faint red tint, as on the laptop, and Pause stays in the accent colour
 - **MANUAL** on the FP5: colours on the phone screen need a person to judge.
 
 #### Scenario: A delete dialog

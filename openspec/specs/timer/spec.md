@@ -136,11 +136,11 @@ On the phone, a row's title and subtitle SHALL wrap so the switch or button besi
 - **MANUAL** layout on a phone
 
 ### Requirement: The running page ends every session
-The running page SHALL offer the end of a session itself, with no second screen, with Discard always on its own line under the main buttons: Pause while running; Resume and Save with the note when paused; Resume when paused during preparation; Save and Add with the note when the time ran out; Save with the note when a session ended unsaved.
+The running page SHALL offer the end of a session itself, with no second screen, with Discard always on its own line under the main buttons: Pause and Save while running; Pause during preparation; Resume and Save with the note when paused; Resume when paused during preparation; Save and Add with the note when the time ran out; Save with the note when a session ended unsaved.
 
 #### Scenario: The buttons follow the session
-- **WHEN** a session is preparing or running, paused, paused during preparation, in overtime, or has ended (Box Breath countdown, or a save that failed)
-- **THEN** the row shows [Pause]; [Resume][Save] + note; [Resume]; [Save][Add] + note; [Save] + note, in that order, and Discard sits under the row in every one of them
+- **WHEN** a session is preparing, running, paused, paused during preparation, in overtime, or has ended (Box Breath countdown, or a save that failed)
+- **THEN** the row shows [Pause]; [Pause][Save]; [Resume][Save] + note; [Resume]; [Save][Add] + note; [Save] + note, in that order, and Discard sits under the row in every one of them
 - **TEST** `meditate-core/src/session/mod.rs::the_end_buttons_follow_the_session`
 
 #### Scenario: Nothing moves when the session pauses, on the laptop
@@ -157,6 +157,16 @@ The running page SHALL offer the end of a session itself, with no second screen,
 - **WHEN** a 20-minute countdown is paused after 7 minutes and the user taps Save
 - **THEN** a 7-minute session is saved with the note and the Setup label, and Setup shows again
 - **TEST** `meditate-core/src/session/mod.rs::save_while_paused_keeps_the_time_so_far`
+
+#### Scenario: Save joins Pause when preparation ends, on the laptop
+- **WHEN** a Timer with 10 seconds of preparation runs past its preparation on the laptop
+- **THEN** the row changes from [Pause] to [Pause][Save] without a pause in between
+- **TEST** `meditate-gtk/src/timer/mod.rs::save_joins_pause_when_preparation_ends`
+
+#### Scenario: Save while running keeps the time so far
+- **WHEN** a 20-minute countdown has run 8 minutes with a 1-minute pause and the user taps Save without pausing
+- **THEN** a 7-minute session is saved with the note written in an earlier pause, if any, and Setup shows again
+- **TEST** `meditate-android/src/app.rs::save_while_running_keeps_the_time_so_far`
 
 #### Scenario: Save after the time ran out keeps the planned length
 - **WHEN** a 20-minute countdown has run 3 minutes into overtime and the user taps Save
@@ -338,7 +348,7 @@ The running page of a Timer countdown or a Guided session SHALL show a ring arou
 - **MANUAL** layout on a real screen; a person checks the FP5 and the GTK window at 400 and 700 px height
 
 ### Requirement: Each bell is a bead on the ring
-The ring SHALL show each bell of the session as a bead at its time, small for a repeating bell and larger for a one-off bell, filled once it rang and hollow before.
+The ring SHALL show each bell of the session as a bead at its time, small for a repeating bell and larger for a one-off bell, filled in the accent once it rang and hollow before, outlined in the faint colour of the ring's track.
 
 #### Scenario: A one-off bell before and after it rings
 - **WHEN** a 30 minute Timer has a bell 3 minutes from the start and 2 minutes before the end, and 10 minutes have passed
@@ -366,6 +376,11 @@ The ring SHALL show each bell of the session as a bead at its time, small for a 
 - **THEN** the bell rings once at 12:00: its 10 minute bead rides to 12:00 and is filled, its 5 minute bead stays hollow because it never rang, and the counter reads "1 of 5"
 - **TEST** `meditate-core/src/session/mod.rs::repeating_bells_are_small_beads`
 
+#### Scenario: Beads before they ring
+- **WHEN** a Timer with a bell every 5 minutes runs, with the accent Rose on the phone and the laptop's accent set to purple
+- **THEN** the beads that have not rung yet and the start point before the session starts are outlined in the faint accent of the ring's track, not grey or white
+- **MANUAL** on the FP5 and the laptop: colours on the running page need a person to see them.
+
 ### Requirement: A random bell waits at its earliest time and stays where it rang
 A repeating bell with random spread SHALL show each bead hollow at the earliest time its ring can come, ride a bead whose time has come along the front of the fill until it rings, and keep it where it rang.
 
@@ -379,23 +394,32 @@ A repeating bell with random spread SHALL show each bead hollow at the earliest 
 - **THEN** at 4:15 its first bead is hollow at 4:15; after the ring it is filled at 4:30 and the next is still at 9:00
 - **TEST** `meditate-core/src/session/mod.rs::a_random_bell_rides_the_fill_until_it_rings`
 
-### Requirement: Repeating bells are counted under the time
-The running page SHALL show one counter per repeating bell under the time, in an order fixed at the start by each bell's earliest first ring, as "rung of total" in a countdown and as the plain number in the Timer stopwatch.
+### Requirement: The bells are counted under the time
+The running page SHALL show one counter under the time for all the session's bells, the starting and end bells included, as "rung of total" in a countdown and as the plain number in the Timer stopwatch, and none when no bell rings between the starting and the end bell.
 
-#### Scenario: Two repeating bells in a countdown
+#### Scenario: Every bell of a countdown, starting and end bell included
+- **WHEN** a 30 minute Timer has a starting bell, a bell 3 minutes in, a bell every 5 minutes and an end bell
+- **THEN** the counter reads "1 of 8" once the starting bell rang, "0 of 8" before it during preparation, "4 of 8" at 12 minutes, and "8" once the end bell rang
+- **TEST** `meditate-core/src/session/mod.rs::the_counter_counts_every_bell`
+
+#### Scenario: Two repeating bells share the counter
 - **WHEN** a 30 minute Timer has a bell every 7 minutes and one every 5 minutes, and 12 minutes have passed
-- **THEN** the counters read "2 of 5" and then "1 of 4"
-- **TEST** `meditate-core/src/session/mod.rs::the_counters_keep_their_order`
+- **THEN** the counter reads "3 of 9"
+- **TEST** `meditate-core/src/session/mod.rs::the_counter_counts_every_bell`
 
-#### Scenario: A late first ring does not change the order
-- **WHEN** a bell every 5 minutes give or take 2 and a bell every 4 minutes run, and the first one's first ring comes at 7:00
-- **THEN** the 5 minute bell's counter stays first the whole session, its earliest first ring being 3:00
-- **AND** two bells with the same earliest first ring keep the order of the bell list
-- **TEST** `meditate-core/src/session/mod.rs::the_counters_keep_their_order`
+#### Scenario: Only a starting and an end bell
+- **WHEN** a Timer has a starting and an end bell and no bell between them
+- **THEN** no counter shows
+- **TEST** `meditate-core/src/session/mod.rs::the_counter_counts_every_bell`
+
+#### Scenario: One-off bells count too
+- **WHEN** a 30 minute Timer has bells 3 minutes in and 2 minutes before the end, and 10 minutes have passed
+- **THEN** the counter reads "1 of 2"
+- **TEST** `meditate-core/src/session/mod.rs::one_off_bells_are_large_beads`
 
 #### Scenario: Stopwatch counts without a total
-- **WHEN** a Timer stopwatch with a bell every 5 minutes has run 12 minutes
-- **THEN** the counter reads "2" and there is no ring
+- **WHEN** a Timer stopwatch with a starting bell and a bell every 5 minutes has run 12 minutes
+- **THEN** the counter reads "3" and there is no ring
 - **TEST** `meditate-core/src/session/mod.rs::the_stopwatch_counts_without_a_total`
 
 #### Scenario: The counter text in every language
@@ -413,7 +437,7 @@ During the preparation before the starting bell, the page SHALL show the ring em
 - **TEST** `meditate-core/src/session/mod.rs::preparation_fills_the_small_ring`
 
 ### Requirement: Overtime shows a full ring
-Once a countdown passes its end, the ring SHALL be full with every rung bead filled, and each counter SHALL show only its number, still counting the bells that ring in overtime.
+Once a countdown passes its end, the ring SHALL be full with every rung bead filled, and the counter SHALL show only its number, still counting the bells that ring in overtime.
 
 #### Scenario: A bell rings on in overtime
 - **WHEN** a 30 minute Timer with a bell every 5 minutes give or take 1 has rung six times and passes the end
@@ -426,7 +450,7 @@ On the phone, the running session's media control SHALL offer the session page's
 
 #### Scenario: The buttons follow the session page in every state
 - **WHEN** a session is running, preparing, paused, paused in preparation, or in overtime
-- **THEN** the media control offers Pause and Discard; Pause and Discard; Resume, Save and Discard; Resume and Discard; Save, Add and Discard
+- **THEN** the media control offers Pause, Save and Discard; Pause and Discard; Resume, Save and Discard; Resume and Discard; Save, Add and Discard
 - **TEST** `meditate-android/src/app.rs::the_notification_offers_the_session_buttons`
 
 #### Scenario: A button in the notification does what the app's button does

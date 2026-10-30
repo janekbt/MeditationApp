@@ -2865,6 +2865,10 @@ impl TimerView {
         // FireStartingBell (emitted by Session alongside EndPrep at
         // the boundary tick) flows through the shared dispatcher.
         self.dispatch_session_effects(&effects);
+        // Save joins Pause once the session runs.
+        if effects.contains(&CoreSessionEffect::EndPrep) {
+            self.refresh_end_buttons();
+        }
         glib::ControlFlow::Continue
     }
 

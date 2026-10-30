@@ -4506,7 +4506,7 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
         let running = AppState::idle().toggle(shape.clone(), t0).state;
-        assert_eq!(media_buttons(&running, true), vec![0, 4], "Pause, Discard");
+        assert_eq!(media_buttons(&running, true), vec![0, 2, 4], "Pause, Save, Discard");
         let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
         assert_eq!(media_buttons(&paused, true), vec![1, 2, 4], "Resume, Save, Discard");
         let prep = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0).state;
@@ -4528,6 +4528,8 @@ mod tests {
         assert_eq!(media_tap(&paused, true, 1), Some(1), "Resume");
         assert_eq!(media_tap(&paused, true, 2), Some(2), "Save");
         assert_eq!(media_tap(&paused, true, 0), None, "a Pause sent while it was running");
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        assert_eq!(media_tap(&running, true, 2), Some(2), "Save while running");
         let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
         assert_eq!(media_tap(&over, true, 3), Some(3), "Add");
         assert_eq!(media_tap(&AppState::idle(), true, MEDIA_DISCARD), None, "after the session ended");
@@ -4583,7 +4585,7 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
         assert!(running.is_running_page());
-        assert_eq!((running.end_buttons().first, running.end_buttons().second), (EndButton::Pause, None));
+        assert_eq!((running.end_buttons().first, running.end_buttons().second), (EndButton::Pause, Some(EndButton::Save)));
         let paused = running.toggle(timer_countdown(Duration::from_secs(60)), t0 + Duration::from_secs(5)).state;
         assert_eq!((paused.end_buttons().first, paused.end_buttons().second), (EndButton::Resume, Some(EndButton::Save)));
         // Save while paused keeps the time so far; in overtime the planned length.
@@ -4618,6 +4620,24 @@ mod tests {
         let save = handler(&code, "save_tap");
         assert!(!save.contains("resolve_persist_action("), "Setup keeps the label for next time");
         assert!(save.contains("resolved_label_for_mode(mode)"), "the session gets the Setup label");
+    }
+
+    #[test]
+    fn save_while_running_keeps_the_time_so_far() {
+        // Pause at 3, resume at 4, Save without pausing at 8: 7 minutes.
+        let t0 = Duration::from_secs(100);
+        let min = |m: u64| t0 + Duration::from_secs(m * 60);
+        let shape = timer_countdown(Duration::from_secs(20 * 60));
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let paused = running.toggle(shape.clone(), min(3)).state;
+        let resumed = paused.toggle(shape, min(4)).state;
+        let saved = resumed.save_end(min(8));
+        assert_eq!(ended_duration_secs(&saved.effects), Some(7 * 60));
+        assert!(saved.is_finished());
+        // The note typed in the pause is still there, hidden: not behind an `if`.
+        let slint = slint_code();
+        let at = slint.find("running-note := NoteField {").unwrap();
+        assert!(!slint[..at].trim_end().ends_with(':'), "the note field is conditional");
     }
 
     #[test]
@@ -5392,7 +5412,8 @@ mod tests {
             assert!(body.contains("dark: true;"), "a session-screen NoteField without dark: true");
         }
         for name in ["WrapButton", "NoteField"] {
-            for line in component(&layout, name).lines().filter(|l| l.contains("MaterialPalette.") && !l.contains("state-layer")) {
+            // Exempt: Discard's red, GTK's mid red on purpose (destructive_buttons_are_red).
+            for line in component(&layout, name).lines().filter(|l| l.contains("MaterialPalette.") && !l.contains("state-layer") && !l.contains("property <color> error:")) {
                 assert!(line.contains("root.dark ? MaterialPalette.schemes.dark."), "{name} draws without its dark switch: {line}");
             }
         }
@@ -5417,10 +5438,14 @@ mod tests {
         assert!(component(&layout, "ConfirmButton").contains("root.destructive ? MaterialPalette.error : MaterialPalette.primary"));
         let wipe = "ConfirmButton {\n                            text: @tr(\"Wipe Local\");\n                            destructive: true;";
         assert!(layout.contains(wipe), "Wipe Local is not red");
-        assert!(component(&layout, "EndButtonView").contains("destructive: root.kind == 4;"));
+        // Discard on the session screen: the laptop's filled red pill.
+        let end = component(&layout, "EndButtonView");
+        assert!(end.contains("destructive: root.kind == 4;") && !end.contains("outline:"), "{end}");
         let wrap = component(&layout, "WrapButton");
-        assert!(wrap.contains("root.dark ? MaterialPalette.schemes.dark.error : MaterialPalette.error"));
-        assert_eq!(wrap.matches("root.destructive ? root.error :").count(), 2, "Discard's text and outline");
+        // GTK's flat destructive pill: red text on a 15 % tint of the same red.
+        assert!(wrap.contains("property <color> error: MaterialPalette.schemes.light.error;"), "{wrap}");
+        assert!(wrap.contains("root.destructive ? root.error.with-alpha("), "{wrap}");
+        assert!(wrap.contains("color: root.destructive ? root.error :"), "{wrap}");
     }
 
     #[test]
