@@ -5245,8 +5245,15 @@ mod tests {
         for line in [running, buttons].iter().flat_map(|part| part.lines()) {
             assert!(!line.replace("MaterialPalette.schemes.dark.", "").contains("MaterialPalette."), "{line}");
         }
-        for role in ["primary: MaterialPalette.schemes.dark.primary;", "on-primary: MaterialPalette.schemes.dark.onPrimary;", "outline-color: MaterialPalette.schemes.dark.outline;"] {
-            assert!(buttons.contains(role), "EndButtonView lacks {role}");
+        assert!(buttons.contains("dark: true;"), "EndButtonView without dark: true");
+        for (at, _) in running.match_indices("NoteField {") {
+            let body = &running[at..at + running[at..].find('}').unwrap()];
+            assert!(body.contains("dark: true;"), "a session-screen NoteField without dark: true");
+        }
+        for name in ["WrapButton", "NoteField"] {
+            for line in component(&layout, name).lines().filter(|l| l.contains("MaterialPalette.") && !l.contains("state-layer")) {
+                assert!(line.contains("root.dark ? MaterialPalette.schemes.dark."), "{name} draws without its dark switch: {line}");
+            }
         }
     }
 

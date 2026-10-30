@@ -444,10 +444,11 @@ component WrapButton inherits Rectangle {
     in property <string> text;
     in property <bool> outline;
     in property <length> base-height: 40px;
-    // The session screen passes the dark scheme's roles (#15).
-    in property <color> primary: MaterialPalette.primary;
-    in property <color> on-primary: MaterialPalette.on-primary;
-    in property <color> outline-color: MaterialPalette.outline;
+    // The black session screen asks for the dark scheme (#15).
+    in property <bool> dark;
+    property <color> primary: root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
+    property <color> on-primary: root.dark ? MaterialPalette.schemes.dark.onPrimary : MaterialPalette.on-primary;
+    property <color> outline-color: root.dark ? MaterialPalette.schemes.dark.outline : MaterialPalette.outline;
     callback clicked;
 
     min-height: max(root.base-height, label.preferred-height + 16px);
@@ -492,9 +493,7 @@ component EndButtonView inherits HorizontalLayout {
         text: root.kind == 0 ? Tr.pause() : root.kind == 1 ? Tr.resume() : root.kind == 2 ? @tr("Save") : root.kind == 3 ? root.add-label : @tr("Discard");
         outline: root.kind == 4;
         base-height: 56px;
-        primary: MaterialPalette.schemes.dark.primary;
-        on-primary: MaterialPalette.schemes.dark.onPrimary;
-        outline-color: MaterialPalette.schemes.dark.outline;
+        dark: true;
         clicked => { root.tapped(root.kind); }
     }
 }
@@ -515,6 +514,14 @@ component NoteField inherits Rectangle {
         input.clear-focus();
     }
 
+    // The black session screen asks for the dark scheme (#15).
+    in property <bool> dark;
+    property <color> surface: root.dark ? MaterialPalette.schemes.dark.surfaceContainerHighest : MaterialPalette.surface-container-highest;
+    property <color> accent: root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
+    property <color> on-accent: root.dark ? MaterialPalette.schemes.dark.onPrimary : MaterialPalette.on-primary;
+    property <color> ink: root.dark ? MaterialPalette.schemes.dark.onSurface : MaterialPalette.on-surface;
+    property <color> muted: root.dark ? MaterialPalette.schemes.dark.onSurfaceVariant : MaterialPalette.on-surface-variant;
+
     // Starts at a single-line height; the inner TextInput's
     // `preferred-height` grows with every wrapped line, and because
     // nothing in the layout caps the Rectangle, the box auto-expands
@@ -523,7 +530,7 @@ component NoteField inherits Rectangle {
     // horizontal scroll.
     min-height: 56px;
     border-radius: 12px;
-    background: MaterialPalette.surface-container-highest;
+    background: root.surface;
 
     VerticalLayout {
         padding-left: 16px;
@@ -535,18 +542,16 @@ component NoteField inherits Rectangle {
         Text {
             text: root.label;
             font-size: 12px;
-            color: input.has-focus
-                ? MaterialPalette.primary
-                : MaterialPalette.on-surface-variant;
+            color: input.has-focus ? root.accent : root.muted;
         }
 
         input := TextInput {
             single-line: false;
             wrap: word-wrap;
             font-size: 16px;
-            color: MaterialPalette.on-surface;
-            selection-background-color: MaterialPalette.primary;
-            selection-foreground-color: MaterialPalette.on-primary;
+            color: root.ink;
+            selection-background-color: root.accent;
+            selection-foreground-color: root.on-accent;
             vertical-alignment: top;
         }
     }
@@ -557,9 +562,7 @@ component NoteField inherits Rectangle {
     Rectangle {
         y: parent.height - self.height;
         height: input.has-focus ? 3px : 1px;
-        background: input.has-focus
-            ? MaterialPalette.primary
-            : MaterialPalette.on-surface-variant;
+        background: input.has-focus ? root.accent : root.muted;
     }
 }
 
@@ -4436,6 +4439,7 @@ export component MainWindow inherits Window {
                         wrap: word-wrap;
                     }
                     running-note := NoteField {
+                        dark: true;
                         label: @tr("Note");
                         text <=> root.note-text;
                     }
