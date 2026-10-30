@@ -1199,3 +1199,6 @@ msgstr "Duração (segundos)"
 
 msgid "Bluetooth"
 msgstr "Bluetooth"
+
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr "Salvo como um novo sino, suas predefinições mantêm o antigo"

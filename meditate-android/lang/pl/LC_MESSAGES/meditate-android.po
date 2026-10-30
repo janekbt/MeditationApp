@@ -1228,3 +1228,6 @@ msgstr "Długość (sekundy)"
 
 msgid "Bluetooth"
 msgstr "Bluetooth"
+
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr "Zapisano jako nowy dzwonek, Twoje szablony zachowują stary"

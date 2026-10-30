@@ -83,45 +83,76 @@ impl Database {
         signal_mode: SignalMode,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        let bell_uuid = uuid::Uuid::new_v4().to_string();
-        let created_iso = chrono::Utc::now().to_rfc3339();
+        let rowid = self.insert_bell_in(&tx, &IntervalBell {
+            id: 0,
+            uuid: uuid::Uuid::new_v4().to_string().into(),
+            kind,
+            time,
+            jitter,
+            step,
+            sound_uuid: sound_uuid.into(),
+            vibration_pattern_uuid: vibration_pattern_uuid.into(),
+            signal_mode,
+            enabled: true,
+            created_iso: chrono::Utc::now().to_rfc3339(),
+            volume: BellVolume::default(),
+        })?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    /// The edit `edited` of bell `old` as new bell `uuid` beside it
+    /// (same creation time), and `old` switched off, in one
+    /// transaction. Returns the new bell's uuid.
+    pub fn copy_interval_bell(&self, old: &IntervalBell, edited: &IntervalBell, uuid: &str) -> Result<super::IntervalBellUuid> {
+        let tx = self.conn.unchecked_transaction()?;
+        let uuid: super::IntervalBellUuid = uuid.into();
+        self.insert_bell_in(&tx, &IntervalBell { uuid: uuid.clone(), created_iso: old.created_iso.clone(), ..edited.clone() })?;
+        self.update_bell_in(&tx, &IntervalBell { enabled: false, ..old.clone() })?;
+        tx.commit()?;
+        Ok(uuid)
+    }
+
+    /// Insert `bell` as it is (its `id` is ignored) and record it.
+    fn insert_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO interval_bells
                 (uuid, kind, minutes, jitter_pct, sound_uuid,
-                 vibration_pattern_uuid, signal_mode, enabled, created_iso,
+                 vibration_pattern_uuid, signal_mode, enabled, created_iso, volume_pct,
                  secs, secs_unit, jitter_secs, jitter_unit, step_secs, step_unit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
-                bell_uuid,
-                kind.as_db_str(),
-                legacy_minutes(time),
-                legacy_jitter_pct(time, jitter),
-                sound_uuid,
-                vibration_pattern_uuid,
-                signal_mode.as_db_str(),
-                created_iso,
-                time.secs,
-                time.unit.as_db_str(),
-                jitter.secs,
-                jitter.unit.as_db_str(),
-                step.secs,
-                step.unit.as_db_str(),
+                bell.uuid,
+                bell.kind.as_db_str(),
+                legacy_minutes(bell.time),
+                legacy_jitter_pct(bell.time, bell.jitter),
+                bell.sound_uuid,
+                bell.vibration_pattern_uuid,
+                bell.signal_mode.as_db_str(),
+                i64::from(bell.enabled),
+                bell.created_iso,
+                bell.volume.percent(),
+                bell.time.secs,
+                bell.time.unit.as_db_str(),
+                bell.jitter.secs,
+                bell.jitter.unit.as_db_str(),
+                bell.step.secs,
+                bell.step.unit.as_db_str(),
             ],
         )?;
         let rowid = self.conn.last_insert_rowid();
         let mut payload = serde_json::json!({
-            "uuid": bell_uuid,
-            "kind": kind.as_db_str(),
-            "sound_uuid": sound_uuid,
-            "vibration_pattern_uuid": vibration_pattern_uuid,
-            "signal_mode": signal_mode.as_db_str(),
-            "enabled": true,
-            "created_iso": created_iso,
-            "volume": BellVolume::default().percent(),
+            "uuid": bell.uuid,
+            "kind": bell.kind.as_db_str(),
+            "sound_uuid": bell.sound_uuid,
+            "vibration_pattern_uuid": bell.vibration_pattern_uuid,
+            "signal_mode": bell.signal_mode.as_db_str(),
+            "enabled": bell.enabled,
+            "created_iso": bell.created_iso,
+            "volume": bell.volume.percent(),
         });
-        add_time_fields(&mut payload, time, jitter, step);
-        self.emit_event(&tx, EventKind::IntervalBellInsert, &bell_uuid, payload.to_string())?;
-        tx.commit()?;
+        add_time_fields(&mut payload, bell.time, bell.jitter, bell.step);
+        self.emit_event(tx, EventKind::IntervalBellInsert, bell.uuid.as_str(), payload.to_string())?;
         Ok(rowid)
     }
 
@@ -133,6 +164,12 @@ impl Database {
     /// "this bell is alive again". Mirrors `update_label`'s shape.
     pub fn update_interval_bell(&self, bell: &IntervalBell) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        self.update_bell_in(&tx, bell)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn update_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<()> {
         let created_iso: Option<String> = self.conn.query_row(
             "SELECT created_iso FROM interval_bells WHERE uuid = ?1",
             params![bell.uuid],
@@ -177,8 +214,7 @@ impl Database {
             "volume": bell.volume.percent(),
         });
         add_time_fields(&mut payload, bell.time, bell.jitter, bell.step);
-        self.emit_event(&tx, EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload.to_string())?;
-        tx.commit()?;
+        self.emit_event(tx, EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload.to_string())?;
         Ok(())
     }
 

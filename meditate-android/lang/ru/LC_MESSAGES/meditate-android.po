@@ -1228,3 +1228,6 @@ msgstr "Длительность (секунды)"
 
 msgid "Bluetooth"
 msgstr "Bluetooth"
+
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr "Сохранено как новый колокол, ваши пресеты сохраняют старый"

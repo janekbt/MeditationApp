@@ -31,7 +31,7 @@ Linux:
 - Bells: an optional starting bell, interval bells (at fixed times, or repeating every so many seconds or minutes, randomised or with gaps that grow on each ring), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor; on Android bells play as media, so with headphones they ring only there, or as an alarm for devices where they fail (Preferences); an optional wake-up lead-in, a soft noise before each bell, keeps sleeping Bluetooth headphones and speakers from swallowing it, in both apps
 - Optional preparation time before the starting bell
 - The computer or phone stays awake during a session so bells ring on time; keeping the screen on too is set per mode
-- Quick presets plus custom durations
+- Quick presets plus custom durations; editing an interval bell a preset rings makes it a new bell, so the preset keeps ringing the bell it was saved with
 - Per-mode labels: each mode remembers the label you last used for it
 - One screen from start to end: pause, resume, save or discard right on the running page, with an optional note
 - Auto-Finish per mode: a countdown saves itself when the time is up, with Undo
@@ -54,7 +54,7 @@ Linux:
 ### Sync
 - Optional sync between all your devices — Linux and Android — via your own Nextcloud (WebDAV, app password)
 - Sessions, labels, presets, preferences and your imported sounds and guided files sync
-- Update every device that syncs together: an older version that changes an interval bell drops what it doesn't know about it, such as a growing gap or a time in seconds
+- Update every device that syncs together: an older version that changes an interval bell drops what it doesn't know about it, such as a growing gap or a time in seconds, and changes the bell a preset rings instead of making a new one
 - Offline-first: everything works without a network; changes merge whenever you're back online, with conflict handling that never loses a session
 
 ### Preferences

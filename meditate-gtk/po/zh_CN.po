@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-29 20:52+0100\n"
+"POT-Creation-Date: 2026-10-30 09:12+0100\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -103,11 +103,11 @@ msgstr "创建新间隔铃…"
 msgid "Delete bell"
 msgstr "删除铃声"
 
-#: src/bells.rs:333 src/bells.rs:893
+#: src/bells.rs:333 src/bells.rs:898
 msgid "Delete Bell?"
 msgstr "删除铃声？"
 
-#: src/bells.rs:334 src/bells.rs:894
+#: src/bells.rs:334 src/bells.rs:899
 msgid "This bell will no longer ring during sessions."
 msgstr "此铃声将不再在会话期间响起。"
 
@@ -115,9 +115,9 @@ msgstr "此铃声将不再在会话期间响起。"
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:338 src/bells.rs:898 src/guided.rs:231 src/guided.rs:962
+#: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:681 src/preferences.rs:755 src/presets.rs:441
+#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:441
 #: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
@@ -126,7 +126,7 @@ msgstr "此铃声将不再在会话期间响起。"
 msgid "Cancel"
 msgstr "取消"
 
-#: src/bells.rs:339 src/bells.rs:899 src/guided.rs:1080 src/labels.rs:405
+#: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
 #: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "删除"
@@ -207,78 +207,82 @@ msgstr "分钟"
 msgid "Minutes"
 msgstr "分钟"
 
-#: src/bells.rs:574
+#: src/bells.rs:544
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr "已另存为新铃声，你的预设保留原来的铃声"
+
+#: src/bells.rs:579
 msgid "Repeating"
 msgstr "重复"
 
-#: src/bells.rs:575
+#: src/bells.rs:580
 msgid "At time from start"
 msgstr "从开始起的时间点"
 
-#: src/bells.rs:576
+#: src/bells.rs:581
 msgid "Before end"
 msgstr "结束前"
 
-#: src/bells.rs:580
+#: src/bells.rs:585
 msgid "Kind"
 msgstr "类型"
 
 #. Time — common to all kinds; its meaning shifts with kind.
-#: src/bells.rs:591
+#: src/bells.rs:596
 msgid "Time"
 msgstr "时间"
 
-#: src/bells.rs:597
+#: src/bells.rs:602
 msgid "Jitter"
 msgstr "随机幅度"
 
-#: src/bells.rs:598
+#: src/bells.rs:603
 msgid "Random shift of each ring"
 msgstr "每次响铃的随机偏移"
 
-#: src/bells.rs:605
+#: src/bells.rs:610
 msgid "Step"
 msgstr "步长"
 
-#: src/bells.rs:606
+#: src/bells.rs:611
 msgid "Added to the gap after each ring"
 msgstr "每次响铃后加到间隔上"
 
-#: src/bells.rs:616 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
+#: src/bells.rs:621 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
 #: data/ui/timer_view.blp:612 data/ui/timer_view.blp:660
 #: data/ui/timer_view.blp:708 data/ui/timer_view.blp:756
 msgid "Type"
 msgstr "类型"
 
-#: src/bells.rs:631 src/bells.rs:651 src/timer/imp.rs:1584
+#: src/bells.rs:636 src/bells.rs:656 src/timer/imp.rs:1584
 #: src/timer/imp.rs:1658 src/timer/imp.rs:1740 data/ui/timer_view.blp:625
 #: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
 #: data/ui/timer_view.blp:769
 msgid "Sound"
 msgstr "声音"
 
-#: src/bells.rs:635 src/timer/imp.rs:1588 src/timer/imp.rs:1660
+#: src/bells.rs:640 src/timer/imp.rs:1588 src/timer/imp.rs:1660
 #: src/timer/imp.rs:1742
 msgid "Vibration"
 msgstr "振动"
 
-#: src/bells.rs:639 src/timer/imp.rs:1592 src/timer/imp.rs:1662
+#: src/bells.rs:644 src/timer/imp.rs:1592 src/timer/imp.rs:1662
 #: src/timer/imp.rs:1744
 msgid "Both"
 msgstr "两者"
 
-#: src/bells.rs:669 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
+#: src/bells.rs:674 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
 #: data/ui/timer_view.blp:565 data/ui/timer_view.blp:646
 #: data/ui/timer_view.blp:694 data/ui/timer_view.blp:742
 #: data/ui/timer_view.blp:790
 msgid "Pattern"
 msgstr "模式"
 
-#: src/bells.rs:690
+#: src/bells.rs:695
 msgid "Delete Bell"
 msgstr "删除铃声"
 
-#: src/bells.rs:708
+#: src/bells.rs:713
 msgid "Edit Bell"
 msgstr "编辑铃声"
 
@@ -298,7 +302,7 @@ msgstr "解析错误"
 msgid "Database error"
 msgstr "数据库错误"
 
-#: src/data_io.rs:33 src/preferences.rs:525
+#: src/data_io.rs:33 src/preferences.rs:531
 msgid "Database unavailable"
 msgstr "数据库不可用"
 
@@ -308,7 +312,7 @@ msgid "«{name}» is already taken"
 msgstr "“{name}”已被占用"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:521 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:527 src/sounds.rs:640
 msgid "Save failed"
 msgstr "保存失败"
 
@@ -394,7 +398,7 @@ msgstr "音轨名称"
 msgid "A guided file with this name already exists."
 msgstr "已存在同名的引导文件。"
 
-#: src/guided.rs:200 src/preferences.rs:219 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:225 src/sounds.rs:501
 msgid "Import"
 msgstr "导入"
 
@@ -741,7 +745,7 @@ msgstr "开始时间"
 msgid "_Cancel"
 msgstr "取消(_C)"
 
-#: src/log/imp.rs:1101 src/preferences.rs:428
+#: src/log/imp.rs:1101 src/preferences.rs:434
 msgid "_Save"
 msgstr "保存(_S)"
 
@@ -803,272 +807,278 @@ msgid ""
 "No bell: increase the length.\n"
 "Noise, then bell: decrease the length.\n"
 "Only the bell: just right."
-msgstr "蓝牙设备在静音 30 到 60 秒后会进入休眠。唤醒时会吞掉铃声的开头，短铃声甚至完全听不到。唤醒预备会先用轻柔的噪声唤醒设备；每台设备所需时间不同。每次测试前请等待 30 到 60 秒：\n没有铃声：增加时长。\n先有噪声再有铃声：缩短时长。\n只有铃声：正好。"
+msgstr ""
+"蓝牙设备在静音 30 到 60 秒后会进入休眠。唤醒时会吞掉铃声的开头，短铃声甚至完"
+"全听不到。唤醒预备会先用轻柔的噪声唤醒设备；每台设备所需时间不同。每次测试前"
+"请等待 30 到 60 秒：\n"
+"没有铃声：增加时长。\n"
+"先有噪声再有铃声：缩短时长。\n"
+"只有铃声：正好。"
 
-#: src/preferences.rs:113
+#: src/preferences.rs:115
 msgid "Wake-up Lead-in for Bluetooth"
 msgstr "蓝牙唤醒预备"
 
-#: src/preferences.rs:127
+#: src/preferences.rs:129
 msgid "Length (Seconds)"
 msgstr "时长（秒）"
 
-#: src/preferences.rs:149 src/preferences.rs:167
+#: src/preferences.rs:151 src/preferences.rs:173
 msgid "Play"
 msgstr "播放"
 
-#: src/preferences.rs:155 src/preferences.rs:162
+#: src/preferences.rs:166
 msgid "Stop"
 msgstr "停止"
 
-#: src/preferences.rs:174
+#: src/preferences.rs:180
 msgid "Test"
 msgstr "测试"
 
-#: src/preferences.rs:186
+#: src/preferences.rs:192
 msgid "Data"
 msgstr "数据"
 
-#: src/preferences.rs:192
+#: src/preferences.rs:198
 msgid "Backup"
 msgstr "备份"
 
-#: src/preferences.rs:193
+#: src/preferences.rs:199
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "将会话记录导出为 CSV 文件，或从中恢复。"
 
-#: src/preferences.rs:197
+#: src/preferences.rs:203
 msgid "Export session log"
 msgstr "导出会话记录"
 
-#: src/preferences.rs:198
+#: src/preferences.rs:204
 msgid "Save every session to a CSV file"
 msgstr "将所有会话保存到 CSV 文件"
 
-#: src/preferences.rs:204
+#: src/preferences.rs:210
 msgid "Export"
 msgstr "导出"
 
-#: src/preferences.rs:212
+#: src/preferences.rs:218
 msgid "Import from Meditate CSV"
 msgstr "从 Meditate CSV 导入"
 
-#: src/preferences.rs:213
+#: src/preferences.rs:219
 msgid "Restore sessions from a file exported above"
 msgstr "从上方导出的文件恢复会话"
 
-#: src/preferences.rs:229
+#: src/preferences.rs:235
 msgid "Migrate"
 msgstr "迁移"
 
-#: src/preferences.rs:230
+#: src/preferences.rs:236
 msgid "Import sessions from another meditation app."
 msgstr "从其他冥想应用导入会话。"
 
-#: src/preferences.rs:234 src/preferences.rs:666
+#: src/preferences.rs:240 src/preferences.rs:672
 msgid "Import from Insight Timer"
 msgstr "从 Insight Timer 导入"
 
-#: src/preferences.rs:235
+#: src/preferences.rs:241
 msgid "Upload an Insight Timer CSV export"
 msgstr "上传 Insight Timer 的 CSV 导出"
 
-#: src/preferences.rs:241
+#: src/preferences.rs:247
 msgid "Import Insight Timer CSV"
 msgstr "导入 Insight Timer CSV"
 
-#: src/preferences.rs:259
+#: src/preferences.rs:265
 msgid "Nextcloud Sync"
 msgstr "Nextcloud 同步"
 
-#: src/preferences.rs:261
+#: src/preferences.rs:267
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
 msgstr "通过你自己的 Nextcloud 服务器在设备间同步会话、标签和偏好设置。"
 
-#: src/preferences.rs:266
+#: src/preferences.rs:272
 msgid "Server URL"
 msgstr "服务器 URL"
 
-#: src/preferences.rs:270
+#: src/preferences.rs:276
 msgid "Username"
 msgstr "用户名"
 
-#: src/preferences.rs:273
+#: src/preferences.rs:279
 msgid "App password"
 msgstr "应用密码"
 
-#: src/preferences.rs:302
+#: src/preferences.rs:308
 msgid "Test connection"
 msgstr "测试连接"
 
-#: src/preferences.rs:303
+#: src/preferences.rs:309
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "验证 URL 和凭据能否连接到你的 Nextcloud。"
 
-#: src/preferences.rs:307
+#: src/preferences.rs:313
 msgid "_Test"
 msgstr "测试(_T)"
 
-#: src/preferences.rs:352 src/preferences.rs:463
+#: src/preferences.rs:358 src/preferences.rs:469
 msgid "Enter URL and username"
 msgstr "请输入 URL 和用户名"
 
-#: src/preferences.rs:356 src/preferences.rs:471
+#: src/preferences.rs:362 src/preferences.rs:477
 msgid "Enter a password"
 msgstr "请输入密码"
 
-#: src/preferences.rs:360 src/preferences.rs:475
+#: src/preferences.rs:366 src/preferences.rs:481
 msgid "Keyring read failed"
 msgstr "读取密钥环失败"
 
-#: src/preferences.rs:366 src/preferences.rs:467
+#: src/preferences.rs:372 src/preferences.rs:473
 msgid "URL must start with https://"
 msgstr "URL 必须以 https:// 开头"
 
-#: src/preferences.rs:400
+#: src/preferences.rs:406
 msgid "Connection OK"
 msgstr "连接正常"
 
-#: src/preferences.rs:401
+#: src/preferences.rs:407
 msgid "Authentication failed"
 msgstr "认证失败"
 
-#: src/preferences.rs:402
+#: src/preferences.rs:408
 msgid "Not a WebDAV folder"
 msgstr "不是 WebDAV 文件夹"
 
-#: src/preferences.rs:403
+#: src/preferences.rs:409
 msgid "Network error"
 msgstr "网络错误"
 
-#: src/preferences.rs:404
+#: src/preferences.rs:410
 msgid "Server error"
 msgstr "服务器错误"
 
-#: src/preferences.rs:409
+#: src/preferences.rs:415
 msgid "Test failed"
 msgstr "测试失败"
 
-#: src/preferences.rs:423
+#: src/preferences.rs:429
 msgid "Save sync settings"
 msgstr "保存同步设置"
 
-#: src/preferences.rs:424
+#: src/preferences.rs:430
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr "URL 和用户名保存在本地；密码保存到你的密钥环。"
 
-#: src/preferences.rs:502
+#: src/preferences.rs:508
 msgid "Keyring write failed"
 msgstr "写入密钥环失败"
 
-#: src/preferences.rs:530
+#: src/preferences.rs:536
 msgid "Sync settings saved"
 msgstr "同步设置已保存"
 
-#: src/preferences.rs:539
+#: src/preferences.rs:545
 msgid "Danger Zone"
 msgstr "危险区域"
 
-#: src/preferences.rs:540
+#: src/preferences.rs:546
 msgid "These actions cannot be undone."
 msgstr "这些操作无法撤销。"
 
-#: src/preferences.rs:544
+#: src/preferences.rs:550
 msgid "Delete all sessions"
 msgstr "删除所有会话"
 
-#: src/preferences.rs:545
+#: src/preferences.rs:551
 msgid "Permanently remove every logged session"
 msgstr "永久删除每一条已记录的会话"
 
-#: src/preferences.rs:549
+#: src/preferences.rs:555
 msgid "_Delete All"
 msgstr "全部删除(_D)"
 
-#: src/preferences.rs:619
+#: src/preferences.rs:625
 msgid "Export Session Log"
 msgstr "导出会话记录"
 
-#: src/preferences.rs:623 src/preferences.rs:724
+#: src/preferences.rs:629 src/preferences.rs:730
 msgid "CSV files"
 msgstr "CSV 文件"
 
-#: src/preferences.rs:639
+#: src/preferences.rs:645
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "已导出 {n} 个会话"
 
-#: src/preferences.rs:643
+#: src/preferences.rs:649
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "导出失败：{error}"
 
-#: src/preferences.rs:657
+#: src/preferences.rs:663
 msgid "Import Session Log"
 msgstr "导入会话记录"
 
-#: src/preferences.rs:676
+#: src/preferences.rs:682
 msgid "Delete Every Session?"
 msgstr "删除所有会话？"
 
-#: src/preferences.rs:677
+#: src/preferences.rs:683
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr "这将永久删除日志中的所有会话。如需保留历史，请先导出备份。"
 
-#: src/preferences.rs:682
+#: src/preferences.rs:688
 msgid "Delete All"
 msgstr "全部删除"
 
-#: src/preferences.rs:693
+#: src/preferences.rs:699
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "已删除 {n} 个会话"
 
-#: src/preferences.rs:700
+#: src/preferences.rs:706
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "删除失败：{error}"
 
-#: src/preferences.rs:740 src/preferences.rs:802
+#: src/preferences.rs:746 src/preferences.rs:808
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "导入失败：{error}"
 
-#: src/preferences.rs:750
+#: src/preferences.rs:756
 msgid "Some Lines Can't Be Read"
 msgstr "部分行无法读取"
 
-#: src/preferences.rs:756
+#: src/preferences.rs:762
 msgid "Import the Rest"
 msgstr "导入其余部分"
 
-#: src/preferences.rs:769
+#: src/preferences.rs:775
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "第 {line} 行：无法读取开始时间。"
 
-#: src/preferences.rs:770
+#: src/preferences.rs:776
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "第 {line} 行：无法读取时长。"
 
-#: src/preferences.rs:777
+#: src/preferences.rs:783
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "另有 {n} 行也无法读取。"
 
-#: src/preferences.rs:786
+#: src/preferences.rs:792
 msgid "Nothing in this file can be imported."
 msgstr "此文件中没有可导入的内容。"
 
-#: src/preferences.rs:795
+#: src/preferences.rs:801
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1193,7 +1203,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr "清除本地数据"
 
-#: src/sound.rs:283
+#: src/sound.rs:280
 msgid "Couldn't play bell sound"
 msgstr "无法播放铃声"
 

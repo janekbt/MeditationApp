@@ -626,6 +626,15 @@ impl Database {
         }
     }
 
+    /// Whether any event, a delete included, ever named `target_id`.
+    pub(crate) fn has_events_for(&self, target_id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM events WHERE target_id = ?1)",
+            params![target_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Resolve which mutate event (if any) currently drives the cache
     /// row for `target_id`, returning its JSON payload. `None` means
     /// the row should be absent — either no mutate events exist for

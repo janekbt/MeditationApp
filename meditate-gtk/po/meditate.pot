@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-29 20:52+0100\n"
+"POT-Creation-Date: 2026-10-30 09:12+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -104,11 +104,11 @@ msgstr ""
 msgid "Delete bell"
 msgstr ""
 
-#: src/bells.rs:333 src/bells.rs:893
+#: src/bells.rs:333 src/bells.rs:898
 msgid "Delete Bell?"
 msgstr ""
 
-#: src/bells.rs:334 src/bells.rs:894
+#: src/bells.rs:334 src/bells.rs:899
 msgid "This bell will no longer ring during sessions."
 msgstr ""
 
@@ -116,9 +116,9 @@ msgstr ""
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:338 src/bells.rs:898 src/guided.rs:231 src/guided.rs:962
+#: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:681 src/preferences.rs:755 src/presets.rs:441
+#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:441
 #: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
@@ -127,7 +127,7 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
-#: src/bells.rs:339 src/bells.rs:899 src/guided.rs:1080 src/labels.rs:405
+#: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
 #: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr ""
@@ -214,78 +214,82 @@ msgstr ""
 msgid "Minutes"
 msgstr ""
 
-#: src/bells.rs:574
+#: src/bells.rs:544
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr ""
+
+#: src/bells.rs:579
 msgid "Repeating"
 msgstr ""
 
-#: src/bells.rs:575
+#: src/bells.rs:580
 msgid "At time from start"
 msgstr ""
 
-#: src/bells.rs:576
+#: src/bells.rs:581
 msgid "Before end"
 msgstr ""
 
-#: src/bells.rs:580
+#: src/bells.rs:585
 msgid "Kind"
 msgstr ""
 
 #. Time — common to all kinds; its meaning shifts with kind.
-#: src/bells.rs:591
+#: src/bells.rs:596
 msgid "Time"
 msgstr ""
 
-#: src/bells.rs:597
+#: src/bells.rs:602
 msgid "Jitter"
 msgstr ""
 
-#: src/bells.rs:598
+#: src/bells.rs:603
 msgid "Random shift of each ring"
 msgstr ""
 
-#: src/bells.rs:605
+#: src/bells.rs:610
 msgid "Step"
 msgstr ""
 
-#: src/bells.rs:606
+#: src/bells.rs:611
 msgid "Added to the gap after each ring"
 msgstr ""
 
-#: src/bells.rs:616 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
+#: src/bells.rs:621 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
 #: data/ui/timer_view.blp:612 data/ui/timer_view.blp:660
 #: data/ui/timer_view.blp:708 data/ui/timer_view.blp:756
 msgid "Type"
 msgstr ""
 
-#: src/bells.rs:631 src/bells.rs:651 src/timer/imp.rs:1584
+#: src/bells.rs:636 src/bells.rs:656 src/timer/imp.rs:1584
 #: src/timer/imp.rs:1658 src/timer/imp.rs:1740 data/ui/timer_view.blp:625
 #: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
 #: data/ui/timer_view.blp:769
 msgid "Sound"
 msgstr ""
 
-#: src/bells.rs:635 src/timer/imp.rs:1588 src/timer/imp.rs:1660
+#: src/bells.rs:640 src/timer/imp.rs:1588 src/timer/imp.rs:1660
 #: src/timer/imp.rs:1742
 msgid "Vibration"
 msgstr ""
 
-#: src/bells.rs:639 src/timer/imp.rs:1592 src/timer/imp.rs:1662
+#: src/bells.rs:644 src/timer/imp.rs:1592 src/timer/imp.rs:1662
 #: src/timer/imp.rs:1744
 msgid "Both"
 msgstr ""
 
-#: src/bells.rs:669 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
+#: src/bells.rs:674 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
 #: data/ui/timer_view.blp:565 data/ui/timer_view.blp:646
 #: data/ui/timer_view.blp:694 data/ui/timer_view.blp:742
 #: data/ui/timer_view.blp:790
 msgid "Pattern"
 msgstr ""
 
-#: src/bells.rs:690
+#: src/bells.rs:695
 msgid "Delete Bell"
 msgstr ""
 
-#: src/bells.rs:708
+#: src/bells.rs:713
 msgid "Edit Bell"
 msgstr ""
 
@@ -305,7 +309,7 @@ msgstr ""
 msgid "Database error"
 msgstr ""
 
-#: src/data_io.rs:33 src/preferences.rs:525
+#: src/data_io.rs:33 src/preferences.rs:531
 msgid "Database unavailable"
 msgstr ""
 
@@ -315,7 +319,7 @@ msgid "«{name}» is already taken"
 msgstr ""
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:521 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:527 src/sounds.rs:640
 msgid "Save failed"
 msgstr ""
 
@@ -408,7 +412,7 @@ msgstr ""
 msgid "A guided file with this name already exists."
 msgstr ""
 
-#: src/guided.rs:200 src/preferences.rs:219 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:225 src/sounds.rs:501
 msgid "Import"
 msgstr ""
 
@@ -761,7 +765,7 @@ msgstr ""
 msgid "_Cancel"
 msgstr ""
 
-#: src/log/imp.rs:1101 src/preferences.rs:428
+#: src/log/imp.rs:1101 src/preferences.rs:434
 msgid "_Save"
 msgstr ""
 
@@ -825,273 +829,273 @@ msgid ""
 "Only the bell: just right."
 msgstr ""
 
-#: src/preferences.rs:113
+#: src/preferences.rs:115
 msgid "Wake-up Lead-in for Bluetooth"
 msgstr ""
 
-#: src/preferences.rs:127
+#: src/preferences.rs:129
 msgid "Length (Seconds)"
 msgstr ""
 
-#: src/preferences.rs:149 src/preferences.rs:167
+#: src/preferences.rs:151 src/preferences.rs:173
 msgid "Play"
 msgstr ""
 
-#: src/preferences.rs:155 src/preferences.rs:162
+#: src/preferences.rs:166
 msgid "Stop"
 msgstr ""
 
-#: src/preferences.rs:174
+#: src/preferences.rs:180
 msgid "Test"
 msgstr ""
 
-#: src/preferences.rs:186
+#: src/preferences.rs:192
 msgid "Data"
 msgstr ""
 
-#: src/preferences.rs:192
+#: src/preferences.rs:198
 msgid "Backup"
 msgstr ""
 
-#: src/preferences.rs:193
+#: src/preferences.rs:199
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr ""
 
-#: src/preferences.rs:197
+#: src/preferences.rs:203
 msgid "Export session log"
 msgstr ""
 
-#: src/preferences.rs:198
+#: src/preferences.rs:204
 msgid "Save every session to a CSV file"
 msgstr ""
 
-#: src/preferences.rs:204
+#: src/preferences.rs:210
 msgid "Export"
 msgstr ""
 
-#: src/preferences.rs:212
+#: src/preferences.rs:218
 msgid "Import from Meditate CSV"
 msgstr ""
 
-#: src/preferences.rs:213
+#: src/preferences.rs:219
 msgid "Restore sessions from a file exported above"
 msgstr ""
 
-#: src/preferences.rs:229
+#: src/preferences.rs:235
 msgid "Migrate"
 msgstr ""
 
-#: src/preferences.rs:230
+#: src/preferences.rs:236
 msgid "Import sessions from another meditation app."
 msgstr ""
 
-#: src/preferences.rs:234 src/preferences.rs:666
+#: src/preferences.rs:240 src/preferences.rs:672
 msgid "Import from Insight Timer"
 msgstr ""
 
-#: src/preferences.rs:235
+#: src/preferences.rs:241
 msgid "Upload an Insight Timer CSV export"
 msgstr ""
 
-#: src/preferences.rs:241
+#: src/preferences.rs:247
 msgid "Import Insight Timer CSV"
 msgstr ""
 
-#: src/preferences.rs:259
+#: src/preferences.rs:265
 msgid "Nextcloud Sync"
 msgstr ""
 
-#: src/preferences.rs:261
+#: src/preferences.rs:267
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
 msgstr ""
 
-#: src/preferences.rs:266
+#: src/preferences.rs:272
 msgid "Server URL"
 msgstr ""
 
-#: src/preferences.rs:270
+#: src/preferences.rs:276
 msgid "Username"
 msgstr ""
 
-#: src/preferences.rs:273
+#: src/preferences.rs:279
 msgid "App password"
 msgstr ""
 
-#: src/preferences.rs:302
+#: src/preferences.rs:308
 msgid "Test connection"
 msgstr ""
 
-#: src/preferences.rs:303
+#: src/preferences.rs:309
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr ""
 
-#: src/preferences.rs:307
+#: src/preferences.rs:313
 msgid "_Test"
 msgstr ""
 
-#: src/preferences.rs:352 src/preferences.rs:463
+#: src/preferences.rs:358 src/preferences.rs:469
 msgid "Enter URL and username"
 msgstr ""
 
-#: src/preferences.rs:356 src/preferences.rs:471
+#: src/preferences.rs:362 src/preferences.rs:477
 msgid "Enter a password"
 msgstr ""
 
-#: src/preferences.rs:360 src/preferences.rs:475
+#: src/preferences.rs:366 src/preferences.rs:481
 msgid "Keyring read failed"
 msgstr ""
 
-#: src/preferences.rs:366 src/preferences.rs:467
+#: src/preferences.rs:372 src/preferences.rs:473
 msgid "URL must start with https://"
 msgstr ""
 
-#: src/preferences.rs:400
+#: src/preferences.rs:406
 msgid "Connection OK"
 msgstr ""
 
-#: src/preferences.rs:401
+#: src/preferences.rs:407
 msgid "Authentication failed"
 msgstr ""
 
-#: src/preferences.rs:402
+#: src/preferences.rs:408
 msgid "Not a WebDAV folder"
 msgstr ""
 
-#: src/preferences.rs:403
+#: src/preferences.rs:409
 msgid "Network error"
 msgstr ""
 
-#: src/preferences.rs:404
+#: src/preferences.rs:410
 msgid "Server error"
 msgstr ""
 
-#: src/preferences.rs:409
+#: src/preferences.rs:415
 msgid "Test failed"
 msgstr ""
 
-#: src/preferences.rs:423
+#: src/preferences.rs:429
 msgid "Save sync settings"
 msgstr ""
 
-#: src/preferences.rs:424
+#: src/preferences.rs:430
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 
-#: src/preferences.rs:502
+#: src/preferences.rs:508
 msgid "Keyring write failed"
 msgstr ""
 
-#: src/preferences.rs:530
+#: src/preferences.rs:536
 msgid "Sync settings saved"
 msgstr ""
 
-#: src/preferences.rs:539
+#: src/preferences.rs:545
 msgid "Danger Zone"
 msgstr ""
 
-#: src/preferences.rs:540
+#: src/preferences.rs:546
 msgid "These actions cannot be undone."
 msgstr ""
 
-#: src/preferences.rs:544
+#: src/preferences.rs:550
 msgid "Delete all sessions"
 msgstr ""
 
-#: src/preferences.rs:545
+#: src/preferences.rs:551
 msgid "Permanently remove every logged session"
 msgstr ""
 
-#: src/preferences.rs:549
+#: src/preferences.rs:555
 msgid "_Delete All"
 msgstr ""
 
-#: src/preferences.rs:619
+#: src/preferences.rs:625
 msgid "Export Session Log"
 msgstr ""
 
-#: src/preferences.rs:623 src/preferences.rs:724
+#: src/preferences.rs:629 src/preferences.rs:730
 msgid "CSV files"
 msgstr ""
 
-#: src/preferences.rs:639
+#: src/preferences.rs:645
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:643
+#: src/preferences.rs:649
 #, rust-format
 msgid "Export failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:657
+#: src/preferences.rs:663
 msgid "Import Session Log"
 msgstr ""
 
-#: src/preferences.rs:676
+#: src/preferences.rs:682
 msgid "Delete Every Session?"
 msgstr ""
 
-#: src/preferences.rs:677
+#: src/preferences.rs:683
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr ""
 
-#: src/preferences.rs:682
+#: src/preferences.rs:688
 msgid "Delete All"
 msgstr ""
 
-#: src/preferences.rs:693
+#: src/preferences.rs:699
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:700
+#: src/preferences.rs:706
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:740 src/preferences.rs:802
+#: src/preferences.rs:746 src/preferences.rs:808
 #, rust-format
 msgid "Import failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:750
+#: src/preferences.rs:756
 msgid "Some Lines Can't Be Read"
 msgstr ""
 
-#: src/preferences.rs:756
+#: src/preferences.rs:762
 msgid "Import the Rest"
 msgstr ""
 
-#: src/preferences.rs:769
+#: src/preferences.rs:775
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr ""
 
-#: src/preferences.rs:770
+#: src/preferences.rs:776
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr ""
 
-#: src/preferences.rs:777
+#: src/preferences.rs:783
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:786
+#: src/preferences.rs:792
 msgid "Nothing in this file can be imported."
 msgstr ""
 
-#: src/preferences.rs:795
+#: src/preferences.rs:801
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1211,7 +1215,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr ""
 
-#: src/sound.rs:283
+#: src/sound.rs:280
 msgid "Couldn't play bell sound"
 msgstr ""
 

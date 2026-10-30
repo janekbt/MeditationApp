@@ -525,7 +525,7 @@ impl TimeRow {
 
 /// Edit page for one bell — pushed when the user taps a row in the
 /// list. Save-as-you-go: every field change persists immediately
-/// Persist the current snapshot via the shell's `update_interval_bell`
+/// Persist the current snapshot via the shell's `edit_interval_bell`
 /// pass-through and fire the rebuild + on_changed pipeline. Hoisted
 /// out of `push_edit_page` so each field-handler can call it from
 /// its own captured clones without nesting an item inside a fn body.
@@ -536,8 +536,13 @@ fn write_back_bell(
     rebuilder: &Rebuilder,
     on_changed: &(impl Fn() + Clone + 'static),
 ) {
-    let s = snap.borrow();
-    let written = app.with_db_mut(|db| db.update_interval_bell(&s));
+    let s = snap.borrow().clone();
+    let written = app.with_db_mut(|db| db.edit_interval_bell(&s));
+    // A preset rings the old bell: the page edits the new one from now on.
+    if let Some(Ok(meditate_core::preset_config::BellEdit::Copied(uuid))) = &written {
+        snap.borrow_mut().uuid = uuid.clone();
+        crate::db::show_toast(anchor, gettext("Saved as a new bell, your presets keep the old one"));
+    }
     write_ok(anchor, "bell.update", written, Failed::Save);
     if let Some(rb) = rebuilder.borrow().as_ref() {
         rb();
@@ -883,7 +888,7 @@ fn push_edit_page(
 
     // ── Delete ────────────────────────────────────────────────────
     let app_for_delete = app.clone();
-    let bell_uuid = bell_uuid.to_string();
+    let snap_for_delete = snapshot.clone();
     let nav_view_for_delete = nav_view.clone();
     let rebuilder_for_delete = rebuilder.clone();
     let on_changed_for_delete = on_changed.clone();
@@ -900,14 +905,15 @@ fn push_edit_page(
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
 
         let app = app_for_delete.clone();
-        let uuid = bell_uuid.clone();
+        let snap = snap_for_delete.clone();
         let nav_view = nav_view_for_delete.clone();
         let rebuilder = rebuilder_for_delete.clone();
         let on_changed = on_changed_for_delete.clone();
         let prefs_for_failure = prefs_page.clone();
         dialog.connect_response(None, move |_, id| {
             if id != "delete" { return; }
-            let deleted = app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+            let uuid = snap.borrow().uuid.clone();
+            let deleted = app.with_db_mut(|db| db.delete_interval_bell(uuid.as_str()));
             if !write_ok(&prefs_for_failure, "bell.delete", deleted, Failed::Delete) {
                 return;
             }

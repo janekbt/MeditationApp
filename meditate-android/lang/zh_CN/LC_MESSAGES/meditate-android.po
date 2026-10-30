@@ -1170,3 +1170,6 @@ msgstr "时长（秒）"
 
 msgid "Bluetooth"
 msgstr "蓝牙"
+
+msgid "Saved as a new bell, your presets keep the old one"
+msgstr "已另存为新铃声，你的预设保留原来的铃声"

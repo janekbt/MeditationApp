@@ -137,7 +137,14 @@ fn show_write_failure(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: O
         Failed::Save => gettext("Save failed"),
         Failed::Delete => gettext("Delete failed"),
     });
-    let toast = adw::Toast::builder().title(text).timeout(4).build();
+    show_toast(anchor, text);
+}
+
+/// A four-second toast on `anchor`'s page, replacing the last one.
+pub fn show_toast(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: String) {
+    // A plain toast title is one line, cut with "…" on a narrow window.
+    let title = gtk::Label::builder().label(text).wrap(true).xalign(0.0).css_classes(["heading"]).build();
+    let toast = adw::Toast::builder().custom_title(&title).timeout(4).build();
     // One at a time: a slider step that fails again replaces the last
     // one instead of queueing four seconds each.
     thread_local! {
@@ -510,13 +517,11 @@ impl Database {
             .map_err(map_core_err)
     }
 
-    pub fn update_interval_bell(
+    pub fn edit_interval_bell(
         &self,
         bell: &meditate_core::IntervalBell,
-    ) -> Result<()> {
-        self.inner
-            .update_interval_bell(bell)
-            .map_err(map_core_err)
+    ) -> Result<meditate_core::preset_config::BellEdit> {
+        meditate_core::preset_config::edit_interval_bell(&self.inner, bell).map_err(map_core_err)
     }
 
     pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {

@@ -6292,8 +6292,8 @@ fn build_ui() -> MainWindow {
 
 
     // Interval-bell editor mode (B-5c-3): `Some(original)` when
-    // editing an existing bell (Save → `update_interval_bell`,
-    // preserving uuid / created_iso / enabled / pattern),
+    // editing an existing bell (Save → `edit_interval_bell`, which
+    // copies a bell a preset rings, else edits it in place),
     // `None` when creating (Save → `insert_interval_bell`).
     let editing_ib: Rc<RefCell<Option<meditate_core::db::IntervalBell>>> =
         Rc::new(RefCell::new(None));
@@ -7848,7 +7848,7 @@ fn build_ui() -> MainWindow {
                             bell.vibration_pattern_uuid =
                                 pattern.clone().into();
                             bell.volume = volume;
-                            db.update_interval_bell(&bell)
+                            meditate_core::preset_config::edit_interval_bell(&db, &bell)
                         }
                         None => {
                             // Create with the chosen Type
@@ -7871,12 +7871,17 @@ fn build_ui() -> MainWindow {
                                     ),
                                 _ => Ok(()),
                             })
+                            .map(|()| meditate_core::preset_config::BellEdit::InPlace)
                         }
                     }
                 });
+                let copied = matches!(res, Some(Ok(meditate_core::preset_config::BellEdit::Copied(_))));
                 // Failed: the editor stays open with its values.
                 if !write_ok(&ui, "interval_bell.save", res) {
                     return;
+                }
+                if copied {
+                    show_notice(&ui, ui.global::<Tr>().invoke_bell_saved_as_new(), None, 4);
                 }
                 editing_ib.borrow_mut().take();
                 stop_volume_preview(&ui);

@@ -695,6 +695,67 @@ pub fn apply(
     Ok(cfg.timing.clone())
 }
 
+/// What `edit_interval_bell` did with an edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BellEdit {
+    InPlace,
+    /// A saved preset rings the bell, so the edit went into this new
+    /// bell next to it and the old one was switched off.
+    Copied(crate::db::IntervalBellUuid),
+}
+
+/// Save an edit of an interval bell from Setup. A bell a saved preset
+/// rings is never changed: the edit becomes a new bell, so the preset
+/// keeps ringing the bell it was saved with.
+pub fn edit_interval_bell(db: &Database, bell: &IntervalBell) -> crate::db::Result<BellEdit> {
+    let library = db.list_interval_bells()?;
+    if let Some(old) = library.iter().find(|b| b.uuid == bell.uuid) {
+        let before = PresetIntervalBell::from(old.clone());
+        if !before.same_settings(&PresetIntervalBell::from(bell.clone())) && rung_by_a_preset(db, &before, &library)? {
+            // Two devices copying the same bell offline make the same
+            // copy, so the later edit wins, as for any edit. Never the
+            // uuid of a deleted copy, which a preset may still ring.
+            let mut n = 0;
+            let uuid = loop {
+                let uuid = copy_uuid(old.uuid.as_str(), n);
+                if library.iter().all(|b| b.uuid.as_str() != uuid) && !db.has_events_for(&uuid)? {
+                    break uuid;
+                }
+                n += 1;
+            };
+            return Ok(BellEdit::Copied(db.copy_interval_bell(old, bell, &uuid)?));
+        }
+    }
+    db.update_interval_bell(bell)?;
+    Ok(BellEdit::InPlace)
+}
+
+/// The `n`th copy's uuid of bell `old`: the same on every device.
+fn copy_uuid(old: &str, n: u32) -> String {
+    // FNV-1a 128: the same on every build, unlike std's hasher.
+    let hash = format!("{old}/{n}").bytes().fold(0x6c62_272e_07bb_0142_62b8_2175_6295_c58d_u128, |h, b| {
+        (h ^ u128::from(b)).wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b)
+    });
+    uuid::Builder::from_custom_bytes(hash.to_be_bytes()).into_uuid().to_string()
+}
+
+/// Whether a saved Timer preset rings `bell`: by its row, or, as `apply`
+/// finds it when the preset's row is gone (or it was saved before bells
+/// carried their row), by its settings.
+fn rung_by_a_preset(db: &Database, bell: &PresetIntervalBell, library: &[IntervalBell]) -> crate::db::Result<bool> {
+    Ok(crate::db::list_presets_from_db(db)?
+        .iter()
+        .filter(|p| p.mode == SessionMode::Timer)
+        .filter_map(|p| PresetConfig::from_json(&p.config_json).ok())
+        .filter(|c| c.interval_bells.enabled)
+        .flat_map(|c| c.interval_bells.bells)
+        .any(|s| {
+            s.enabled
+                && (s.uuid == bell.uuid
+                    || (library.iter().all(|b| b.uuid != s.uuid) && s.same_settings(bell)))
+        }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1133,6 +1194,182 @@ mod tests {
         db.update_interval_bell(&IntervalBell { time: BellTime::new(7, TimeUnit::Min), enabled: false, ..row }).unwrap();
         apply(&db, &saved, SessionMode::Timer).unwrap();
         assert_eq!(bell_rows(&db), [(7, true)]);
+    }
+
+    /// Apply `bells`, save them as a starred Timer preset, return it.
+    fn saved_preset(db: &Database, bells: Vec<PresetIntervalBell>) -> PresetConfig {
+        apply(db, &with_bells(bells), SessionMode::Timer).unwrap();
+        let saved = snapshot(db, SessionMode::Timer, PresetTiming::default());
+        db.insert_preset("P", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        saved
+    }
+
+    fn sync(from: &Database, to: &Database) {
+        let events: Vec<_> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+        to.replay_events(&events).unwrap();
+    }
+
+    fn row_at(db: &Database, minutes: u32) -> IntervalBell {
+        db.list_interval_bells().unwrap().into_iter().find(|b| b.time.number() == minutes).unwrap()
+    }
+
+    fn sorted_rows(db: &Database) -> Vec<(u32, bool)> {
+        let mut rows = bell_rows(db);
+        rows.sort();
+        rows
+    }
+
+    fn at(minutes: u32, b: IntervalBell) -> IntervalBell {
+        IntervalBell { time: BellTime::new(minutes, TimeUnit::Min), ..b }
+    }
+
+    #[test]
+    fn editing_a_preset_bell_makes_a_new_bell() {
+        let db = Database::open_in_memory().unwrap();
+        let quiet = PresetIntervalBell { volume: crate::bell_volume::BellVolume::from_percent(30.0), ..bell(5, true) };
+        let preset = saved_preset(&db, vec![quiet]);
+        let old = row_at(&db, 5);
+        let edited = IntervalBell { sound_uuid: "t".into(), volume: crate::bell_volume::BellVolume::from_percent(80.0), ..at(7, old.clone()) };
+        let BellEdit::Copied(new) = edit_interval_bell(&db, &edited).unwrap() else { panic!("not copied") };
+        assert_ne!(new, old.uuid);
+        assert_eq!(sorted_rows(&db), [(5, false), (7, true)]);
+        assert_eq!((row_at(&db, 7).uuid, row_at(&db, 7).sound_uuid.as_str(), row_at(&db, 7).volume.percent()), (new, "t", 80));
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        assert_eq!(sorted_rows(&db), [(5, true), (7, false)]);
+        assert_eq!((row_at(&db, 5).sound_uuid.as_str(), row_at(&db, 5).volume.percent()), ("s", 30));
+    }
+
+    #[test]
+    fn a_save_without_changes_copies_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        saved_preset(&db, vec![bell(5, true)]);
+        assert_eq!(edit_interval_bell(&db, &row_at(&db, 5)).unwrap(), BellEdit::InPlace);
+        assert_eq!(bell_rows(&db), [(5, true)]);
+    }
+
+    #[test]
+    fn only_bells_a_preset_rings_are_copied() {
+        let db = Database::open_in_memory().unwrap();
+        apply(&db, &with_bells(vec![bell(10, true)]), SessionMode::Timer).unwrap();
+        saved_preset(&db, vec![bell(5, true)]);
+        let mut bells_off = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        bells_off.interval_bells.enabled = false;
+        bells_off.interval_bells.bells.retain(|b| b.time.number() == 5);
+        bells_off.interval_bells.bells[0].uuid = row_at(&db, 10).uuid;
+        db.insert_preset("Bells off", SessionMode::Timer, true, &bells_off.to_json()).unwrap();
+        let breath = PresetConfig {
+            timing: PresetTiming::BoxBreath { stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 300 },
+            interval_bells: PresetIntervalBells { enabled: true, bells: vec![PresetIntervalBell { enabled: true, ..PresetIntervalBell::from(row_at(&db, 10)) }] },
+            ..Default::default()
+        };
+        db.insert_preset("Breath", SessionMode::BoxBreath, true, &breath.to_json()).unwrap();
+        assert_eq!(edit_interval_bell(&db, &at(12, row_at(&db, 10))).unwrap(), BellEdit::InPlace);
+        assert_eq!(bell_rows(&db), [(12, false), (5, true)]);
+    }
+
+    #[test]
+    fn the_new_bell_takes_further_edits_in_place() {
+        let db = Database::open_in_memory().unwrap();
+        saved_preset(&db, vec![bell(5, true)]);
+        let BellEdit::Copied(new) = edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap() else { panic!("not copied") };
+        assert_eq!(edit_interval_bell(&db, &at(9, row_at(&db, 7))).unwrap(), BellEdit::InPlace);
+        assert_eq!(sorted_rows(&db), [(5, false), (9, true)]);
+        assert_eq!(row_at(&db, 9).uuid, new);
+    }
+
+    #[test]
+    fn a_bell_no_preset_uses_is_edited_in_place() {
+        let db = Database::open_in_memory().unwrap();
+        apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
+        assert_eq!(edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap(), BellEdit::InPlace);
+        assert_eq!(bell_rows(&db), [(7, true)]);
+    }
+
+    #[test]
+    fn the_new_bell_sits_next_to_the_old_one() {
+        let db = Database::open_in_memory().unwrap();
+        saved_preset(&db, vec![bell(3, true), bell(5, true), bell(10, true)]);
+        edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap();
+        let order: Vec<u32> = bell_rows(&db).iter().map(|r| r.0).collect();
+        assert_eq!((order.len(), order[0], order[3]), (4, 3, 10), "{order:?}");
+    }
+
+    #[test]
+    fn another_device_gets_the_copy_as_it_is() {
+        let db = Database::open_in_memory().unwrap();
+        saved_preset(&db, vec![bell(3, true), bell(5, true), bell(10, true)]);
+        let loud = IntervalBell { volume: crate::bell_volume::BellVolume::from_percent(80.0), ..at(7, row_at(&db, 5)) };
+        edit_interval_bell(&db, &loud).unwrap();
+        let peer = Database::open_in_memory().unwrap();
+        sync(&db, &peer);
+        let rows = |db: &Database| -> Vec<(String, u32, bool, u8, String)> {
+            db.list_interval_bells().unwrap().into_iter()
+                .map(|b| (b.uuid.as_str().to_owned(), b.time.number(), b.enabled, b.volume.percent(), b.created_iso))
+                .collect()
+        };
+        assert_eq!(rows(&peer), rows(&db));
+    }
+
+    #[test]
+    fn two_devices_editing_the_same_bell_keep_one_copy() {
+        let phone = Database::open_in_memory().unwrap();
+        saved_preset(&phone, vec![bell(5, true)]);
+        let laptop = Database::open_in_memory().unwrap();
+        sync(&phone, &laptop);
+        edit_interval_bell(&phone, &at(7, row_at(&phone, 5))).unwrap();
+        edit_interval_bell(&laptop, &at(9, row_at(&laptop, 5))).unwrap();
+        sync(&phone, &laptop);
+        sync(&laptop, &phone);
+        assert_eq!(sorted_rows(&phone).len(), 2, "{:?}", sorted_rows(&phone));
+        assert_eq!(sorted_rows(&phone), sorted_rows(&laptop));
+        assert_eq!(sorted_rows(&phone)[0], (5, false));
+        assert!([(7, true), (9, true)].contains(&sorted_rows(&phone)[1]), "one of the two edits");
+    }
+
+    #[test]
+    fn a_second_copy_of_the_same_bell_is_a_bell_of_its_own() {
+        let db = Database::open_in_memory().unwrap();
+        saved_preset(&db, vec![bell(5, true)]);
+        edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap();
+        let old = row_at(&db, 5);
+        db.set_interval_bell_enabled(old.uuid.as_str(), true).unwrap();
+        edit_interval_bell(&db, &at(9, row_at(&db, 5))).unwrap();
+        assert_eq!(sorted_rows(&db), [(5, false), (7, true), (9, true)]);
+    }
+
+    #[test]
+    fn a_deleted_copy_is_not_brought_back_by_the_next_edit() {
+        let db = Database::open_in_memory().unwrap();
+        let a = saved_preset(&db, vec![bell(5, true)]);
+        edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap();
+        let b = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        db.insert_preset("B", SessionMode::Timer, true, &b.to_json()).unwrap();
+        db.delete_interval_bell(row_at(&db, 7).uuid.as_str()).unwrap();
+        apply(&db, &a, SessionMode::Timer).unwrap();
+        edit_interval_bell(&db, &at(12, row_at(&db, 5))).unwrap();
+        apply(&db, &b, SessionMode::Timer).unwrap();
+        assert_eq!(sorted_rows(&db), [(5, false), (7, true), (12, false)]);
+    }
+
+    #[test]
+    fn a_preset_whose_bell_was_re_made_keeps_it_too() {
+        let db = Database::open_in_memory().unwrap();
+        let preset = saved_preset(&db, vec![bell(5, true)]);
+        db.delete_interval_bell(row_at(&db, 5).uuid.as_str()).unwrap();
+        apply(&db, &preset, SessionMode::Timer).unwrap();
+        assert!(matches!(edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap(), BellEdit::Copied(_)));
+        assert_eq!(sorted_rows(&db), [(5, false), (7, true)]);
+    }
+
+    #[test]
+    fn an_old_preset_keeps_its_bell_too() {
+        let db = Database::open_in_memory().unwrap();
+        apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
+        let mut old = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        old.interval_bells.bells[0].uuid = Default::default();
+        db.insert_preset("Old", SessionMode::Timer, true, &old.to_json()).unwrap();
+        assert!(matches!(edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap(), BellEdit::Copied(_)));
+        assert_eq!(sorted_rows(&db), [(5, false), (7, true)]);
     }
 
     #[test]
