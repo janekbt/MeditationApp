@@ -29,6 +29,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Icon
+import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -36,6 +40,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.view.KeyEvent
+import java.io.File
 
 class MeditateSessionService : Service() {
     companion object {
@@ -45,6 +51,22 @@ class MeditateSessionService : Service() {
         const val ACTION_STOP_SESSION = "io.github.janekbt.Meditate.STOP_SESSION"
         const val ACTION_PAUSE_SESSION = "io.github.janekbt.Meditate.PAUSE_SESSION"
         const val ACTION_RESUME_SESSION = "io.github.janekbt.Meditate.RESUME_SESSION"
+        const val ACTION_SHOW_BUTTONS = "io.github.janekbt.Meditate.SHOW_BUTTONS"
+        const val ACTION_TAP = "io.github.janekbt.Meditate.TAP"
+        const val EXTRA_PAYLOAD = "payload"
+        const val EXTRA_CODE = "code"
+
+        // Button codes, as in src/app.rs (end_button_code, MEDIA_*).
+        const val MEDIA_PAUSE = 0
+        const val MEDIA_RESUME = 1
+        const val MEDIA_SAVE = 2
+        const val MEDIA_ADD = 3
+        const val MEDIA_DISCARD = 4
+        const val MEDIA_HEADPHONES = 5
+
+        // A tap wakes the phone this long, so a paused session (no
+        // session wake lock) still reaches the next Rust tick.
+        const val TAP_WAKE_MS = 10_000L
 
         // Persistent notification slot. Stable across start/stop so
         // a stop-then-start within the same process re-uses the
@@ -191,6 +213,17 @@ class MeditateSessionService : Service() {
             context.startService(intent)
         }
 
+        /// The media control's buttons from Rust (service.rs
+        /// show_buttons): the accent's ARGB, then "code<TAB>label" lines.
+        @JvmStatic
+        fun showButtons(context: Context, payload: String) {
+            val intent = Intent(context, MeditateSessionService::class.java).apply {
+                action = ACTION_SHOW_BUTTONS
+                putExtra(EXTRA_PAYLOAD, payload)
+            }
+            context.startService(intent)
+        }
+
         @JvmStatic
         fun resume(context: Context) {
             val intent = Intent(context, MeditateSessionService::class.java).apply {
@@ -208,6 +241,14 @@ class MeditateSessionService : Service() {
     // pin path. The session itself doesn't drive any audio playback
     // — Phase 5 will plug bell-cue audio into the same session.
     private var mediaSession: MediaSession? = null
+
+    // Set by START, so a SHOW_BUTTONS racing a stop can't post a
+    // notification for a session that is over.
+    private var started = false
+    private var buttons: List<Pair<Int, String>> = emptyList()
+    private var accent: Int? = null
+    // Held in a field: a collected lock is released early.
+    private var tapWakeLock: PowerManager.WakeLock? = null
 
     // The FGS keeps the *process* alive, but not the CPU: in Doze /
     // deep suspend the 200 ms Slint tick stops being scheduled and
@@ -251,19 +292,144 @@ class MeditateSessionService : Service() {
                     )
                     .build(),
             )
+            setCallback(object : MediaSession.Callback() {
+                override fun onCustomAction(action: String, extras: android.os.Bundle?) {
+                    action.toIntOrNull()?.let { writeTap(it) }
+                }
+
+                override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
+                    val key = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                    } ?: return false
+                    val toggle = key.keyCode in listOf(
+                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        KeyEvent.KEYCODE_HEADSETHOOK,
+                        KeyEvent.KEYCODE_MEDIA_PLAY,
+                        KeyEvent.KEYCODE_MEDIA_PAUSE,
+                    )
+                    if (!toggle) return false
+                    if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0) {
+                        writeTap(MEDIA_HEADPHONES)
+                    }
+                    return true
+                }
+            })
             isActive = true
         }
+    }
+
+    // Hands the tap to the Rust tick (service.rs take_tap), which
+    // checks it against the buttons the session offers right now.
+    private fun writeTap(code: Int) {
+        runCatching {
+            val lock = tapWakeLock ?: getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Meditate:tap")
+                .apply { setReferenceCounted(false) }
+                .also { tapWakeLock = it }
+            lock.acquire(TAP_WAKE_MS)
+            val f = File(File(filesDir, "meditate"), "session_tap")
+            f.parentFile?.mkdirs()
+            MeditateDropFile.write(f, code.toString())
+        }
+    }
+
+    // Android 13+ draws the media control from the playback state's
+    // custom actions and colours it from the artwork; older versions
+    // use the notification's actions (buildNotification).
+    private fun showButtons(payload: String) {
+        val lines = payload.split("\n")
+        val newAccent = lines.first().toLongOrNull()?.toInt()
+        buttons = lines.drop(1).mapNotNull { line ->
+            val (code, label) = line.split("\t", limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+            code.toIntOrNull()?.let { it to label }
+        }
+        val session = mediaSession ?: return
+        val state = PlaybackState.Builder().setState(
+            PlaybackState.STATE_PLAYING,
+            PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+            1.0f,
+        )
+        for ((code, label) in buttons) {
+            state.addCustomAction(
+                PlaybackState.CustomAction.Builder(code.toString(), label, buttonIcon(code)).build(),
+            )
+        }
+        session.setPlaybackState(state.build())
+        if (newAccent != null && newAccent != accent) {
+            accent = newAccent
+            session.setMetadata(
+                MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, getString(R.string.app_name))
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, getString(R.string.notification_session_running))
+                    .putBitmap(MediaMetadata.METADATA_KEY_ART, lotusArt(newAccent))
+                    .build(),
+            )
+        }
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+    }
+
+    private fun buttonIcon(code: Int): Int = when (code) {
+        MEDIA_PAUSE -> android.R.drawable.ic_media_pause
+        MEDIA_RESUME -> android.R.drawable.ic_media_play
+        MEDIA_SAVE -> android.R.drawable.ic_menu_save
+        MEDIA_ADD -> android.R.drawable.ic_menu_add
+        else -> android.R.drawable.ic_menu_delete
+    }
+
+    // The app icon's white lotus on the accent colour. Large on
+    // purpose: MediaSession scales it down to what the system shows.
+    private fun lotusArt(color: Int): Bitmap {
+        val size = 1024
+        val lotus = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        getDrawable(R.drawable.ic_launcher_foreground)?.apply {
+            setBounds(0, 0, size, size)
+            draw(Canvas(lotus))
+        }
+        // The icon parts its white petals with a translucent blue
+        // stroke (#64A0E6 at 0.45); here the stroke becomes a gap the
+        // accent shows through. A pixel's red channel tells how much
+        // stroke it holds: 255 is pure white, 100 pure stroke.
+        val px = IntArray(size * size)
+        lotus.getPixels(px, 0, size, 0, 0, size, size)
+        for (i in px.indices) {
+            val a = px[i] ushr 24
+            if (a == 0) continue
+            val stroke = (255 - ((px[i] shr 16) and 0xFF)) / 155f
+            val keep = (1f - stroke / 0.45f).coerceIn(0f, 1f)
+            px[i] = ((a * keep).toInt() shl 24) or 0xFFFFFF
+        }
+        lotus.setPixels(px, 0, size, 0, 0, size, size)
+        val art = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        Canvas(art).apply {
+            drawColor(color)
+            drawBitmap(lotus, 0f, 0f, null)
+        }
+        lotus.recycle()
+        return art
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_SESSION -> {
+                started = true
                 startForeground(NOTIFICATION_ID, buildNotification())
                 acquireWakeLock()
             }
             ACTION_PAUSE_SESSION -> releaseWakeLock()
             ACTION_RESUME_SESSION -> acquireWakeLock()
+            // Either one reaching a stopped service would leave a fresh
+            // instance with an active MediaSession behind.
+            ACTION_SHOW_BUTTONS, ACTION_TAP -> when {
+                !started -> stopSelf()
+                intent.action == ACTION_TAP -> writeTap(intent.getIntExtra(EXTRA_CODE, -1))
+                else -> intent.getStringExtra(EXTRA_PAYLOAD)?.let { showButtons(it) }
+            }
             ACTION_STOP_SESSION -> {
+                started = false
+                buttons = emptyList()
                 releaseWakeLock()
                 // STOP_FOREGROUND_REMOVE = clear the notification
                 // even though the user might still be on the Done
@@ -363,11 +529,24 @@ class MeditateSessionService : Service() {
         // the service hasn't stopped yet.
         val style = Notification.MediaStyle()
         mediaSession?.let { style.setMediaSession(it.sessionToken) }
-        return Notification.Builder(this, CHANNEL_ID)
+        style.setShowActionsInCompactView(*buttons.indices.take(3).toIntArray())
+        val builder = Notification.Builder(this, CHANNEL_ID)
+        for ((code, label) in buttons) {
+            val tap = Intent(this, MeditateSessionService::class.java).apply {
+                action = ACTION_TAP
+                putExtra(EXTRA_CODE, code)
+            }
+            val pending = PendingIntent.getService(this, code, tap, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(
+                Notification.Action.Builder(Icon.createWithResource(this, buttonIcon(code)), label, pending).build(),
+            )
+        }
+        return builder
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.notification_session_running))
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setCategory(Notification.CATEGORY_TRANSPORT)
             .setContentIntent(buildContentIntent())
             .setStyle(style)

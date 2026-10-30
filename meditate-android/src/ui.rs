@@ -277,6 +277,7 @@ fn on_state_changed(
         if !was_active && is_active {
             if let Some(app) = android_app() {
                 service::start(app);
+                MEDIA_SENT.take();
                 // Keep the screen awake for the running session
                 // iff this mode's per-mode `*_keep_screen_awake`
                 // setting is on — the Android analogue of GTK's
@@ -304,6 +305,28 @@ fn on_state_changed(
                 screen::set_keep_awake(app, false);
             }
         }
+    }
+}
+
+thread_local! {
+    /// What the media control was last told; resent only on change.
+    static MEDIA_SENT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Hand the session's buttons, their labels and the accent to the
+/// media control: the accent's ARGB, then one "code<TAB>label" line
+/// per button.
+fn send_media_buttons(app: &slint::android::AndroidApp, ui: &MainWindow, state: &AppState) {
+    if !state.is_active() {
+        return;
+    }
+    let mut payload = ui.global::<MaterialPalette>().get_schemes().light.primary.as_argb_encoded().to_string();
+    for code in app::media_buttons(state, ui.get_note_text().is_empty()) {
+        let label = ui.global::<Tr>().invoke_end_button(code, ui.get_overtime_add_label());
+        payload += &format!("\n{code}\t{label}");
+    }
+    if MEDIA_SENT.replace(payload.clone()) != payload {
+        service::show_buttons(app, &payload);
     }
 }
 
@@ -4976,6 +4999,19 @@ fn build_ui() -> MainWindow {
                             refresh(&ui, &state.borrow(), now_since_epoch());
                         }
                     }
+                    // A button in the media control, or the headphones'
+                    // play/pause, goes through the running page's own buttons.
+                    let tap = state.borrow().is_active().then(|| service::take_tap(app)).flatten();
+                    let tap = tap.and_then(|code| app::media_tap(&state.borrow(), ui.get_note_text().is_empty(), code));
+                    if let Some(code) = tap {
+                        ui.invoke_release_note();
+                        if code == app::MEDIA_DISCARD {
+                            ui.invoke_discard_tap();
+                        } else {
+                            ui.invoke_end_button_tap(code);
+                        }
+                    }
+                    send_media_buttons(app, &ui, &state.borrow());
                 }
             }
             let now = now_since_epoch();

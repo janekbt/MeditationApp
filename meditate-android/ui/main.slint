@@ -167,8 +167,10 @@ export global Tr {
     public pure function importing(name: string, dur: string) -> string { return @tr("Importing: {} ({})", name, dur); }
     // Running-screen primary action (AppState::primary_action)
     public pure function start-session() -> string { return @tr("Start Session"); }
-    public pure function pause() -> string { return @tr("Pause"); }
-    public pure function resume() -> string { return @tr("Resume"); }
+    // A running-page button's label by its code (EndButtonView, the media control).
+    public pure function end-button(kind: int, add-label: string) -> string {
+        return kind == 0 ? @tr("Pause") : kind == 1 ? @tr("Resume") : kind == 2 ? @tr("Save") : kind == 3 ? add-label : @tr("Discard");
+    }
     public pure function add-overtime(t: string) -> string { return @tr("+ {} and Save", t); }
     // Preset-chip / widget subtitles (preset_subtitle)
     public pure function stopwatch() -> string { return @tr("Stopwatch"); }
@@ -595,7 +597,7 @@ component EndButtonView inherits HorizontalLayout {
     in property <string> add-label;
     callback tapped(int);
     WrapButton {
-        text: root.kind == 0 ? Tr.pause() : root.kind == 1 ? Tr.resume() : root.kind == 2 ? @tr("Save") : root.kind == 3 ? root.add-label : @tr("Discard");
+        text: Tr.end-button(root.kind, root.add-label);
         outline: root.kind == 4;
         base-height: 56px;
         dark: true;
@@ -2749,6 +2751,8 @@ export component MainWindow inherits Window {
     // paused or over. The Rust side reads this value on Save.
     in-out property <string> note-text: "";
 
+    // A notification tap lets go of the note like the page's buttons.
+    public function release-note() { running-note.release(); }
     callback action-tap();
     callback end-button-tap(int);
     callback stop-tap();

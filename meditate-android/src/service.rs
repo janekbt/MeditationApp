@@ -44,6 +44,8 @@ const SERVICE_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateSessionSe
 pub fn start(app: &AndroidApp) {
     // A "Meditation complete" left from the last session is stale now.
     clear_complete(app);
+    // A tap left from the last session must not reach this one.
+    take_tap(app);
     if let Err(e) = invoke(app, "start") {
         meditate_core::log("service", &format!("start FAILED: {e:?}"));
     }
@@ -78,6 +80,20 @@ pub fn resume(app: &AndroidApp) {
     if let Err(e) = invoke(app, "resume") {
         meditate_core::log("service", &format!("resume FAILED: {e:?}"));
     }
+}
+
+/// Show the media control's buttons; the payload is built by
+/// `ui::send_media_buttons`. Same swallow-error policy.
+pub fn show_buttons(app: &AndroidApp, payload: &str) {
+    if let Err(e) = invoke_with_text(app, "showButtons", payload) {
+        meditate_core::log("service", &format!("showButtons FAILED: {e:?}"));
+    }
+}
+
+/// The code of a media-control button or headphone press waiting for
+/// the tick (`MeditateSessionService.writeTap`), taken once.
+pub fn take_tap(app: &AndroidApp) -> Option<i32> {
+    crate::drop_file::take(app, "session_tap")?.trim().parse().ok()
 }
 
 /// Post the "Meditation complete" notification; `duration` is the

@@ -72,6 +72,33 @@ pub fn end_button_from_code(code: i32) -> Option<meditate_core::session::EndButt
     }
 }
 
+/// The media control's Discard; the other codes are `end_button_code`.
+pub const MEDIA_DISCARD: i32 = 4;
+/// The headphones' play/pause button.
+pub const MEDIA_HEADPHONES: i32 = 5;
+
+/// The media control's buttons as codes: the running page's row, then
+/// Discard while no note is written. None without a live session.
+pub fn media_buttons(state: &AppState, note_empty: bool) -> Vec<i32> {
+    if !state.is_active() {
+        return vec![];
+    }
+    let row = state.end_buttons().row().into_iter().flatten().map(end_button_code);
+    row.chain(note_empty.then_some(MEDIA_DISCARD)).collect()
+}
+
+/// The running page's button a media-control tap stands for, or
+/// `None` when the control doesn't offer it now (a stale tap).
+pub fn media_tap(state: &AppState, note_empty: bool, code: i32) -> Option<i32> {
+    let offered = media_buttons(state, note_empty);
+    if code == MEDIA_HEADPHONES {
+        use meditate_core::session::EndButton::{Pause, Resume};
+        let toggles = [end_button_code(Pause), end_button_code(Resume)];
+        return offered.into_iter().find(|c| toggles.contains(c));
+    }
+    offered.contains(&code).then_some(code)
+}
+
 /// The duration core says to save for the session that just ended:
 /// `EndSession` (Stop, Finish, Add) or `EndBoxBreath` (a Box Breath
 /// session reaching its cycle-aligned end). `None` when the effects
@@ -4475,6 +4502,82 @@ mod tests {
     }
 
     #[test]
+    fn the_notification_offers_the_session_buttons() {
+        let t0 = Duration::from_secs(100);
+        let shape = timer_countdown(Duration::from_secs(60));
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        assert_eq!(media_buttons(&running, true), vec![0, 4], "Pause, Discard");
+        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        assert_eq!(media_buttons(&paused, true), vec![1, 2, 4], "Resume, Save, Discard");
+        let prep = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0).state;
+        assert_eq!(media_buttons(&prep, true), vec![0, 4], "Pause, Discard");
+        let prep_paused = prep.toggle(shape.clone(), t0 + Duration::from_secs(2)).state;
+        assert_eq!(media_buttons(&prep_paused, true), vec![1, 4], "Resume, Discard");
+        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        assert_eq!(media_buttons(&over, true), vec![2, 3, 4], "Save, Add, Discard");
+        assert!(media_buttons(&AppState::idle(), true).is_empty());
+        assert!(media_buttons(&AppState::Finished, true).is_empty(), "the service is gone");
+    }
+
+    #[test]
+    fn a_notification_tap_goes_through_the_session_buttons() {
+        let t0 = Duration::from_secs(100);
+        let shape = timer_countdown(Duration::from_secs(60));
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        assert_eq!(media_tap(&paused, true, 1), Some(1), "Resume");
+        assert_eq!(media_tap(&paused, true, 2), Some(2), "Save");
+        assert_eq!(media_tap(&paused, true, 0), None, "a Pause sent while it was running");
+        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        assert_eq!(media_tap(&over, true, 3), Some(3), "Add");
+        assert_eq!(media_tap(&AppState::idle(), true, MEDIA_DISCARD), None, "after the session ended");
+        assert_eq!(media_tap(&over, true, 9), None);
+
+        // The tick hands the tap to the app's own buttons; a new session
+        // drops a tap left from the last one.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = ui.find("service::take_tap(app)").expect("the tick takes taps");
+        assert!(ui[..at].ends_with("state.borrow().is_active().then(|| "), "only a live session takes taps");
+        let body = &ui[at..at + 900];
+        assert!(body.contains("app::media_tap("));
+        assert!(body.contains("ui.invoke_release_note()"), "the note lets go, like the page's buttons");
+        assert!(body.contains("ui.invoke_discard_tap()"));
+        assert!(body.contains("ui.invoke_end_button_tap("));
+        let svc = std::fs::read_to_string(root.join("src/service.rs")).unwrap();
+        let start = &svc[svc.find("pub fn start(").unwrap()..];
+        assert!(start[..start.find("\n}").unwrap()].contains("take_tap(app)"), "a stale tap is dropped at the start");
+    }
+
+    #[test]
+    fn discard_from_the_notification_spares_a_note() {
+        let t0 = Duration::from_secs(100);
+        let shape = timer_countdown(Duration::from_secs(60));
+        let paused = AppState::idle().toggle(shape.clone(), t0).state.toggle(shape, t0 + Duration::from_secs(5)).state;
+        assert_eq!(media_tap(&paused, true, MEDIA_DISCARD), Some(MEDIA_DISCARD));
+        assert_eq!(media_buttons(&paused, false), vec![1, 2], "no Discard once a note is written");
+        assert_eq!(media_tap(&paused, false, MEDIA_DISCARD), None, "a Discard sent before the note");
+    }
+
+    #[test]
+    fn the_headphone_button_toggles_the_pause() {
+        let t0 = Duration::from_secs(100);
+        let shape = timer_countdown(Duration::from_secs(60));
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        assert_eq!(media_tap(&running, true, MEDIA_HEADPHONES), Some(0), "Pause");
+        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        assert_eq!(media_tap(&paused, false, MEDIA_HEADPHONES), Some(1), "Resume");
+        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        assert_eq!(media_tap(&over, true, MEDIA_HEADPHONES), None, "no Pause in overtime");
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let body = kotlin_fn(&kt, "override fun onMediaButtonEvent(");
+        assert!(body.contains("KEYCODE_MEDIA_PLAY_PAUSE") && body.contains("KEYCODE_HEADSETHOOK"));
+        assert!(body.contains("MEDIA_HEADPHONES"));
+    }
+
+    #[test]
     fn the_running_page_is_the_only_end_screen() {
         use meditate_core::session::{EndButton, EndButtons};
         let t0 = Duration::from_secs(100);
@@ -5429,6 +5532,7 @@ mod jni_tests {
         ("service", "SERVICE_CLASS_DOTTED", "pause", "(Landroid/content/Context;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "resume", "(Landroid/content/Context;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "notifyComplete", "(Landroid/content/Context;Ljava/lang/String;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "showButtons", "(Landroid/content/Context;Ljava/lang/String;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "clearComplete", "(Landroid/content/Context;)V"),
     ];
 
