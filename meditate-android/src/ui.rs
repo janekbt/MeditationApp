@@ -9217,6 +9217,13 @@ fn build_ui() -> MainWindow {
         });
     }
     apply_system_insets(&ui);
+    let match_bars = |light| {
+        if let Some(app) = android_app() {
+            screen::match_system_bars(app, light);
+        }
+    };
+    match_bars(ui.get_light_bars());
+    ui.on_system_bars_changed(match_bars);
 
     // Accent theming (P8). Capture the shipped baseline BEFORE
     // any accent applies, seed the swatch row, apply the

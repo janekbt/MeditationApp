@@ -15,6 +15,9 @@
 package io.github.janekbt.Meditate
 
 import android.app.Activity
+import android.os.Build
+import android.view.View
+import android.view.WindowInsetsController
 import android.view.WindowManager
 
 object MeditateScreen {
@@ -26,6 +29,28 @@ object MeditateScreen {
                 activity.window.addFlags(flag)
             } else {
                 activity.window.clearFlags(flag)
+            }
+        }
+    }
+
+    // Dark bar symbols over a light page, light ones over a dark one
+    // (#15); the page sits behind both bars. Slint decides `light`.
+    @JvmStatic
+    fun matchSystemBars(activity: Activity, light: Boolean) {
+        activity.runOnUiThread {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val flags = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                activity.window.insetsController?.setSystemBarsAppearance(if (light) flags else 0, flags)
+            } else {
+                val decor = activity.window.decorView
+                val flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                @Suppress("DEPRECATION")
+                decor.systemUiVisibility = if (light) {
+                    decor.systemUiVisibility or flags
+                } else {
+                    decor.systemUiVisibility and flags.inv()
+                }
             }
         }
     }

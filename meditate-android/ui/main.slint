@@ -2122,6 +2122,12 @@ export enum Modal {
 }
 
 export component MainWindow inherits Window {
+    // Dark system bar symbols over a light page (#15); the session
+    // screen is black in both themes; flip halfway through its slide.
+    // Rust hands it to Android.
+    out property <bool> light-bars: Palette.color-scheme != ColorScheme.dark && !(root.screen-offset > root.width / 2 && root.nav-page == 0);
+    callback system-bars-changed(bool);
+    changed light-bars => { root.system-bars-changed(self.light-bars); }
     // Feed KeyboardArea: the room above the keyboard (#11).
     function feed-keyboard() {
         KeyboardArea.bottom = root.height - root.virtual-keyboard-size.height;

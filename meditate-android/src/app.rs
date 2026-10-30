@@ -5334,6 +5334,7 @@ mod jni_tests {
         ("keychain", "KEYCHAIN_CLASS_DOTTED", "storePassword", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z"),
         ("keychain", "KEYCHAIN_CLASS_DOTTED", "readPassword", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
         ("screen", "SCREEN_CLASS_DOTTED", "setKeepAwake", "(Landroid/app/Activity;Z)V"),
+        ("screen", "SCREEN_CLASS_DOTTED", "matchSystemBars", "(Landroid/app/Activity;Z)V"),
         ("widget", "WIDGET_CLASS_DOTTED", "refresh", "(Landroid/content/Context;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "start", "(Landroid/content/Context;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "stop", "(Landroid/content/Context;)V"),
