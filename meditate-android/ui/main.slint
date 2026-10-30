@@ -2662,6 +2662,13 @@ export component MainWindow inherits Window {
     callback preset-star-tap(string);
     callback preset-rename-tap(string, string);
     callback preset-delete-tap(string);
+    // Manage-mode reorder: drag a row by its handle onto another
+    // row (GTK `add_reordering`). The uuid rides as a data-transfer,
+    // which only Rust can build and read.
+    pure callback preset-drag-data(string) -> data-transfer;
+    pure callback preset-drag-uuid(data-transfer) -> string;
+    callback preset-move(string, int);
+    property <int> preset-drag-index: -1;
     in-out property <string> rename-preset-text: "";
     in property <bool> rename-preset-valid: false;
     callback rename-preset-changed(string);
@@ -7093,6 +7100,27 @@ export component MainWindow inherits Window {
                             && root.preset-chooser-save-mode
                             ? MaterialPalette.surface-container-high
                             : transparent;
+                        opacity: root.preset-drag-index == idx ? 0.4 : 1.0;
+
+                        pc-drop := DropArea {
+                            width: 100%;
+                            height: 100%;
+                            can-drop(event) => root.preset-chooser-save-mode ? DragAction.none : DragAction.move;
+                            dropped(event) => {
+                                // The move swaps the rows, so the dragged
+                                // one's `changed dragging` may never run.
+                                root.preset-drag-index = -1;
+                                root.preset-move(root.preset-drag-uuid(event.data), idx);
+                                return DragAction.move;
+                            }
+                        }
+                        // Where the dragged row lands: above this row
+                        // when it comes from below, else under it.
+                        if pc-drop.has-drag && root.preset-drag-index != idx : Rectangle {
+                            y: root.preset-drag-index > idx ? 0px : parent.height - self.height;
+                            height: 2px;
+                            background: MaterialPalette.primary;
+                        }
 
                         pc-row-touch := TouchArea {
                             // Save mode: tap = override-with-current.
@@ -7120,6 +7148,29 @@ export component MainWindow inherits Window {
                             // outline dimmed when not (GTK's
                             // starred-symbolic / non-starred-
                             // symbolic + preset-star-on / dimmed).
+                            if !root.preset-chooser-save-mode : VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 40px;
+                                    DragArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        data: root.preset-drag-data(item.uuid);
+                                        allow-move: true;
+                                        changed dragging => {
+                                            root.preset-drag-index = self.dragging ? idx : -1;
+                                        }
+                                    }
+                                    Image {
+                                        source: @image-url("assets/drag_handle.svg");
+                                        width: 20px;
+                                        height: 20px;
+                                        colorize: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+
                             if !root.preset-chooser-save-mode : VerticalLayout {
                                 alignment: center;
                                 Rectangle {

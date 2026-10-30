@@ -3054,7 +3054,7 @@ mod tests {
             "root.bell-chooser-items", "root.pattern-chooser-items",
         ] {
             let at = slint.find(&format!("in {list} : VerticalLayout {{")).unwrap_or_else(|| panic!("{list}"));
-            let row = &slint[at..at + 4500];
+            let row = &slint[at..at + 6500];
             let name = row.find("text: item.name;").unwrap_or_else(|| panic!("{list}: name"));
             let text = &row[name..name + row[name..].find('}').unwrap()];
             assert!(text.contains("wrap: word-wrap;"), "{list}: the name wraps");

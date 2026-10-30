@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 09:12+0100\n"
+"POT-Creation-Date: 2026-10-30 10:07+0100\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -93,7 +93,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
-#: src/presets.rs:695 src/timer/imp.rs:2585 src/timer/imp.rs:3791
+#: src/presets.rs:772 src/timer/imp.rs:2585 src/timer/imp.rs:3791
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "Отменить"
@@ -124,8 +124,8 @@ msgstr "Этот колокол больше не будет звучать во
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:441
-#: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
+#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:518
+#: src/presets.rs:580 src/presets.rs:645 src/presets.rs:709
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
 #: src/timer/imp.rs:3920 src/vibration_editor.rs:129 src/vibrations.rs:546
@@ -134,7 +134,7 @@ msgid "Cancel"
 msgstr "Отмена"
 
 #: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
-#: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
+#: src/presets.rs:646 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "Удалить"
 
@@ -470,7 +470,7 @@ msgid "Star: show in home list"
 msgstr "В избранное: показывать на главном экране"
 
 #: src/guided.rs:789 src/guided.rs:963 src/labels.rs:198 src/labels.rs:322
-#: src/presets.rs:381 src/presets.rs:504 src/sounds.rs:344 src/sounds.rs:921
+#: src/presets.rs:458 src/presets.rs:581 src/sounds.rs:344 src/sounds.rs:921
 #: src/vibrations.rs:411 src/vibrations.rs:547
 msgid "Rename"
 msgstr "Переименовать"
@@ -534,7 +534,7 @@ msgstr "Имя метки"
 msgid "Create Label"
 msgstr "Создать метку"
 
-#: src/labels.rs:249 src/presets.rs:442
+#: src/labels.rs:249 src/presets.rs:519
 msgid "Create"
 msgstr "Создать"
 
@@ -1170,51 +1170,55 @@ msgstr "Управлять"
 msgid "Create new preset…"
 msgstr "Создать новый пресет…"
 
-#: src/presets.rs:348
+#: src/presets.rs:358
+msgid "Drag to reorder"
+msgstr "Перетащите, чтобы изменить порядок"
+
+#: src/presets.rs:425
 msgid "Remove from home list"
 msgstr "Убрать с главного экрана"
 
-#: src/presets.rs:349
+#: src/presets.rs:426
 msgid "Pin to home list"
 msgstr "Закрепить на главном экране"
 
-#: src/presets.rs:408
+#: src/presets.rs:485
 msgid "Delete preset"
 msgstr "Удалить пресет"
 
-#: src/presets.rs:431
+#: src/presets.rs:508
 msgid "Preset name"
 msgstr "Название пресета"
 
-#: src/presets.rs:436
+#: src/presets.rs:513
 msgid "Create Preset"
 msgstr "Создать пресет"
 
-#: src/presets.rs:498
+#: src/presets.rs:575
 msgid "Rename Preset"
 msgstr "Переименовать пресет"
 
-#: src/presets.rs:560
+#: src/presets.rs:637
 #, rust-format
 msgid "'{name}' will be removed from this device and any synced peers."
 msgstr ""
 "'{name}' будет удалён с этого устройства и со всех синхронизированных "
 "устройств."
 
-#: src/presets.rs:563
+#: src/presets.rs:640
 msgid "Delete Preset?"
 msgstr "Удалить пресет?"
 
-#: src/presets.rs:624
+#: src/presets.rs:701
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr "Заменить сохранённую конфигурацию '{name}' текущими настройками?"
 
-#: src/presets.rs:627
+#: src/presets.rs:704
 msgid "Override Preset?"
 msgstr "Перезаписать пресет?"
 
-#: src/presets.rs:633
+#: src/presets.rs:710
 msgid "Override"
 msgstr "Перезаписать"
 

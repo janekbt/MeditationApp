@@ -345,6 +345,55 @@ impl Database {
         Ok(())
     }
 
+    /// Move a preset to `to` in its mode's list (clamped to the end).
+    /// The lists sort by `created_iso` as text (older versions too), so
+    /// only the moved preset gets a new one, between its new
+    /// neighbours: a sync can't touch the presets it passed. Only
+    /// neighbours with equal text leave no room; then the mode's
+    /// presets get fresh times 1 ms apart from now.
+    /// Unknown uuids and a move onto the same place write nothing.
+    pub fn move_preset(&self, uuid_str: &str, to: usize) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some(row) = find_preset_by_uuid_from_db(self, uuid_str)? else { return Ok(()); };
+        let mut list = list_presets_for_mode_from_db(self, row.mode)?;
+        let from = list.iter().position(|p| p.uuid == row.uuid).expect("a preset is listed under its mode");
+        let to = to.min(list.len() - 1);
+        if from == to { return Ok(()); }
+        let moved = list.remove(from);
+        list.insert(to, moved);
+        let mut times: Vec<String> = list.iter().map(|p| p.created_iso.clone()).collect();
+        match key_between(to.checked_sub(1).map(|i| times[i].as_str()), times.get(to + 1).map(String::as_str), uuid_str) {
+            Some(key) => times[to] = key,
+            None => {
+                let start = chrono::Utc::now();
+                times = (0..list.len())
+                    .map(|i| (start + chrono::Duration::milliseconds(i as i64))
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, false))
+                    .collect();
+            }
+        }
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        for (p, created_iso) in list.iter().zip(&times) {
+            if &p.created_iso == created_iso { continue; }
+            self.conn.execute(
+                "UPDATE presets SET created_iso = ?1, updated_iso = ?2 WHERE uuid = ?3",
+                params![created_iso, now_iso, p.uuid.as_str()],
+            )?;
+            let payload = serde_json::json!({
+                "uuid": p.uuid.as_str(),
+                "name": p.name,
+                "mode": p.mode.as_db_str(),
+                "is_starred": p.is_starred,
+                "config_json": p.config_json,
+                "created_iso": created_iso,
+                "updated_iso": now_iso,
+            }).to_string();
+            self.emit_event(&tx, EventKind::PresetUpdate, p.uuid.as_str(), payload)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Remove a preset row and emit a tombstone. Unknown uuids are
     /// silent no-ops with no event — peers would otherwise receive a
     /// tombstone for a preset they never knew existed.
@@ -408,6 +457,87 @@ impl Database {
         }
         Ok(())
     }
+}
+
+// ponytail: moves dropped again and again at the same edge of one gap
+// add a digit every 5 to 10 moves (about 160 characters after 1000);
+// count in the neighbour's tail, as count_up does, if that ever shows.
+/// A `created_iso` that sorts as text strictly between `before` and
+/// `after` (`None`: the list's end). Between two neighbours it extends
+/// `before` with digits, so there is always room; a tail from the
+/// moved preset's uuid keeps two devices' moves into one gap apart.
+/// `None` only for neighbours with equal text, or a first preset with
+/// no digit above 0.
+fn key_between(before: Option<&str>, after: Option<&str>, uuid: &str) -> Option<String> {
+    let core = match (before, after) {
+        (Some(lo), Some(hi)) if lo < hi => match hi.strip_prefix(lo) {
+            Some(rest) => format!("{lo}{}", digits_below(rest)?),
+            None => just_above(lo, hi),
+        },
+        // The first digit above 0 lowered: below `hi` for any text. The
+        // 9 after it gives the next moves to the top room to lower.
+        (None, Some(hi)) => {
+            let j = hi.bytes().position(|b| (b'1'..=b'9').contains(&b))?;
+            format!("{}{}9", &hi[..j], char::from(hi.as_bytes()[j] - 1))
+        }
+        // Now, so a preset saved later still comes after it. With the
+        // clock behind `lo`: `lo` without its tail, counted up by one in
+        // its last digits, so it stays as long and as early as it is.
+        (Some(lo), None) => {
+            let now = chrono::Utc::now().to_rfc3339();
+            if now.as_str() > lo { now } else { count_up(lo) }
+        }
+        _ => return None,
+    };
+    // The last 8 hex digits (the bundled ids share their first ones),
+    // each as two digits 1-9: never ending in 0, so digits_below always
+    // finds room, and two ids never give one tail.
+    let tail: String = uuid.chars().rev().filter_map(|c| c.to_digit(16)).take(8)
+        .flat_map(|v| [char::from(b'1' + (v / 9) as u8), char::from(b'1' + (v % 9) as u8)]).collect();
+    let key = core + &tail;
+    (before.map_or(true, |lo| lo < key.as_str()) && after.map_or(true, |hi| key.as_str() < hi)).then_some(key)
+}
+
+/// The shortest start of `lo`, with one digit raised, that sorts above
+/// `lo` and below `hi`, where `hi` doesn't start with `lo`; so moves
+/// back and forth don't grow the text.
+fn just_above(lo: &str, hi: &str) -> String {
+    let (l, h) = (lo.as_bytes(), hi.as_bytes());
+    let split = l.iter().zip(h).position(|(a, b)| a != b).unwrap_or(l.len());
+    (split..l.len())
+        .find_map(|j| {
+            let digit = l[j].saturating_add(1).max(b'1');
+            let start = lo.get(..j).filter(|_| digit <= b'9' && (j > split || digit < h[j]))?;
+            Some(format!("{start}{}", char::from(digit)))
+        })
+        .unwrap_or_else(|| format!("{lo}5"))
+}
+
+/// The next text above `lo`: its last digit below 9 raised and the
+/// digits after it set to 0. The count runs in a move's 16-digit tail
+/// (or a plain time's offset), never in the time before it, so the
+/// place stays as early as it is; a second tail on top is dropped
+/// first, so the text stays as long. Every tail holds a digit below 9.
+fn count_up(lo: &str) -> String {
+    let n = lo.len();
+    let core = if n >= 32 && lo.as_bytes()[n - 32..].iter().all(u8::is_ascii_digit) { &lo[..n - 16] } else { lo };
+    let mut bytes = core.as_bytes().to_vec();
+    let Some(j) = bytes.iter().rposition(|b| (b'0'..=b'8').contains(b)) else { return format!("{lo}5"); };
+    bytes[j] += 1;
+    bytes[j + 1..].iter_mut().filter(|b| b.is_ascii_digit()).for_each(|b| *b = b'0');
+    String::from_utf8(bytes).expect("only ASCII digits changed")
+}
+
+/// A digit string that sorts below `rest` and is not a start of it;
+/// `rest` is digits not ending in 0, as `key_between` writes them.
+fn digits_below(rest: &str) -> Option<String> {
+    let zeros = rest.bytes().take_while(|&b| b == b'0').count();
+    let low = match *rest.as_bytes().get(zeros)? {
+        first @ b'2'..=b'9' => char::from(first - 1).to_string(),
+        b'1' => "05".into(),
+        _ => return None,
+    };
+    Some(format!("{}{low}", &rest[..zeros]))
 }
 
 #[cfg(test)]
@@ -901,5 +1031,314 @@ mod tests {
         db.delete_preset(morning.uuid.as_str()).unwrap();
         db.restore_preset(&morning).unwrap();
         assert_eq!(names(&db), before);
+    }
+
+    fn order(db: &Database, mode: SessionMode) -> Vec<String> {
+        list_presets_for_mode_from_db(db, mode).unwrap().into_iter().map(|p| p.name).collect()
+    }
+
+    fn uuid_of(db: &Database, name: &str) -> String {
+        list_presets_from_db(db).unwrap().into_iter().find(|p| p.name == name).unwrap().uuid.0
+    }
+
+    fn timer_presets(db: &Database, names: &[&str]) {
+        for name in names {
+            db.insert_preset(name, SessionMode::Timer, true, "{}").unwrap();
+        }
+    }
+
+    fn sync_both(one: &Database, two: &Database) {
+        swap_events(one, two);
+        swap_events(two, one);
+    }
+
+    fn longest_place(db: &Database) -> usize {
+        list_presets_from_db(db).unwrap().into_iter().map(|p| p.created_iso.len()).max().unwrap()
+    }
+
+    fn swap_events(from: &Database, to: &Database) {
+        let events: Vec<Event> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+        to.replay_events(&events).unwrap();
+    }
+
+    #[test]
+    fn a_moved_preset_takes_its_new_place() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A"]);
+        db.insert_preset("X", SessionMode::BoxBreath, true, "{}").unwrap();
+        timer_presets(&db, &["B"]);
+        db.insert_preset("Y", SessionMode::BoxBreath, true, "{}").unwrap();
+        timer_presets(&db, &["C"]);
+        db.move_preset(&uuid_of(&db, "C"), 0).unwrap();
+        assert_eq!(order(&db, SessionMode::Timer), ["C", "A", "B"]);
+        let starred: Vec<String> = list_starred_presets_for_mode_from_db(&db, SessionMode::Timer).unwrap().into_iter().map(|p| p.name).collect();
+        assert_eq!(starred, ["C", "A", "B"]);
+        assert_eq!(order(&db, SessionMode::BoxBreath), ["X", "Y"]);
+    }
+
+    #[test]
+    fn a_preset_moved_down_lands_below_the_others() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        db.move_preset(&uuid_of(&db, "A"), 2).unwrap();
+        assert_eq!(order(&db, SessionMode::Timer), ["B", "C", "A"]);
+    }
+
+    #[test]
+    fn a_preset_dropped_on_its_place_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        let before = db.pending_events().unwrap().len();
+        db.move_preset(&uuid_of(&db, "B"), 1).unwrap();
+        db.move_preset(&uuid_of(&db, "C"), 99).unwrap();
+        db.move_preset("not-a-preset", 0).unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before);
+        assert_eq!(order(&db, SessionMode::Timer), ["A", "B", "C"]);
+    }
+
+    #[test]
+    fn another_device_gets_the_new_order() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B", "C"]);
+        one.move_preset(&uuid_of(&one, "C"), 0).unwrap();
+        swap_events(&one, &two);
+        assert_eq!(order(&two, SessionMode::Timer), ["C", "A", "B"]);
+    }
+
+    #[test]
+    fn an_edit_elsewhere_to_a_preset_not_moved_keeps_the_order() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B", "C", "D"]);
+        swap_events(&one, &two);
+        one.move_preset(&uuid_of(&one, "B"), 0).unwrap();
+        two.update_preset_name(&uuid_of(&two, "D"), "D2").unwrap();
+        sync_both(&one, &two);
+        assert_eq!(order(&one, SessionMode::Timer), ["B", "A", "C", "D2"]);
+        assert_eq!(order(&two, SessionMode::Timer), ["B", "A", "C", "D2"]);
+    }
+
+    #[test]
+    fn presets_with_the_same_time_can_still_be_moved() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C", "D"]);
+        db.conn.execute("UPDATE presets SET created_iso = '2026-01-01T00:00:00+00:00'", []).unwrap();
+        let b = order(&db, SessionMode::Timer);
+        db.move_preset(&uuid_of(&db, &b[3]), 1).unwrap();
+        assert_eq!(order(&db, SessionMode::Timer), [b[0].clone(), b[3].clone(), b[1].clone(), b[2].clone()]);
+    }
+
+    #[test]
+    fn an_edit_elsewhere_to_a_preset_the_move_passes_is_kept() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B", "C"]);
+        swap_events(&one, &two);
+        two.update_preset_name(&uuid_of(&two, "B"), "B2").unwrap();
+        two.delete_preset(&uuid_of(&two, "A")).unwrap();
+        // The phone has written more since, so its move is the later write.
+        for starred in [false, true, false, true] {
+            one.update_preset_starred(&uuid_of(&one, "C"), crate::db::StarredState::from_flag(starred)).unwrap();
+        }
+        one.move_preset(&uuid_of(&one, "C"), 0).unwrap();
+        sync_both(&one, &two);
+        assert_eq!(order(&one, SessionMode::Timer), ["C", "B2"]);
+        assert_eq!(order(&two, SessionMode::Timer), ["C", "B2"]);
+    }
+
+    #[test]
+    fn a_move_past_the_end_lands_last() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        db.move_preset(&uuid_of(&db, "A"), 99).unwrap();
+        assert_eq!(order(&db, SessionMode::Timer), ["B", "C", "A"]);
+    }
+
+    #[test]
+    fn two_devices_moving_before_they_sync_end_in_one_order() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B", "C", "D"]);
+        swap_events(&one, &two);
+        one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
+        two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
+        sync_both(&one, &two);
+        let settled = order(&one, SessionMode::Timer);
+        assert_eq!(order(&two, SessionMode::Timer), settled);
+        assert_eq!((settled[0].as_str(), settled[3].as_str()), ("A", "B"));
+    }
+
+    #[test]
+    fn many_moves_into_one_gap_write_only_the_moved_preset() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        for _ in 0..60 {
+            let last = order(&db, SessionMode::Timer)[2].clone();
+            let before = db.pending_events().unwrap().len();
+            db.move_preset(&uuid_of(&db, &last), 1).unwrap();
+            assert_eq!(db.pending_events().unwrap().len(), before + 1);
+            assert_eq!(order(&db, SessionMode::Timer)[1], last);
+        }
+        // To the top, above a preset that was itself moved there.
+        for _ in 0..2 {
+            let last = order(&db, SessionMode::Timer)[2].clone();
+            let before = db.pending_events().unwrap().len();
+            db.move_preset(&uuid_of(&db, &last), 0).unwrap();
+            assert_eq!(db.pending_events().unwrap().len(), before + 1);
+            assert_eq!(order(&db, SessionMode::Timer)[0], last);
+        }
+    }
+
+    #[test]
+    fn moves_into_one_gap_on_two_devices_leave_room_between_them() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B", "C", "D"]);
+        swap_events(&one, &two);
+        one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
+        two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
+        sync_both(&one, &two);
+        two.delete_preset(&uuid_of(&two, "A")).unwrap();
+        for starred in [false, true, false, true] {
+            one.update_preset_starred(&uuid_of(&one, "B"), crate::db::StarredState::from_flag(starred)).unwrap();
+        }
+        one.move_preset(&uuid_of(&one, "B"), 2).unwrap();
+        sync_both(&one, &two);
+        let settled = order(&one, SessionMode::Timer);
+        assert_eq!(order(&two, SessionMode::Timer), settled);
+        assert_eq!(settled.len(), 3, "A stays deleted: {settled:?}");
+        assert_eq!(settled[1], "B");
+    }
+
+    #[test]
+    fn a_preset_moved_to_the_end_stays_above_one_saved_later() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B"]);
+        db.move_preset(&uuid_of(&db, "A"), 1).unwrap();
+        timer_presets(&db, &["C"]);
+        assert_eq!(order(&db, SessionMode::Timer), ["B", "A", "C"]);
+    }
+
+    #[test]
+    fn moves_of_two_presets_into_one_gap_never_share_a_place() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        timer_presets(&one, &["A", "B"]);
+        // Ids whose first characters a lossy mapping would merge.
+        one.insert_preset_with_uuid("00000000-0000-4000-8000-000000000001", "C", SessionMode::Timer, true, "{}").unwrap();
+        one.insert_preset_with_uuid("99999999-0000-4000-8000-000000000002", "D", SessionMode::Timer, true, "{}").unwrap();
+        swap_events(&one, &two);
+        one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
+        two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
+        sync_both(&one, &two);
+        let settled = order(&one, SessionMode::Timer);
+        let before = one.pending_events().unwrap().len();
+        one.move_preset(&uuid_of(&one, "B"), 2).unwrap();
+        assert_eq!(one.pending_events().unwrap().len(), before + 1, "{settled:?}");
+        assert_eq!(order(&one, SessionMode::Timer)[2], "B");
+    }
+
+    #[test]
+    fn swapping_the_top_two_again_and_again_keeps_the_place_short() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        for _ in 0..200 {
+            let first = order(&db, SessionMode::Timer)[0].clone();
+            db.move_preset(&uuid_of(&db, &first), 1).unwrap();
+        }
+        assert!(longest_place(&db) < 120, "{}", longest_place(&db));
+        for _ in 0..200 {
+            let last = order(&db, SessionMode::Timer)[2].clone();
+            db.move_preset(&uuid_of(&db, &last), 0).unwrap();
+        }
+        assert!(longest_place(&db) < 120, "to the top: {}", longest_place(&db));
+    }
+
+    #[test]
+    fn a_move_to_the_top_after_moves_in_the_middle_writes_only_the_moved_preset() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A", "B", "C"]);
+        for (name, to) in [("C", 1), ("A", 2), ("B", 0)] {
+            let before = db.pending_events().unwrap().len();
+            db.move_preset(&uuid_of(&db, name), to).unwrap();
+            assert_eq!(db.pending_events().unwrap().len(), before + 1, "{name}");
+        }
+        assert_eq!(order(&db, SessionMode::Timer), ["B", "C", "A"]);
+    }
+
+    /// Random moves on two devices that sync now and then: every move
+    /// lands where it was dropped and writes only the moved preset, the
+    /// places stay short, and both devices end in one order.
+    #[test]
+    fn random_moves_write_only_the_moved_preset() {
+        let devices = [Database::open_in_memory().unwrap(), Database::open_in_memory().unwrap()];
+        timer_presets(&devices[0], &["A", "B", "C", "D", "E", "F"]);
+        swap_events(&devices[0], &devices[1]);
+        let mut state = 7_u64;
+        let mut pick = |n: usize| { let (unit, next) = crate::bells::xorshift64(state); state = next; (unit * n as f64) as usize };
+        for step in 0..600 {
+            let db = &devices[pick(2)];
+            let mut expected = order(db, SessionMode::Timer);
+            let (from, to) = (pick(6), pick(6));
+            let name = expected.remove(from);
+            expected.insert(to, name.clone());
+            let before = db.pending_events().unwrap().len();
+            db.move_preset(&uuid_of(db, &name), to).unwrap();
+            assert_eq!(order(db, SessionMode::Timer), expected, "step {step}");
+            assert_eq!(db.pending_events().unwrap().len(), before + usize::from(from != to), "step {step}");
+            if step % 50 == 49 {
+                sync_both(&devices[0], &devices[1]);
+                assert_eq!(order(&devices[0], SessionMode::Timer), order(&devices[1], SessionMode::Timer), "step {step}");
+            }
+        }
+        assert!(longest_place(&devices[0]) < 120, "{}", longest_place(&devices[0]));
+    }
+
+    #[test]
+    fn the_bundled_box_breath_presets_moved_into_one_gap_on_two_devices_leave_room() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        for name in ["P", "Q"] {
+            one.insert_preset(name, SessionMode::BoxBreath, true, "{}").unwrap();
+        }
+        // The bundled ids differ only in their last digits.
+        one.insert_preset_with_uuid(crate::seeds::DEFAULT_BOX_BREATH_4444_UUID, "4-4-4-4", SessionMode::BoxBreath, true, "{}").unwrap();
+        one.insert_preset_with_uuid(crate::seeds::DEFAULT_BOX_BREATH_4780_UUID, "4-7-8-0", SessionMode::BoxBreath, true, "{}").unwrap();
+        swap_events(&one, &two);
+        one.move_preset(crate::seeds::DEFAULT_BOX_BREATH_4444_UUID, 1).unwrap();
+        two.move_preset(crate::seeds::DEFAULT_BOX_BREATH_4780_UUID, 1).unwrap();
+        sync_both(&one, &two);
+        let before = one.pending_events().unwrap().len();
+        one.move_preset(&uuid_of(&one, "Q"), 2).unwrap();
+        assert_eq!(one.pending_events().unwrap().len(), before + 1);
+        assert_eq!(order(&one, SessionMode::BoxBreath)[2], "Q");
+    }
+
+    #[test]
+    fn swapping_the_last_two_while_the_clock_is_behind_keeps_the_place_short() {
+        // Written by a device whose clock runs far ahead of this one: a
+        // plain time, and a place a move between two presets cut short.
+        for (start, before_next) in [
+            ("2999-01-01T00:00:00+00:00", "2999-01-01T00:00:01"),
+            ("2999-01-01T011234567812345678", "2999-01-01T02"),
+        ] {
+            let db = Database::open_in_memory().unwrap();
+            timer_presets(&db, &["A", "B", "C"]);
+            db.conn.execute("UPDATE presets SET created_iso = ?1 WHERE name = 'C'", [start]).unwrap();
+            for _ in 0..200 {
+                let mut expected = order(&db, SessionMode::Timer);
+                let second = expected.remove(1);
+                expected.push(second.clone());
+                let before = db.pending_events().unwrap().len();
+                db.move_preset(&uuid_of(&db, &second), 2).unwrap();
+                assert_eq!(order(&db, SessionMode::Timer), expected);
+                assert_eq!(db.pending_events().unwrap().len(), before + 1);
+            }
+            let places: Vec<String> = list_presets_from_db(&db).unwrap().into_iter().map(|p| p.created_iso).collect();
+            assert!(places.iter().all(|p| p.len() < 120), "{places:?}");
+            // The place counts up after the other device's, not hours ahead.
+            assert!(places.iter().all(|p| p.as_str() < before_next), "{start}: {places:?}");
+        }
     }
 }

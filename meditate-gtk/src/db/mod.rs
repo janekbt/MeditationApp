@@ -637,6 +637,10 @@ impl Database {
         self.inner.update_preset_starred(uuid, starred).map_err(map_core_err)
     }
 
+    pub fn move_preset(&self, uuid: &str, to: usize) -> Result<()> {
+        self.inner.move_preset(uuid, to).map_err(map_core_err)
+    }
+
     pub fn delete_preset(&self, uuid: &str) -> Result<()> {
         self.inner.delete_preset(uuid).map_err(map_core_err)
     }

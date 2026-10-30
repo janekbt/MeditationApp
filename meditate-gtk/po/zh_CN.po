@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 09:12+0100\n"
+"POT-Creation-Date: 2026-10-30 10:07+0100\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -86,7 +86,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
-#: src/presets.rs:695 src/timer/imp.rs:2585 src/timer/imp.rs:3791
+#: src/presets.rs:772 src/timer/imp.rs:2585 src/timer/imp.rs:3791
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "撤销"
@@ -117,8 +117,8 @@ msgstr "此铃声将不再在会话期间响起。"
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:441
-#: src/presets.rs:503 src/presets.rs:568 src/presets.rs:632
+#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:518
+#: src/presets.rs:580 src/presets.rs:645 src/presets.rs:709
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
 #: src/timer/imp.rs:3920 src/vibration_editor.rs:129 src/vibrations.rs:546
@@ -127,7 +127,7 @@ msgid "Cancel"
 msgstr "取消"
 
 #: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
-#: src/presets.rs:569 src/sounds.rs:989 src/vibrations.rs:640
+#: src/presets.rs:646 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "删除"
 
@@ -445,7 +445,7 @@ msgid "Star: show in home list"
 msgstr "收藏：在主页列表显示"
 
 #: src/guided.rs:789 src/guided.rs:963 src/labels.rs:198 src/labels.rs:322
-#: src/presets.rs:381 src/presets.rs:504 src/sounds.rs:344 src/sounds.rs:921
+#: src/presets.rs:458 src/presets.rs:581 src/sounds.rs:344 src/sounds.rs:921
 #: src/vibrations.rs:411 src/vibrations.rs:547
 msgid "Rename"
 msgstr "重命名"
@@ -509,7 +509,7 @@ msgstr "标签名称"
 msgid "Create Label"
 msgstr "创建标签"
 
-#: src/labels.rs:249 src/presets.rs:442
+#: src/labels.rs:249 src/presets.rs:519
 msgid "Create"
 msgstr "创建"
 
@@ -1112,49 +1112,53 @@ msgstr "管理预设"
 msgid "Create new preset…"
 msgstr "创建新预设…"
 
-#: src/presets.rs:348
+#: src/presets.rs:358
+msgid "Drag to reorder"
+msgstr "拖动以重新排序"
+
+#: src/presets.rs:425
 msgid "Remove from home list"
 msgstr "从主页列表移除"
 
-#: src/presets.rs:349
+#: src/presets.rs:426
 msgid "Pin to home list"
 msgstr "固定到主页列表"
 
-#: src/presets.rs:408
+#: src/presets.rs:485
 msgid "Delete preset"
 msgstr "删除预设"
 
-#: src/presets.rs:431
+#: src/presets.rs:508
 msgid "Preset name"
 msgstr "预设名称"
 
-#: src/presets.rs:436
+#: src/presets.rs:513
 msgid "Create Preset"
 msgstr "创建预设"
 
-#: src/presets.rs:498
+#: src/presets.rs:575
 msgid "Rename Preset"
 msgstr "重命名预设"
 
-#: src/presets.rs:560
+#: src/presets.rs:637
 #, rust-format
 msgid "'{name}' will be removed from this device and any synced peers."
 msgstr "“{name}”将从此设备及所有同步的设备中移除。"
 
-#: src/presets.rs:563
+#: src/presets.rs:640
 msgid "Delete Preset?"
 msgstr "删除预设？"
 
-#: src/presets.rs:624
+#: src/presets.rs:701
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr "用当前设置替换“{name}”已保存的配置？"
 
-#: src/presets.rs:627
+#: src/presets.rs:704
 msgid "Override Preset?"
 msgstr "覆盖预设？"
 
-#: src/presets.rs:633
+#: src/presets.rs:710
 msgid "Override"
 msgstr "覆盖"
 

@@ -6057,6 +6057,24 @@ fn build_ui() -> MainWindow {
             }
         });
     }
+    // Manage-mode reorder: the dragged row's uuid rides as plain text.
+    ui.on_preset_drag_data(slint::DataTransfer::from);
+    ui.on_preset_drag_uuid(|data| data.plain_text().unwrap_or_default());
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_preset_move(move |uuid, to| {
+            let Some(ui) = weak.upgrade() else { return; };
+            let core_mode: meditate_core::SessionMode = current_mode.get().into();
+            let to = usize::try_from(to).unwrap_or(0);
+            if !setting_saved(&ui, "preset.move", lock_db().map(|db| db.move_preset(uuid.as_str(), to))) {
+                return;
+            }
+            populate_preset_chooser(&ui, core_mode);
+            refresh_preset_chips(&ui, core_mode);
+            refresh_widget(&ui);
+        });
+    }
     {
         let weak = ui.as_weak();
         let rename_preset_uuid = rename_preset_uuid.clone();

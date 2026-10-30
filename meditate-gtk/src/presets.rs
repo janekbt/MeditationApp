@@ -203,11 +203,11 @@ fn rebuild_chooser_rows(
         .with_db(|db| db.list_presets_for_mode(mode))
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
-    for preset in presets {
+    for (index, preset) in presets.iter().enumerate() {
         let row = build_preset_row(
-            &preset, app, &chooser_mode, nav_view, toast_overlay,
+            preset, index, app, &chooser_mode, nav_view, toast_overlay,
             on_changed.clone(), toast_slot.clone(),
-            &label_names, rebuilder.clone(),
+            &label_names, rows, rebuilder.clone(),
         );
         group.add(&row);
         rows.borrow_mut().push(row.upcast());
@@ -216,6 +216,7 @@ fn rebuild_chooser_rows(
 
 fn build_preset_row(
     preset: &Preset,
+    index: usize,
     app: &MeditateApplication,
     chooser_mode: &Rc<ChooserMode>,
     nav_view: &adw::NavigationView,
@@ -223,6 +224,7 @@ fn build_preset_row(
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     label_names: &HashMap<String, String>,
+    rows: &Rc<RefCell<Vec<gtk::Widget>>>,
     rebuilder: crate::Rebuilder,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -239,6 +241,9 @@ fn build_preset_row(
         preset, app, on_changed.clone(), toast_slot.clone(), rebuilder.clone(),
     );
     row.add_prefix(&star_btn);
+    if matches!(**chooser_mode, ChooserMode::Manage) {
+        add_reordering(&row, preset, index, app, rows, on_changed.clone(), rebuilder.clone());
+    }
 
     // Manage-only suffixes: rename + delete buttons. In Save mode
     // taps on the row body trigger the override dialog instead.
@@ -324,6 +329,85 @@ fn build_preset_row(
         });
     }
     row
+}
+
+/// Manage mode: a drag handle (added after the star: `add_prefix` puts
+/// each new prefix in front), the row as a drop target, and Alt+Up /
+/// Alt+Down on the focused row.
+fn add_reordering(
+    row: &adw::ActionRow,
+    preset: &Preset,
+    index: usize,
+    app: &MeditateApplication,
+    rows: &Rc<RefCell<Vec<gtk::Widget>>>,
+    on_changed: Rc<dyn Fn()>,
+    rebuilder: crate::Rebuilder,
+) {
+    let move_to = {
+        let (app, rows) = (app.clone(), rows.clone());
+        Rc::new(move |anchor: &gtk::Widget, uuid: &str, to: usize| {
+            let written = app.with_db_mut(|db| db.move_preset(uuid, to));
+            write_ok(anchor, "preset.move", written, Failed::Save);
+            on_changed();
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+            let rows = rows.borrow();
+            if let Some(row) = rows.get(to).or(rows.last()) { row.grab_focus(); }
+        })
+    };
+
+    let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    handle.add_css_class("dimmed");
+    handle.set_tooltip_text(Some(&gettext("Drag to reorder")));
+    handle.set_cursor_from_name(Some("grab"));
+    row.add_prefix(&handle);
+
+    let source = gtk::DragSource::builder().actions(gtk::gdk::DragAction::MOVE).build();
+    let uuid = preset.uuid.0.clone();
+    let grab = Rc::new(std::cell::Cell::new((0.0, 0.0)));
+    let (row_weak, grab_at) = (row.downgrade(), grab.clone());
+    source.connect_prepare(move |src, x, y| {
+        let point = src.widget().zip(row_weak.upgrade())
+            .and_then(|(handle, row)| handle.compute_point(&row, &gtk::graphene::Point::new(x as f32, y as f32)));
+        grab_at.set(point.map_or((x, y), |p| (f64::from(p.x()), f64::from(p.y()))));
+        Some(gtk::gdk::ContentProvider::for_value(&uuid.to_value()))
+    });
+    let row_weak = row.downgrade();
+    source.connect_drag_begin(move |src, _| {
+        if let Some(row) = row_weak.upgrade() {
+            let (x, y) = grab.get();
+            src.set_icon(Some(&gtk::WidgetPaintable::new(Some(&row))), x as i32, y as i32);
+        }
+    });
+    handle.add_controller(source);
+
+    let target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let move_on_drop = move_to.clone();
+    target.connect_drop(move |target, value, _, _| {
+        // Only a row of this list, never text dragged in from another app.
+        let local = target.current_drop().is_some_and(|drop| drop.drag().is_some());
+        let (true, Ok(uuid), Some(row)) = (local, value.get::<String>(), target.widget()) else { return false; };
+        // After the drop has finished: the rebuild destroys the dragged row.
+        let move_on_drop = move_on_drop.clone();
+        gtk::glib::idle_add_local_once(move || move_on_drop(&row, &uuid, index));
+        true
+    });
+    row.add_controller(target);
+
+    let keys = gtk::EventControllerKey::new();
+    let uuid = preset.uuid.0.clone();
+    keys.connect_key_pressed(move |keys, key, _, state| {
+        if !state.contains(gtk::gdk::ModifierType::ALT_MASK) { return gtk::glib::Propagation::Proceed; }
+        let to = match key {
+            // Past the end, core keeps the preset where it is.
+            gtk::gdk::Key::Up if index > 0 => index - 1,
+            gtk::gdk::Key::Down => index + 1,
+            gtk::gdk::Key::Up => return gtk::glib::Propagation::Stop,
+            _ => return gtk::glib::Propagation::Proceed,
+        };
+        if let Some(row) = keys.widget() { move_to(&row, &uuid, to); }
+        gtk::glib::Propagation::Stop
+    });
+    row.add_controller(keys);
 }
 
 fn build_star_button(

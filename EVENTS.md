@@ -260,8 +260,29 @@ Recompute: `recompute_preset`. `target_id` is the preset uuid.
 - `is_starred`: bool. Whether the preset appears in the visible
   chip list above the Save / Manage buttons.
 - `created_iso` / `updated_iso`: RFC 3339 in UTC, written by
-  chrono as `+00:00` with fractional seconds. `updated_iso` bumps on
-  rename / config-change / star-toggle.
+  chrono as `+00:00` with fractional seconds; a moved preset's
+  `created_iso` is a sort key instead (below). `updated_iso` bumps on
+  rename / config-change / star-toggle / move.
+- `created_iso` is also the preset's place: every list of a mode's
+  presets sorts by it as text (then uuid), and nothing reads it as a
+  time. Moving a preset rewrites only its own `created_iso`, one
+  `preset_update`, so it sorts between its new neighbours:
+  - to the top: the first preset's text up to its first digit above
+    0, that digit lowered, then a 9;
+  - to the end: now; while the clock is behind the last preset's
+    text, that text counted up by one in its last digits (the last
+    digit below 9 raised, the digits after it set to 0), which sit in
+    its own 16-digit tail or a plain time's offset, so the time before
+    them stays; a second tail on top is dropped first;
+  - between two presets: the upper one's text, cut where one digit
+    can be raised (or with digits appended when the lower one starts
+    with it).
+  Then 16 digits follow, the last 8 hex digits of the uuid one to
+  one, so moves on two devices into one gap don't meet unless two ids
+  share those digits. Only foreign data (equal neighbours, a first
+  preset with no digit above 0, a lower neighbour that extends the
+  upper one with more than digits) or such ids make the move respace
+  the whole mode 1 ms apart from now.
 
 ### `preset_delete`
 
