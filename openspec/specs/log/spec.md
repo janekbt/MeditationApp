@@ -141,7 +141,7 @@ The Log SHALL colour each label from the current accent: sixteen colours, the fi
 
 #### Scenario: The accent is changed while the Log is open
 - **WHEN** the Log shows labelled sessions and the accent is changed (Linux: GNOME Settings, Appearance; Android: Preferences)
-- **THEN** the stripes (and on Linux the chips and dots) take the new colours at once, each label keeps its place, and unlabelled sessions stay grey
+- **THEN** the stripes and the chips and dots take the new colours at once, each label keeps its place, and unlabelled sessions stay grey
 - **MANUAL** on the laptop and the FP5: colour on screen can't be checked on the host
 
 ### Requirement: Labels take colours in the order they were created
@@ -213,3 +213,16 @@ The Android Log SHALL put each session under the day it started, at its start ti
 - **WHEN** a session has a label and played a guided file
 - **THEN** its card shows the label's name and colour place and the file's name, and a session whose label was deleted shows no label and no colour
 - **TEST** `meditate-android/src/app.rs::log_card_shows_label_colour_and_guided_name`
+
+### Requirement: A labelled card shows its label in a pill
+On the phone, a Log card with a label SHALL show the label as a pill like the laptop's: a light tint of the label's colour behind a small dot and the name in that colour.
+
+#### Scenario: Two labels in the Log
+- **WHEN** the Log shows sessions with two different labels and one without
+- **THEN** each labelled card shows a pill tinted in its label's colour, with the dot and the name in that colour, matching its stripe; the unlabelled card shows no pill
+- **MANUAL** on the FP5: colours and the pill's shape need a render.
+
+#### Scenario: A long label name
+- **WHEN** a label's name is longer than the card is wide, in any language
+- **THEN** the name wraps inside the pill and shows in full
+- **MANUAL** on the FP5 at 360 px width: wrapping needs a render.

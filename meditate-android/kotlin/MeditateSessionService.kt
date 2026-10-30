@@ -155,7 +155,7 @@ class MeditateSessionService : Service() {
             val notification = Notification.Builder(context, COMPLETE_CHANNEL_ID)
                 .setContentTitle(context.getString(R.string.notification_complete_title))
                 .setContentText(context.getString(R.string.notification_complete_body, duration))
-                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setAutoCancel(true)
                 .setContentIntent(launchIntent(context))
                 .build()

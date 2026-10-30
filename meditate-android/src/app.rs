@@ -5448,6 +5448,13 @@ mod tests {
     }
 
     #[test]
+    fn the_complete_notification_shows_the_lotus() {
+        let kt = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("kotlin/MeditateSessionService.kt")).unwrap();
+        assert_eq!(kt.matches(".setSmallIcon(R.drawable.ic_launcher_foreground)").count(), 2, "running and complete");
+        assert!(!kt.contains("android.R."), "a system symbol in the service");
+    }
+
+    #[test]
     fn the_media_buttons_show_the_apps_own_symbols() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();

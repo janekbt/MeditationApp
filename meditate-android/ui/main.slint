@@ -2318,11 +2318,8 @@ export component MainWindow inherits Window {
     in property <int> end-right: -1;
     in property <bool> end-note: false;
     in property <string> overtime-add-label: Tr.add-overtime("00:00");
-    // Streak chip slot above the hero — matches `streak_label` in
-    // `meditate-gtk/data/ui/timer_view.blp` (line 32). Empty
-    // placeholder for now; phase 3 wires the real value from the
-    // DB. Defined as a property rather than a hard-coded blank
-    // Text so the layout doesn't reshape once phase 3 fills it in.
+    // Streak chip above the hero, GTK's `streak_label` in
+    // `meditate-gtk/data/ui/timer_view.blp`. Empty until read.
     in property <string> streak-text: "";
 
     in-out property <int> setup-hours: 0;
@@ -3583,15 +3580,34 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 spacing: 4px;
 
-                // Streak chip slot. Empty until phase 3's DB
-                // persistence lights it up; sized to leave the
-                // visual gap GTK's `streak_label` reserves even
-                // when its text is blank.
-                Text {
-                    text: root.streak-text;
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
+                // Streak chip, GTK's `.streak-chip`: accent tint
+                // behind accent capitals. Invisible (but keeping
+                // its height) until the streak is read, so the
+                // time below doesn't jump.
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        visible: root.streak-text != "";
+                        border-radius: self.height / 2;
+                        background: MaterialPalette.primary.with-alpha(0.15);
+                        HorizontalLayout {
+                            // The font keeps room below the baseline for descenders the
+                            // capitals don't use; half a pixel more on top centres them.
+                            padding-top: 4.5px;
+                            padding-bottom: 3.5px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: root.streak-text.to-uppercase();
+                                font-size: 14px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                                color: MaterialPalette.primary;
+                            }
+                        }
+                    }
                 }
                 Text {
                     text: root.remaining-text;
@@ -4848,16 +4864,41 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 alignment: center;
                                 spacing: 4px;
-                                if item.label-name != "" : Text {
-                                    text: item.label-name;
-                                    wrap: word-wrap;
-                                    font-size: 12px;
-                                    // Label name colour matches
-                                    // the stripe — mirrors GTK's
-                                    // `.log-label-chip.log-cN
-                                    // { color: @log_cN }` rule.
-                                    color: card.label-color;
-                                    horizontal-alignment: left;
+                                // Label chip, GTK's `.log-label-chip.log-cN`:
+                                // the stripe's colour tinted behind a dot and
+                                // the name in that colour.
+                                if item.label-name != "" : HorizontalLayout {
+                                    alignment: start;
+                                    Rectangle {
+                                        // A full stadium on one line; a wrapped name keeps its corners clear.
+                                        border-radius: min(self.height / 2, 11px);
+                                        background: card.label-color.with-alpha(0.14);
+                                        HorizontalLayout {
+                                            // As the streak chip: the descender room
+                                            // below the baseline sits the name high.
+                                            padding-top: 3px;
+                                            padding-bottom: 1px;
+                                            padding-left: 8px;
+                                            padding-right: 10px;
+                                            spacing: 5px;
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    width: 6px;
+                                                    height: 6px;
+                                                    border-radius: 3px;
+                                                    background: card.label-color;
+                                                }
+                                            }
+                                            Text {
+                                                text: item.label-name;
+                                                wrap: word-wrap;
+                                                font-size: 12px;
+                                                font-weight: 600;
+                                                color: card.label-color;
+                                            }
+                                        }
+                                    }
                                 }
                                 // Guided library file, mirroring
                                 // GTK's dimmed caption line.
