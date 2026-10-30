@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 10:07+0100\n"
+"POT-Creation-Date: 2026-10-30 15:09+0100\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -86,7 +86,7 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
-#: src/presets.rs:772 src/timer/imp.rs:2585 src/timer/imp.rs:3791
+#: src/presets.rs:779 src/timer/imp.rs:2584 src/timer/imp.rs:3790
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "撤销"
@@ -117,17 +117,17 @@ msgstr "此铃声将不再在会话期间响起。"
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:518
-#: src/presets.rs:580 src/presets.rs:645 src/presets.rs:709
+#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:525
+#: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
-#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2625
-#: src/timer/imp.rs:3920 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2624
+#: src/timer/imp.rs:3919 src/vibration_editor.rs:129 src/vibrations.rs:546
 #: src/vibrations.rs:639
 msgid "Cancel"
 msgstr "取消"
 
 #: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
-#: src/presets.rs:646 src/sounds.rs:989 src/vibrations.rs:640
+#: src/presets.rs:653 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "删除"
 
@@ -203,7 +203,7 @@ msgstr "秒"
 msgid "min"
 msgstr "分钟"
 
-#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3894
+#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3893
 msgid "Minutes"
 msgstr "分钟"
 
@@ -254,20 +254,20 @@ msgstr "每次响铃后加到间隔上"
 msgid "Type"
 msgstr "类型"
 
-#: src/bells.rs:636 src/bells.rs:656 src/timer/imp.rs:1584
-#: src/timer/imp.rs:1658 src/timer/imp.rs:1740 data/ui/timer_view.blp:625
+#: src/bells.rs:636 src/bells.rs:656 src/timer/imp.rs:1583
+#: src/timer/imp.rs:1657 src/timer/imp.rs:1739 data/ui/timer_view.blp:625
 #: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
 #: data/ui/timer_view.blp:769
 msgid "Sound"
 msgstr "声音"
 
-#: src/bells.rs:640 src/timer/imp.rs:1588 src/timer/imp.rs:1660
-#: src/timer/imp.rs:1742
+#: src/bells.rs:640 src/timer/imp.rs:1587 src/timer/imp.rs:1659
+#: src/timer/imp.rs:1741
 msgid "Vibration"
 msgstr "振动"
 
-#: src/bells.rs:644 src/timer/imp.rs:1592 src/timer/imp.rs:1662
-#: src/timer/imp.rs:1744
+#: src/bells.rs:644 src/timer/imp.rs:1591 src/timer/imp.rs:1661
+#: src/timer/imp.rs:1743
 msgid "Both"
 msgstr "两者"
 
@@ -386,7 +386,7 @@ msgstr "所选文件没有本地路径"
 msgid "This file has no audio track"
 msgstr "此文件没有音轨"
 
-#: src/guided.rs:164 src/timer/imp.rs:3593
+#: src/guided.rs:164 src/timer/imp.rs:3592
 msgid "Couldn't read audio file"
 msgstr "无法读取音频文件"
 
@@ -445,7 +445,7 @@ msgid "Star: show in home list"
 msgstr "收藏：在主页列表显示"
 
 #: src/guided.rs:789 src/guided.rs:963 src/labels.rs:198 src/labels.rs:322
-#: src/presets.rs:458 src/presets.rs:581 src/sounds.rs:344 src/sounds.rs:921
+#: src/presets.rs:465 src/presets.rs:588 src/sounds.rs:344 src/sounds.rs:921
 #: src/vibrations.rs:411 src/vibrations.rs:547
 msgid "Rename"
 msgstr "重命名"
@@ -509,7 +509,7 @@ msgstr "标签名称"
 msgid "Create Label"
 msgstr "创建标签"
 
-#: src/labels.rs:249 src/presets.rs:519
+#: src/labels.rs:249 src/presets.rs:526
 msgid "Create"
 msgstr "创建"
 
@@ -590,7 +590,7 @@ msgstr[0] "{n} 个文件"
 msgid "{n}%"
 msgstr "{n}%"
 
-#: src/local_folder.rs:263 src/timer/imp.rs:3457
+#: src/local_folder.rs:263 src/timer/imp.rs:3456
 msgid "Unstar"
 msgstr "取消星标"
 
@@ -696,7 +696,7 @@ msgid "1 session"
 msgid_plural "{n} sessions"
 msgstr[0] "{n} 个会话"
 
-#: src/log/imp.rs:874 src/timer/imp.rs:3887
+#: src/log/imp.rs:874 src/timer/imp.rs:3886
 msgid "Hours"
 msgstr "小时"
 
@@ -728,7 +728,7 @@ msgstr "标签"
 msgid "Tag this session"
 msgstr "为此会话加标签"
 
-#: src/log/imp.rs:1042 src/window/imp.rs:432
+#: src/log/imp.rs:1042 src/window/imp.rs:429
 msgid "Note (optional)"
 msgstr "笔记（可选）"
 
@@ -762,15 +762,15 @@ msgstr "编辑会话"
 msgid "Add Session"
 msgstr "添加会话"
 
-#: src/log/imp.rs:1173 src/timer/imp.rs:3976
+#: src/log/imp.rs:1173 src/timer/imp.rs:3975
 msgid "(none, pick one)"
 msgstr "（无，请选择）"
 
-#: src/log/imp.rs:1272 src/timer/imp.rs:2546
+#: src/log/imp.rs:1272 src/timer/imp.rs:2545
 msgid "Couldn't save session: storage error"
 msgstr "无法保存会话：存储错误"
 
-#: src/log/imp.rs:1277 src/timer/imp.rs:2564
+#: src/log/imp.rs:1277 src/timer/imp.rs:2563
 msgid "Couldn't save session: storage unavailable"
 msgstr "无法保存会话：存储不可用"
 
@@ -1112,53 +1112,53 @@ msgstr "管理预设"
 msgid "Create new preset…"
 msgstr "创建新预设…"
 
-#: src/presets.rs:358
+#: src/presets.rs:360
 msgid "Drag to reorder"
 msgstr "拖动以重新排序"
 
-#: src/presets.rs:425
+#: src/presets.rs:432
 msgid "Remove from home list"
 msgstr "从主页列表移除"
 
-#: src/presets.rs:426
+#: src/presets.rs:433
 msgid "Pin to home list"
 msgstr "固定到主页列表"
 
-#: src/presets.rs:485
+#: src/presets.rs:492
 msgid "Delete preset"
 msgstr "删除预设"
 
-#: src/presets.rs:508
+#: src/presets.rs:515
 msgid "Preset name"
 msgstr "预设名称"
 
-#: src/presets.rs:513
+#: src/presets.rs:520
 msgid "Create Preset"
 msgstr "创建预设"
 
-#: src/presets.rs:575
+#: src/presets.rs:582
 msgid "Rename Preset"
 msgstr "重命名预设"
 
-#: src/presets.rs:637
+#: src/presets.rs:644
 #, rust-format
 msgid "'{name}' will be removed from this device and any synced peers."
 msgstr "“{name}”将从此设备及所有同步的设备中移除。"
 
-#: src/presets.rs:640
+#: src/presets.rs:647
 msgid "Delete Preset?"
 msgstr "删除预设？"
 
-#: src/presets.rs:701
+#: src/presets.rs:708
 #, rust-format
 msgid "Replace '{name}'s saved configuration with the current settings?"
 msgstr "用当前设置替换“{name}”已保存的配置？"
 
-#: src/presets.rs:704
+#: src/presets.rs:711
 msgid "Override Preset?"
 msgstr "覆盖预设？"
 
-#: src/presets.rs:710
+#: src/presets.rs:717
 msgid "Override"
 msgstr "覆盖"
 
@@ -1444,193 +1444,192 @@ msgid "{duration} · 1 session"
 msgid_plural "{duration} · {n} sessions"
 msgstr[0] "{duration} · {n} 个会话"
 
-#: src/timer/imp.rs:1158
+#: src/timer/imp.rs:1157
 msgid "Meditation session running"
 msgstr "冥想会话进行中"
 
-#: src/timer/imp.rs:1161
+#: src/timer/imp.rs:1160
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "无法让电脑保持唤醒以按时响铃"
 
-#: src/timer/imp.rs:1777
+#: src/timer/imp.rs:1776
 msgid "This device can't vibrate, so nothing plays"
 msgstr "此设备无法振动，因此不会播放任何提示"
 
-#: src/timer/imp.rs:1778
+#: src/timer/imp.rs:1777
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "此设备无法振动，因此只会播放声音"
 
-#: src/timer/imp.rs:1993
+#: src/timer/imp.rs:1992
 msgid "Paused"
 msgstr "已暂停"
 
-#: src/timer/imp.rs:2020 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2019 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "小时 · 分钟"
 
-#: src/timer/imp.rs:2197
+#: src/timer/imp.rs:2196
 msgid "Couldn't start playback"
 msgstr "无法开始播放"
 
-#: src/timer/imp.rs:2368
+#: src/timer/imp.rs:2369
 msgid "Pause"
 msgstr "暂停"
 
-#: src/timer/imp.rs:2369
+#: src/timer/imp.rs:2370
 msgid "Resume"
 msgstr "继续"
 
-#: src/timer/imp.rs:2370 src/vibration_editor.rs:130
+#: src/timer/imp.rs:2371 src/vibration_editor.rs:130
 msgid "Save"
 msgstr "保存"
 
-#: src/timer/imp.rs:2372 src/timer/imp.rs:2626 src/window/imp.rs:420
-msgid "Discard"
-msgstr "放弃"
-
-#: src/timer/imp.rs:2429
+#: src/timer/imp.rs:2428
 msgid "Meditation Complete"
 msgstr "冥想完成"
 
-#: src/timer/imp.rs:2435
+#: src/timer/imp.rs:2434
 #, rust-format
 msgid "Session: {duration}"
 msgstr "会话：{duration}"
 
-#: src/timer/imp.rs:2584
+#: src/timer/imp.rs:2583
 msgid "Session saved"
 msgstr "会话已保存"
 
-#: src/timer/imp.rs:2616
+#: src/timer/imp.rs:2615
 msgid "Discard Session?"
 msgstr "放弃会话？"
 
-#: src/timer/imp.rs:2617
+#: src/timer/imp.rs:2616
 msgid "Your note will be lost."
 msgstr "您的笔记将会丢失。"
 
-#: src/timer/imp.rs:3207
+#: src/timer/imp.rs:2625 src/window/imp.rs:417
+msgid "Discard"
+msgstr "放弃"
+
+#: src/timer/imp.rs:3206
 msgid "Start your streak today"
 msgstr "今天开始连续打卡"
 
-#: src/timer/imp.rs:3208 src/timer/imp.rs:3210
+#: src/timer/imp.rs:3207 src/timer/imp.rs:3209
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "连续 {n} 天"
 
-#: src/timer/imp.rs:3264
+#: src/timer/imp.rs:3263
 msgid "Tap Save Settings to create your first preset"
 msgstr "点按“保存设置”创建你的第一个预设"
 
-#: src/timer/imp.rs:3339
+#: src/timer/imp.rs:3338
 msgid "No starred files"
 msgstr "没有已收藏的文件"
 
-#: src/timer/imp.rs:3341
+#: src/timer/imp.rs:3340
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr "点按“打开文件”，再点按“导入文件”，或在“管理导入”中为文件加星标"
 
-#: src/timer/imp.rs:3435
+#: src/timer/imp.rs:3434
 msgid "not found"
 msgstr "找不到"
 
-#: src/timer/imp.rs:3439
+#: src/timer/imp.rs:3438
 msgid "Local file"
 msgstr "本地文件"
 
-#: src/timer/imp.rs:3471
+#: src/timer/imp.rs:3470
 msgid "File not found in the local folder"
 msgstr "在本地文件夹中找不到该文件"
 
-#: src/timer/imp.rs:3488
+#: src/timer/imp.rs:3487
 msgid "Reading length"
 msgstr "正在读取时长"
 
-#: src/timer/imp.rs:3494 src/timer/imp.rs:3495
+#: src/timer/imp.rs:3493 src/timer/imp.rs:3494
 msgid "Local folder"
 msgstr "本地文件夹"
 
-#: src/timer/imp.rs:3501 data/ui/timer_view.blp:234
+#: src/timer/imp.rs:3500 data/ui/timer_view.blp:234
 msgid "No file selected"
 msgstr "未选择文件"
 
-#: src/timer/imp.rs:3503 data/ui/timer_view.blp:235
+#: src/timer/imp.rs:3502 data/ui/timer_view.blp:235
 msgid "Tap Open File or pick from list below"
 msgstr "点按“打开文件”或从下方列表选择"
 
-#: src/timer/imp.rs:3511
+#: src/timer/imp.rs:3510
 msgid "Open New File"
 msgstr "打开新文件"
 
-#: src/timer/imp.rs:3513 data/ui/timer_view.blp:251
+#: src/timer/imp.rs:3512 data/ui/timer_view.blp:251
 msgid "Open File"
 msgstr "打开文件"
 
-#: src/timer/imp.rs:3789
+#: src/timer/imp.rs:3788
 #, rust-format
 msgid "'{name}' applied"
 msgstr "已应用“{name}”"
 
-#: src/timer/imp.rs:3914
+#: src/timer/imp.rs:3913
 msgid "Custom Time"
 msgstr "自定义时间"
 
-#: src/timer/imp.rs:3915
+#: src/timer/imp.rs:3914
 msgid "Hours : Minutes"
 msgstr "小时 : 分钟"
 
-#: src/timer/imp.rs:3921
+#: src/timer/imp.rs:3920
 msgid "Set"
 msgstr "设置"
 
-#: src/timer/imp.rs:3978
+#: src/timer/imp.rs:3977
 msgid "Off"
 msgstr "关闭"
 
 #. / Subtitle text for the "Manage Bells" row reflecting how many of the
-#. / "Add MM:SS ?" running-page button label. `{time}` is the
-#. / placeholder for the formatted overtime duration; translators
-#. / can position it anywhere in the localised string (German
-#. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
-#. / returns the formatted MM:SS via `format_time`; the shell owns
-#. / word order via this gettext template.
-#: src/timer/imp.rs:4258
+#. / "+ MM:SS and Save" running-page button label. `{time}` is the
+#. / placeholder for the formatted overtime duration; translators can
+#. / position it anywhere in the localised string. Core returns the
+#. / formatted MM:SS via `format_time`; the shell owns word order via
+#. / this gettext template.
+#: src/timer/imp.rs:4256
 #, rust-format
-msgid "Add {time} and Save"
-msgstr "加上 {time} 并保存"
+msgid "+ {time} and Save"
+msgstr "+ {time} 并保存"
 
-#: src/timer/imp.rs:4268
+#: src/timer/imp.rs:4266
 msgid "None enabled"
 msgstr "未启用"
 
-#: src/timer/imp.rs:4269 src/timer/imp.rs:4270
+#: src/timer/imp.rs:4267 src/timer/imp.rs:4268
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "已启用 {n} 个"
 
-#: src/timer/imp.rs:4294 data/ui/timer_view.blp:607
+#: src/timer/imp.rs:4292 data/ui/timer_view.blp:607
 msgid "Inhale"
 msgstr "吸气"
 
-#: src/timer/imp.rs:4295
+#: src/timer/imp.rs:4293
 msgid "Hold (full)"
 msgstr "屏息（吸气后）"
 
-#: src/timer/imp.rs:4296 data/ui/timer_view.blp:703
+#: src/timer/imp.rs:4294 data/ui/timer_view.blp:703
 msgid "Exhale"
 msgstr "呼气"
 
-#: src/timer/imp.rs:4297
+#: src/timer/imp.rs:4295
 msgid "Hold (empty)"
 msgstr "屏息（呼气后）"
 
-#: src/timer/imp.rs:4359
+#: src/timer/imp.rs:4357
 msgid "Decrease"
 msgstr "减少"
 
-#: src/timer/imp.rs:4370
+#: src/timer/imp.rs:4368
 msgid "Increase"
 msgstr "增加"
 
@@ -1701,83 +1700,83 @@ msgstr "引用此模式的铃声和箱式呼吸阶段将失去振动。"
 msgid "Volume"
 msgstr "音量"
 
-#: src/window/imp.rs:203
+#: src/window/imp.rs:201
 msgid "Meditating"
 msgstr "正在冥想"
 
-#: src/window/imp.rs:222 src/window/imp.rs:411
+#: src/window/imp.rs:220 src/window/imp.rs:407
 msgid "Box Breathing"
 msgstr "箱式呼吸"
 
-#: src/window/imp.rs:387
+#: src/window/imp.rs:383
 msgid "Breathe in"
 msgstr "吸气"
 
-#: src/window/imp.rs:388
+#: src/window/imp.rs:384
 msgid "Hold"
 msgstr "屏息"
 
-#: src/window/imp.rs:389
+#: src/window/imp.rs:385
 msgid "Breathe out"
 msgstr "呼气"
 
-#: src/window/imp.rs:646
+#: src/window/imp.rs:661
 msgid "Syncing with Nextcloud…"
 msgstr "正在与 Nextcloud 同步…"
 
-#: src/window/imp.rs:656
+#: src/window/imp.rs:671
 msgid "Last sync failed, click to retry"
 msgstr "上次同步失败，点击重试"
 
-#: src/window/imp.rs:668
+#: src/window/imp.rs:683
 msgid "Some files weren't uploaded, click to retry"
 msgstr "部分文件未上传，点击重试"
 
-#: src/window/imp.rs:678
+#: src/window/imp.rs:693
 msgid "No password saved, click to enter it"
 msgstr "未保存密码，点击输入"
 
-#: src/window/imp.rs:693
+#: src/window/imp.rs:708
 msgid "Sync configured (waiting for first run)"
 msgstr "同步已配置（等待首次运行）"
 
-#: src/window/imp.rs:722
+#: src/window/imp.rs:737
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}：太大，无法同步"
 
-#: src/window/imp.rs:723
+#: src/window/imp.rs:738
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}：对服务器来说太大"
 
-#: src/window/imp.rs:724
+#: src/window/imp.rs:739
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}：服务器空间已满"
 
-#: src/window/imp.rs:726
+#: src/window/imp.rs:741
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}：被服务器拒绝（{status}）"
 
-#: src/window/imp.rs:737
+#: src/window/imp.rs:752
 msgid "Synced just now"
 msgstr "刚刚同步"
 
-#: src/window/imp.rs:739
+#: src/window/imp.rs:754
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "{n} 分钟前已同步"
 
-#: src/window/imp.rs:742
+#: src/window/imp.rs:757
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "{n} 小时前已同步"
 
-#: src/window/imp.rs:745
+#: src/window/imp.rs:760
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"

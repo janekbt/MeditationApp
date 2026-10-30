@@ -68,7 +68,6 @@ impl From<TimerMode> for meditate_core::SessionMode {
 pub struct RunningControls {
     pub first: gtk::Button,
     pub second: gtk::Button,
-    pub discard: gtk::Button,
     /// The note caption and field, shown or hidden together.
     pub note: gtk::Widget,
     pub note_view: gtk::TextView,
@@ -2363,23 +2362,23 @@ impl TimerView {
         let Some(buttons) = self.core_session.borrow().as_ref().map(CoreSession::end_buttons) else { return; };
         let controls = self.running_controls.borrow();
         let Some(c) = controls.as_ref() else { return; };
-        for (btn, which) in [(&c.first, buttons.row[0]), (&c.second, buttons.row[1])] {
+        c.second.set_visible(buttons.second.is_some());
+        for (btn, which) in [&c.first, &c.second].into_iter().zip(buttons.row()) {
+            let Some(which) = which else { continue; };
             let (label, classes): (String, &[&str]) = match which {
                 EndButton::Pause => (gettext("Pause"), &["pill"]),
                 EndButton::Resume => (gettext("Resume"), &["pill", "suggested-action"]),
                 EndButton::Save => (gettext("Save"), &["pill", "suggested-action"]),
                 EndButton::Add => (overtime_add_button_label(self.overtime_delta.get()), &["pill", "tabular-nums"]),
-                EndButton::Discard => (gettext("Discard"), &["pill", "destructive-action"]),
             };
             btn.set_label(&label);
             btn.set_css_classes(classes);
-            // "Add 03:00 and Save" takes two lines where one doesn't fit.
+            // "+ 03:00 and Save" takes two lines where one doesn't fit.
             if let Some(text) = btn.child().and_downcast::<gtk::Label>() {
                 text.set_wrap(true);
                 text.set_justify(gtk::Justification::Center);
             }
         }
-        c.discard.set_visible(buttons.discard_below);
         c.note.set_visible(buttons.note);
     }
 
@@ -2387,10 +2386,10 @@ impl TimerView {
     pub(crate) fn end_button_clicked(&self, index: usize) {
         use meditate_core::session::EndButton;
         let Some(buttons) = self.core_session.borrow().as_ref().map(CoreSession::end_buttons) else { return; };
-        match buttons.row[index] {
+        let Some(which) = buttons.row()[index] else { return; };
+        match which {
             EndButton::Pause => self.on_pause(),
             EndButton::Resume => self.on_resume(),
-            EndButton::Discard => self.on_discard(),
             EndButton::Add => {
                 self.end_in_flight(CoreSession::add_overtime_and_finish);
                 self.on_save(false);
@@ -4247,15 +4246,13 @@ fn library_pick(f: &crate::db::GuidedFile) -> crate::guided::GuidedFilePick {
     }
 }
 
-/// Subtitle text for the "Manage Bells" row reflecting how many of the
-/// "Add MM:SS ?" running-page button label. `{time}` is the
-/// placeholder for the formatted overtime duration; translators
-/// can position it anywhere in the localised string (German
-/// "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
-/// returns the formatted MM:SS via `format_time`; the shell owns
-/// word order via this gettext template.
+/// "+ MM:SS and Save" running-page button label. `{time}` is the
+/// placeholder for the formatted overtime duration; translators can
+/// position it anywhere in the localised string. Core returns the
+/// formatted MM:SS via `format_time`; the shell owns word order via
+/// this gettext template.
 fn overtime_add_button_label(overtime: std::time::Duration) -> String {
-    gettext("Add {time} and Save")
+    gettext("+ {time} and Save")
         .replace("{time}", &meditate_core::format::format_time(overtime))
 }
 
@@ -4607,7 +4604,7 @@ mod tests {
 
     #[test]
     fn the_add_button_says_that_it_saves() {
-        assert_eq!(super::overtime_add_button_label(std::time::Duration::from_secs(180)), "Add 03:00 and Save");
+        assert_eq!(super::overtime_add_button_label(std::time::Duration::from_secs(180)), "+ 03:00 and Save");
         // Two lines where one doesn't fit.
         let code = production();
         let refresh = body(&code, "fn refresh_end_buttons(&self)");

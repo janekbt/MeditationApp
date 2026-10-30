@@ -91,7 +91,7 @@ pub enum ToggleAction {
     NoOp,
 }
 
-/// A button on the running page, which also ends the session.
+/// A button in the running page's row; Discard has its own line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndButton {
     Pause,
@@ -99,22 +99,26 @@ pub enum EndButton {
     Save,
     /// Overtime: save with the overtime added.
     Add,
-    Discard,
 }
 
-/// What the running page shows: a row of two buttons, optionally a
-/// Discard button under it, and optionally the note field.
+/// What the running page shows: a row of one or two buttons, Discard
+/// under it in every state, and optionally the note field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EndButtons {
-    pub row: [EndButton; 2],
-    pub discard_below: bool,
+    pub first: EndButton,
+    pub second: Option<EndButton>,
     pub note: bool,
 }
 
 impl EndButtons {
     /// A session that ended but is not saved yet (Box Breath's own
     /// end, or a save that failed).
-    pub const ENDED: Self = Self { row: [EndButton::Save, EndButton::Discard], discard_below: false, note: true };
+    pub const ENDED: Self = Self { first: EndButton::Save, second: None, note: true };
+
+    /// The row's two places, left to right.
+    pub fn row(&self) -> [Option<EndButton>; 2] {
+        [Some(self.first), self.second]
+    }
 }
 
 /// Default Timer-mode countdown in seconds for a fresh user
@@ -754,15 +758,15 @@ impl Session {
 
     /// The running page's buttons for this session right now.
     pub fn end_buttons(&self) -> EndButtons {
-        use EndButton::{Add, Discard, Pause, Resume, Save};
-        let buttons = |row, discard_below, note| EndButtons { row, discard_below, note };
+        use EndButton::{Add, Pause, Resume, Save};
+        let buttons = |first, second, note| EndButtons { first, second, note };
         match (self.phase, self.is_paused) {
             (SessionPhase::Stopped, _) => EndButtons::ENDED,
             // Preparation seconds are never saved as meditation.
-            (SessionPhase::Prep, true) => buttons([Resume, Discard], false, false),
-            (_, true) => buttons([Resume, Save], true, true),
-            (SessionPhase::Overtime, false) => buttons([Save, Add], true, true),
-            _ => buttons([Pause, Discard], false, false),
+            (SessionPhase::Prep, true) => buttons(Resume, None, false),
+            (_, true) => buttons(Resume, Some(Save), true),
+            (SessionPhase::Overtime, false) => buttons(Save, Some(Add), true),
+            _ => buttons(Pause, None, false),
         }
     }
 
@@ -2088,31 +2092,31 @@ mod tests {
 
     #[test]
     fn the_end_buttons_follow_the_session() {
-        use EndButton::{Add, Discard, Pause, Resume, Save};
+        use EndButton::{Add, Pause, Resume, Save};
         let t0 = Duration::from_secs(100);
         let shown = |s: &Session| s.end_buttons();
-        let row = |row: [EndButton; 2], discard_below: bool, note: bool| EndButtons { row, discard_below, note };
+        let row = |first: EndButton, second: Option<EndButton>, note: bool| EndButtons { first, second, note };
 
         let mut prep = timer_countdown_settings(600);
         prep.prep_secs = Some(10);
         let (mut s, _) = Session::start(prep, t0);
-        assert_eq!(shown(&s), row([Pause, Discard], false, false), "preparing");
+        assert_eq!(shown(&s), row(Pause, None, false), "preparing");
         let _ = s.pause(t0 + Duration::from_secs(2));
-        assert_eq!(shown(&s), row([Resume, Discard], false, false), "paused in preparation");
+        assert_eq!(shown(&s), row(Resume, None, false), "paused in preparation");
 
         let mut s = Session::start_running(timer_countdown_settings(60), t0);
-        assert_eq!(shown(&s), row([Pause, Discard], false, false), "running");
+        assert_eq!(shown(&s), row(Pause, None, false), "running");
         let _ = s.pause(t0 + Duration::from_secs(5));
-        assert_eq!(shown(&s), row([Resume, Save], true, true), "paused");
+        assert_eq!(shown(&s), row(Resume, Some(Save), true), "paused");
         s.resume(t0 + Duration::from_secs(10));
         let _ = s.tick(t0 + Duration::from_secs(70));
-        assert_eq!(shown(&s), row([Save, Add], true, true), "overtime");
+        assert_eq!(shown(&s), row(Save, Some(Add), true), "overtime");
 
         let mut s = Session::start_running(box_breath_settings(Some(16)), t0);
         let _ = s.tick(t0 + Duration::from_millis(500));
         let _ = s.tick(t0 + Duration::from_secs(16));
-        assert_eq!(shown(&s), row([Save, Discard], false, true), "box breath ended");
-        assert_eq!(EndButtons::ENDED, row([Save, Discard], false, true), "ended, not saved");
+        assert_eq!(shown(&s), row(Save, None, true), "box breath ended");
+        assert_eq!(EndButtons::ENDED, row(Save, None, true), "ended, not saved");
     }
 
     #[test]

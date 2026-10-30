@@ -702,8 +702,8 @@ msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "{n} sessione alla numero {0}"
 msgstr[1] "{n} sessioni alla numero {0}"
 
-msgid "Add {} and Save"
-msgstr "Aggiungi {} e salva"
+msgid "+ {} and Save"
+msgstr "+ {} e salva"
 
 msgid "Vibration"
 msgstr "Vibrazione"

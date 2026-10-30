@@ -480,9 +480,8 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
         meditate_core::format::format_hhmm(target.as_secs() as u32).into(),
     );
     let end = state.end_buttons();
-    ui.set_end_left(app::end_button_code(end.row[0]));
-    ui.set_end_right(app::end_button_code(end.row[1]));
-    ui.set_end_discard_below(end.discard_below);
+    ui.set_end_left(app::end_button_code(end.first));
+    ui.set_end_right(end.second.map_or(-1, app::end_button_code));
     ui.set_end_note(end.note);
     ui.set_running_page(state.is_running_page());
 }
@@ -4501,7 +4500,8 @@ fn build_ui() -> MainWindow {
         ui.on_end_button_tap(move |code| {
             use meditate_core::session::EndButton;
             let Some(ui) = weak.upgrade() else { return; };
-            match app::end_button_from_code(code) {
+            let Some(button) = app::end_button_from_code(code) else { return; };
+            match button {
                 EndButton::Pause | EndButton::Resume => ui.invoke_action_tap(),
                 EndButton::Save => {
                     if state.borrow().is_active() {
@@ -4513,7 +4513,6 @@ fn build_ui() -> MainWindow {
                     ui.invoke_add_tap();
                     ui.invoke_save_tap();
                 }
-                EndButton::Discard => ui.invoke_discard_tap(),
             }
         });
     }

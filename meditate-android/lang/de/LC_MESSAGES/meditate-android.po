@@ -708,8 +708,8 @@ msgstr "Pause"
 msgid "Resume"
 msgstr "Fortsetzen"
 
-msgid "Add {} and Save"
-msgstr "{} hinzufügen und speichern"
+msgid "+ {} and Save"
+msgstr "+ {} und speichern"
 
 msgid "Stopwatch"
 msgstr "Stoppuhr"

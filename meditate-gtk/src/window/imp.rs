@@ -192,15 +192,13 @@ impl MeditateWindow {
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(32)
-            .valign(gtk::Align::Center)
-            .vexpand(true)
-            .margin_top(24).margin_bottom(24)
             .margin_start(12).margin_end(12)
             .build();
         content.append(&time_label);
-        content.append(&self.end_controls());
+        let (controls, note) = self.end_controls();
+        content.append(&controls);
 
-        self.push_running_page_with_content(&gettext("Meditating"), content);
+        self.push_running_page_with_content(&gettext("Meditating"), content, note);
     }
 
     /// Build the Box-Breath running page: session-countdown strip at top,
@@ -347,14 +345,12 @@ impl MeditateWindow {
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(24)
-            .valign(gtk::Align::Center)
-            .vexpand(true)
-            .margin_top(24).margin_bottom(24)
             .margin_start(12).margin_end(12)
             .build();
         content.append(&top_strip);
         content.append(&overlay);
-        content.append(&self.end_controls());
+        let (controls, note) = self.end_controls();
+        content.append(&controls);
 
         // Install the per-frame tick callback on the drawing area. Elapsed
         // time is now read from `meditate_core::timer::Stopwatch` via the
@@ -408,13 +404,14 @@ impl MeditateWindow {
             glib::ControlFlow::Continue
         });
 
-        self.push_running_page_with_content(&gettext("Box Breathing"), content);
+        self.push_running_page_with_content(&gettext("Box Breathing"), content, note);
     }
 
     /// The running page's end of a session, for both running pages: a
-    /// row of two buttons, Discard under it, then the note. TimerView
-    /// sets what each shows from core's button set.
-    fn end_controls(&self) -> gtk::Box {
+    /// row of one or two buttons with Discard under it, and the note
+    /// the page places below them. TimerView sets what each shows from
+    /// core's button set.
+    fn end_controls(&self) -> (gtk::Box, gtk::Widget) {
         let button = || gtk::Button::builder().css_classes(["pill"]).build();
         let (first, second, discard) = (button(), button(), button());
         discard.set_label(&gettext("Discard"));
@@ -449,12 +446,15 @@ impl MeditateWindow {
         let note = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).build();
         note.append(&caption);
         note.append(&frame);
-        let note_clamp = adw::Clamp::builder().maximum_size(480).child(&note).build();
+        let note_clamp = adw::Clamp::builder()
+            .maximum_size(480)
+            .margin_start(12).margin_end(12).margin_top(18)
+            .child(&note)
+            .build();
 
         let controls = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(18).build();
         controls.append(&row);
         controls.append(&discard);
-        controls.append(&note_clamp);
 
         for (i, btn) in [&first, &second].into_iter().enumerate() {
             let obj = self.obj().clone();
@@ -463,23 +463,46 @@ impl MeditateWindow {
         let obj = self.obj().clone();
         discard.connect_clicked(move |_| obj.imp().timer_view.discard());
         self.timer_view.set_running_controls(crate::timer::RunningControls {
-            first, second, discard, note: note_clamp.upcast(), note_view,
+            first, second, note: note_clamp.clone().upcast(), note_view,
         });
-        controls
+        (controls, note_clamp.upcast())
     }
 
     /// Shared scaffolding for both running pages: wraps the content in an
     /// AdwNavigationPage with a header, wires Pause/Stop/Esc, pushes onto
     /// the nav view.
-    fn push_running_page_with_content(&self, title: &str, content: gtk::Box) {
+    fn push_running_page_with_content(&self, title: &str, content: gtk::Box, note: gtk::Widget) {
         let header = adw::HeaderBar::builder().show_back_button(false).build();
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
-        // The note can push the page past a short window.
+        // As on the phone: the time and the buttons stay where they are
+        // whether the note shows or not. A spacer holds them centred in the
+        // visible page; the note hangs below and the page scrolls when the
+        // window has no room for it.
+        let spacer = gtk::Box::builder().build();
+        let column = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_top(24).margin_bottom(24)
+            .build();
+        column.append(&spacer);
+        column.append(&content);
+        column.append(&note);
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
-            .child(&content)
+            .child(&column)
             .build();
+        scroll.vadjustment().connect_page_size_notify(clone!(
+            #[weak] content,
+            #[weak] spacer,
+            #[weak] column,
+            move |adj| {
+                // ponytail: follows the window height only; a label that
+                // wraps later grows the block downward, off centre by half a line.
+                let (_, height, _, _) = content.measure(gtk::Orientation::Vertical, -1);
+                let room = adj.page_size() as i32 - column.margin_top() - column.margin_bottom() - height;
+                spacer.set_height_request((room / 2).max(0));
+            }
+        ));
         toolbar_view.set_content(Some(&scroll));
 
         // Black background + light foreground for low-light
@@ -1034,5 +1057,31 @@ mod day_tests {
         assert!(reload.contains("InvalidateScope::ALL"), "both pages go stale");
         assert!(reload.contains("Some(\"log\") => self.log_view.refresh()"));
         assert!(reload.contains("Some(\"stats\") => self.stats_view.refresh()"));
+    }
+
+    /// Pausing used to move Discard and lift the whole column.
+    #[test]
+    fn the_session_buttons_keep_their_place() {
+        let src = production();
+        let page = &src[src.find("fn push_running_page_with_content(").expect("the shared page")..];
+        let page = &page[..page.find("\n    }\n").unwrap()];
+        // As on the phone: a spacer as tall as half the room the time and
+        // buttons leave in the visible page keeps them centred; the note
+        // hangs below and the page scrolls when there is no room for it.
+        let order = ["column.append(&spacer)", "column.append(&content)", "column.append(&note)"].map(|a| page.find(a).unwrap_or_else(|| panic!("{a}")));
+        assert!(order[0] < order[1] && order[1] < order[2], "spacer, time and buttons, note");
+        let follow = &page[page.find("scroll.vadjustment().connect_page_size_notify(").expect("follows the visible height")..];
+        assert!(follow.contains("adj.page_size()") && follow.contains("content.measure(gtk::Orientation::Vertical, -1)"));
+        assert!(follow.contains("spacer.set_height_request("), "from the visible page, never from the note");
+        assert!(!follow[..follow.find("));").unwrap()].contains("note"));
+        for push in ["fn push_time_running_page(&self)", "fn push_breathing_running_page(&self)"] {
+            let body = &src[src.find(push).unwrap()..];
+            assert!(body[..body.find("\n    }\n").unwrap()].contains("let (controls, note) = self.end_controls();"), "{push}");
+        }
+        let timer = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/timer/imp.rs")).unwrap();
+        let refresh = &timer[timer.find("fn refresh_end_buttons(&self)").unwrap()..];
+        let refresh = &refresh[..refresh.find("\n    }\n").unwrap()];
+        assert!(!refresh.contains("discard"), "Discard is always there");
+        assert!(refresh.contains("c.second.set_visible(buttons.second.is_some())"));
     }
 }

@@ -709,8 +709,8 @@ msgstr[0] "{n} sesja do {0}."
 msgstr[1] "{n} sesje do {0}."
 msgstr[2] "{n} sesji do {0}."
 
-msgid "Add {} and Save"
-msgstr "Dodaj {} i zapisz"
+msgid "+ {} and Save"
+msgstr "+ {} i zapisz"
 
 msgid "Vibration"
 msgstr "Wibracja"

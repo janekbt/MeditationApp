@@ -57,18 +57,18 @@ pub fn end_button_code(button: meditate_core::session::EndButton) -> i32 {
         B::Resume => 1,
         B::Save => 2,
         B::Add => 3,
-        B::Discard => 4,
     }
 }
 
-pub fn end_button_from_code(code: i32) -> meditate_core::session::EndButton {
+/// `None` for a code that is no button: nothing happens.
+pub fn end_button_from_code(code: i32) -> Option<meditate_core::session::EndButton> {
     use meditate_core::session::EndButton as B;
     match code {
-        0 => B::Pause,
-        1 => B::Resume,
-        2 => B::Save,
-        3 => B::Add,
-        _ => B::Discard,
+        0 => Some(B::Pause),
+        1 => Some(B::Resume),
+        2 => Some(B::Save),
+        3 => Some(B::Add),
+        _ => None,
     }
 }
 
@@ -4470,9 +4470,9 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
         assert!(running.is_running_page());
-        assert_eq!(running.end_buttons().row, [EndButton::Pause, EndButton::Discard]);
+        assert_eq!((running.end_buttons().first, running.end_buttons().second), (EndButton::Pause, None));
         let paused = running.toggle(timer_countdown(Duration::from_secs(60)), t0 + Duration::from_secs(5)).state;
-        assert_eq!(paused.end_buttons().row, [EndButton::Resume, EndButton::Save]);
+        assert_eq!((paused.end_buttons().first, paused.end_buttons().second), (EndButton::Resume, Some(EndButton::Save)));
         // Save while paused keeps the time so far; in overtime the planned length.
         let saved = paused.save_end(t0 + Duration::from_secs(9));
         assert_eq!(ended_duration_secs(&saved.effects), Some(5));
@@ -4480,9 +4480,10 @@ mod tests {
         assert_eq!(saved.end_buttons(), EndButtons::ENDED);
         let over = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).tick(t0 + Duration::from_secs(90)).state;
         assert_eq!(ended_duration_secs(&over.save_end(t0 + Duration::from_secs(95)).effects), Some(60));
-        for b in [EndButton::Pause, EndButton::Resume, EndButton::Save, EndButton::Add, EndButton::Discard] {
-            assert_eq!(end_button_from_code(end_button_code(b)), b, "Slint hands back the button it was given");
+        for b in [EndButton::Pause, EndButton::Resume, EndButton::Save, EndButton::Add] {
+            assert_eq!(end_button_from_code(end_button_code(b)), Some(b), "Slint hands back the button it was given");
         }
+        assert_eq!(end_button_from_code(-1), None, "no second button, nothing to do");
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
@@ -4497,7 +4498,6 @@ mod tests {
         for (button, does) in [
             ("EndButton::Save", "ui.invoke_save_tap()"),
             ("EndButton::Add", "ui.invoke_add_tap()"),
-            ("EndButton::Discard", "ui.invoke_discard_tap()"),
         ] {
             let at = tap.find(button).unwrap_or_else(|| panic!("{button}"));
             assert!(tap[at..].contains(does), "{button}");
@@ -4580,10 +4580,38 @@ mod tests {
         &slint[at..end]
     }
 
+    /// Pausing used to move Discard and lift the whole column.
+    #[test]
+    fn the_session_buttons_keep_their_place() {
+        let slint = slint_code();
+        let running = &slint[slint.find("// ── Running screen").unwrap()..slint.find("// ── Log page").unwrap()];
+        assert!(!slint.contains("end-discard-below") && !ui_code().contains("end_discard_below"));
+        // The time and the buttons form one block, centred by padding; the note follows it.
+        let at = running.find("running-block := VerticalLayout {").expect("the centred block");
+        let mut depth = 0;
+        let end = at + running[at..].char_indices().find(|&(_, c)| {
+            depth += match c { '{' => 1, '}' => -1, _ => 0 };
+            c == '}' && depth == 0
+        }).unwrap().0;
+        let block = &running[at..end];
+        for part in ["root.remaining-text", "root.bb-counter-text", "kind: root.end-left;", "kind: 4;"] {
+            assert!(block.contains(part), "{part} sits in the block");
+        }
+        assert!(running[end..].contains("running-note := NoteField {"), "the note comes after the block");
+        assert!(running.contains("running-block.preferred-height) / 2"), "centred by padding");
+        // Discard is always there and goes straight to the discard tap.
+        let before = &block[..block.find("kind: 4;").unwrap()];
+        let holder = before[..before.rfind("EndButtonView {").unwrap()].lines().rev().find(|l| l.contains("HorizontalLayout {")).unwrap();
+        assert!(!holder.contains("if "), "Discard is never behind an if: {holder}");
+        assert!(block[before.len()..].contains("root.discard-tap();"));
+        assert!(block.contains("if root.end-right >= 0 : EndButtonView {"), "the second button only when there is one");
+        assert!(ui_code().contains("ui.set_end_right(end.second.map_or(-1, app::end_button_code));"));
+    }
+
     #[test]
     fn the_add_button_says_that_it_saves() {
         let slint = slint_code();
-        assert!(slint.contains("@tr(\"Add {} and Save\", t)"));
+        assert!(slint.contains("@tr(\"+ {} and Save\", t)"));
         // The bundled Material buttons clip; the house one wraps.
         let wrap = component(&slint, "WrapButton");
         assert!(wrap.contains("wrap: word-wrap;") && wrap.contains("horizontal-alignment: center;"));

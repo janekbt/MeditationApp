@@ -136,12 +136,22 @@ On the phone, a row's title and subtitle SHALL wrap so the switch or button besi
 - **MANUAL** layout on a phone
 
 ### Requirement: The running page ends every session
-The running page SHALL offer the end of a session itself, with no second screen: Pause and Discard while running; Resume, Save and Discard with the note when paused; Save, Add and Discard with the note when the time ran out; Save and Discard with the note when a Box Breath countdown ended.
+The running page SHALL offer the end of a session itself, with no second screen, with Discard always on its own line under the main buttons: Pause while running; Resume and Save with the note when paused; Resume when paused during preparation; Save and Add with the note when the time ran out; Save with the note when a session ended unsaved.
 
 #### Scenario: The buttons follow the session
 - **WHEN** a session is preparing or running, paused, paused during preparation, in overtime, or has ended (Box Breath countdown, or a save that failed)
-- **THEN** the page shows [Pause][Discard]; [Resume][Save] + Discard + note; [Resume][Discard]; [Save][Add] + Discard + note; [Save][Discard] + note, in that order
+- **THEN** the row shows [Pause]; [Resume][Save] + note; [Resume]; [Save][Add] + note; [Save] + note, in that order, and Discard sits under the row in every one of them
 - **TEST** `meditate-core/src/session/mod.rs::the_end_buttons_follow_the_session`
+
+#### Scenario: Nothing moves when the session pauses, on the laptop
+- **WHEN** a running session is paused on the laptop and the note appears, in a tall or a short window
+- **THEN** the time, the row and Discard stay where they were, the note comes in below them, and a short window scrolls to it
+- **TEST** `meditate-gtk/src/window/imp.rs::the_session_buttons_keep_their_place`
+
+#### Scenario: Nothing moves when the session pauses, on the phone
+- **WHEN** a running session is paused on the phone and the note appears
+- **THEN** the time, the row and Discard stay where they were, and the note comes in below them
+- **TEST** `meditate-android/src/app.rs::the_session_buttons_keep_their_place`
 
 #### Scenario: Save while paused keeps the time so far
 - **WHEN** a 20-minute countdown is paused after 7 minutes and the user taps Save
@@ -160,12 +170,12 @@ The running page SHALL offer the end of a session itself, with no second screen:
 
 #### Scenario: The Add button says that it saves, on the laptop
 - **WHEN** a countdown is 3 minutes into overtime on the laptop
-- **THEN** the button reads "Add 03:00 and Save", on two lines where one doesn't fit
+- **THEN** the button reads "+ 03:00 and Save", on two lines where one doesn't fit
 - **TEST** `meditate-gtk/src/timer/imp.rs::the_add_button_says_that_it_saves`
 
 #### Scenario: The Add button says that it saves, on the phone
 - **WHEN** a countdown is 3 minutes into overtime on the phone
-- **THEN** the button reads "Add 03:00 and Save", on two lines where one doesn't fit, never cut off
+- **THEN** the button reads "+ 03:00 and Save", on two lines where one doesn't fit, never cut off
 - **TEST** `meditate-android/src/app.rs::the_add_button_says_that_it_saves`
 
 #### Scenario: Discard ends without saving
@@ -204,8 +214,8 @@ The running page SHALL offer the end of a session itself, with no second screen:
 - **TEST** `meditate-gtk/src/timer/mod.rs::only_a_successful_save_leaves_the_running_page`
 
 #### Scenario: How it looks
-- **WHEN** a session is paused, then resumed, then runs into overtime, on the phone at 360 dp and on the laptop, in German
-- **THEN** the buttons sit as listed, nothing is cut off, the note keeps its text across Resume and is hidden while running
+- **WHEN** a session is paused, then resumed, then runs into overtime, on the phone at 360 dp and on the laptop, in German, in Timer and Box Breath
+- **THEN** Discard never changes its place, the time and the buttons don't jump when the note appears or goes, "+ 03:00 und speichern" fits, nothing is cut off, and the note keeps its text across Resume and is hidden while running
 - **MANUAL** layout and the soft keyboard over the note need a real screen
 
 ### Requirement: Auto-Finish saves a countdown when the time is up

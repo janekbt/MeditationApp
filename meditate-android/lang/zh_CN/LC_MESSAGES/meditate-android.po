@@ -695,8 +695,8 @@ msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "距第 {0} 个会话还差 {n} 个"
 
-msgid "Add {} and Save"
-msgstr "加上 {} 并保存"
+msgid "+ {} and Save"
+msgstr "+ {} 并保存"
 
 msgid "Vibration"
 msgstr "振动"
