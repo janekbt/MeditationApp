@@ -21,6 +21,7 @@ import {
 // re-exported through `material.slint`; pull it from the source
 // module so the Log-filter label dropdown can be typed.
 import { MenuItem } from "../material-1.0/ui/items/menu_item.slint";
+import { BaseButton } from "../material-1.0/ui/components/base_button.slint";
 import { Palette } from "std-widgets.slint";
 // `Date` isn't re-exported through `material.slint` (unlike its
 // sibling `Time`); import it directly from the picker module so
@@ -446,9 +447,12 @@ component WrapButton inherits Rectangle {
     in property <length> base-height: 40px;
     // The black session screen asks for the dark scheme (#15).
     in property <bool> dark;
-    property <color> primary: root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
+    // Red for an action that throws data away, as GTK's destructive-action.
+    in property <bool> destructive;
+    property <color> error: root.dark ? MaterialPalette.schemes.dark.error : MaterialPalette.error;
+    property <color> primary: root.destructive ? root.error : root.dark ? MaterialPalette.schemes.dark.primary : MaterialPalette.primary;
     property <color> on-primary: root.dark ? MaterialPalette.schemes.dark.onPrimary : MaterialPalette.on-primary;
-    property <color> outline-color: root.dark ? MaterialPalette.schemes.dark.outline : MaterialPalette.outline;
+    property <color> outline-color: root.destructive ? root.error : root.dark ? MaterialPalette.schemes.dark.outline : MaterialPalette.outline;
     callback clicked;
 
     min-height: max(root.base-height, label.preferred-height + 16px);
@@ -494,6 +498,7 @@ component EndButtonView inherits HorizontalLayout {
         outline: root.kind == 4;
         base-height: 56px;
         dark: true;
+        destructive: root.kind == 4;
         clicked => { root.tapped(root.kind); }
     }
 }
@@ -1364,11 +1369,38 @@ component PageHeader inherits HorizontalLayout {
     }
 }
 
+// The library's TextButton, in red when the action throws data away
+// (GTK's ResponseAppearance::Destructive); TextButton takes no colour.
+component ConfirmButton {
+    in property <string> text <=> base.text;
+    in property <bool> enabled <=> base.enabled;
+    in property <bool> destructive;
+    callback clicked <=> base.clicked;
+
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-label: root.text;
+    accessible-action-default => { base.clicked(); }
+
+    base := BaseButton {
+        border_radius: root.height / 2;
+        color: root.destructive ? MaterialPalette.error : MaterialPalette.primary;
+    }
+
+    states [
+        disabled when !root.enabled : {
+            base.color: MaterialPalette.on_surface;
+            base.transparent_background: true;
+        }
+    ]
+}
+
 component ConfirmDialog inherits Rectangle {
     in property <string> title;
     in property <string> body;
     in property <string> confirm-text;
     in property <bool> confirm-enabled: true;
+    in property <bool> destructive;
     // One button per line, for a confirm text too long to sit beside
     // Cancel (Material's stacked dialog buttons).
     in property <bool> stacked;
@@ -1426,8 +1458,9 @@ component ConfirmDialog inherits Rectangle {
                     text: @tr("Cancel");
                     clicked => { root.cancel(); }
                 }
-                TextButton {
+                ConfirmButton {
                     text: root.confirm-text;
+                    destructive: root.destructive;
                     enabled: root.confirm-enabled;
                     clicked => { root.confirm(); }
                 }
@@ -1437,8 +1470,9 @@ component ConfirmDialog inherits Rectangle {
 
                 HorizontalLayout {
                     alignment: end;
-                    TextButton {
+                    ConfirmButton {
                         text: root.confirm-text;
+                        destructive: root.destructive;
                         enabled: root.confirm-enabled;
                         clicked => { root.confirm(); }
                     }
@@ -7315,6 +7349,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete Label?");
         body: root.delete-label-body;
         confirm-text: @tr("Delete");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.delete-label-confirm(); }
     }
@@ -7376,6 +7411,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete Preset?");
         body: @tr("'{}' will be removed from this device and any synced peers.", root.delete-preset-name);
         confirm-text: @tr("Delete");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.delete-preset-confirm(); }
     }
@@ -8512,6 +8548,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete Sound?");
         body: @tr("Bells that reference this sound will lose their audio.");
         confirm-text: @tr("Delete");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.bell-delete-confirm(); }
         Text {
@@ -8537,6 +8574,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete Pattern?");
         body: @tr("Bells and Box Breath phases that reference this pattern will lose their vibration.");
         confirm-text: @tr("Delete");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.pattern-delete-confirm(); }
     }
@@ -8545,6 +8583,7 @@ export component MainWindow inherits Window {
         title: @tr("Discard Session?");
         body: @tr("Your note will be lost.");
         confirm-text: @tr("Discard");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.discard-confirm(); }
     }
@@ -8553,6 +8592,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete Bell?");
         body: @tr("This bell will no longer ring during sessions.");
         confirm-text: @tr("Delete");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => {
             root.modal = Modal.none;
@@ -8649,6 +8689,7 @@ export component MainWindow inherits Window {
         title: @tr("Delete all sessions?");
         body: @tr("This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone.");
         confirm-text: @tr("Delete All");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.delete-all-confirm(); }
     }
@@ -8705,8 +8746,9 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout {
                         alignment: end;
-                        TextButton {
+                        ConfirmButton {
                             text: @tr("Wipe Local");
+                            destructive: true;
                             clicked => {
                                 root.modal = Modal.none;
                                 root.modal = Modal.recovery-wipe-confirm;
@@ -8731,6 +8773,7 @@ export component MainWindow inherits Window {
         title: @tr("Wipe local data?");
         body: @tr("This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.");
         confirm-text: @tr("Wipe Local Data");
+        destructive: true;
         cancel => { root.modal = Modal.none; }
         confirm => { root.recovery-wipe-confirm-tap(); }
     }

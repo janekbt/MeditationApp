@@ -5258,6 +5258,31 @@ mod tests {
     }
 
     #[test]
+    fn destructive_buttons_are_red() {
+        // GTK marks these destructive-action / Destructive; they throw data away.
+        let layout = slint_code();
+        let mut dialogs = 0;
+        for (at, _) in layout.match_indices("ConfirmDialog {") {
+            let body = &layout[at..at + layout[at..].find("\n    }\n").unwrap()];
+            let text = ["Delete", "Delete All", "Discard", "Wipe Local Data"].iter().find(|t| body.contains(&format!("confirm-text: @tr(\"{t}\");")));
+            if let Some(text) = text {
+                assert!(body.contains("destructive: true;"), "the {text} dialog is not red");
+                dialogs += 1;
+            }
+        }
+        assert_eq!(dialogs, 8);
+        let dialog = component(&layout, "ConfirmDialog");
+        assert_eq!(dialog.matches("destructive: root.destructive;").count(), 2, "both confirm buttons follow the dialog");
+        assert!(component(&layout, "ConfirmButton").contains("root.destructive ? MaterialPalette.error : MaterialPalette.primary"));
+        let wipe = "ConfirmButton {\n                            text: @tr(\"Wipe Local\");\n                            destructive: true;";
+        assert!(layout.contains(wipe), "Wipe Local is not red");
+        assert!(component(&layout, "EndButtonView").contains("destructive: root.kind == 4;"));
+        let wrap = component(&layout, "WrapButton");
+        assert!(wrap.contains("root.dark ? MaterialPalette.schemes.dark.error : MaterialPalette.error"));
+        assert_eq!(wrap.matches("root.destructive ? root.error :").count(), 2, "Discard's text and outline");
+    }
+
+    #[test]
     fn the_window_background_is_the_surface_role() {
         // Without its own background the window shows Slint's fixed
         // #fafafa behind every page that doesn't paint one (Timer).
