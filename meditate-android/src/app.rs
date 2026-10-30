@@ -677,6 +677,15 @@ impl AppState {
         }
     }
 
+    /// The bell ring and counters round the running time; nothing
+    /// without a session.
+    pub fn bell_ring(&self, now: Duration) -> meditate_core::session::BellRing {
+        match self {
+            Self::Active(s) => s.bell_ring(now),
+            Self::Idle | Self::Finished => Default::default(),
+        }
+    }
+
     /// Big hero-label text. Setup shows `HH:MM` of the configured
     /// target (matching the GTK shell's `idle_hero_label` —
     /// minute-precision since the user authors duration in minutes).
@@ -1816,6 +1825,7 @@ mod tests {
         assert!(slint.contains("width: max(44px, ymax-text.preferred-width, ymid-text.preferred-width);"));
 
         let ids = [
+            "msgid \"{} of {}\"\nmsgstr \"",
             "msgid \"{n}h\"\nmsgid_plural \"{n}h\"\nmsgstr[0] \"",
             "msgid \"{n}m\"\nmsgid_plural \"{n}m\"\nmsgstr[0] \"",
             "msgid \"{}s\"\nmsgstr \"",

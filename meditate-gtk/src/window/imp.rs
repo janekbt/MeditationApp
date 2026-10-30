@@ -194,11 +194,96 @@ impl MeditateWindow {
             .spacing(32)
             .margin_start(12).margin_end(12)
             .build();
-        content.append(&time_label);
+        content.append(&self.bell_ring(&time_label));
         let (controls, note) = self.end_controls();
         content.append(&controls);
 
         self.push_running_page_with_content(&gettext("Meditating"), content, note);
+    }
+
+    /// The running time inside the bell ring (Timer countdown, Guided),
+    /// with the repeating bells' counters under it. Both follow the
+    /// session every quarter second, so a counter moves with its bell.
+    fn bell_ring(&self, time_label: &gtk::Label) -> gtk::Box {
+        use std::{cell::RefCell, rc::Rc};
+        let block = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(16).build();
+        let counters = gtk::Box::builder().spacing(20).halign(gtk::Align::Center).visible(false).build();
+        let now = self.timer_view.bell_ring();
+        if now.ring.is_none() && now.counters.is_empty() {
+            block.append(time_label);
+            return block;
+        }
+        let ring = Rc::new(RefCell::new(now.ring.clone()));
+        let area = gtk::DrawingArea::builder().content_width(300).content_height(300).halign(gtk::Align::Center).build();
+        if now.ring.is_some() {
+            area.set_draw_func(clone!(
+                #[strong] ring,
+                move |area, cr, w, h| {
+                    if let Some(ring) = ring.borrow().as_ref() {
+                        draw_bell_ring(area, cr, w, h, ring);
+                    }
+                }
+            ));
+            let overlay = gtk::Overlay::builder().child(&area).halign(gtk::Align::Center).build();
+            time_label.set_valign(gtk::Align::Center);
+            // Hours don't fit inside the ring at the full size.
+            let fit = |label: &gtk::Label| {
+                if label.label().len() > 5 {
+                    label.add_css_class("in-ring-long");
+                } else {
+                    label.remove_css_class("in-ring-long");
+                }
+            };
+            fit(time_label);
+            time_label.connect_label_notify(fit);
+            overlay.add_overlay(time_label);
+            block.append(&overlay);
+        } else {
+            block.append(time_label);
+        }
+        block.append(&counters);
+        let shown = RefCell::new(None::<Vec<meditate_core::session::BellCounter>>);
+        let refresh = clone!(
+            #[weak(rename_to = timer_view)] self.timer_view,
+            // Held here: in the stopwatch it is on no page.
+            #[strong] area,
+            #[weak] counters,
+            #[upgrade_or] glib::ControlFlow::Break,
+            move || {
+                let now = timer_view.bell_ring();
+                if *ring.borrow() != now.ring {
+                    *ring.borrow_mut() = now.ring;
+                    area.queue_draw();
+                }
+                if shown.borrow().as_ref() != Some(&now.counters) {
+                    while let Some(child) = counters.first_child() {
+                        counters.remove(&child);
+                    }
+                    for c in &now.counters {
+                        let text = match c.total {
+                            Some(total) => gettext("{rung} of {total}")
+                                .replace("{rung}", &c.rung.to_string())
+                                .replace("{total}", &total.to_string()),
+                            None => c.rung.to_string(),
+                        };
+                        let counter = gtk::Box::builder().spacing(6).build();
+                        counter.append(&gtk::Label::builder()
+                            .label("●")
+                            .css_classes(["accent", "caption"])
+                            .accessible_role(gtk::AccessibleRole::Presentation)
+                            .build());
+                        counter.append(&gtk::Label::builder().label(text).css_classes(["numeric", "dim-label"]).build());
+                        counters.append(&counter);
+                    }
+                    counters.set_visible(!now.counters.is_empty());
+                    *shown.borrow_mut() = Some(now.counters);
+                }
+                glib::ControlFlow::Continue
+            }
+        );
+        refresh();
+        glib::timeout_add_local(Duration::from_millis(250), refresh);
+        block
     }
 
     /// Build the Box-Breath running page: session-countdown strip at top,
@@ -1083,5 +1168,54 @@ mod day_tests {
         let refresh = &refresh[..refresh.find("\n    }\n").unwrap()];
         assert!(!refresh.contains("discard"), "Discard is always there");
         assert!(refresh.contains("c.second.set_visible(buttons.second.is_some())"));
+    }
+}
+
+/// The bell ring round the running time: a faint track, the filled
+/// part in the accent colour from the top clockwise, the start point,
+/// the preparation's small ring round it, and a bead per bell.
+fn draw_bell_ring(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, w: i32, h: i32, ring: &meditate_core::session::Ring) {
+    use std::f64::consts::PI;
+    let (ar, ag, ab) = accent_rgb(area);
+    let (cx, cy) = (f64::from(w) / 2.0, f64::from(h) / 2.0);
+    // Room outside the track for the preparation's ring.
+    let r = f64::from(w.min(h)) / 2.0 - 22.0;
+    let angle = |at: f64| -PI / 2.0 + 2.0 * PI * at;
+    cr.set_line_width(4.0);
+    cr.set_line_cap(gtk::cairo::LineCap::Round);
+    cr.set_source_rgba(ar, ag, ab, 0.25);
+    cr.arc(cx, cy, r, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+    if ring.filled > 0.0 {
+        cr.set_source_rgb(ar, ag, ab);
+        cr.arc(cx, cy, r, angle(0.0), angle(ring.filled));
+        let _ = cr.stroke();
+    }
+    let bead = |at: f64, radius: f64, filled: bool| {
+        let (x, y) = (cx + r * angle(at).cos(), cy + r * angle(at).sin());
+        cr.new_sub_path();
+        cr.arc(x, y, radius, 0.0, 2.0 * PI);
+        if filled {
+            cr.set_source_rgb(ar, ag, ab);
+            let _ = cr.fill();
+        } else {
+            // The running page is black.
+            cr.set_source_rgb(0.0, 0.0, 0.0);
+            let _ = cr.fill_preserve();
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+            cr.set_line_width(2.0);
+            let _ = cr.stroke();
+        }
+    };
+    for b in &ring.beads {
+        bead(b.at, if b.large { 7.0 } else { 5.0 }, b.rung);
+    }
+    bead(0.0, 9.0, ring.start_filled);
+    if let Some(prep) = ring.prep {
+        cr.set_source_rgb(ar, ag, ab);
+        cr.set_line_width(2.0);
+        cr.new_sub_path();
+        cr.arc(cx, cy - r, 18.0, angle(0.0), angle(prep));
+        let _ = cr.stroke();
     }
 }

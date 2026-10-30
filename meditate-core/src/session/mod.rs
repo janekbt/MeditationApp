@@ -121,6 +121,40 @@ impl EndButtons {
     }
 }
 
+/// What the running page draws around the time: the ring (a Timer
+/// countdown or a Guided session) and one counter per repeating bell.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BellRing {
+    pub ring: Option<Ring>,
+    pub counters: Vec<BellCounter>,
+}
+
+/// Positions are parts of the planned length, 0 at the top, 1 back
+/// at the top, clockwise.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ring {
+    pub filled: f64,
+    /// The small ring round the start point, while preparing.
+    pub prep: Option<f64>,
+    pub start_filled: bool,
+    pub beads: Vec<Bead>,
+}
+
+/// One ring of a bell: `large` for a one-off bell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bead {
+    pub at: f64,
+    pub large: bool,
+    pub rung: bool,
+}
+
+/// "2 of 5": `total` is `None` where no end bounds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BellCounter {
+    pub rung: u32,
+    pub total: Option<u32>,
+}
+
 /// Default Timer-mode countdown in seconds for a fresh user
 /// (10 minutes). Used by the shell when restoring on first launch
 /// before any persisted value exists, AND as the fallback when the
@@ -557,12 +591,11 @@ impl Session {
             if target.saturating_sub(elapsed).is_zero() {
                 // The end bell stands for every bell due by now: advance
                 // them silently so none rings just after it.
-                let _ = fire_due_bells(
-                    &mut self.bells,
-                    &mut self.bell_rng_state,
-                    self.settings.signal_mode_override,
-                    elapsed,
-                );
+                let mut rng = bell_rng(&mut self.bell_rng_state);
+                for bell in &mut self.bells {
+                    bell.skip_due(elapsed.as_secs(), &mut rng);
+                }
+                drop(rng);
                 return self.reach_end();
             }
         }
@@ -808,6 +841,70 @@ impl Session {
         Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
     }
 
+    /// The ring and the bell counters for the running page right now.
+    pub fn bell_ring(&self, now: Duration) -> BellRing {
+        use crate::bells::BellSchedule;
+        let end = match self.settings.shape {
+            SessionShape::BoxBreathCountdown { .. } => None,
+            ref shape => shape.target_secs().map(u64::from),
+        };
+        let preparing = self.phase == SessionPhase::Prep;
+        let elapsed = if preparing { 0.0 } else { self.phase_clock.elapsed(now).as_secs_f64() };
+        let past_end = matches!(self.phase, SessionPhase::Overtime | SessionPhase::Stopped);
+        let part = |secs: f64| end.map_or(0.0, |end| (secs / end as f64).min(1.0));
+        let mut beads = Vec::new();
+        let mut counters = Vec::new();
+        for bell in &self.bells {
+            match &bell.schedule {
+                BellSchedule::Fixed { target_secs, fired } => {
+                    beads.push(Bead { at: part(*target_secs as f64), large: true, rung: *fired == Some(true) });
+                }
+                BellSchedule::Interval { base_secs, jitter_secs, step_secs, gaps, rang, .. } => {
+                    // A bell with no time (old data) rings each second;
+                    // a bead a second would say nothing.
+                    if *base_secs == 0 && *step_secs == 0 {
+                        continue;
+                    }
+                    // A bead per planned ring that can come before the end,
+                    // at its earliest time until it rings.
+                    let mut mine = 0;
+                    if let Some(end) = end {
+                        let mut heard = rang.iter().peekable();
+                        for (index, earliest) in bell.schedule.rings_before(end) {
+                            let at = heard.next_if(|&&(i, _)| i == index).map(|&(_, at)| at as f64);
+                            let secs = match at {
+                                Some(at) => at,
+                                None if index + 1 == *gaps => (earliest as f64).max(elapsed),
+                                None => earliest as f64,
+                            };
+                            beads.push(Bead { at: part(secs), large: false, rung: at.is_some() });
+                            mine += 1;
+                        }
+                        if mine == 0 {
+                            continue;
+                        }
+                    }
+                    let total = (end.is_some() && !past_end).then_some(mine);
+                    let first = crate::bells::earliest_ring_secs(u64::from(*base_secs), *jitter_secs);
+                    counters.push((first, BellCounter { rung: rang.len() as u32, total }));
+                }
+            }
+        }
+        // Stable: two bells with the same earliest first ring keep the
+        // bell list's order.
+        counters.sort_by_key(|&(first, _)| first);
+        let ring = end.map(|_| Ring {
+            filled: if past_end { 1.0 } else { part(elapsed) },
+            prep: preparing.then(|| {
+                let prep = f64::from(self.settings.prep_secs.unwrap_or(1).max(1));
+                (self.phase_clock.elapsed(now).as_secs_f64() / prep).min(1.0)
+            }),
+            start_filled: !preparing,
+            beads,
+        });
+        BellRing { ring, counters: counters.into_iter().map(|(_, c)| c).collect() }
+    }
+
     /// The whole-seconds value the running label should show right
     /// now, dispatching on phase + display mode:
     ///
@@ -945,6 +1042,15 @@ fn box_breath_cue_effect(
     })
 }
 
+/// The session's jitter draws, advancing its xorshift state.
+fn bell_rng(state: &mut u64) -> impl FnMut() -> f64 + '_ {
+    move || {
+        let (unit, next) = crate::bells::xorshift64(*state);
+        *state = next;
+        unit
+    }
+}
+
 /// Iterate over the session's bells, tick each against `elapsed`,
 /// and emit `FireBell` effects for every bell that crosses its
 /// ring boundary this tick. Mutates `bells` (Interval bells reroll
@@ -962,12 +1068,8 @@ fn fire_due_bells(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
     let elapsed_secs = elapsed.as_secs();
+    let mut rng = bell_rng(rng_state);
     for bell in bells.iter_mut() {
-        let mut rng = || -> f64 {
-            let (unit, next) = crate::bells::xorshift64(*rng_state);
-            *rng_state = next;
-            unit
-        };
         if bell.tick(elapsed_secs, &mut rng) {
             if let Some(eff) = crate::bells::effective_signal_mode(
                 bell.signal_mode,
@@ -1078,7 +1180,7 @@ mod tests {
             sound_uuid: sound_uuid.into(),
             vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
-            schedule: BellSchedule::Fixed { target_secs, fired: false },
+            schedule: BellSchedule::Fixed { target_secs, fired: None },
             volume: Default::default(),
         }
     }
@@ -1089,13 +1191,7 @@ mod tests {
             sound_uuid: sound_uuid.into(),
             vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
-            schedule: BellSchedule::Interval {
-                base_secs: base_min * 60,
-                jitter_secs: 0,
-                step_secs: 0,
-                gaps: 1,
-                next_ring_secs: u64::from(base_min) * 60,
-            },
+            schedule: BellSchedule::every(base_min * 60, 0, 0, None, 0.5),
             volume: Default::default(),
         }
     }
@@ -2726,5 +2822,208 @@ mod tests {
         }
         assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
         assert_eq!(effects.iter().filter(|e| matches!(e, Effect::FireEndBell { .. })).count(), 1, "{effects:?}");
+    }
+
+    // ── The bell ring ─────────────────────────────────────────────
+
+    /// A repeating bell every `base` s ± `jitter` s, `step` s more per
+    /// gap, ending at `end`, its first ring drawn at `first`.
+    fn every(base: u32, jitter: u32, step: u32, end: Option<u64>, first: u64) -> ActiveBell {
+        use crate::bells::BellSchedule;
+        let mut schedule = BellSchedule::every(base, jitter, step, end, 0.5);
+        if let BellSchedule::Interval { next_ring_secs, .. } = &mut schedule {
+            *next_ring_secs = first;
+        }
+        ActiveBell { schedule, ..interval_bell(1, "sound") }
+    }
+
+    fn timer_with(target_secs: u32, bells: Vec<ActiveBell>) -> Session {
+        Session::start(SessionSettings { bells, ..timer_countdown_settings(target_secs) }, Duration::ZERO).0
+    }
+
+    fn at(s: u64) -> Duration {
+        Duration::from_secs(s)
+    }
+
+    fn small(secs: f64, of: f64, rung: bool) -> Bead {
+        Bead { at: secs / of, large: false, rung }
+    }
+
+    fn ring_of(s: &Session, now: u64) -> Ring {
+        s.bell_ring(at(now)).ring.expect("a ring")
+    }
+
+    #[test]
+    fn the_ring_fills_with_the_session() {
+        let mut s = timer_with(1200, Vec::new());
+        assert_eq!(ring_of(&s, 300).filled, 0.25);
+        s.pause(at(300));
+        assert_eq!(ring_of(&s, 480).filled, 0.25);
+        assert!(ring_of(&s, 480).start_filled);
+    }
+
+    #[test]
+    fn only_a_known_length_gets_a_ring() {
+        let stopwatch = SessionSettings { shape: SessionShape::TimerStopwatch, ..timer_countdown_settings(600) };
+        let (s, _) = Session::start(stopwatch, Duration::ZERO);
+        assert_eq!(s.bell_ring(at(60)).ring, None);
+        let (s, _) = Session::start(box_breath_settings(Some(300)), Duration::ZERO);
+        assert_eq!(s.bell_ring(at(60)), BellRing::default());
+        let (s, _) = Session::start(guided_settings(600, true), Duration::ZERO);
+        assert_eq!(
+            s.bell_ring(at(150)).ring,
+            Some(Ring { filled: 0.25, prep: None, start_filled: true, beads: Vec::new() })
+        );
+    }
+
+    #[test]
+    fn one_off_bells_are_large_beads() {
+        let mut s = timer_with(1800, vec![fixed_bell(180, "a"), fixed_bell(1680, "b")]);
+        s.tick(at(600));
+        assert_eq!(
+            ring_of(&s, 600).beads,
+            [
+                Bead { at: 180.0 / 1800.0, large: true, rung: true },
+                Bead { at: 1680.0 / 1800.0, large: true, rung: false },
+            ]
+        );
+        assert_eq!(s.bell_ring(at(600)).counters, [], "one-off bells are not counted");
+    }
+
+    #[test]
+    fn a_one_off_bell_slept_through_stays_hollow() {
+        // Asleep from 27:00 to 31:00: the 28:00 bell never rang.
+        let mut s = timer_with(1800, vec![fixed_bell(1680, "a")]);
+        s.tick(at(1620));
+        s.tick(at(1860));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        assert_eq!(ring_of(&s, 1860).beads, [Bead { at: 1680.0 / 1800.0, large: true, rung: false }]);
+    }
+
+    #[test]
+    fn repeating_bells_are_small_beads() {
+        let five = |rung: usize| -> Vec<Bead> {
+            [300.0, 600.0, 900.0, 1200.0, 1500.0].iter().enumerate().map(|(i, &t)| small(t, 1800.0, i < rung)).collect()
+        };
+        let mut s = timer_with(1800, vec![every(300, 0, 0, Some(1800), 300)]);
+        for t in [300, 600, 720] {
+            s.tick(at(t));
+        }
+        assert_eq!(ring_of(&s, 720).beads, five(2));
+        assert_eq!(s.bell_ring(at(720)).counters, [BellCounter { rung: 2, total: Some(5) }]);
+        for t in [900, 1200, 1500, 1799] {
+            s.tick(at(t));
+        }
+        assert_eq!(s.bell_ring(at(1799)).counters, [BellCounter { rung: 5, total: Some(5) }]);
+        // 30:00 is the end bell's: no sixth ring is counted.
+        s.tick(at(1800));
+        assert_eq!(s.bell_ring(at(1800)).counters, [BellCounter { rung: 5, total: None }]);
+
+        // A bell with no time rings each second but is not drawn.
+        let s0 = timer_with(1800, vec![every(0, 0, 0, Some(1800), 1)]);
+        assert_eq!(s0.bell_ring(at(0)), BellRing { ring: Some(ring_of(&s0, 0)), counters: Vec::new() });
+        assert_eq!(ring_of(&s0, 0).beads, []);
+
+        // Growing by a minute: 5, 11, 18 and 26 minutes.
+        let s = timer_with(1800, vec![every(300, 0, 60, Some(1800), 300)]);
+        let beads: Vec<Bead> = [300.0, 660.0, 1080.0, 1560.0].iter().map(|&t| small(t, 1800.0, false)).collect();
+        assert_eq!(ring_of(&s, 0).beads, beads);
+
+        // Asleep from 4:00 to 12:00: one ring, for the 10 minute bead.
+        let mut s = timer_with(1800, vec![every(300, 0, 0, Some(1800), 300)]);
+        s.tick(at(240));
+        s.tick(at(720));
+        assert_eq!(
+            ring_of(&s, 720).beads,
+            [small(300.0, 1800.0, false), small(720.0, 1800.0, true), small(900.0, 1800.0, false),
+             small(1200.0, 1800.0, false), small(1500.0, 1800.0, false)]
+        );
+        assert_eq!(s.bell_ring(at(720)).counters, [BellCounter { rung: 1, total: Some(5) }]);
+    }
+
+    #[test]
+    fn a_random_bell_rides_the_fill_until_it_rings() {
+        let earliest = [240.0, 540.0, 840.0, 1140.0, 1440.0, 1740.0];
+        // Late: rings first at 5:40.
+        let mut s = timer_with(1800, vec![every(300, 60, 0, Some(1800), 340)]);
+        let hollow: Vec<Bead> = earliest.iter().map(|&t| small(t, 1800.0, false)).collect();
+        assert_eq!(ring_of(&s, 180).beads, hollow);
+        s.tick(at(320));
+        assert_eq!(ring_of(&s, 320).beads[0], small(320.0, 1800.0, false));
+        s.tick(at(340));
+        assert_eq!(ring_of(&s, 400).beads[..2], [small(340.0, 1800.0, true), small(540.0, 1800.0, false)]);
+        // Early: rings first at 4:30.
+        let mut s = timer_with(1800, vec![every(300, 60, 0, Some(1800), 270)]);
+        assert_eq!(ring_of(&s, 255).beads[0], small(255.0, 1800.0, false));
+        s.tick(at(270));
+        assert_eq!(ring_of(&s, 280).beads[..2], [small(270.0, 1800.0, true), small(540.0, 1800.0, false)]);
+    }
+
+    #[test]
+    fn the_counters_keep_their_order() {
+        let counter = |rung, total| BellCounter { rung, total: Some(total) };
+        let mut s = timer_with(1800, vec![every(420, 0, 0, Some(1800), 420), every(300, 0, 0, Some(1800), 300)]);
+        for t in [300, 420, 600, 720] {
+            s.tick(at(t));
+        }
+        assert_eq!(s.bell_ring(at(720)).counters, [counter(2, 5), counter(1, 4)]);
+
+        // Every 5 min ±2 (earliest 3:00) stays ahead of every 4 min.
+        let mut s = timer_with(1800, vec![every(240, 0, 0, Some(1800), 240), every(300, 120, 0, Some(1800), 420)]);
+        s.tick(at(240));
+        assert_eq!(s.bell_ring(at(300)).counters, [counter(0, 6), counter(1, 7)]);
+        s.tick(at(420));
+        assert_eq!(s.bell_ring(at(430)).counters, [counter(1, 6), counter(1, 7)]);
+
+        // Same earliest first ring: the bell list decides.
+        let grows = || every(300, 0, 60, Some(1800), 300);
+        let flat = || every(300, 0, 0, Some(1800), 300);
+        assert_eq!(timer_with(1800, vec![grows(), flat()]).bell_ring(at(0)).counters, [counter(0, 4), counter(0, 5)]);
+        assert_eq!(timer_with(1800, vec![flat(), grows()]).bell_ring(at(0)).counters, [counter(0, 5), counter(0, 4)]);
+    }
+
+    #[test]
+    fn the_stopwatch_counts_without_a_total() {
+        let settings = SessionSettings {
+            shape: SessionShape::TimerStopwatch,
+            bells: vec![every(300, 0, 0, None, 300)],
+            ..timer_countdown_settings(600)
+        };
+        let (mut s, _) = Session::start(settings, Duration::ZERO);
+        for t in [300, 600, 720] {
+            s.tick(at(t));
+        }
+        assert_eq!(s.bell_ring(at(720)), BellRing { ring: None, counters: vec![BellCounter { rung: 2, total: None }] });
+    }
+
+    #[test]
+    fn preparation_fills_the_small_ring() {
+        let (mut s, _) = Session::start(timer_prep_settings(10, 600), Duration::ZERO);
+        assert_eq!(
+            s.bell_ring(at(5)).ring,
+            Some(Ring { filled: 0.0, prep: Some(0.5), start_filled: false, beads: Vec::new() })
+        );
+        s.tick(at(10));
+        let ring = ring_of(&s, 10);
+        assert_eq!((ring.prep, ring.start_filled), (None, true));
+    }
+
+    #[test]
+    fn overtime_shows_a_full_ring() {
+        let mut s = timer_with(1800, vec![every(300, 60, 0, Some(1800), 280)]);
+        let next = |s: &Session| match s.bells[0].schedule {
+            crate::bells::BellSchedule::Interval { next_ring_secs, .. } => next_ring_secs,
+            crate::bells::BellSchedule::Fixed { .. } => unreachable!(),
+        };
+        while next(&s) < 1800 {
+            s.tick(at(next(&s)));
+        }
+        s.tick(at(1800));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        let ring = s.bell_ring(at(1810));
+        assert_eq!(ring.ring.map(|r| r.filled), Some(1.0));
+        assert_eq!(ring.counters, [BellCounter { rung: 6, total: None }]);
+        s.tick(at(next(&s)));
+        assert_eq!(s.bell_ring(at(2200)).counters, [BellCounter { rung: 7, total: None }]);
     }
 }

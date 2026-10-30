@@ -91,33 +91,34 @@ impl SignalMode {
 // the jittered intervals — keeps the helpers deterministic + testable
 // while letting the shell choose its RNG (xorshift, system time, ...).
 
-/// Compute the elapsed-secs boundary when the next ring of an
-/// interval bell should fire.
+/// The elapsed-secs mark a repeating bell's ring planned at
+/// `planned_secs` lands on: anywhere in `planned ± jitter_secs`
+/// (the jitter already capped), picked linearly from `random_unit`,
+/// a caller-supplied uniform in `[0, 1)`, and at least 1 s. When that
+/// window opens before `end_secs`, its top is cut to the last second
+/// before the end, so a ring that can come before the end does.
 ///
-/// `last_ring_secs` is the elapsed-secs boundary of the previous ring
-/// (use 0 for the first ring of a session). `gap_secs` is this gap
-/// (the bell's time plus its step for every gap before it) and
-/// `jitter_secs` the already capped jitter. `random_unit` is a
-/// caller-supplied uniform in `[0, 1)`.
-///
-/// With no jitter the offset is exactly `gap_secs` and `random_unit`
-/// is ignored. Otherwise the offset is in `[gap - j, gap + j]`, picked
-/// linearly from `random_unit`, and at least 1 s.
-pub fn next_interval_ring_secs(
-    last_ring_secs: u64,
-    gap_secs: u64,
-    jitter_secs: u32,
-    random_unit: f64,
-) -> u64 {
-    let base_secs = gap_secs.max(1);
-    if jitter_secs == 0 {
-        return last_ring_secs + base_secs;
+/// With no jitter the ring is exactly `planned_secs` and
+/// `random_unit` is ignored.
+pub fn grid_ring_secs(planned_secs: u64, jitter_secs: u32, end_secs: Option<u64>, random_unit: f64) -> u64 {
+    let jitter = u64::from(jitter_secs);
+    let low = earliest_ring_secs(planned_secs, jitter_secs);
+    let mut high = (planned_secs + jitter).max(1);
+    if let Some(end) = end_secs.filter(|&end| jitter > 0 && low < end) {
+        high = high.min(end - 1);
     }
-    let span = f64::from(jitter_secs);
-    // [0, 1) → [-span, +span). Centre (0.5) lands on zero offset.
-    let offset = (random_unit - 0.5) * 2.0 * span;
-    let next_secs = ((base_secs as f64) + offset).round().max(1.0) as u64;
-    last_ring_secs + next_secs
+    low + ((high - low) as f64 * random_unit).round() as u64
+}
+
+/// The earliest second a ring planned at `planned_secs` can come.
+pub(crate) fn earliest_ring_secs(planned_secs: u64, jitter_secs: u32) -> u64 {
+    planned_secs.saturating_sub(u64::from(jitter_secs)).max(1)
+}
+
+/// The planned time `gaps` gaps in, after `planned_secs`; at least a
+/// second on, so a bell with no time can't stall the tick.
+fn next_planned_secs(planned_secs: u64, base_secs: u32, step_secs: u32, gaps: u32) -> u64 {
+    planned_secs + interval_gap_secs(base_secs, step_secs, gaps).max(1)
 }
 
 /// Compute the elapsed-secs boundary for a "T from session
@@ -161,25 +162,33 @@ pub fn fixed_from_end_target_secs(
 /// `ActiveBell::tick` thereafter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BellSchedule {
-    /// Recurring interval bell — every `base_secs`, growing by
-    /// `step_secs` per gap, give or take `jitter_secs` (already capped
-    /// at half the base). `gaps` counts the gaps already scheduled.
-    /// `next_ring_secs` is the absolute elapsed-since-Running mark
-    /// when the next ring is due.
+    /// Recurring interval bell — planned every `base_secs`, growing
+    /// by `step_secs` per gap; each ring lands within `jitter_secs`
+    /// (already capped at half the base) of its own planned time,
+    /// whenever the ring before it came. `gaps` counts the planned
+    /// times so far, `planned_secs` is the latest of them, and
+    /// `next_ring_secs` the drawn elapsed-since-Running mark of its
+    /// ring. In a countdown, `end_secs` keeps a ring that can come
+    /// before the end before it. `rang` holds `(planned index,
+    /// elapsed secs)` of every ring that was heard.
     Interval {
         base_secs: u32,
         jitter_secs: u32,
         step_secs: u32,
         gaps: u32,
+        planned_secs: u64,
         next_ring_secs: u64,
+        end_secs: Option<u64>,
+        rang: Vec<(u32, u64)>,
     },
     /// One-shot bell pinned to a known offset from session start
     /// (fixed-from-start) or session end (fixed-from-end, resolved to
-    /// an absolute target at build time). Flips `fired` on first
+    /// an absolute target at build time). Sets `fired` on first
     /// match so subsequent ticks skip it.
     Fixed {
         target_secs: u64,
-        fired: bool,
+        /// `Some(heard)` once due: `false` when passed over at the end.
+        fired: Option<bool>,
     },
 }
 
@@ -195,44 +204,99 @@ pub struct ActiveBell {
     pub schedule: BellSchedule,
 }
 
+impl BellSchedule {
+    /// A repeating bell's planned rings whose earliest time is before
+    /// `end_secs`, as `(index, earliest secs)`; none for a one-off bell.
+    pub(crate) fn rings_before(&self, end_secs: u64) -> Vec<(u32, u64)> {
+        let BellSchedule::Interval { base_secs, jitter_secs, step_secs, .. } = *self else {
+            return Vec::new();
+        };
+        let mut rings = Vec::new();
+        let mut planned = u64::from(base_secs);
+        for index in 0u32.. {
+            let earliest = earliest_ring_secs(planned, jitter_secs);
+            if earliest >= end_secs {
+                break;
+            }
+            rings.push((index, earliest));
+            planned = next_planned_secs(planned, base_secs, step_secs, index + 1);
+        }
+        rings
+    }
+
+    /// A repeating bell's schedule before its first ring, drawn by
+    /// `r`: planned every `base_secs` ± `jitter_secs`, `step_secs` more
+    /// per gap, and in a countdown kept before `end_secs`.
+    pub fn every(base_secs: u32, jitter_secs: u32, step_secs: u32, end_secs: Option<u64>, r: f64) -> Self {
+        let planned_secs = u64::from(base_secs);
+        BellSchedule::Interval {
+            base_secs,
+            jitter_secs,
+            step_secs,
+            gaps: 1,
+            planned_secs,
+            next_ring_secs: grid_ring_secs(planned_secs, jitter_secs, end_secs, r),
+            end_secs,
+            rang: Vec::new(),
+        }
+    }
+}
+
 impl ActiveBell {
     /// Per-tick decision: did this bell's ring boundary just get crossed?
     /// Mutates the schedule so the next tick won't double-fire:
-    ///   - `Interval`: rerolls `next_ring_secs` (one `rng()` draw per
-    ///     step) until it is past `elapsed_secs`, so a time jump rings
-    ///     once.
-    ///   - `Fixed`: flips `fired` to true.
+    ///   - `Interval`: moves to the next planned time and draws its
+    ///     ring (one `rng()` draw per step) until it is past
+    ///     `elapsed_secs`, so a time jump rings once, and records the
+    ///     ring in `rang`.
+    ///   - `Fixed`: sets `fired`.
     ///
     /// Returns `true` if the caller should dispatch this bell's
     /// playback now. `rng()` is only called on an `Interval` fire;
     /// `Fixed` and the no-fire branches never touch it.
     pub fn tick(&mut self, elapsed_secs: u64, rng: &mut impl FnMut() -> f64) -> bool {
+        self.advance(elapsed_secs, rng, true)
+    }
+
+    /// `tick` for rings nobody hears (the end bell stands for them):
+    /// the schedule moves on, `rang` stays as it was.
+    pub fn skip_due(&mut self, elapsed_secs: u64, rng: &mut impl FnMut() -> f64) {
+        self.advance(elapsed_secs, rng, false);
+    }
+
+    fn advance(&mut self, elapsed_secs: u64, rng: &mut impl FnMut() -> f64, heard: bool) -> bool {
         match &mut self.schedule {
             BellSchedule::Interval {
                 base_secs,
                 jitter_secs,
                 step_secs,
                 gaps,
+                planned_secs,
                 next_ring_secs,
+                end_secs,
+                rang,
             } => {
-                if elapsed_secs >= *next_ring_secs {
-                    // After a time jump: ring once, then continue from
-                    // the first due time still ahead.
-                    while elapsed_secs >= *next_ring_secs {
-                        let r = rng();
-                        let gap = interval_gap_secs(*base_secs, *step_secs, *gaps);
-                        *gaps = gaps.saturating_add(1);
-                        *next_ring_secs =
-                            next_interval_ring_secs(*next_ring_secs, gap, *jitter_secs, r);
-                    }
-                    true
-                } else {
-                    false
+                if elapsed_secs < *next_ring_secs {
+                    return false;
                 }
+                // After a time jump: ring once, for the latest due time,
+                // then continue from the first one still ahead.
+                let mut index = *gaps - 1;
+                while elapsed_secs >= *next_ring_secs {
+                    index = *gaps - 1;
+                    let r = rng();
+                    *planned_secs = next_planned_secs(*planned_secs, *base_secs, *step_secs, *gaps);
+                    *gaps = gaps.saturating_add(1);
+                    *next_ring_secs = grid_ring_secs(*planned_secs, *jitter_secs, *end_secs, r);
+                }
+                if heard {
+                    rang.push((index, elapsed_secs));
+                }
+                true
             }
             BellSchedule::Fixed { target_secs, fired } => {
-                if !*fired && elapsed_secs >= *target_secs {
-                    *fired = true;
+                if fired.is_none() && elapsed_secs >= *target_secs {
+                    *fired = Some(heard);
                     true
                 } else {
                     false
@@ -887,26 +951,18 @@ pub(crate) fn build_active_bells(
                 let (r, next) = xorshift64(state);
                 state = next;
                 let jitter_secs = ringing_jitter(row.time, row.jitter).secs;
-                let next_ring =
-                    next_interval_ring_secs(0, u64::from(row.time.secs), jitter_secs, r);
-                BellSchedule::Interval {
-                    base_secs: row.time.secs,
-                    jitter_secs,
-                    step_secs: row.step.secs,
-                    gaps: 1,
-                    next_ring_secs: next_ring,
-                }
+                BellSchedule::every(row.time.secs, jitter_secs, row.step.secs, total_target_secs, r)
             }
             IntervalBellKind::FixedFromStart => {
                 match fixed_from_start_target_secs(row.time.secs, total_target_secs) {
-                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: None },
                     None => continue,
                 }
             }
             IntervalBellKind::FixedFromEnd => {
                 let Some(total) = total_target_secs else { continue; };
                 match fixed_from_end_target_secs(row.time.secs, total) {
-                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: None },
                     None => continue,
                 }
             }
@@ -956,24 +1012,22 @@ mod tests {
             sound_uuid: "sound-uuid".into(),
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
-            schedule: BellSchedule::Fixed { target_secs, fired: false },
+            schedule: BellSchedule::Fixed { target_secs, fired: None },
             volume: Default::default(),
         }
     }
 
     /// An interval bell every `base_min` minutes ± `jitter_pct` % of it.
     fn interval_bell(base_min: u32, jitter_pct: u32, next_ring_secs: u64) -> ActiveBell {
+        let mut schedule = BellSchedule::every(base_min * 60, base_min * 60 * jitter_pct / 100, 0, None, 0.5);
+        if let BellSchedule::Interval { next_ring_secs: next, .. } = &mut schedule {
+            *next = next_ring_secs;
+        }
         ActiveBell {
             sound_uuid: "sound-uuid".into(),
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
-            schedule: BellSchedule::Interval {
-                base_secs: base_min * 60,
-                jitter_secs: base_min * 60 * jitter_pct / 100,
-                step_secs: 0,
-                gaps: 1,
-                next_ring_secs,
-            },
+            schedule,
             volume: Default::default(),
         }
     }
@@ -1002,7 +1056,7 @@ mod tests {
         let mut bell = fixed_bell(60);
         let mut rng = CountedRng::new(0.5);
         assert!(!bell.tick(59, &mut rng.closure()));
-        assert!(matches!(bell.schedule, BellSchedule::Fixed { fired: false, .. }));
+        assert!(matches!(bell.schedule, BellSchedule::Fixed { fired: None, .. }));
         assert_eq!(rng.calls, 0);
     }
 
@@ -1011,7 +1065,7 @@ mod tests {
         let mut bell = fixed_bell(60);
         let mut rng = CountedRng::new(0.5);
         assert!(bell.tick(60, &mut rng.closure()));
-        assert!(matches!(bell.schedule, BellSchedule::Fixed { fired: true, .. }));
+        assert!(matches!(bell.schedule, BellSchedule::Fixed { fired: Some(true), .. }));
         assert_eq!(rng.calls, 0, "fixed bells must not consume rng draws");
     }
 
@@ -1873,14 +1927,62 @@ mod tests {
             BellTime::new(1, TimeUnit::Min),
             BellTime::ZERO,
         );
-        for (draw, gap) in [(0.0, 360), (0.999_999, 480)] {
+        for (draw, second) in [(0.0, 780), (0.999_999, 900)] {
             let (mut bells, _) = build_active_bells(std::slice::from_ref(&row), None, DisplayMode::Stopwatch, 7);
             let first = next_ring(&bells[0]);
             assert!((360..=480).contains(&first), "first ring at {first}");
             let mut rng = CountedRng::new(draw);
             assert!(bells[0].tick(first, &mut rng.closure()));
-            assert_eq!(next_ring(&bells[0]) - first, gap, "draw {draw}");
+            assert_eq!(next_ring(&bells[0]), second, "draw {draw}");
         }
+    }
+
+    #[test]
+    fn each_ring_keeps_to_its_own_planned_time() {
+        // Every 5 min ±1 min, first ring drawn late at 5:59.
+        let mut bell = interval_bell(5, 20, 359);
+        for (draw, second) in [(0.0, 540), (0.999_999, 660)] {
+            let mut late = bell.clone();
+            let mut rng = CountedRng::new(draw);
+            assert!(late.tick(359, &mut rng.closure()));
+            assert_eq!(next_ring(&late), second, "draw {draw}");
+        }
+        let mut rng = CountedRng::new(0.5);
+        assert!(bell.tick(359, &mut rng.closure()));
+        assert!(bell.tick(600, &mut rng.closure()));
+        assert_eq!(next_ring(&bell), 900, "the third is planned at 15:00");
+    }
+
+    /// A bell with no time (an old row or event with no minutes)
+    /// rings once a second instead of hanging the tick.
+    #[test]
+    fn a_bell_with_no_time_still_moves_on() {
+        let mut bell = interval_bell(0, 0, 1);
+        let mut rng = CountedRng::new(0.5);
+        assert!(bell.tick(1, &mut rng.closure()));
+        assert_eq!(next_ring(&bell), 2);
+    }
+
+    #[test]
+    fn a_ring_that_can_come_before_the_end_does() {
+        let rings = |jitter, draw| {
+            let mut bell = interval_bell(5, 0, 0);
+            bell.schedule = BellSchedule::every(300, jitter, 0, Some(1800), draw);
+            let mut rng = CountedRng::new(draw);
+            let mut at = vec![next_ring(&bell)];
+            while at.len() < 7 {
+                let due = next_ring(&bell);
+                assert!(bell.tick(due, &mut rng.closure()));
+                at.push(next_ring(&bell));
+            }
+            at
+        };
+        // Every 5 min ±1 min in 30 min: the sixth, planned at 30:00,
+        // lands between 29:00 and 29:59; the seventh is past the end.
+        assert_eq!(rings(60, 0.0), [240, 540, 840, 1140, 1440, 1740, 2040]);
+        assert_eq!(rings(60, 0.999_999), [360, 660, 960, 1260, 1560, 1799, 2160]);
+        // Without jitter: 30:00 is the end, not a ring before it.
+        assert_eq!(rings(0, 0.5), [300, 600, 900, 1200, 1500, 1800, 2100]);
     }
 
     #[test]
@@ -1891,12 +1993,13 @@ mod tests {
             BellTime::new(45, TimeUnit::Sec),
             BellTime::ZERO,
         );
-        for (draw, gap) in [(0.0, 30), (0.999_999, 90)] {
+        for (draw, second) in [(0.0, 90), (0.999_999, 150)] {
             let (mut bells, _) = build_active_bells(std::slice::from_ref(&row), None, DisplayMode::Stopwatch, 7);
             let first = next_ring(&bells[0]);
+            assert!((30..=90).contains(&first), "first ring at {first}");
             let mut rng = CountedRng::new(draw);
             assert!(bells[0].tick(first, &mut rng.closure()));
-            assert_eq!(next_ring(&bells[0]) - first, gap, "draw {draw}");
+            assert_eq!(next_ring(&bells[0]), second, "draw {draw}");
         }
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(
@@ -1978,41 +2081,41 @@ mod tests {
         );
     }
 
-    // ── next_interval_ring_secs ────────────────────────────────────
+    // ── grid_ring_secs ────────────────────────────────────────────
 
     #[test]
-    fn next_interval_ring_with_zero_jitter_is_exactly_base_minutes() {
-        // No jitter → next ring is last_ring + the gap regardless
+    fn grid_ring_with_zero_jitter_is_exactly_base_minutes() {
+        // No jitter → the ring is the planned time regardless
         // of random_unit. random_unit gets ignored entirely.
-        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.0), 300);
-        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.5), 300);
-        assert_eq!(next_interval_ring_secs(0, 300, 0, 0.999), 300);
-        assert_eq!(next_interval_ring_secs(300, 300, 0, 0.5), 600);
+        assert_eq!(grid_ring_secs(300, 0, None, 0.0), 300);
+        assert_eq!(grid_ring_secs(300, 0, None, 0.5), 300);
+        assert_eq!(grid_ring_secs(300, 0, None, 0.999), 300);
+        assert_eq!(grid_ring_secs(600, 0, None, 0.5), 600);
     }
 
     #[test]
-    fn next_interval_ring_with_random_unit_at_centre_is_exactly_base() {
-        assert_eq!(next_interval_ring_secs(0, 540, 162, 0.5), 540);
-        assert_eq!(next_interval_ring_secs(540, 540, 162, 0.5), 1080);
+    fn grid_ring_with_random_unit_at_centre_is_exactly_base() {
+        assert_eq!(grid_ring_secs(540, 162, None, 0.5), 540);
+        assert_eq!(grid_ring_secs(1080, 162, None, 0.5), 1080);
     }
 
     #[test]
-    fn next_interval_ring_random_unit_at_zero_lands_at_lower_bound() {
+    fn grid_ring_random_unit_at_zero_lands_at_lower_bound() {
         // random_unit=0.0 → -span offset from base. For base=9 ±30%,
         // span = 540 * 0.30 = 162, so 540 - 162 = 378.
-        assert_eq!(next_interval_ring_secs(0, 540, 162, 0.0), 378);
+        assert_eq!(grid_ring_secs(540, 162, None, 0.0), 378);
     }
 
     #[test]
-    fn next_interval_ring_random_unit_just_below_one_lands_near_upper_bound() {
+    fn grid_ring_random_unit_just_below_one_lands_near_upper_bound() {
         // random_unit just below 1.0 → just below +span. For base=9 ±30%,
         // upper bound is 540 + 162 = 702.
-        let v = next_interval_ring_secs(0, 540, 162, 0.9999);
+        let v = grid_ring_secs(540, 162, None, 0.9999);
         assert!((700..=702).contains(&v), "got {v}");
     }
 
     #[test]
-    fn next_interval_ring_stays_within_jitter_window_for_every_unit() {
+    fn grid_ring_stays_within_jitter_window_for_every_unit() {
         let base = 9 * 60u64;
         let jitter_pct = 30u32;
         let span = base as f64 * f64::from(jitter_pct) / 100.0;
@@ -2020,18 +2123,18 @@ mod tests {
         let hi = (base as f64 + span).round() as u64;
         for i in 0..=10 {
             let u = f64::from(i) / 10.0;
-            let v = next_interval_ring_secs(0, base, 162, u);
+            let v = grid_ring_secs(base, 162, None, u);
             assert!(v >= lo && v <= hi,
                 "u={u} produced {v} outside [{lo}, {hi}]");
         }
     }
 
     #[test]
-    fn next_interval_ring_zero_minutes_clamps_to_one_second() {
+    fn grid_ring_zero_minutes_clamps_to_one_second() {
         // base=0 doesn't make sense (UI prevents it via SpinRow min),
         // but the helper still has to return a usable u64 — clamping
         // to 1 second is the harmless choice.
-        assert_eq!(next_interval_ring_secs(0, 0, 0, 0.5), 1);
+        assert_eq!(grid_ring_secs(0, 0, None, 0.5), 1);
     }
 
     // ── fixed_from_start_target_secs ──────────────────────────────

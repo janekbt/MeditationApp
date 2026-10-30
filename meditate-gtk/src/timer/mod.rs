@@ -45,6 +45,11 @@ impl TimerView {
         self.imp().current_display_secs()
     }
 
+    /// The ring and bell counters around the running time, right now.
+    pub fn bell_ring(&self) -> meditate_core::session::BellRing {
+        self.imp().bell_ring()
+    }
+
     /// Store a reference to the running-page time label so tick updates it.
     pub fn set_running_label(&self, label: gtk::Label) {
         self.imp().set_running_label(label);

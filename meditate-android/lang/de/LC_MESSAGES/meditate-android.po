@@ -711,6 +711,9 @@ msgstr "Fortsetzen"
 msgid "+ {} and Save"
 msgstr "+ {} und speichern"
 
+msgid "{} of {}"
+msgstr "{} von {}"
+
 msgid "Stopwatch"
 msgstr "Stoppuhr"
 

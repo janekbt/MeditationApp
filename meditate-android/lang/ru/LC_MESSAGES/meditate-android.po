@@ -712,6 +712,9 @@ msgstr[2] "{n} сессий до {0}-й"
 msgid "+ {} and Save"
 msgstr "+ {} и сохранить"
 
+msgid "{} of {}"
+msgstr "{} из {}"
+
 msgid "Vibration"
 msgstr "Вибрация"
 

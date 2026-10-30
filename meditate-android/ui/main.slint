@@ -353,6 +353,20 @@ export struct LocalRow {
 // One row in the Interval Bells library (B-5c). `title` is the
 // rendered `meditate_core::bells::bell_title_key` summary
 // ("Every 120 s +/-1 min, +5 s" / "At 10 min" / "5 min before end");
+// One bell on the running ring, `at` a part of the planned length
+// clockwise from the top (core's `Bead`).
+export struct RingBead {
+    at: float,
+    large: bool,
+    rung: bool,
+}
+
+// A repeating bell's counter; `total` -1 shows the plain number.
+export struct BellCount {
+    rung: int,
+    total: int,
+}
+
 // `sound` is the resolved bell-sound name. `uuid` carries the
 // row identity for the edit/delete slices (B-5c-2/3); the
 // list itself is read-only here. Mirrors GTK's `build_bell_row`
@@ -483,6 +497,93 @@ component WrapButton inherits Rectangle {
             font-size: 14px;
             font-weight: 500;
             color: root.outline ? root.primary : root.on-primary;
+        }
+    }
+}
+
+// The bell ring round the running time (GTK: `draw_bell_ring`): a faint
+// track, the filled part from the top clockwise, a bead per bell, the
+// start point and, while preparing, a small ring round it.
+component BellRingView inherits Rectangle {
+    in property <float> filled;
+    in property <float> prep: -1;
+    in property <bool> start-filled;
+    in property <[RingBead]> beads;
+    property <color> accent: MaterialPalette.schemes.dark.primary;
+    // Room outside the track for the preparation's ring.
+    property <length> inset: 22px;
+    property <length> r: self.width / 2 - self.inset;
+
+    Rectangle {
+        x: root.inset - 2px;
+        y: root.inset - 2px;
+        width: 2 * root.r + 4px;
+        height: self.width;
+        border-width: 4px;
+        border-radius: self.width / 2;
+        border-color: root.accent.with-alpha(0.25);
+    }
+    if root.filled > 0 : Path {
+        // A Path fits its viewbox into its size less the stroke width.
+        property <float> rr: 100 * root.r / (root.width - 4px);
+        property <float> to: min(root.filled, 0.9999);
+        width: root.width;
+        height: root.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: root.accent;
+        stroke-width: 4px;
+        stroke-line-cap: round;
+        MoveTo { x: 50; y: 50 - parent.rr; }
+        ArcTo {
+            radius-x: parent.rr;
+            radius-y: parent.rr;
+            x: 50 + parent.rr * sin(parent.to * 360deg);
+            y: 50 - parent.rr * cos(parent.to * 360deg);
+            sweep: true;
+            large-arc: parent.to > 0.5;
+        }
+    }
+    for bead in root.beads : Rectangle {
+        property <length> size: bead.large ? 14px : 10px;
+        x: root.width / 2 + root.r * sin(bead.at * 360deg) - self.size / 2;
+        y: root.height / 2 - root.r * cos(bead.at * 360deg) - self.size / 2;
+        width: self.size;
+        height: self.size;
+        border-radius: self.size / 2;
+        background: bead.rung ? root.accent : MaterialPalette.schemes.dark.background;
+        border-width: bead.rung ? 0px : 2px;
+        border-color: MaterialPalette.schemes.dark.outline;
+    }
+    Rectangle {
+        x: root.width / 2 - 9px;
+        y: root.inset - 9px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: root.start-filled ? root.accent : MaterialPalette.schemes.dark.background;
+        border-width: root.start-filled ? 0px : 2px;
+        border-color: MaterialPalette.schemes.dark.outline;
+    }
+    if root.prep >= 0 : Path {
+        property <float> to: min(root.prep, 0.9999);
+        property <float> pr: 18 * 40 / 38;
+        x: root.width / 2 - 20px;
+        y: root.inset - 20px;
+        width: 40px;
+        height: 40px;
+        viewbox-width: 40;
+        viewbox-height: 40;
+        stroke: root.accent;
+        stroke-width: 2px;
+        MoveTo { x: 20; y: 20 - parent.pr; }
+        ArcTo {
+            radius-x: parent.pr;
+            radius-y: parent.pr;
+            x: 20 + parent.pr * sin(parent.to * 360deg);
+            y: 20 - parent.pr * cos(parent.to * 360deg);
+            sweep: true;
+            large-arc: parent.to > 0.5;
         }
     }
 }
@@ -2615,6 +2716,15 @@ export component MainWindow inherits Window {
     // flips the Running overlay's layout from Timer hero to
     // the square + dot visualization.
     in property <bool> bb-running-active: false;
+    // The bell ring round the Timer/Guided time (core's `BellRing`);
+    // `ring-on` false for the stopwatch, `ring-prep` -1 outside the
+    // preparation.
+    in property <bool> ring-on: false;
+    in property <float> ring-filled: 0;
+    in property <float> ring-prep: -1;
+    in property <bool> ring-start-filled: false;
+    in property <[RingBead]> ring-beads: [];
+    in property <[BellCount]> bell-counts: [];
     // "Box Breathing" eyebrow counter — "M:SS / M:SS" for
     // countdown shapes, just "M:SS" for stopwatch (see
     // `meditate_core::format::box_breath_counter_label`).
@@ -4313,12 +4423,60 @@ export component MainWindow inherits Window {
                 running-block := VerticalLayout {
                     spacing: running-stack.spacing;
 
-                    // Timer mode hero — digit countdown.
-                    if !root.bb-running-active : Text {
+                    // Timer mode hero — digit countdown, inside the bell
+                    // ring when the session has a known length.
+                    if !root.bb-running-active && !root.ring-on : Text {
                         text: root.remaining-text;
                         font-size: root.height < 560px ? 56px : 80px;
                         horizontal-alignment: center;
                         color: #ffffff;
+                    }
+                    if !root.bb-running-active && root.ring-on : HorizontalLayout {
+                        alignment: center;
+                        BellRingView {
+                            width: min(root.height < 560px ? 220px : 320px, running-stack.width - 48px);
+                            height: self.width;
+                            filled: root.ring-filled;
+                            prep: root.ring-prep;
+                            start-filled: root.ring-start-filled;
+                            beads: root.ring-beads;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: root.remaining-text;
+                                // Hours don't fit inside the ring at the full size.
+                                font-size: root.remaining-text.character-count > 5
+                                    ? (root.height < 560px ? 40px : 56px)
+                                    : (root.height < 560px ? 48px : 72px);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                color: #ffffff;
+                            }
+                        }
+                    }
+                    if !root.bb-running-active && root.bell-counts.length > 0 : HorizontalLayout {
+                        alignment: center;
+                        spacing: 20px;
+                        for count in root.bell-counts : HorizontalLayout {
+                            spacing: 6px;
+                            alignment: center;
+                            // The dot centred on the text's line.
+                            Rectangle {
+                                width: 8px;
+                                Rectangle {
+                                    y: parent.height / 2 - 4px;
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: MaterialPalette.schemes.dark.primary;
+                                }
+                            }
+                            Text {
+                                text: count.total >= 0 ? @tr("{} of {}", count.rung, count.total) : count.rung;
+                                font-size: 15px;
+                                color: #ffffffb3;
+                            }
+                        }
                     }
 
                     // Box Breath visualisation — mirrors GTK's

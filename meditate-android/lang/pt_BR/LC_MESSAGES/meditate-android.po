@@ -705,6 +705,9 @@ msgstr[1] "{n} sessões até a {0}ª"
 msgid "+ {} and Save"
 msgstr "+ {} e salvar"
 
+msgid "{} of {}"
+msgstr "{} de {}"
+
 msgid "Vibration"
 msgstr "Vibração"
 

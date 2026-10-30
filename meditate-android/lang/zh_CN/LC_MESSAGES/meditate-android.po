@@ -698,6 +698,9 @@ msgstr[0] "距第 {0} 个会话还差 {n} 个"
 msgid "+ {} and Save"
 msgstr "+ {} 并保存"
 
+msgid "{} of {}"
+msgstr "{}/{}"
+
 msgid "Vibration"
 msgstr "振动"
 

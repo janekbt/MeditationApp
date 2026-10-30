@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 15:09+0100\n"
+"POT-Creation-Date: 2026-10-30 17:53+0100\n"
 "PO-Revision-Date: 2026-04-20 18:22+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Italian\n"
@@ -751,7 +751,7 @@ msgstr "Etichetta"
 msgid "Tag this session"
 msgstr "Etichetta questa sessione"
 
-#: src/log/imp.rs:1042 src/window/imp.rs:429
+#: src/log/imp.rs:1042 src/window/imp.rs:488
 msgid "Note (optional)"
 msgstr "Nota (facoltativa)"
 
@@ -1549,7 +1549,7 @@ msgstr "Scartare la sessione?"
 msgid "Your note will be lost."
 msgstr "La nota verrà persa."
 
-#: src/timer/imp.rs:2625 src/window/imp.rs:417
+#: src/timer/imp.rs:2625 src/window/imp.rs:476
 msgid "Discard"
 msgstr "Scarta"
 
@@ -1635,49 +1635,48 @@ msgstr "Imposta"
 msgid "Off"
 msgstr "Disattivata"
 
-#. / Subtitle text for the "Manage Bells" row reflecting how many of the
 #. / "+ MM:SS and Save" running-page button label. `{time}` is the
 #. / placeholder for the formatted overtime duration; translators can
 #. / position it anywhere in the localised string. Core returns the
 #. / formatted MM:SS via `format_time`; the shell owns word order via
 #. / this gettext template.
-#: src/timer/imp.rs:4256
+#: src/timer/imp.rs:4261
 #, rust-format
 msgid "+ {time} and Save"
 msgstr "+ {time} e salva"
 
-#: src/timer/imp.rs:4266
+#: src/timer/imp.rs:4271
 msgid "None enabled"
 msgstr "Nessuna attiva"
 
-#: src/timer/imp.rs:4267 src/timer/imp.rs:4268
+#: src/timer/imp.rs:4272 src/timer/imp.rs:4273
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} attiva"
 msgstr[1] "{n} attive"
 
-#: src/timer/imp.rs:4292 data/ui/timer_view.blp:607
+#: src/timer/imp.rs:4297 data/ui/timer_view.blp:607
 msgid "Inhale"
 msgstr "Inspira"
 
-#: src/timer/imp.rs:4293
+#: src/timer/imp.rs:4298
 msgid "Hold (full)"
 msgstr "Trattieni (pieno)"
 
-#: src/timer/imp.rs:4294 data/ui/timer_view.blp:703
+#: src/timer/imp.rs:4299 data/ui/timer_view.blp:703
 msgid "Exhale"
 msgstr "Espira"
 
-#: src/timer/imp.rs:4295
+#: src/timer/imp.rs:4300
 msgid "Hold (empty)"
 msgstr "Trattieni (vuoto)"
 
-#: src/timer/imp.rs:4357
+#: src/timer/imp.rs:4362
 msgid "Decrease"
 msgstr "Diminuisci"
 
-#: src/timer/imp.rs:4368
+#: src/timer/imp.rs:4373
 msgid "Increase"
 msgstr "Aumenta"
 
@@ -1756,81 +1755,86 @@ msgstr "Volume"
 msgid "Meditating"
 msgstr "Meditazione in corso"
 
-#: src/window/imp.rs:220 src/window/imp.rs:407
+#: src/window/imp.rs:237
+#, rust-format
+msgid "{rung} of {total}"
+msgstr "{rung} di {total}"
+
+#: src/window/imp.rs:279 src/window/imp.rs:466
 msgid "Box Breathing"
 msgstr "Respirazione quadrata"
 
-#: src/window/imp.rs:383
+#: src/window/imp.rs:442
 msgid "Breathe in"
 msgstr "Inspira"
 
-#: src/window/imp.rs:384
+#: src/window/imp.rs:443
 msgid "Hold"
 msgstr "Trattieni"
 
-#: src/window/imp.rs:385
+#: src/window/imp.rs:444
 msgid "Breathe out"
 msgstr "Espira"
 
-#: src/window/imp.rs:661
+#: src/window/imp.rs:728
 msgid "Syncing with Nextcloud…"
 msgstr "Sincronizzazione con Nextcloud…"
 
-#: src/window/imp.rs:671
+#: src/window/imp.rs:738
 msgid "Last sync failed, click to retry"
 msgstr "Ultima sincronizzazione non riuscita, fai clic per riprovare"
 
-#: src/window/imp.rs:683
+#: src/window/imp.rs:750
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Alcuni file non sono stati caricati, fai clic per riprovare"
 
-#: src/window/imp.rs:693
+#: src/window/imp.rs:760
 msgid "No password saved, click to enter it"
 msgstr "Nessuna password salvata, fai clic per inserirla"
 
-#: src/window/imp.rs:708
+#: src/window/imp.rs:775
 msgid "Sync configured (waiting for first run)"
 msgstr "Sincronizzazione configurata (in attesa della prima esecuzione)"
 
-#: src/window/imp.rs:737
+#: src/window/imp.rs:804
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: troppo grande per la sincronizzazione"
 
-#: src/window/imp.rs:738
+#: src/window/imp.rs:805
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: troppo grande per il server"
 
-#: src/window/imp.rs:739
+#: src/window/imp.rs:806
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: il server è pieno"
 
-#: src/window/imp.rs:741
+#: src/window/imp.rs:808
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: rifiutato dal server ({status})"
 
-#: src/window/imp.rs:752
+#: src/window/imp.rs:819
 msgid "Synced just now"
 msgstr "Sincronizzato adesso"
 
-#: src/window/imp.rs:754
+#: src/window/imp.rs:821
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "Sincronizzato 1 minuto fa"
 msgstr[1] "Sincronizzato {n} minuti fa"
 
-#: src/window/imp.rs:757
+#: src/window/imp.rs:824
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "Sincronizzato 1 ora fa"
 msgstr[1] "Sincronizzato {n} ore fa"
 
-#: src/window/imp.rs:760
+#: src/window/imp.rs:827
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"

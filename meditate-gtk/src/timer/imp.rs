@@ -4013,6 +4013,12 @@ impl TimerView {
             .map_or(0, |s| s.display_secs(now))
     }
 
+    /// The ring and bell counters around the running time, right now.
+    pub fn bell_ring(&self) -> meditate_core::session::BellRing {
+        let now = self.elapsed_since_start();
+        self.core_session.borrow().as_ref().map(|s| s.bell_ring(now)).unwrap_or_default()
+    }
+
     pub fn set_running_label(&self, label: gtk::Label) {
         *self.running_label.borrow_mut() = Some(label);
     }

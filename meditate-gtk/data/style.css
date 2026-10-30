@@ -331,6 +331,11 @@ button.preset-chip.preset-chip-active:hover {
     color: @accent_fg_color;
 }
 
+/* The running time with hours, inside the bell ring. */
+.timer-setup-display.in-ring-long {
+    font-size: 3.5rem;
+}
+
 /* Black background for the running timer / stopwatch / boxbreath view.
    Meditation typically happens in low light; a bright content area
    stabs the eye while the user just wants to watch a clock. The class

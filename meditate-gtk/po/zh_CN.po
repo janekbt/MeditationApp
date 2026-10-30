@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 15:09+0100\n"
+"POT-Creation-Date: 2026-10-30 17:53+0100\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -728,7 +728,7 @@ msgstr "标签"
 msgid "Tag this session"
 msgstr "为此会话加标签"
 
-#: src/log/imp.rs:1042 src/window/imp.rs:429
+#: src/log/imp.rs:1042 src/window/imp.rs:488
 msgid "Note (optional)"
 msgstr "笔记（可选）"
 
@@ -1505,7 +1505,7 @@ msgstr "放弃会话？"
 msgid "Your note will be lost."
 msgstr "您的笔记将会丢失。"
 
-#: src/timer/imp.rs:2625 src/window/imp.rs:417
+#: src/timer/imp.rs:2625 src/window/imp.rs:476
 msgid "Discard"
 msgstr "放弃"
 
@@ -1588,48 +1588,47 @@ msgstr "设置"
 msgid "Off"
 msgstr "关闭"
 
-#. / Subtitle text for the "Manage Bells" row reflecting how many of the
 #. / "+ MM:SS and Save" running-page button label. `{time}` is the
 #. / placeholder for the formatted overtime duration; translators can
 #. / position it anywhere in the localised string. Core returns the
 #. / formatted MM:SS via `format_time`; the shell owns word order via
 #. / this gettext template.
-#: src/timer/imp.rs:4256
+#: src/timer/imp.rs:4261
 #, rust-format
 msgid "+ {time} and Save"
 msgstr "+ {time} 并保存"
 
-#: src/timer/imp.rs:4266
+#: src/timer/imp.rs:4271
 msgid "None enabled"
 msgstr "未启用"
 
-#: src/timer/imp.rs:4267 src/timer/imp.rs:4268
+#: src/timer/imp.rs:4272 src/timer/imp.rs:4273
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "已启用 {n} 个"
 
-#: src/timer/imp.rs:4292 data/ui/timer_view.blp:607
+#: src/timer/imp.rs:4297 data/ui/timer_view.blp:607
 msgid "Inhale"
 msgstr "吸气"
 
-#: src/timer/imp.rs:4293
+#: src/timer/imp.rs:4298
 msgid "Hold (full)"
 msgstr "屏息（吸气后）"
 
-#: src/timer/imp.rs:4294 data/ui/timer_view.blp:703
+#: src/timer/imp.rs:4299 data/ui/timer_view.blp:703
 msgid "Exhale"
 msgstr "呼气"
 
-#: src/timer/imp.rs:4295
+#: src/timer/imp.rs:4300
 msgid "Hold (empty)"
 msgstr "屏息（呼气后）"
 
-#: src/timer/imp.rs:4357
+#: src/timer/imp.rs:4362
 msgid "Decrease"
 msgstr "减少"
 
-#: src/timer/imp.rs:4368
+#: src/timer/imp.rs:4373
 msgid "Increase"
 msgstr "增加"
 
@@ -1704,79 +1703,84 @@ msgstr "音量"
 msgid "Meditating"
 msgstr "正在冥想"
 
-#: src/window/imp.rs:220 src/window/imp.rs:407
+#: src/window/imp.rs:237
+#, rust-format
+msgid "{rung} of {total}"
+msgstr "{rung}/{total}"
+
+#: src/window/imp.rs:279 src/window/imp.rs:466
 msgid "Box Breathing"
 msgstr "箱式呼吸"
 
-#: src/window/imp.rs:383
+#: src/window/imp.rs:442
 msgid "Breathe in"
 msgstr "吸气"
 
-#: src/window/imp.rs:384
+#: src/window/imp.rs:443
 msgid "Hold"
 msgstr "屏息"
 
-#: src/window/imp.rs:385
+#: src/window/imp.rs:444
 msgid "Breathe out"
 msgstr "呼气"
 
-#: src/window/imp.rs:661
+#: src/window/imp.rs:728
 msgid "Syncing with Nextcloud…"
 msgstr "正在与 Nextcloud 同步…"
 
-#: src/window/imp.rs:671
+#: src/window/imp.rs:738
 msgid "Last sync failed, click to retry"
 msgstr "上次同步失败，点击重试"
 
-#: src/window/imp.rs:683
+#: src/window/imp.rs:750
 msgid "Some files weren't uploaded, click to retry"
 msgstr "部分文件未上传，点击重试"
 
-#: src/window/imp.rs:693
+#: src/window/imp.rs:760
 msgid "No password saved, click to enter it"
 msgstr "未保存密码，点击输入"
 
-#: src/window/imp.rs:708
+#: src/window/imp.rs:775
 msgid "Sync configured (waiting for first run)"
 msgstr "同步已配置（等待首次运行）"
 
-#: src/window/imp.rs:737
+#: src/window/imp.rs:804
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}：太大，无法同步"
 
-#: src/window/imp.rs:738
+#: src/window/imp.rs:805
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}：对服务器来说太大"
 
-#: src/window/imp.rs:739
+#: src/window/imp.rs:806
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}：服务器空间已满"
 
-#: src/window/imp.rs:741
+#: src/window/imp.rs:808
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}：被服务器拒绝（{status}）"
 
-#: src/window/imp.rs:752
+#: src/window/imp.rs:819
 msgid "Synced just now"
 msgstr "刚刚同步"
 
-#: src/window/imp.rs:754
+#: src/window/imp.rs:821
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "{n} 分钟前已同步"
 
-#: src/window/imp.rs:757
+#: src/window/imp.rs:824
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "{n} 小时前已同步"
 
-#: src/window/imp.rs:760
+#: src/window/imp.rs:827
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"

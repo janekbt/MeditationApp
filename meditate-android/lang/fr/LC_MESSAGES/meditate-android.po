@@ -705,6 +705,9 @@ msgstr[1] "{n} séances avant la {0}ᵉ"
 msgid "+ {} and Save"
 msgstr "+ {} et enregistrer"
 
+msgid "{} of {}"
+msgstr "{} sur {}"
+
 msgid "Vibration"
 msgstr "Vibration"
 

@@ -364,7 +364,8 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
   `"fixed_from_end"`. Missing means `interval`.
 - `secs`: fire cadence (interval) or offset (fixed-from-*), in
   seconds. `jitter_secs`: an interval ring lands up to this many
-  seconds early or late (capped at half of `secs` when it rings).
+  seconds before or after its planned time (capped at half of `secs`
+  when it rings).
   `step_secs`: each interval gap is the previous one plus this.
   Each has a `*_unit` (`secs_unit`, `jitter_unit`, `step_unit`),
   `"s"` or `"min"`, the unit it was set in and shows in; in

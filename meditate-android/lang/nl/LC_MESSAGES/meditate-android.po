@@ -705,6 +705,9 @@ msgstr[1] "Nog {n} sessies tot je {0}e"
 msgid "+ {} and Save"
 msgstr "+ {} en opslaan"
 
+msgid "{} of {}"
+msgstr "{} van {}"
+
 msgid "Vibration"
 msgstr "Trillen"
 
