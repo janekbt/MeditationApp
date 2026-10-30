@@ -5433,6 +5433,62 @@ mod tests {
         assert!(own.contains("    background: MaterialPalette.surface;"), "{own}");
     }
 
+    fn res(path: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("android/app/src/main/res").join(path)).unwrap()
+    }
+
+    #[test]
+    fn the_lotus_parts_its_petals_with_gaps() {
+        // A coloured line between the petals shows on every background
+        // but its own; the themed icon reads only the shape and loses it.
+        let lotus = res("drawable/ic_launcher_foreground.xml");
+        assert_eq!(lotus.matches("android:fillColor").count(), 5, "{lotus}");
+        // The base arc is the one stroke; any other would be a line on the petals.
+        assert_eq!(lotus.matches("android:strokeColor").count(), 1, "{lotus}");
+    }
+
+    #[test]
+    fn the_media_buttons_show_the_apps_own_symbols() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let body = kotlin_fn(&kt, "private fun buttonIcon(");
+        assert!(!body.contains("android.R."), "a system symbol: {body}");
+        for (code, drawable, svg) in [
+            ("MEDIA_PAUSE", "ic_pause", "ui/assets/pause.svg"),
+            ("MEDIA_RESUME", "ic_play", "ui/assets/play.svg"),
+            ("MEDIA_SAVE", "ic_check", "material-1.0/ui/icons/check.svg"),
+            ("MEDIA_ADD", "ic_add", "ui/assets/add.svg"),
+            ("MEDIA_DISCARD", "ic_close", "material-1.0/ui/icons/close.svg"),
+        ] {
+            assert!(body.contains(&format!("{code} -> R.drawable.{drawable}")), "{code}: {body}");
+            let svg = std::fs::read_to_string(root.join(svg)).unwrap();
+            let glyph = svg.split(" d=\"").nth(1).unwrap().split('"').next().unwrap();
+            let xml = res(&format!("drawable/{drawable}.xml"));
+            assert!(xml.contains(&format!("android:pathData=\"{glyph}\"")), "{xml}");
+            assert_eq!(xml.matches("<path").count(), 1, "{xml}");
+            // The source's viewBox: same size, and a shift when it doesn't start at 0.
+            let view: Vec<&str> = svg.split("viewBox=\"").nth(1).unwrap().split('"').next().unwrap().split(' ').collect();
+            assert!(xml.contains(&format!("android:viewportWidth=\"{}\"", view[2])), "{xml}");
+            assert!(xml.contains(&format!("android:viewportHeight=\"{}\"", view[3])), "{xml}");
+            if view[1] != "0" {
+                assert!(xml.contains(&format!("android:translateY=\"{}\"", view[1].trim_start_matches('-'))), "{xml}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_widget_app_image_takes_the_system_accent() {
+        let icon = res("drawable/widget_app_icon.xml");
+        assert!(icon.contains("android:startColor=\"@color/widget_icon_top\""), "{icon}");
+        assert!(icon.contains("android:endColor=\"@color/widget_icon_bottom\""), "{icon}");
+        let base = res("values/colors.xml");
+        assert!(base.contains("<color name=\"widget_icon_top\">#5BA4E8</color>"), "{base}");
+        assert!(base.contains("<color name=\"widget_icon_bottom\">#1A60BB</color>"), "{base}");
+        let system = res("values-v31/colors.xml");
+        assert!(system.contains("<color name=\"widget_icon_top\">@android:color/system_accent1_400</color>"), "{system}");
+        assert!(system.contains("<color name=\"widget_icon_bottom\">@android:color/system_accent1_600</color>"), "{system}");
+    }
+
     #[test]
     fn only_a_pick_writes_the_accent() {
         // A start that stored the accent it shows would sync `system`

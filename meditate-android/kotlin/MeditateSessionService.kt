@@ -372,42 +372,25 @@ class MeditateSessionService : Service() {
     }
 
     private fun buttonIcon(code: Int): Int = when (code) {
-        MEDIA_PAUSE -> android.R.drawable.ic_media_pause
-        MEDIA_RESUME -> android.R.drawable.ic_media_play
-        MEDIA_SAVE -> android.R.drawable.ic_menu_save
-        MEDIA_ADD -> android.R.drawable.ic_menu_add
-        else -> android.R.drawable.ic_menu_delete
+        MEDIA_PAUSE -> R.drawable.ic_pause
+        MEDIA_RESUME -> R.drawable.ic_play
+        MEDIA_SAVE -> R.drawable.ic_check
+        MEDIA_ADD -> R.drawable.ic_add
+        MEDIA_DISCARD -> R.drawable.ic_close
+        else -> R.drawable.ic_close // every code is one of the above (media_buttons)
     }
 
     // The app icon's white lotus on the accent colour. Large on
     // purpose: MediaSession scales it down to what the system shows.
     private fun lotusArt(color: Int): Bitmap {
         val size = 1024
-        val lotus = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val art = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(art)
+        canvas.drawColor(color)
         getDrawable(R.drawable.ic_launcher_foreground)?.apply {
             setBounds(0, 0, size, size)
-            draw(Canvas(lotus))
+            draw(canvas)
         }
-        // The icon parts its white petals with a translucent blue
-        // stroke (#64A0E6 at 0.45); here the stroke becomes a gap the
-        // accent shows through. A pixel's red channel tells how much
-        // stroke it holds: 255 is pure white, 100 pure stroke.
-        val px = IntArray(size * size)
-        lotus.getPixels(px, 0, size, 0, 0, size, size)
-        for (i in px.indices) {
-            val a = px[i] ushr 24
-            if (a == 0) continue
-            val stroke = (255 - ((px[i] shr 16) and 0xFF)) / 155f
-            val keep = (1f - stroke / 0.45f).coerceIn(0f, 1f)
-            px[i] = ((a * keep).toInt() shl 24) or 0xFFFFFF
-        }
-        lotus.setPixels(px, 0, size, 0, 0, size, size)
-        val art = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        Canvas(art).apply {
-            drawColor(color)
-            drawBitmap(lotus, 0f, 0f, null)
-        }
-        lotus.recycle()
         return art
     }
 
@@ -516,12 +499,6 @@ class MeditateSessionService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        // `android.R.drawable.ic_media_play` is a system-provided
-        // play-triangle drawable — works without us shipping a
-        // custom resource, and reads as "session in progress" at a
-        // glance in the notification shade. Phase 8's theming pass
-        // can swap to a meditate-branded vector drawable.
-        //
         // MediaStyle + the session token is what lands us in the
         // shade's Media-controls section instead of the regular
         // dismissible list. setOngoing(true) still helps for the

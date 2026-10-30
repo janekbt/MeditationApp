@@ -7,14 +7,14 @@
      (14.32, 11.22) places the lotus bbox centre at ~(54,54) and
      keeps every petal inside the safe zone under any launcher
      mask (group matrix order = translate ∘ scale, pivot 0).
-     Inner <group>s carry the per-petal rotation about the
-     source-space pivot (64,92), drawn back-to-front (outer →
-     inner → centre) so the centre petal stays on top — same
-     ordering as the SVG. Each petal keeps the SVG's translucent
-     blue stroke (#64A0E6 @ 0.45, width 2): that outline is what
-     visually separates the overlapping white petals — without it
-     the flower reads as one uniform white blob. The base arc is
-     kept (slightly translucent white) as in the source. -->
+     The petals are white fills with real gaps between them: each
+     back petal is cut where a petal in front of it lies, grown by
+     1.5 units (outlines computed once and stored as plain points).
+     The gaps show whatever is behind the lotus, so it works on the
+     blue icon, the accent colours and as the themed icon, which
+     reads only the shape. The GTK SVG parts them with a blue
+     stroke instead. The base arc is kept (slightly translucent
+     white) as in the source. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -27,44 +27,25 @@
         android:translateX="14.32"
         android:translateY="11.22">
 
-        <!-- Outer petals -->
-        <group android:rotation="-55" android:pivotX="64" android:pivotY="92">
-            <path android:fillColor="#FFFFFF"
-                android:strokeColor="#64A0E6"
-                android:strokeAlpha="0.45"
-                android:strokeWidth="2"
-                android:pathData="M64,92 C50,84 50,62 64,44 C78,62 78,84 64,92 Z" />
-        </group>
-        <group android:rotation="55" android:pivotX="64" android:pivotY="92">
-            <path android:fillColor="#FFFFFF"
-                android:strokeColor="#64A0E6"
-                android:strokeAlpha="0.45"
-                android:strokeWidth="2"
-                android:pathData="M64,92 C50,84 50,62 64,44 C78,62 78,84 64,92 Z" />
-        </group>
-
-        <!-- Inner side petals -->
-        <group android:rotation="-30" android:pivotX="64" android:pivotY="92">
-            <path android:fillColor="#FFFFFF"
-                android:strokeColor="#64A0E6"
-                android:strokeAlpha="0.45"
-                android:strokeWidth="2"
-                android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
-        </group>
-        <group android:rotation="30" android:pivotX="64" android:pivotY="92">
-            <path android:fillColor="#FFFFFF"
-                android:strokeColor="#64A0E6"
-                android:strokeAlpha="0.45"
-                android:strokeWidth="2"
-                android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
-        </group>
-
-        <!-- Centre petal (frontmost) -->
+        <!-- Outer left petal -->
         <path android:fillColor="#FFFFFF"
-            android:strokeColor="#64A0E6"
-            android:strokeAlpha="0.45"
-            android:strokeWidth="2"
-            android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
+            android:pathData="M32.48,64.62 L30.38,64.47 28.39,64.40 26.38,64.41 24.68,64.47 25.65,67.35 26.89,70.42 28.13,73.05 29.63,75.83 31.10,78.18 32.84,80.63 34.68,82.89 36.62,84.97 38.03,86.31 39.48,87.54 40.96,88.68 42.47,89.71 44.01,90.64 45.57,91.45 47.15,92.15 48.51,92.66 50.12,93.15 51.73,93.51 53.34,93.75 54.72,93.86 56.34,93.87 57.94,93.75 59.54,93.49 60.93,93.15 58.59,92.66 56.35,92.00 54.18,91.17 51.79,90.03 49.78,88.87 47.59,87.36 45.50,85.69 43.52,83.84 41.88,82.08 40.13,79.94 38.51,77.67 37.01,75.26 35.81,73.04 34.72,70.75 33.49,67.69 Z" />
+
+        <!-- Outer right petal -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M67.07,93.15 L68.24,93.44 69.60,93.69 70.97,93.83 72.35,93.88 73.51,93.85 74.89,93.73 76.27,93.51 77.66,93.21 79.03,92.81 80.40,92.33 81.76,91.76 83.10,91.11 84.43,90.38 85.75,89.57 87.04,88.68 88.31,87.71 89.56,86.67 90.78,85.56 91.97,84.37 93.13,83.11 94.25,81.78 95.34,80.39 97.24,77.67 98.21,76.09 99.14,74.46 100.71,71.31 102.11,67.98 102.79,66.09 103.32,64.47 101.28,64.40 99.27,64.41 97.30,64.49 95.52,64.62 94.63,67.34 93.56,70.09 92.35,72.72 90.99,75.25 89.50,77.66 87.87,79.94 86.12,82.08 84.48,83.84 82.50,85.69 80.41,87.36 78.22,88.87 76.21,90.03 73.82,91.17 71.65,92.00 69.42,92.66 Z" />
+
+        <!-- Inner left petal -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M51.47,48.72 L49.40,47.01 47.28,45.44 45.06,43.96 42.75,42.58 40.34,41.31 37.85,40.15 35.27,39.10 33.00,38.31 32.62,40.28 32.26,42.64 32.01,45.00 31.87,47.34 31.83,49.27 31.87,51.58 32.01,53.86 32.24,56.12 32.57,58.34 32.99,60.53 33.50,62.68 34.10,64.78 34.78,66.83 35.54,68.84 36.39,70.79 37.47,72.98 38.66,75.10 39.75,76.83 40.92,78.49 42.15,80.08 43.45,81.58 44.81,83.01 46.24,84.34 47.72,85.58 49.26,86.72 50.86,87.77 52.50,88.71 54.20,89.54 55.95,90.26 57.43,90.78 59.26,91.28 60.98,91.64 59.97,90.78 58.99,89.87 57.17,87.93 55.53,85.85 54.08,83.64 52.81,81.31 51.72,78.85 50.82,76.31 50.35,74.69 50.02,73.35 49.50,70.65 49.14,67.54 49.01,64.71 49.07,61.48 49.36,58.24 49.80,55.33 50.42,52.42 50.91,50.59 Z" />
+
+        <!-- Inner right petal -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M67.02,91.64 L68.74,91.28 70.57,90.78 72.35,90.15 74.09,89.41 75.77,88.56 77.41,87.60 79.00,86.54 80.53,85.38 82.00,84.12 83.42,82.77 84.77,81.34 86.06,79.82 87.28,78.22 88.43,76.55 89.52,74.80 90.69,72.68 91.61,70.79 92.46,68.84 93.22,66.83 93.90,64.78 94.50,62.68 95.01,60.53 95.43,58.34 95.76,56.12 95.99,53.86 96.13,51.58 96.17,49.27 96.13,47.34 95.99,45.00 95.74,42.64 95.38,40.28 95.00,38.31 92.73,39.10 90.15,40.15 87.66,41.31 85.25,42.58 82.94,43.96 80.72,45.44 78.60,47.01 76.53,48.72 77.39,51.69 78.13,54.96 78.60,57.88 78.91,61.12 79.00,64.35 78.89,67.19 78.55,70.30 78.05,73.02 77.74,74.36 77.28,75.99 76.41,78.54 75.34,81.01 74.09,83.35 72.66,85.58 71.06,87.67 70.17,88.68 69.03,89.86 68.05,90.77 Z" />
+
+        <!-- Centre petal -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M64.00,92.00 L62.43,90.87 60.95,89.65 59.58,88.34 58.30,86.95 57.11,85.48 56.03,83.93 55.04,82.32 54.01,80.35 53.23,78.60 52.55,76.79 51.97,74.93 51.41,72.71 51.04,70.75 50.73,68.43 50.57,66.40 50.50,64.00 50.57,61.57 50.73,59.47 51.04,57.01 51.41,54.89 51.97,52.41 52.55,50.30 53.23,48.19 54.01,46.09 55.04,43.66 56.03,41.61 57.11,39.58 58.30,37.58 59.58,35.62 60.95,33.70 62.43,31.83 64.00,30.00 65.57,31.83 67.05,33.70 68.42,35.62 69.70,37.58 70.88,39.58 71.97,41.61 72.96,43.66 73.99,46.09 74.77,48.19 75.45,50.30 76.03,52.41 76.59,54.89 76.96,57.01 77.27,59.47 77.43,61.57 77.50,64.00 77.43,66.40 77.27,68.43 76.96,70.75 76.59,72.71 76.03,74.93 75.45,76.79 74.77,78.60 73.99,80.35 72.96,82.32 71.97,83.93 70.89,85.48 69.70,86.95 68.42,88.34 67.05,89.65 65.57,90.87 Z" />
 
         <!-- Base arc (water-surface suggestion) -->
         <path

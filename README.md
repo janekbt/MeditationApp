@@ -65,7 +65,7 @@ Linux:
 
 ### Android app
 - Native Android port (Slint + Material 3) in [`meditate-android/`](meditate-android/): the same modes, log, stats, presets, and Nextcloud sync on your phone, sharing the identical `meditate-core` logic — a session recorded on one device converges to all of them
-- Home-screen widget for one-tap preset starts, in your system colours on Android 12 and later, foreground-service timer that survives screen-off, with Pause, Resume, Save and Discard in its media control on the lock screen and the headphones' play/pause button, guided-audio import with on-device Opus transcode
+- Home-screen widget for one-tap preset starts, in your system colours on Android 12 and later, a themed app icon on Android 13 and later, foreground-service timer that survives screen-off, with Pause, Resume, Save and Discard in its media control on the lock screen and the headphones' play/pause button, guided-audio import with on-device Opus transcode
 - On [F-Droid](https://f-droid.org/packages/io.github.janekbt.Meditate/); build instructions in [`BUILDING.md`](BUILDING.md#android)
 
 ### General

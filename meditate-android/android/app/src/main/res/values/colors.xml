@@ -12,4 +12,7 @@
          (~10% white). Translucent on purpose — it lifts whatever
          the widget sits on, like the mockup. -->
     <color name="widget_row_bg">#1AFFFFFF</color>
+    <!-- Widget app image: the icon's blue gradient. -->
+    <color name="widget_icon_top">#5BA4E8</color>
+    <color name="widget_icon_bottom">#1A60BB</color>
 </resources>
