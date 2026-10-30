@@ -5234,6 +5234,23 @@ mod tests {
     }
 
     #[test]
+    fn the_session_screen_takes_the_dark_roles() {
+        // The session screen is black in both themes, so the light
+        // theme's roles there are dark on black (#15).
+        let layout = slint_code();
+        let running = &layout[layout.find("// ── Running screen").unwrap()..layout.find("// ── Log page").unwrap()];
+        let buttons = component(&layout, "EndButtonView");
+        // A bare WrapButton there would take the current theme's defaults.
+        assert!(!running.contains("WrapButton {"), "use EndButtonView on the session screen");
+        for line in [running, buttons].iter().flat_map(|part| part.lines()) {
+            assert!(!line.replace("MaterialPalette.schemes.dark.", "").contains("MaterialPalette."), "{line}");
+        }
+        for role in ["primary: MaterialPalette.schemes.dark.primary;", "on-primary: MaterialPalette.schemes.dark.onPrimary;", "outline-color: MaterialPalette.schemes.dark.outline;"] {
+            assert!(buttons.contains(role), "EndButtonView lacks {role}");
+        }
+    }
+
+    #[test]
     fn the_window_background_is_the_surface_role() {
         // Without its own background the window shows Slint's fixed
         // #fafafa behind every page that doesn't paint one (Timer).

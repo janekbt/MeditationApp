@@ -444,16 +444,20 @@ component WrapButton inherits Rectangle {
     in property <string> text;
     in property <bool> outline;
     in property <length> base-height: 40px;
+    // The session screen passes the dark scheme's roles (#15).
+    in property <color> primary: MaterialPalette.primary;
+    in property <color> on-primary: MaterialPalette.on-primary;
+    in property <color> outline-color: MaterialPalette.outline;
     callback clicked;
 
     min-height: max(root.base-height, label.preferred-height + 16px);
     horizontal-stretch: 1;
     border-radius: min(self.height / 2, 28px);
     border-width: root.outline ? 1px : 0px;
-    border-color: MaterialPalette.outline;
+    border-color: root.outline-color;
     background: root.outline
-        ? (touch.pressed ? MaterialPalette.primary.with-alpha(MaterialPalette.state-layer-opacity-press) : transparent)
-        : (touch.pressed ? MaterialPalette.primary.mix(MaterialPalette.on-primary, 1 - MaterialPalette.state-layer-opacity-press) : MaterialPalette.primary);
+        ? (touch.pressed ? root.primary.with-alpha(MaterialPalette.state-layer-opacity-press) : transparent)
+        : (touch.pressed ? root.primary.mix(root.on-primary, 1 - MaterialPalette.state-layer-opacity-press) : root.primary);
 
     accessible-role: button;
     accessible-label: root.text;
@@ -473,7 +477,7 @@ component WrapButton inherits Rectangle {
             vertical-alignment: center;
             font-size: 14px;
             font-weight: 500;
-            color: root.outline ? MaterialPalette.primary : MaterialPalette.on-primary;
+            color: root.outline ? root.primary : root.on-primary;
         }
     }
 }
@@ -488,6 +492,9 @@ component EndButtonView inherits HorizontalLayout {
         text: root.kind == 0 ? Tr.pause() : root.kind == 1 ? Tr.resume() : root.kind == 2 ? @tr("Save") : root.kind == 3 ? root.add-label : @tr("Discard");
         outline: root.kind == 4;
         base-height: 56px;
+        primary: MaterialPalette.schemes.dark.primary;
+        on-primary: MaterialPalette.schemes.dark.onPrimary;
+        outline-color: MaterialPalette.schemes.dark.outline;
         clicked => { root.tapped(root.kind); }
     }
 }
@@ -4223,12 +4230,14 @@ export component MainWindow inherits Window {
     // go straight to #000. Two layouts share this overlay: Timer
     // hero (digit countdown) and Box Breath visualisation (square
     // + perimeter dot). `bb-running-active` switches between them.
-    Rectangle {
+    running-canvas := Rectangle {
         visible: root.nav-page == 0;
         x: parent.width - root.screen-offset;
         width: parent.width;
         height: parent.height;
         background: #000000;
+        // Black in both themes, so the dark scheme's accent (#15).
+        property <color> accent: MaterialPalette.schemes.dark.primary;
 
         // Swallow taps on empty areas so they never reach the
         // page underneath (a background colour does not block input).
@@ -4322,9 +4331,9 @@ export component MainWindow inherits Window {
                             width: 196px;
                             height: 196px;
                             border-radius: 20px;
-                            background: MaterialPalette.primary.with-alpha(0.08);
+                            background: running-canvas.accent.with-alpha(0.08);
                             border-width: 1.5px;
-                            border-color: MaterialPalette.primary.with-alpha(0.45);
+                            border-color: running-canvas.accent.with-alpha(0.45);
                         }
 
                         // Phase label + remaining-seconds overlay,
@@ -4342,7 +4351,7 @@ export component MainWindow inherits Window {
                                 text: root.bb-phase-label;
                                 font-size: 14px;
                                 horizontal-alignment: center;
-                                color: MaterialPalette.primary;
+                                color: running-canvas.accent;
                             }
                             Text {
                                 text: root.bb-phase-seconds;
@@ -4367,7 +4376,7 @@ export component MainWindow inherits Window {
                             width: 22px;
                             height: 22px;
                             border-radius: 11px;
-                            background: MaterialPalette.primary.with-alpha(0.30);
+                            background: running-canvas.accent.with-alpha(0.30);
                             animate x { duration: 200ms; easing: linear; }
                             animate y { duration: 200ms; easing: linear; }
                         }
@@ -4383,7 +4392,7 @@ export component MainWindow inherits Window {
                             border-radius: 7px;
                             background: #ffffff;
                             border-width: 2.5px;
-                            border-color: MaterialPalette.primary;
+                            border-color: running-canvas.accent;
                             animate x { duration: 200ms; easing: linear; }
                             animate y { duration: 200ms; easing: linear; }
                         }
