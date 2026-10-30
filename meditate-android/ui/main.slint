@@ -520,6 +520,12 @@ component BellRingView inherits Rectangle {
     // Room outside the track for the preparation's ring.
     property <length> inset: 22px;
     property <length> r: self.width / 2 - self.inset;
+    // The ticks come every 200 ms; the arcs glide between them like Box
+    // Breath's dot. Preparation's -1 ("none") must not glide through a
+    // negative arc.
+    property <float> shown-filled: root.filled;
+    property <float> shown-prep: max(0, root.prep);
+    animate shown-filled, shown-prep { duration: 200ms; easing: linear; }
 
     Rectangle {
         x: root.inset - 2px;
@@ -533,7 +539,7 @@ component BellRingView inherits Rectangle {
     if root.filled > 0 : Path {
         // A Path fits its viewbox into its size less the stroke width.
         property <float> rr: 100 * root.r / (root.width - 4px);
-        property <float> to: min(root.filled, 0.9999);
+        property <float> to: min(root.shown-filled, 0.9999);
         width: root.width;
         height: root.height;
         viewbox-width: 100;
@@ -573,7 +579,7 @@ component BellRingView inherits Rectangle {
         border-color: root.track;
     }
     if root.prep >= 0 : Path {
-        property <float> to: min(root.prep, 0.9999);
+        property <float> to: min(root.shown-prep, 0.9999);
         property <float> pr: 18 * 40 / 38;
         x: root.width / 2 - 20px;
         y: root.inset - 20px;

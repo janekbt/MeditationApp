@@ -202,8 +202,8 @@ impl MeditateWindow {
     }
 
     /// The running time inside the bell ring (Timer countdown, Guided),
-    /// with the session's bell counter under it. Both follow the
-    /// session every quarter second, so the counter moves with each bell.
+    /// with the session's bell counter under it. The ring follows every
+    /// frame, the counter every quarter second, so it moves with each bell.
     fn bell_ring(&self, time_label: &gtk::Label) -> gtk::Box {
         use std::{cell::RefCell, rc::Rc};
         let block = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(16).build();
@@ -215,6 +215,38 @@ impl MeditateWindow {
         }
         let ring = Rc::new(RefCell::new(now.ring.clone()));
         let area = gtk::DrawingArea::builder().content_width(300).content_height(300).halign(gtk::Align::Center).build();
+        // While the ring moves it is redrawn every frame, so the arc glides;
+        // a still ring (paused, ended) lets the frame clock rest until the
+        // quarter-second refresh below sees it move again.
+        let ticking = Rc::new(std::cell::Cell::new(false));
+        let follow = clone!(
+            #[weak(rename_to = timer_view)] self.timer_view,
+            #[strong] ring,
+            move |area: &gtk::DrawingArea| {
+                if ticking.replace(true) {
+                    return;
+                }
+                area.add_tick_callback(clone!(
+                    #[weak] timer_view,
+                    #[strong] ring,
+                    #[strong] ticking,
+                    #[upgrade_or] glib::ControlFlow::Break,
+                    move |area, _| {
+                        // ponytail: rebuilds the whole ring, beads included, each frame; fine
+                        // for a handful of bells, split out the fill if a 5 s bell over an
+                        // hour janks on the Librem 5.
+                        let now = timer_view.bell_ring().ring;
+                        if *ring.borrow() == now {
+                            ticking.set(false);
+                            return glib::ControlFlow::Break;
+                        }
+                        *ring.borrow_mut() = now;
+                        area.queue_draw();
+                        glib::ControlFlow::Continue
+                    }
+                ));
+            }
+        );
         if now.ring.is_some() {
             area.set_draw_func(clone!(
                 #[strong] ring,
@@ -251,9 +283,9 @@ impl MeditateWindow {
             #[upgrade_or] glib::ControlFlow::Break,
             move || {
                 let now = timer_view.bell_ring();
+                // The frame clock stores and draws the new ring itself.
                 if *ring.borrow() != now.ring {
-                    *ring.borrow_mut() = now.ring;
-                    area.queue_draw();
+                    follow(&area);
                 }
                 if shown.borrow().as_ref() != Some(&now.counters) {
                     while let Some(child) = counters.first_child() {
@@ -1142,6 +1174,23 @@ mod day_tests {
         assert!(reload.contains("InvalidateScope::ALL"), "both pages go stale");
         assert!(reload.contains("Some(\"log\") => self.log_view.refresh()"));
         assert!(reload.contains("Some(\"stats\") => self.stats_view.refresh()"));
+    }
+
+    /// The ring jumped every quarter second; it follows the frame clock now.
+    #[test]
+    fn the_ring_follows_every_frame() {
+        let src = production();
+        let ring = &src[src.find("fn bell_ring(&self").unwrap()..];
+        let ring = &ring[..ring.find("\n    }\n").unwrap()];
+        let tick = &ring[ring.find("area.add_tick_callback(").expect("redraws with the frame clock")..];
+        assert!(tick.contains("timer_view.bell_ring().ring") && tick.contains("area.queue_draw()"));
+        // A still ring (paused, ended) lets the frame clock rest; the quarter-second
+        // refresh starts it again when the ring moves.
+        let still = &tick[tick.find("if *ring.borrow() == now {").expect("stops when still")..];
+        let still = &still[..still.find('}').unwrap()];
+        assert!(still.contains("ticking.set(false)") && still.contains("glib::ControlFlow::Break"), "lets `follow` start it again");
+        let refresh = &ring[ring.find("let refresh = clone!(").unwrap()..];
+        assert!(refresh.contains("follow(&area)"), "the refresh starts the frame clock again");
     }
 
     /// Pausing used to move Discard and lift the whole column.

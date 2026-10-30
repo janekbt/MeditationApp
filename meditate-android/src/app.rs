@@ -4713,6 +4713,19 @@ mod tests {
         &slint[at..end]
     }
 
+    /// The ring jumped five times a second while Box Breath's dot glides.
+    #[test]
+    fn the_ring_glides_between_ticks() {
+        let slint = slint_code();
+        let ring = component(&slint, "BellRingView");
+        assert!(ring.contains("property <float> shown-filled: root.filled;"));
+        assert!(ring.contains("property <float> shown-prep: max(0, root.prep);"), "no negative arc from -1");
+        assert!(ring.contains("animate shown-filled, shown-prep { duration: 200ms; easing: linear; }"));
+        // Both arcs draw the gliding copies; the `if`s keep the raw values.
+        assert!(ring.contains("min(root.shown-filled, 0.9999)") && ring.contains("min(root.shown-prep, 0.9999)"));
+        assert!(ring.contains("if root.filled > 0 : Path") && ring.contains("if root.prep >= 0 : Path"));
+    }
+
     /// Pausing used to move Discard and lift the whole column.
     #[test]
     fn the_session_buttons_keep_their_place() {
