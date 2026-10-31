@@ -29,6 +29,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | K. Failed writes and stale pages | #52, #80, #78, #84, #124, #136, #140, #141, #170 | failures that look like success, stale screens |
 | [x] | K2. GTK settings that don't stick | #191 | a setting reverts on the next start, unnoticed |
 | [ ] | K3. Presets all or nothing | #193 | a preset that fails halfway |
+| [ ] | K4. GTK freeze before bells | #199 | the window hangs before every bell |
 | [x] | L. Android platform (manifest: ask first) | #50, #51, #57, #79, #63, #149, #176 | other apps, phone transfer, audio focus, battery saver |
 | [x] | M. Android layout and editors | #139, #142, #143, #144, #145, #146, #189 | hidden controls, lost edits |
 | [x] | N. Stats numbers | #55, #59, #60, #114, #115 | screens disagree |
@@ -54,6 +55,13 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 - Where: `meditate-core/src/preset_config.rs` `apply` (comment above it: core::db has no nestable transactions; `set_interval_bell_enabled` opens its own); the length is written after it by each app (`set_timer_session_secs` / `set_breathing`).
 - Problem: a write that fails partway (sync lock, full disk) leaves part of the preset. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
 - Fix: nestable transactions (savepoints) in core::db, then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
+
+## K4. GTK freeze before bells
+
+### #199 GTK: the Bluetooth lead-in freezes the window before every bell
+- Where: `meditate-gtk/src/sound.rs` `lead_in` (395) calls `default_output_is_bluetooth` (487) for every bell, on the main thread: it starts a GStreamer `DeviceMonitor`, lists the sinks and stops it.
+- Problem: in the 26.11.0 Flatpak the window freezes about 3 s before each bell while the lead-in is on (found by the maintainer, 2026-10-31, lead-in 0.1 s). On the host the same probe takes 0.02 s, so something in the sandbox waits, maybe a device provider timing out; not yet measured inside the sandbox. Android is not affected (it asks AudioManager). Workaround: lead-in off.
+- Fix: first measure the probe inside the Flatpak to find what waits. Then keep one monitor running from startup (or probe off the main thread) and read a cached "default output is Bluetooth" at bell time, updated when the output changes, so a bell never blocks the window.
 
 ## L. Android platform (manifest: ask first)
 
