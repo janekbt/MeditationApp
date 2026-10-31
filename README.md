@@ -4,6 +4,8 @@ A meditation timer and session log for Android and Linux.
 
 Countdown and stopwatch, a browsable log, and daily-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones, with a native Android app that syncs over your own Nextcloud.
 
+<a href="https://f-droid.org/packages/io.github.janekbt.Meditate/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80"></a>
+
 ## Screenshots
 
 Android:
