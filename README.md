@@ -5,6 +5,7 @@ A meditation timer and session log for Android and Linux.
 Countdown and stopwatch, a browsable log, and daily-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones, with a native Android app that syncs over your own Nextcloud.
 
 <a href="https://f-droid.org/packages/io.github.janekbt.Meditate/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80"></a>
+<a href="https://flatpark.org/apps/io.github.janekbt.Meditate/"><img src="https://flatpark.org/badges/get-it-on-flatpark.svg" alt="Get it on FlatPark" height="56"></a>
 
 ## Screenshots
 
@@ -96,6 +97,8 @@ can't update an installed release, and installing one over a release
 requires uninstalling it first, which deletes the app's data.
 
 ### Linux (FlatPark)
+
+<a href="https://flatpark.org/apps/io.github.janekbt.Meditate/"><img src="https://flatpark.org/badges/get-it-on-flatpark.svg" alt="Get it on FlatPark" height="56"></a>
 
 Install **[Meditate from FlatPark](https://flatpark.org/apps/io.github.janekbt.Meditate/)**,
 a signed Flatpak remote, for **x86_64** and **aarch64**. It ships the same
