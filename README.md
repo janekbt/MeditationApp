@@ -95,7 +95,24 @@ other). Unreleased builds from CI (`meditate-android.apk` on the
 can't update an installed release, and installing one over a release
 requires uninstalling it first, which deletes the app's data.
 
-### Linux (Flatpak)
+### Linux (FlatPark)
+
+Install **[Meditate from FlatPark](https://flatpark.org/apps/io.github.janekbt.Meditate/)**,
+a signed Flatpak remote, for **x86_64** and **aarch64**. It ships the same
+build as the release bundles below, and updates arrive with `flatpak update`
+or your software centre.
+
+```sh
+flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo  # provides the GNOME 51 runtime
+flatpak --user install flatpark io.github.janekbt.Meditate
+```
+
+Coming from a release bundle? Uninstall it first with
+`flatpak uninstall io.github.janekbt.Meditate`; both use the same app id, and
+your sessions and settings in `~/.var/app/io.github.janekbt.Meditate` stay.
+
+### Linux (Flatpak bundle)
 
 Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every
 [release](../../releases) as `meditate-<version>-<arch>.flatpak`. (Flathub is
