@@ -79,6 +79,8 @@ Linux:
 
 ### Android
 
+<a href="https://f-droid.org/packages/io.github.janekbt.Meditate/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80"></a>
+
 Install **[Meditate from F-Droid](https://f-droid.org/packages/io.github.janekbt.Meditate/)**.
 F-Droid rebuilds every release from source and verifies it matches the APK
 published here, so you get the same signed app either way; updates arrive
