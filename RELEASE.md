@@ -102,6 +102,7 @@ from a current `setup-android.sh` points there unless your shell exports
 another `JAVA_HOME`. Confirm:
 
     . ~/.config/meditate-android/env.sh && "$JAVA_HOME/bin/java" -version   # must say 17
+    echo "$JAVA_HOME"   # must be /usr/lib/jvm/java-17-openjdk-amd64 (Debian 12's, like F-Droid), never ~/Android/jdk-*
     cargo test -p meditate-core -p meditate-android --lib
     cargo test --workspace          # GTK shell included
     cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings
@@ -116,6 +117,9 @@ another `JAVA_HOME`. Confirm:
   `release: 26.8.1`), push, then dispatch Flatpak CI on beta:
   `gh workflow run flatpak.yml --ref beta` and WAIT for green
   (~35 min; poll `gh run view`). Do not proceed on red.
+- When `build.sh` or `build-aux/setup-android.sh` changed since the last
+  release, also run the fresh-system build ([BUILDING.md → CI](BUILDING.md#ci))
+  and wait for all eight jobs to be green.
 - **[judgment] On-device check:** build the optimised release type
   signed with the debug key, `MEDITATE_SIGNING=/nonexistent ./build.sh android`,
   install that on the phone (`adb install -r

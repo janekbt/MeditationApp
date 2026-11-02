@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-android.sh — bring a Debian / Ubuntu machine to a state
+# setup-android.sh — bring an x86_64 Linux machine to a state
 # where the meditate-android Gradle pipeline can build for a real
 # Android device (writes ~/.config/meditate-android/env.sh, which
 # meditate-android/android/rust-build.sh and the gradle wrapper
@@ -41,10 +41,14 @@ trap '{
 # JDK 17, exactly: rust-build.sh pins the d8 dexer from build-tools
 # 31.0.0 (to match F-Droid's buildserver for reproducible builds), and
 # that d8 crashes on classes compiled by a newer javac ("Dex conversion
-# failed"). F-Droid's recipe installs Debian 12's openjdk-17; Debian 13
-# no longer ships 17 — Step 1 prints the three commands to add it.
+# failed"). An installed JDK 17 is used first (F-Droid's recipe and the
+# maintainer's release builds use Debian 12's openjdk-17); without one,
+# Step 1 downloads this Temurin build, since Debian 13 and Fedora 42+
+# no longer ship 17.
 PINNED_JDK_MAJOR="17"
-PINNED_OPENJDK_PKG="openjdk-17-jdk-headless"
+PINNED_JDK="17.0.21+9"
+PINNED_JDK_URL="https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.21%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.21_9.tar.gz"
+PINNED_JDK_SHA256="8b9b611d917e3dfd8419d3566b5949226f69b052fed7e109c1368add1dfe8711"
 PINNED_CMDLINE_TOOLS_BUILD="14742923"   # build number, see https://developer.android.com/studio#command-line-tools-only
 PINNED_API_LEVEL="35"                    # Android 15 — emulator image; build-tools 35 puts apksigner on PATH
 PINNED_BUILD_TOOLS="35.0.0"
@@ -73,8 +77,7 @@ ANDROID_HOME="${HOME}/Android/Sdk"
 ANDROID_NDK_ROOT="${ANDROID_HOME}/ndk/${PINNED_NDK}"
 GRADLE_HOME="${HOME}/Android/gradle-${PINNED_GRADLE}"
 KOTLIN_HOME="${HOME}/Android/kotlinc-${PINNED_KOTLIN}"
-# JAVA_HOME is set to the JDK 17 home — see Prerequisites / Step 1.
-JAVA_HOME=""
+JDK_DIR="${HOME}/Android/jdk-${PINNED_JDK}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${HOME}/.config/meditate-android/env.sh"
 BASHRC="${HOME}/.bashrc"
@@ -89,7 +92,7 @@ usage() {
 Usage: $(basename "$0") [--with-emulator] [--help]
 
 Installs the Android toolchain needed by the meditate-android crate:
-- OpenJDK ${PINNED_JDK_MAJOR} (${PINNED_OPENJDK_PKG}; on Debian 13 add the bookworm source first — the script says how)
+- JDK ${PINNED_JDK_MAJOR}: the installed one, else Temurin ${PINNED_JDK} into ${JDK_DIR}
 - Android command-line tools build ${PINNED_CMDLINE_TOOLS_BUILD}
 - Android SDK platform-${PINNED_REPRO_PLATFORM} + build-tools ${PINNED_REPRO_BUILD_TOOLS} (reproducible release pins),
   platform-${PINNED_API_LEVEL}, build-tools ${PINNED_BUILD_TOOLS}, NDK ${PINNED_NDK}
@@ -124,14 +127,19 @@ done
 # ── Helpers ──────────────────────────────────────────────────────────
 log() { printf '\033[1;36m[setup-android]\033[0m %s\n' "$*"; }
 
-# ── Prerequisites ────────────────────────────────────────────────────
-# apt only ever provides three things (JDK 17, unzip, wget); the SDK,
-# NDK, Gradle and kotlinc are direct downloads. If all three are
-# already present (any distro — build.sh pre-installs them on
-# Fedora/Arch), skip the apt machinery entirely.
+# ── Step 1: JDK 17 ───────────────────────────────────────────────────
+# Needs only unzip and curl from the distro (build.sh installs them);
+# everything else is a pinned direct download.
+for tool in unzip curl; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        echo "${tool} is missing: install unzip and curl, then re-run (./build.sh android does this for you)." >&2
+        exit 1
+    fi
+done
 
 # Print the JDK 17 home, or nothing. A JDK other than 17 on PATH does
-# not count (see PINNED_JDK_MAJOR).
+# not count (see PINNED_JDK_MAJOR). The downloaded one comes last, so
+# an installed JDK 17 always wins.
 find_jdk17() {
     local c
     for c in /usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/java-17-openjdk \
@@ -142,84 +150,35 @@ find_jdk17() {
        && javac -version 2>&1 | grep -q "^javac ${PINNED_JDK_MAJOR}\."; then
         local javac_real; javac_real="$(readlink -f "$(command -v javac)")"
         echo "${javac_real%/bin/javac}"
+        return
     fi
+    if [[ -x "${JDK_DIR}/bin/javac" ]]; then echo "${JDK_DIR}"; fi
 }
 
-PREREQS_PRESENT=0
 JAVA_HOME="$(find_jdk17)"
-if [[ -n "${JAVA_HOME}" ]] \
-   && command -v unzip >/dev/null 2>&1 \
-   && command -v wget >/dev/null 2>&1; then
-    PREREQS_PRESENT=1
-    log "prereqs present (JDK ${PINNED_JDK_MAJOR}/unzip/wget) — skipping apt; JDK home: ${JAVA_HOME}"
-fi
-
-if [[ "${PREREQS_PRESENT}" = 0 ]]; then
-# ── Distro check ─────────────────────────────────────────────────────
-if [[ ! -r /etc/os-release ]]; then
-    echo "Cannot read /etc/os-release — refusing to guess distro." >&2
-    exit 1
-fi
-. /etc/os-release
-if [[ "${ID:-}" != "debian" && "${ID:-}" != "ubuntu" && "${ID_LIKE:-}" != *debian* ]]; then
-    echo "This script supports Debian / Ubuntu only (or any distro with" >&2
-    echo "JDK ${PINNED_JDK_MAJOR}, unzip and wget preinstalled — e.g. via build.sh)." >&2
-    echo "Detected ID=${ID:-unknown}." >&2
-    exit 1
-fi
-
-need_apt() {
-    local pkg="$1"
-    if dpkg -s "${pkg}" >/dev/null 2>&1; then
-        log "apt: ${pkg} already installed"
-    else
-        log "apt: installing ${pkg}"
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends "${pkg}"
+if [[ -z "${JAVA_HOME}" ]]; then
+    log "No JDK ${PINNED_JDK_MAJOR} installed — downloading Temurin ${PINNED_JDK}"
+    # Unpacked beside its final place, on the same filesystem, so the
+    # mv is one rename: an interrupted run never leaves a JDK that looks
+    # whole, and the next run clears what it left.
+    part="${JDK_DIR}.part"
+    rm -rf "${part}" "${JDK_DIR}"
+    mkdir -p "${part}"
+    curl -fL --retry 3 -o "${part}/jdk.tar.gz" "${PINNED_JDK_URL}"
+    if ! echo "${PINNED_JDK_SHA256}  ${part}/jdk.tar.gz" | sha256sum -c --status -; then
+        rm -rf "${part}"
+        echo "${PINNED_JDK_URL} doesn't match its pinned checksum; nothing installed." >&2
+        exit 1
     fi
-}
-
-# ── Step 1: OpenJDK 17 ───────────────────────────────────────────────
-# Refresh the apt index once so apt-cache show reflects current
-# availability.
-log "apt: refreshing package index"
-sudo apt-get update -y >/dev/null
-
-if ! apt-cache show "${PINNED_OPENJDK_PKG}" >/dev/null 2>&1; then
-    cat >&2 <<MSG
-${PINNED_OPENJDK_PKG} is not available from your apt sources (Debian 13
-dropped it). Add Debian 12's archive for it — the same thing F-Droid's
-build recipe does — pinned low so nothing else is ever taken from it:
-
-  echo "deb https://deb.debian.org/debian bookworm main" | sudo tee /etc/apt/sources.list.d/bookworm.list
-  printf 'Package: *\nPin: release n=bookworm\nPin-Priority: 100\n' | sudo tee /etc/apt/preferences.d/bookworm-low
-  sudo apt update && sudo apt install ${PINNED_OPENJDK_PKG}
-
-then re-run this script.
-MSG
-    exit 1
+    tar -xzf "${part}/jdk.tar.gz" -C "${part}"
+    mv "${part}/jdk-${PINNED_JDK}" "${JDK_DIR}"
+    rm -rf "${part}"
+    JAVA_HOME="${JDK_DIR}"
 fi
-log "JDK: ${PINNED_OPENJDK_PKG}"
-
-need_apt "${PINNED_OPENJDK_PKG}"
-need_apt "unzip"
-need_apt "wget"
-
-# Locate JAVA_HOME from the JDK package we just installed. dpkg -L
-# is authoritative — it lists the package's owned paths regardless of
-# whether the user has multiple JDKs installed or how their
-# update-alternatives setup is configured. We pick `javac` (vs `java`)
-# because the headless JDK package owns it; the JRE-headless package
-# owns `java`, and we want the JDK home, not the JRE home.
-javac_path="$(dpkg -L "${PINNED_OPENJDK_PKG}" 2>/dev/null | grep -E '/bin/javac$' | head -1 || true)"
-if [[ -z "${javac_path}" || ! -x "${javac_path}" ]]; then
-    echo "Couldn't locate javac after installing ${PINNED_OPENJDK_PKG}." >&2
-    echo "Run 'dpkg -L ${PINNED_OPENJDK_PKG} | grep bin/javac' to debug." >&2
-    exit 1
-fi
-JAVA_HOME="${javac_path%/bin/javac}"
+# sdkmanager below runs on this JDK.
+export JAVA_HOME
+export PATH="${JAVA_HOME}/bin:${PATH}"
 log "JDK home: ${JAVA_HOME}"
-fi  # PREREQS_PRESENT
 
 # ── Step 2: Android command-line tools ───────────────────────────────
 SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
@@ -230,7 +189,7 @@ else
     mkdir -p "${ANDROID_HOME}/cmdline-tools"
     tmpzip="$(mktemp --suffix=.zip)"
     trap 'rm -f "${tmpzip}"' EXIT
-    wget -q --show-progress -O "${tmpzip}" \
+    curl -fL --retry 3 -o "${tmpzip}" \
         "https://dl.google.com/android/repository/commandlinetools-linux-${PINNED_CMDLINE_TOOLS_BUILD}_latest.zip"
     tmpdir="$(mktemp -d)"
     unzip -q "${tmpzip}" -d "${tmpdir}"
@@ -333,7 +292,7 @@ else
     mkdir -p "$(dirname "${GRADLE_HOME}")"
     tmpzip="$(mktemp --suffix=.zip)"
     trap 'rm -f "${tmpzip}"' EXIT
-    wget -q --show-progress -O "${tmpzip}" \
+    curl -fL --retry 3 -o "${tmpzip}" \
         "https://services.gradle.org/distributions/gradle-${PINNED_GRADLE}-bin.zip"
     # The zip unpacks as `gradle-<version>/...`, which matches our
     # ${GRADLE_HOME} path layout (one tree per pinned version, so
@@ -357,7 +316,7 @@ else
     mkdir -p "$(dirname "${KOTLIN_HOME}")"
     tmpzip="$(mktemp --suffix=.zip)"
     trap 'rm -f "${tmpzip}"' EXIT
-    wget -q --show-progress -O "${tmpzip}" \
+    curl -fL --retry 3 -o "${tmpzip}" \
         "https://github.com/JetBrains/kotlin/releases/download/v${PINNED_KOTLIN}/kotlin-compiler-${PINNED_KOTLIN}.zip"
     # The zip unpacks as `kotlinc/...`; rename to the versioned path
     # so future version bumps don't collide.

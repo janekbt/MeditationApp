@@ -31,7 +31,10 @@ x86_64) and run from the repository root unless a `cd` says otherwise.
 [rustup](https://rustup.rs). `rust-toolchain.toml` pins the toolchain
 (1.95.0); rustup installs it on the first `cargo` run inside the repo.
 Targets must be added **from inside the repo** so they land on that pinned
-toolchain rather than rustup's default.
+toolchain rather than rustup's default. When `build.sh` installs rustup it
+sets no default toolchain and doesn't touch your shell profile: run
+`. ~/.cargo/env` for `cargo` in a new terminal, and `rustup default stable`
+if you want Rust outside this repo too.
 
 ### Linux app dependencies
 
@@ -62,9 +65,17 @@ for your password once) and skips the step when everything is present.
 
 **JDK 17 — exactly 17.** `rust-build.sh` pins the d8 dexer from build-tools
 31.0.0 so the APK matches F-Droid's rebuild, and that d8 crashes on classes
-compiled by a newer javac (`Dex conversion failed`). Debian 13 no longer
-ships 17; add Debian 12's archive for it, pinned low so nothing else is ever
-taken from it — the same thing F-Droid's build recipe does:
+compiled by a newer javac (`Dex conversion failed`). `setup-android.sh`
+uses an installed JDK 17 (under `/usr/lib/jvm` or `javac` 17 on PATH);
+without one it downloads a pinned Temurin 17 into `~/Android`, since
+Debian 13 and Fedora 42+ no longer ship 17. Your system default Java can
+stay whatever it is, but don't export a `JAVA_HOME` that points at another
+JDK: `env.sh` only sets `JAVA_HOME` when it is unset.
+
+Release builds (maintainer) use Debian 12's openjdk-17, the JDK F-Droid's
+recipe uses, not the downloaded one. On Debian 13 add Debian 12's archive,
+pinned low so nothing else is ever taken from it, then re-run
+`setup-android.sh`:
 
 ```sh
 echo "deb https://deb.debian.org/debian bookworm main" | sudo tee /etc/apt/sources.list.d/bookworm.list
@@ -72,17 +83,15 @@ printf 'Package: *\nPin: release n=bookworm\nPin-Priority: 100\n' | sudo tee /et
 sudo apt update && sudo apt install openjdk-17-jdk-headless
 ```
 
-(Fedora: `java-17-openjdk-devel`; Arch: `jdk17-openjdk`.) Your system
-default Java can stay whatever it is, but don't export a `JAVA_HOME`
-that points at another JDK: `env.sh` only sets `JAVA_HOME` when it is unset.
-
-Install [rustup](https://rustup.rs) first. Then the toolchain, one time:
+`./build.sh android` installs a C compiler, unzip, curl and rustup, then
+runs the setup below. By hand: install those and [rustup](https://rustup.rs)
+first. Then the toolchain, one time:
 
 ```sh
 build-aux/setup-android.sh
 ```
 
-Idempotent. It downloads the pinned Android command-line tools, SDK
+Idempotent. It downloads the JDK when needed, the pinned Android command-line tools, SDK
 platforms 34 and 35, build-tools 31.0.0 and 35.0.0, NDK r27c
 (27.2.12479018), platform-tools (adb), Gradle 8.5 and kotlinc into
 `~/Android`, adds the aarch64, armv7 and x86_64 Android targets to the
@@ -216,7 +225,8 @@ Troubleshooting:
 - **`Dex conversion failed` … `JDK version 21 is known to cause an error`** —
   the build ran on a JDK other than 17. Check `echo $JAVA_HOME`; re-run
   `build-aux/setup-android.sh` to rewrite `env.sh`, or prefix the command
-  with `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`.
+  with `JAVA_HOME=` and your JDK 17 (`/usr/lib/jvm/java-17-openjdk-amd64`,
+  or the downloaded `~/Android/jdk-17*`).
 - **APK timestamp didn't change after a rebuild** — Gradle compares content:
   if the stripped native library is byte-identical, packaging is skipped.
   That's expected, not a stale build.
@@ -327,3 +337,14 @@ keystore), and the x86_64 and aarch64 Flatpak bundles plus their app
 trees as tarballs for FlatPark. The bundles and tarballs of
 the release commit's run on `beta` are what a release ships to Linux
 users; `main` fast-forwards to that same commit, so pushing it runs nothing.
+
+`.github/workflows/fresh-build.yml` checks that `./build.sh gtk --debug`
+and `./build.sh android --debug` finish on fresh Ubuntu 26.04, Debian 13,
+Fedora and Arch images, as a normal user with sudo and nothing else
+installed. An Android job takes about an hour. It runs by hand, and on a push to a
+branch named `fresh-build`:
+
+```sh
+gh workflow run fresh-build.yml --ref beta   # once the file is on main
+git push origin HEAD:fresh-build             # before that, then delete the branch
+```

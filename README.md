@@ -153,8 +153,8 @@ flatpak run io.github.janekbt.Meditate
 
 Drop `--debug` for optimized builds. `build.sh` installs missing
 dependencies on Debian/Ubuntu, Fedora and Arch (it asks for your password
-once) and checks the GTK 4.18 / libadwaita 1.7 floor before compiling. The
-Android build needs **JDK 17 exactly** and rustup installed first. See
+once) and checks the GTK 4.18 / libadwaita 1.7 floor before compiling. For
+Android it also installs rustup and, if you have none, a JDK 17. See
 [`BUILDING.md`](BUILDING.md#android-toolchain), which is the full reference:
 prerequisites, the Flatpak build, tests, translations, testing on a phone,
 and CI.

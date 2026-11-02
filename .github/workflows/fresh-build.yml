@@ -1,0 +1,48 @@
+name: Fresh system build
+
+# README promises that ./build.sh installs everything a fresh machine
+# lacks. This proves it: each job starts the distro's official image,
+# adds only sudo, git and a normal user, and runs the README command.
+# Free for a public repo, but an Android job takes about an hour, so it
+# runs by hand, or on a push to the fresh-build branch until this file
+# is on main (a manual run needs it there).
+on:
+  workflow_dispatch:
+  push:
+    branches: [fresh-build]
+
+jobs:
+  build:
+    name: ${{ matrix.app }} on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:26.04", "debian:13", "fedora:latest", "archlinux:latest"]
+        app: [gtk, android]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: ./build.sh ${{ matrix.app }} --debug
+        env:
+          IMAGE: ${{ matrix.image }}
+          APP: ${{ matrix.app }}
+        run: |
+          docker run --rm -v "$PWD:/src" -e APP -e HOST_UID="$(id -u)" "$IMAGE" bash -euc '
+            if command -v apt-get >/dev/null; then
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo git
+            elif command -v dnf >/dev/null; then
+              dnf install -y -q sudo git
+            else
+              # Every real Arch install is synced; the image may not be.
+              pacman -Syu --noconfirm --needed sudo git
+            fi
+            useradd -m -o -u "$HOST_UID" builder
+            echo "builder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/builder
+            # sudo, not su: the Fedora image has no su.
+            sudo -u builder -H bash -c "cd /src && ./build.sh $APP --debug"
+            case $APP in
+              gtk)     test -x /src/meditate-gtk/builddir/src/meditate ;;
+              android) test -s /src/meditate-android/android/app/build/outputs/apk/debug/app-debug.apk ;;
+            esac'

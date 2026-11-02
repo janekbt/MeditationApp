@@ -21,10 +21,10 @@
 #   * Low-RAM guard: heavy LTO link steps have frozen a 16 GiB
 #     machine before — parallelism is capped when RAM is tight.
 #   * Android toolchain (SDK/NDK/Gradle) is bootstrapped by
-#     build-aux/setup-android.sh (idempotent, pinned versions); on
-#     non-Debian distros this script pre-installs the three
-#     packages that bootstrap needs (JDK 17/unzip/wget). JDK 17
-#     exactly — the reproducible-build dexer pin rejects newer.
+#     build-aux/setup-android.sh (idempotent, pinned versions, and a
+#     pinned JDK 17 when none is installed: the reproducible-build
+#     dexer pin rejects newer); this script installs what that needs
+#     (a C compiler, unzip, curl).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -59,7 +59,8 @@ install_pkgs() {
     # (caller printed the manual list already).
     case "$PM" in
         apt)    sudo apt-get update -qq
-                sudo apt-get install -y --no-install-recommends "$@" ;;
+                sudo env DEBIAN_FRONTEND=noninteractive \
+                    apt-get install -y --no-install-recommends "$@" ;;
         dnf)    sudo dnf install -y "$@" ;;
         pacman) sudo pacman -S --needed --noconfirm "$@" ;;
     esac
@@ -67,6 +68,9 @@ install_pkgs() {
 
 # ── Shared: Rust ─────────────────────────────────────────────────────
 ensure_rust() {
+    # Where the installer below puts it (--no-modify-path), maybe on an
+    # earlier run.
+    export PATH="$HOME/.cargo/bin:$PATH"
     if command -v rustup >/dev/null; then
         return
     fi
@@ -79,10 +83,11 @@ ensure_rust() {
         log "using distro rust ($(rustc --version)) — fine for the GTK build"
         return
     fi
+    command -v curl >/dev/null || install_pkgs curl ca-certificates
     log "installing rustup (official installer, ~/.cargo) …"
+    # No default toolchain: rust-toolchain.toml brings the pinned one.
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path
-    export PATH="$HOME/.cargo/bin:$PATH"
+        | sh -s -- -y --no-modify-path --default-toolchain none
 }
 
 # ── Shared: RAM guard ────────────────────────────────────────────────
@@ -153,30 +158,31 @@ Your distro is too old for a native build — use the Flatpak path instead:
 # ═══════════════════════════════════ Android ═════════════════════════
 build_android() {
     log "target: Android APK ($MODE)"
-    # setup-android.sh needs exactly JDK 17/unzip/wget from the
-    # distro; it direct-downloads everything else (SDK, NDK r27,
-    # Gradle, kotlinc) with pinned versions, idempotently.
-    if ! { ls -d /usr/lib/jvm/java-17-* && command -v unzip && command -v wget; } >/dev/null 2>&1; then
+    # The Rust build scripts link with the host's cc; setup-android.sh
+    # needs unzip and curl and downloads everything else (JDK 17, SDK,
+    # NDK r27, Gradle, kotlinc) with pinned versions, idempotently.
+    if ! { command -v cc && command -v unzip && command -v curl; } >/dev/null; then
         case "$PM" in
-            apt)    : ;;  # setup-android.sh handles apt itself
-            dnf)    install_pkgs java-17-openjdk-devel unzip wget ;;
-            pacman) install_pkgs jdk17-openjdk unzip wget ;;
-            *)      die "install JDK 17 (exactly — newer breaks the pinned dexer), unzip and wget, then rerun." ;;
+            apt)    install_pkgs build-essential unzip curl ca-certificates ;;
+            dnf)    install_pkgs gcc unzip curl tar ;;
+            pacman) install_pkgs base-devel unzip curl ;;
+            *)      die "install a C compiler, unzip and curl, then rerun." ;;
         esac
     fi
+    # Rust first: the bootstrap adds the Android targets to it.
+    ensure_rust
+    command -v rustup >/dev/null \
+        || die "the Android target needs rustup (distro cargo can't add cross targets) — https://rustup.rs"
     ENV_SH="$HOME/.config/meditate-android/env.sh"
     if [[ -r "$ENV_SH" ]] && . "$ENV_SH" 2>/dev/null \
         && [[ -d "${ANDROID_NDK_ROOT:-/nonexistent}" ]]; then
         log "Android toolchain present (env.sh) — skipping bootstrap"
     else
-        log "bootstrapping Android SDK/NDK (one-time, ~3 GiB download) …"
-        build-aux/setup-android.sh
+        log "bootstrapping the Android toolchain and JDK 17 (one-time, ~3 GiB download) …"
+        # No terminal on stdin, so it doesn't stop for "Press Enter".
+        build-aux/setup-android.sh </dev/null
         . "$ENV_SH"
     fi
-
-    ensure_rust
-    command -v rustup >/dev/null \
-        || die "the Android target needs rustup (distro cargo can't add cross targets) — https://rustup.rs"
     rustup target add aarch64-linux-android >/dev/null
     ram_guard
 
