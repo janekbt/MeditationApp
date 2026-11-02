@@ -38,6 +38,19 @@ button.preset-chip {
     font-variant-numeric: tabular-nums;
 }
 
+/* Start bar of the Session, Bells and Manage Bells pages (#20): the
+   main screen's time, small, beside a tall Start button. */
+.start-bar-time {
+    font-size: 1.9rem;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 26px content + the pill's 10px padding top and bottom: 46px. */
+.start-bar-button {
+    min-height: 26px;
+}
+
 /* Generic helper for any label whose text contains live-updating
    numbers and shouldn't reflow as digits change. Reused by the
    sit-longer "Add MM:SS ?" button — its embedded time updates each

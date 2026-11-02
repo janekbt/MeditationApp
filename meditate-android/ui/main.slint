@@ -176,6 +176,13 @@ export global Tr {
     public pure function stopwatch() -> string { return @tr("Stopwatch"); }
     public pure function n-min(n: int) -> string { return @tr("{n} min" | "{n} min" % n); }
     public pure function n-bells(n: int) -> string { return @tr("{n} bell" | "{n} bells" % n); }
+    // Session and Bells row subtitles (refresh_setup_summaries)
+    public pure function auto-finish() -> string { return @tr("Auto-Finish"); }
+    public pure function starting-bell() -> string { return @tr("Starting Bell"); }
+    public pure function n-interval-bells(n: int) -> string { return @tr("{n} interval bell" | "{n} interval bells" % n); }
+    public pure function end-bell() -> string { return @tr("End Bell"); }
+    public pure function phase-cues() -> string { return @tr("Cues during phases"); }
+    public pure function no-bells() -> string { return @tr("No bells"); }
     // Interval-bells summary + row titles (bell_title_key)
     public pure function none-enabled() -> string { return @tr("None enabled"); }
     public pure function n-enabled(n: int) -> string { return @tr("{n} enabled" | "{n} enabled" % n); }
@@ -2243,6 +2250,93 @@ component BoxedList inherits Rectangle {
     }
 }
 
+// The session's time with "Hours · Minutes" under it; a tap opens
+// the Duration dialog wherever the Duration row would (GitHub #20).
+component TimeButton inherits Rectangle {
+    in property <string> text;
+    in property <length> font-size;
+    in property <int> font-weight: 400;
+    in property <TextHorizontalAlignment> alignment: center;
+    in property <bool> enabled;
+    callback tapped();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: @tr("Duration");
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.tapped(); }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.tapped(); }
+    }
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.text;
+            font-size: root.font-size;
+            font-weight: root.font-weight;
+            horizontal-alignment: root.alignment;
+            color: MaterialPalette.on-surface;
+        }
+        Text {
+            text: @tr("Hours · Minutes");
+            font-size: 12px;
+            wrap: word-wrap;
+            horizontal-alignment: root.alignment;
+            color: MaterialPalette.on-surface-variant;
+        }
+    }
+}
+
+// The bottom bar of Session, Bells and Manage Bells (GitHub #20):
+// the main screen's time and Start Session, so a session starts
+// without going back. The bottom-bar colour, as the NavigationBar.
+component StartBar inherits Rectangle {
+    in property <string> time-text;
+    in property <bool> time-enabled;
+    in property <bool> start-enabled;
+    in property <length> inset;
+    callback time-tap();
+    callback start();
+
+    height: bar.preferred-height;
+    background: MaterialPalette.surface-container;
+
+    // A colour doesn't block input.
+    TouchArea {}
+
+    bar := HorizontalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 12px;
+        padding-bottom: root.inset + 12px;
+        spacing: 16px;
+
+        VerticalLayout {
+            alignment: center;
+            TimeButton {
+                text: root.time-text;
+                font-size: 32px;
+                font-weight: 300;
+                alignment: left;
+                enabled: root.time-enabled;
+                tapped => { root.time-tap(); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            FilledButton {
+                text: @tr("Start Session");
+                height: 56px;
+                enabled: root.start-enabled;
+                clicked => { root.start(); }
+            }
+        }
+    }
+}
+
 /// Who opened the label chooser: Setup's label row (picks write the
 /// mode's setting) or Edit Session.
 export enum LabelTarget {
@@ -2943,13 +3037,37 @@ export component MainWindow inherits Window {
     // `push_bells_page` (`meditate-gtk/src/bells.rs:24`).
     in-out property <bool> interval-bells-active: false;
     in property <[IntervalBellRow]> interval-bell-items: [];
-    in property <bool> interval-bells-page: false;
+    // in-out: closes itself behind a session started from its start bar.
+    in-out property <bool> interval-bells-page: false;
     // "N enabled" / "None enabled" — mirrors GTK's
     // `intervals_count_subtitle` on the Manage Bells row.
     in property <string> interval-bells-summary: @tr("None enabled");
     callback interval-bells-toggled(bool);
     callback manage-bells-tap();
     callback interval-bells-back();
+
+    // Session and Bells pages (GitHub #20): the rows that left the
+    // main screen; their rows there sum them up (ui.rs
+    // `refresh_setup_summaries`, from core's summaries).
+    in-out property <bool> session-page: false;
+    in-out property <bool> bells-page: false;
+    in property <string> session-summary;
+    in property <string> bells-summary;
+    // Either page closed, however: Rust refreshes the summaries.
+    callback setup-page-closed();
+    changed session-page => {
+        if !self.session-page { root.setup-page-closed(); }
+    }
+    changed bells-page => {
+        if !self.bells-page { root.setup-page-closed(); }
+    }
+    // Start Session's state, on the main screen and in the start bars.
+    // Stopwatch Mode needs no duration; Guided needs its file read.
+    property <bool> start-enabled: ((root.setup-mode == 0 || root.setup-mode == 2)
+            && (root.stopwatch-on || root.setup-hours > 0 || root.setup-minutes > 0))
+        || (root.setup-mode == 1 && root.guided-name != "" && !root.guided-reading);
+    // The time opens the Duration dialog where the Duration row would.
+    property <bool> time-tappable: root.setup-mode != 1 && !root.stopwatch-on;
     // B-5c-2: per-row delete + a "Create interval bell" entry
     // that opens the editor. Sound-only (no Type/Pattern —
     // that folds in with B-2). `ie-*` are the editor's working
@@ -3453,6 +3571,22 @@ export component MainWindow inherits Window {
 
     property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
     animate interval-bells-offset { duration: 300ms; easing: ease-out; }
+    property <length> session-offset: root.session-page ? root.width : 0px;
+    animate session-offset { duration: 300ms; easing: ease-out; }
+    property <length> bells-offset: root.bells-page ? root.width : 0px;
+    animate bells-offset { duration: 300ms; easing: ease-out; }
+    // A session started from a start bar: the Running screen slides in
+    // over the page, then the page closes unseen behind it. The interval
+    // is the Running slide's duration (`animate screen-offset`).
+    Timer {
+        interval: 300ms;
+        running: root.running-page && (root.session-page || root.bells-page || root.interval-bells-page);
+        triggered => {
+            root.session-page = false;
+            root.bells-page = false;
+            root.interval-bells-page = false;
+        }
+    }
 
     property <length> interval-editor-offset: root.interval-editor-page ? root.width : 0px;
     animate interval-editor-offset { duration: 300ms; easing: ease-out; }
@@ -3619,17 +3753,11 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                Text {
+                TimeButton {
                     text: root.remaining-text;
                     font-size: 80px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("Hours · Minutes");
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
+                    enabled: root.time-tappable;
+                    tapped => { root.duration-tap(); }
                 }
             }
 
@@ -3657,11 +3785,7 @@ export component MainWindow inherits Window {
             FilledButton {
                 text: @tr("Start Session");
                 height: 56px;
-                enabled: ((root.setup-mode == 0 || root.setup-mode == 2)
-                    && (root.stopwatch-on
-                        || root.setup-hours > 0
-                        || root.setup-minutes > 0))
-                    || (root.setup-mode == 1 && root.guided-name != "" && !root.guided-reading);
+                enabled: root.start-enabled;
                 clicked => { root.action-tap(); }
             }
 
@@ -4025,657 +4149,30 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Session group, shared by every mode — mirrors GTK's
-            // `session_group` (`timer_view.blp` line 299) and core
-            // `setup_visibility`: no Cues row in Box Breath (it has
-            // phase cues), no Duration row in Guided (the file sets
-            // the length). The rows' props are per-mode; mode switch
-            // reloads them.
-            VerticalLayout {
-                spacing: 8px;
-
-                Text {
-                    text: @tr("Session");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
+            // Session and Bells rows (GitHub #20): their groups live on
+            // their own pages; the subtitles sum them up (core summaries).
+            BoxedList {
+                ChooserRow {
+                    title: @tr("Session");
+                    subtitle: root.session-summary;
+                    child-shade: false;
+                    tapped => { root.session-page = true; }
                 }
-
-                BoxedList {
-                    // Cues row sits FIRST — mirrors the GTK .blp
-                    // ordering (Cues → Stopwatch → Duration → Label →
-                    // Keep Awake).
-                    if root.setup-mode != 2 : CuesRow {
-                        title: @tr("Cues");
-                        current-index <=> root.cues-mode;
-                        changed(idx) => { root.cues-changed(idx); }
-                    }
-
-                    // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
-                    // row separator. Each hidden row hides its divider.
-                    if root.setup-mode != 2 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    SwitchRow {
-                        title: @tr("Stopwatch Mode");
-                        subtitle: @tr("Count up from zero");
-                        checked <=> root.stopwatch-on;
-                        toggled(value) => { root.stopwatch-toggled(value); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    if root.setup-mode != 1 : DurationRow {
-                        value-text: root.duration-text;
-                        enabled: !root.stopwatch-on;
-                        tapped => { root.duration-tap(); }
-                    }
-
-                    if root.setup-mode != 1 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Label expander — mirrors `setup_label_enabled_row`.
-                    // Master switch toggles per-mode label tagging;
-                    // the inner Selected row opens the label chooser.
-                    ExpanderRow {
-                        title: @tr("Label");
-                        subtitle: @tr("Tag this session");
-                        body-title: @tr("Selected");
-                        body-subtitle: root.label-name;
-                        active <=> root.label-active;
-                        toggled(value) => { root.label-active-toggled(value); }
-                        body-tapped => { root.label-tap(); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Auto-Finish: greyed out where the session has no end (a
-                    // guided file always has one).
-                    SwitchRow {
-                        title: @tr("Auto-Finish");
-                        subtitle: @tr("Saves the session without asking when the time is up");
-                        enabled: root.setup-mode == 1 || !root.stopwatch-on;
-                        checked <=> root.auto-finish-on;
-                        toggled(value) => { root.auto-finish-toggled(value); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Keep Screen Awake — mirrors GTK's
-                    // `keep_screen_awake_row`, in every mode.
-                    SwitchRow {
-                        title: @tr("Keep Screen Awake");
-                        subtitle: @tr("Prevent display sleep during a session");
-                        checked <=> root.keep-awake-on;
-                        toggled(value) => { root.keep-awake-toggled(value); }
-                    }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
                 }
-            }
-
-            // Bells group, shared by every mode — mirrors GTK's
-            // `bells_group` (`timer_view.blp:401`). Starting and
-            // Interval Bells are Timer-only (core `setup_visibility`);
-            // End Bell shows in every mode. The bell props are global,
-            // not per-mode.
-            VerticalLayout {
-                spacing: 8px;
-
-                Text {
-                    text: @tr("Bells");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-
-                BoxedList {
-                    // Starting Bell — an ExpanderGroup so its
-                    // body can hold the Bell Sound row AND the
-                    // nested Preparation Time expander, exactly
-                    // like GTK's `starting_bell_row` with the
-                    // `preparation_time_row` AdwExpanderRow
-                    // nested inside it (`timer_view.blp:413`).
-                    if root.setup-mode == 0 : ExpanderGroup {
-                        title: @tr("Starting Bell");
-                        subtitle: @tr("Play a signal when the session begins");
-                        active <=> root.starting-bell-active;
-                        toggled(value) => { root.starting-bell-toggled(value); }
-
-                        CuesRow {
-                            title: @tr("Type");
-                            current-index <=> root.starting-bell-signal-mode;
-                            changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
-                        }
-
-                        // Bell Sound — revealed when the mode
-                        // includes sound (Sound|Both); Pattern when
-                        // it includes vibration (Vibration|Both).
-                        // Mirrors GTK's `starting_bell_sound_revealer`
-                        // / `starting_bell_pattern_revealer`.
-                        RevealChooser {
-                            shown: root.starting-bell-signal-mode != 1;
-                            title: @tr("Bell Sound");
-                            subtitle: root.starting-bell-sound-name;
-                            tapped => { root.starting-bell-sound-tap(); }
-                        }
-                        RevealVolume {
-                            shown: root.starting-bell-signal-mode != 1;
-                            minimum: root.bell-volume-min;
-                            maximum: root.bell-volume-max;
-                            step: root.bell-volume-step;
-                            value <=> root.starting-bell-volume;
-                            previewing: root.volume-previewing == "start";
-                            value-changed(v) => { root.bell-volume-changed("start", v); }
-                            released(v) => { root.bell-volume-released("start", v); }
-                            stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        RevealChooser {
-                            shown: root.starting-bell-signal-mode != 0;
-                            title: @tr("Pattern");
-                            subtitle: root.starting-bell-pattern-name;
-                            tapped => { root.starting-bell-pattern-tap(); }
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            background: MaterialPalette.outline-variant;
-                        }
-
-                        // Nested Preparation Time expander —
-                        // child of Starting Bell, mirroring GTK.
-                        ExpanderRow {
-                            title: @tr("Preparation Time");
-                            subtitle: @tr("Silence before the starting bell");
-                            body-title: @tr("Duration");
-                            body-subtitle: Tr.secs(root.prep-time-secs);
-                            active <=> root.prep-time-active;
-                            toggled(value) => { root.prep-time-toggled(value); }
-                            body-tapped => { root.prep-time-tap(); }
-                        }
-                    }
-
-                    if root.setup-mode == 0 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Interval Bells — between Starting and End
-                    // Bell, mirroring GTK's group order
-                    // (`timer_view.blp:482`). Body row drills
-                    // into the library page.
-                    if root.setup-mode == 0 : ExpanderRow {
-                        title: @tr("Interval Bells");
-                        subtitle: @tr("Ring during the session");
-                        body-title: @tr("Manage Bells");
-                        body-subtitle: root.interval-bells-summary;
-                        active <=> root.interval-bells-active;
-                        toggled(value) => { root.interval-bells-toggled(value); }
-                        body-tapped => { root.manage-bells-tap(); }
-                    }
-
-                    if root.setup-mode == 0 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // End Bell — an ExpanderGroup (was a single-
-                    // body ExpanderRow) so it can hold Type +
-                    // Sound + Pattern, mirroring GTK's `end_bell_
-                    // row` (`timer_view.blp:506`).
-                    ExpanderGroup {
-                        title: @tr("End Bell");
-                        subtitle: @tr("Play a signal when the session ends");
-                        active <=> root.end-bell-active;
-                        enabled: root.end-bell-sensitive;
-                        toggled(value) => { root.end-bell-toggled(value); }
-
-                        CuesRow {
-                            title: @tr("Type");
-                            current-index <=> root.end-bell-signal-mode;
-                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
-                        }
-
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 1;
-                            title: @tr("Bell Sound");
-                            subtitle: root.end-bell-sound-name;
-                            tapped => { root.end-bell-sound-tap(); }
-                        }
-                        RevealVolume {
-                            shown: root.end-bell-signal-mode != 1;
-                            minimum: root.bell-volume-min;
-                            maximum: root.bell-volume-max;
-                            step: root.bell-volume-step;
-                            value <=> root.end-bell-volume;
-                            previewing: root.volume-previewing == "end";
-                            value-changed(v) => { root.bell-volume-changed("end", v); }
-                            released(v) => { root.bell-volume-released("end", v); }
-                            stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 0;
-                            title: @tr("Pattern");
-                            subtitle: root.end-bell-pattern-name;
-                            tapped => { root.end-bell-pattern-tap(); }
-                        }
-                    }
-                }
-            }
-
-            // Box Breath cues — Box Breath only, after the shared
-            // Session and Bells groups.
-            if root.setup-mode == 2 : VerticalLayout {
-                spacing: 8px;
-
-                // Box Breath cues (B-7) — mirrors GTK's
-                // `boxbreath_phase_section` PreferencesGroup
-                // (`timer_view.blp:570`): a master "Cues during
-                // phases" expander wrapping the four phase cue
-                // expanders. Cue firing itself is already wired
-                // (B-6 feeds box_breath_cues_from_db into the
-                // session; dispatch_effects routes
-                // FireBoxBreathCue) — this is the config surface.
-                Text {
-                    text: @tr("Box Breath cues");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-
-                BoxedList {
-                    ExpanderGroup {
-                        title: @tr("Cues during phases");
-                        subtitle: @tr("Different cue per phase to feel the cycle");
-                        active <=> root.boxbreath-cues-active;
-                        toggled(v) => { root.boxbreath-cues-toggled(v); }
-
-                        PhaseCue {
-                            title: @tr("Inhale");
-                            active <=> root.bbc-in-active;
-                            signal-mode <=> root.bbc-in-signal-mode;
-                            sound-name: root.bbc-in-sound-name;
-                            pattern-name: root.bbc-in-pattern-name;
-                            toggled(v) => { root.bbc-in-toggled(v); }
-                            signal-mode-changed(i) => { root.bbc-in-signal-mode-changed(i); }
-                            sound-tap => { root.bbc-in-sound-tap(); }
-                            pattern-tap => { root.bbc-in-pattern-tap(); }
-                            volume <=> root.bbc-in-volume;
-                            volume-min: root.bell-volume-min;
-                            volume-max: root.bell-volume-max;
-                            volume-step: root.bell-volume-step;
-                            previewing: root.volume-previewing == "in";
-                            volume-changed(v) => { root.bell-volume-changed("in", v); }
-                            volume-released(v) => { root.bell-volume-released("in", v); }
-                            volume-stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        Rectangle {
-                            height: 1px;
-                            background: MaterialPalette.outline-variant;
-                        }
-                        PhaseCue {
-                            title: @tr("Hold (full)");
-                            active <=> root.bbc-holdin-active;
-                            signal-mode <=> root.bbc-holdin-signal-mode;
-                            sound-name: root.bbc-holdin-sound-name;
-                            pattern-name: root.bbc-holdin-pattern-name;
-                            toggled(v) => { root.bbc-holdin-toggled(v); }
-                            signal-mode-changed(i) => { root.bbc-holdin-signal-mode-changed(i); }
-                            sound-tap => { root.bbc-holdin-sound-tap(); }
-                            pattern-tap => { root.bbc-holdin-pattern-tap(); }
-                            volume <=> root.bbc-holdin-volume;
-                            volume-min: root.bell-volume-min;
-                            volume-max: root.bell-volume-max;
-                            volume-step: root.bell-volume-step;
-                            previewing: root.volume-previewing == "holdin";
-                            volume-changed(v) => { root.bell-volume-changed("holdin", v); }
-                            volume-released(v) => { root.bell-volume-released("holdin", v); }
-                            volume-stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        Rectangle {
-                            height: 1px;
-                            background: MaterialPalette.outline-variant;
-                        }
-                        PhaseCue {
-                            title: @tr("Exhale");
-                            active <=> root.bbc-out-active;
-                            signal-mode <=> root.bbc-out-signal-mode;
-                            sound-name: root.bbc-out-sound-name;
-                            pattern-name: root.bbc-out-pattern-name;
-                            toggled(v) => { root.bbc-out-toggled(v); }
-                            signal-mode-changed(i) => { root.bbc-out-signal-mode-changed(i); }
-                            sound-tap => { root.bbc-out-sound-tap(); }
-                            pattern-tap => { root.bbc-out-pattern-tap(); }
-                            volume <=> root.bbc-out-volume;
-                            volume-min: root.bell-volume-min;
-                            volume-max: root.bell-volume-max;
-                            volume-step: root.bell-volume-step;
-                            previewing: root.volume-previewing == "out";
-                            volume-changed(v) => { root.bell-volume-changed("out", v); }
-                            volume-released(v) => { root.bell-volume-released("out", v); }
-                            volume-stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        Rectangle {
-                            height: 1px;
-                            background: MaterialPalette.outline-variant;
-                        }
-                        PhaseCue {
-                            title: @tr("Hold (empty)");
-                            active <=> root.bbc-holdout-active;
-                            signal-mode <=> root.bbc-holdout-signal-mode;
-                            sound-name: root.bbc-holdout-sound-name;
-                            pattern-name: root.bbc-holdout-pattern-name;
-                            toggled(v) => { root.bbc-holdout-toggled(v); }
-                            signal-mode-changed(i) => { root.bbc-holdout-signal-mode-changed(i); }
-                            sound-tap => { root.bbc-holdout-sound-tap(); }
-                            pattern-tap => { root.bbc-holdout-pattern-tap(); }
-                            volume <=> root.bbc-holdout-volume;
-                            volume-min: root.bell-volume-min;
-                            volume-max: root.bell-volume-max;
-                            volume-step: root.bell-volume-step;
-                            previewing: root.volume-previewing == "holdout";
-                            volume-changed(v) => { root.bell-volume-changed("holdout", v); }
-                            volume-released(v) => { root.bell-volume-released("holdout", v); }
-                            volume-stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                    }
+                ChooserRow {
+                    title: @tr("Bells");
+                    subtitle: root.bells-summary;
+                    child-shade: false;
+                    tapped => { root.bells-page = true; }
                 }
             }
             }   // close setup-stack VerticalLayout
         }       // close Flickable
     }           // close Setup Rectangle
 
-
-    // ── Running screen ──────────────────────────────────────────
-    // Hero + controls vertically centered on a pure-black canvas.
-    // GTK shell uses libadwaita's background-fade-to-black on the
-    // running page; Material 3 has no canonical equivalent, so we
-    // go straight to #000. Two layouts share this overlay: Timer
-    // hero (digit countdown) and Box Breath visualisation (square
-    // + perimeter dot). `bb-running-active` switches between them.
-    running-canvas := Rectangle {
-        visible: root.nav-page == 0;
-        x: parent.width - root.screen-offset;
-        width: parent.width;
-        height: parent.height;
-        background: #000000;
-        // Black in both themes, so the dark scheme's accent (#15).
-        property <color> accent: MaterialPalette.schemes.dark.primary;
-
-        // Swallow taps on empty areas so they never reach the
-        // page underneath (a background colour does not block input).
-        TouchArea {}
-
-        // Scrolls once the note and the keyboard need the room.
-        Flickable {
-            width: 100%;
-            height: 100%;
-            content-width: self.width;
-            content-height: max(self.height, running-stack.preferred-height);
-            // A tap on empty space lets go of the note.
-            TouchArea {
-                width: parent.content-width;
-                height: parent.content-height;
-                clicked => { running-note.release(); }
-            }
-
-            running-stack := VerticalLayout {
-                height: parent.content-height;
-                alignment: start;
-                // Short viewports (phone landscape): tighter spacing +
-                // smaller hero so the column fits ~360dp heights. The
-                // 220px Box Breath square itself stays fixed — its
-                // perimeter-dot coordinates are Rust-computed for that
-                // exact geometry (see bb-dot-x/y).
-                spacing: root.height < 560px ? 10px : 24px;
-                padding-left: 24px;
-                padding-right: 24px;
-                // Centres the time and the buttons between the bars, note or
-                // not, so pausing moves nothing; the note hangs below.
-                property <length> pad: 24px;
-                padding-top: root.status-bar-inset + self.pad + max(0px, (running-canvas.height - root.status-bar-inset - root.bottom-bar-inset - 2 * self.pad - running-block.preferred-height) / 2);
-                padding-bottom: root.bottom-bar-inset + self.pad;
-
-                running-block := VerticalLayout {
-                    spacing: running-stack.spacing;
-
-                    // Timer mode hero — digit countdown, inside the bell
-                    // ring when the session has a known length.
-                    if !root.bb-running-active && !root.ring-on : Text {
-                        text: root.remaining-text;
-                        font-size: root.height < 560px ? 56px : 80px;
-                        horizontal-alignment: center;
-                        color: #ffffff;
-                    }
-                    if !root.bb-running-active && root.ring-on : HorizontalLayout {
-                        alignment: center;
-                        BellRingView {
-                            width: min(root.height < 560px ? 220px : 320px, running-stack.width - 48px);
-                            height: self.width;
-                            filled: root.ring-filled;
-                            prep: root.ring-prep;
-                            start-filled: root.ring-start-filled;
-                            beads: root.ring-beads;
-                            Text {
-                                width: parent.width;
-                                height: parent.height;
-                                text: root.remaining-text;
-                                // Hours don't fit inside the ring at the full size.
-                                font-size: root.remaining-text.character-count > 5
-                                    ? (root.height < 560px ? 40px : 56px)
-                                    : (root.height < 560px ? 48px : 72px);
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                color: #ffffff;
-                            }
-                        }
-                    }
-                    if !root.bb-running-active && root.bell-counts.length > 0 : HorizontalLayout {
-                        alignment: center;
-                        spacing: 20px;
-                        for count in root.bell-counts : HorizontalLayout {
-                            spacing: 6px;
-                            alignment: center;
-                            // The dot centred on the text's line.
-                            Rectangle {
-                                width: 8px;
-                                Rectangle {
-                                    y: parent.height / 2 - 4px;
-                                    width: 8px;
-                                    height: 8px;
-                                    border-radius: 4px;
-                                    background: MaterialPalette.schemes.dark.primary;
-                                }
-                            }
-                            Text {
-                                text: count.total >= 0 ? @tr("{} of {}", count.rung, count.total) : count.rung;
-                                font-size: 15px;
-                                color: #ffffffb3;
-                            }
-                        }
-                    }
-
-                    // Box Breath visualisation — mirrors GTK's
-                    // `push_breathing_running_page` content vbox at
-                    // `meditate-gtk/src/window/imp.rs:254-498`. Top strip
-                    // (eyebrow + counter) → 220×220 overlay (frame + dot
-                    // + phase label + phase seconds) → buttons (the
-                    // buttons live in `running-block`, shared with
-                    // Timer mode).
-                    if root.bb-running-active : VerticalLayout {
-                        spacing: root.height < 560px ? 10px : 24px;
-                        alignment: center;
-
-                        // Top strip: "Box Breathing" eyebrow + counter.
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text {
-                                text: @tr("Box Breathing");
-                                font-size: 12px;
-                                horizontal-alignment: center;
-                                color: #ffffffaa;
-                            }
-                            Text {
-                                text: root.bb-counter-text;
-                                font-size: 28px;
-                                horizontal-alignment: center;
-                                color: #ffffff;
-                            }
-                        }
-
-                        // Square + dot overlay. The frame is a 196×196
-                        // rounded rectangle at (12, 12) inside a 220×220
-                        // container — matches GTK's pad=12, side=196
-                        // (cairo drawing area is 220px). Halo + dot are
-                        // positioned at the perimeter point Rust computes
-                        // via `Phase::perimeter_point(t, 12, 196)`; the
-                        // -7 / -11 offsets centre them on that coordinate.
-                        //
-                        // HorizontalLayout { alignment: center } keeps the
-                        // 220 px container horizontally centred in the
-                        // parent column (default VerticalLayout
-                        // packing left-aligns sub-parent-width children).
-                        HorizontalLayout {
-                            alignment: center;
-                        Rectangle {
-                            width: 220px;
-                            height: 220px;
-
-                            // Square frame — tinted fill + accent stroke.
-                            Rectangle {
-                                x: 12px;
-                                y: 12px;
-                                width: 196px;
-                                height: 196px;
-                                border-radius: 20px;
-                                background: running-canvas.accent.with-alpha(0.08);
-                                border-width: 1.5px;
-                                border-color: running-canvas.accent.with-alpha(0.45);
-                            }
-
-                            // Phase label + remaining-seconds overlay,
-                            // centred inside the square — mirrors GTK's
-                            // inner_stack at `imp.rs:305-312`.
-                            VerticalLayout {
-                                x: 12px;
-                                y: 12px;
-                                width: 196px;
-                                height: 196px;
-                                alignment: center;
-                                spacing: 2px;
-
-                                Text {
-                                    text: root.bb-phase-label;
-                                    font-size: 14px;
-                                    horizontal-alignment: center;
-                                    color: running-canvas.accent;
-                                }
-                                Text {
-                                    text: root.bb-phase-seconds;
-                                    font-size: 56px;
-                                    horizontal-alignment: center;
-                                    color: #ffffff;
-                                }
-                            }
-
-                            // Halo — semi-transparent accent disc behind
-                            // the dot. Drawn before the dot so the dot
-                            // body sits on top. `animate x, y` smooths the
-                            // 200 ms tick-driven steps into glide-y motion;
-                            // linear easing because the perimeter is
-                            // axis-aligned (only one of x / y changes per
-                            // phase) and corner crossings always land on
-                            // the same coordinate before / after, so
-                            // linear interpolation never cuts inside.
-                            Rectangle {
-                                x: root.bb-dot-x - 11px;
-                                y: root.bb-dot-y - 11px;
-                                width: 22px;
-                                height: 22px;
-                                border-radius: 11px;
-                                background: running-canvas.accent.with-alpha(0.30);
-                                animate x { duration: 200ms; easing: linear; }
-                                animate y { duration: 200ms; easing: linear; }
-                            }
-
-                            // Dot — white fill with accent ring. Matches
-                            // GTK's "white-filled, accent-bordered" dot
-                            // at `imp.rs:374-380`.
-                            Rectangle {
-                                x: root.bb-dot-x - 7px;
-                                y: root.bb-dot-y - 7px;
-                                width: 14px;
-                                height: 14px;
-                                border-radius: 7px;
-                                background: #ffffff;
-                                border-width: 2.5px;
-                                border-color: running-canvas.accent;
-                                animate x { duration: 200ms; easing: linear; }
-                                animate y { duration: 200ms; easing: linear; }
-                            }
-                        }
-                        }
-                    }
-
-                    // Core's button set (`EndButtons`): one or two in a row,
-                    // Discard always under them; the note once paused or over.
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: center;
-                        EndButtonView {
-                            kind: root.end-left;
-                            add-label: root.overtime-add-label;
-                            tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
-                        }
-                        if root.end-right >= 0 : EndButtonView {
-                            kind: root.end-right;
-                            add-label: root.overtime-add-label;
-                            tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: center;
-                        EndButtonView {
-                            kind: 4;
-                            tapped => { running-note.release(); root.discard-tap(); }
-                        }
-                    }
-                }
-                // Kept (not `if`) so its text survives Resume.
-                VerticalLayout {
-                    visible: root.end-note;
-                    height: root.end-note ? self.preferred-height : 0px;
-                    spacing: 6px;
-                    Text {
-                        text: @tr("Note (optional)");
-                        font-size: 12px;
-                        color: #ffffffaa;
-                        horizontal-alignment: left;
-                        wrap: word-wrap;
-                    }
-                    running-note := NoteField {
-                        dark: true;
-                        label: @tr("Note");
-                        text <=> root.note-text;
-                    }
-                }
-            }
-        }
-    }
 
     // ── Log page (base layer, nav-page == 2) ────────────────────
     // Mirrors GTK's `log_view.blp` Stack: empty state vs. list.
@@ -6024,6 +5521,892 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Session page (GitHub #20) ───────────────────────────────
+    // Today's Session group, opened from the main screen's Session
+    // row, with a start bar. Mirrors GTK's `session_page`. Declared
+    // before the Running screen, which slides in over it.
+    Rectangle {
+        x: parent.width - root.session-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        // Swallow taps on empty areas so they never reach the
+        // page underneath (a background colour does not block input).
+        TouchArea {}
+
+        Flickable {
+            content-width: self.width;
+            content-height: session-scroll.preferred-height;
+            interactive: !SliderTouch.held;
+
+            session-scroll := VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            // Room for the start bar.
+            padding-bottom: session-bar.height + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            PageHeader {
+                title: @tr("Session");
+                back => { root.session-page = false; }
+            }
+
+            // Today's Session group without Cues (core `setup_visibility`:
+            // no Duration row in Guided). The props are per-mode.
+            BoxedList {
+                SwitchRow {
+                    title: @tr("Stopwatch Mode");
+                    subtitle: @tr("Count up from zero");
+                    checked <=> root.stopwatch-on;
+                    toggled(value) => { root.stopwatch-toggled(value); }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                if root.setup-mode != 1 : DurationRow {
+                    value-text: root.duration-text;
+                    enabled: !root.stopwatch-on;
+                    tapped => { root.duration-tap(); }
+                }
+
+                if root.setup-mode != 1 : Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // Label expander — mirrors `setup_label_enabled_row`.
+                // Master switch toggles per-mode label tagging;
+                // the inner Selected row opens the label chooser.
+                ExpanderRow {
+                    title: @tr("Label");
+                    subtitle: @tr("Tag this session");
+                    body-title: @tr("Selected");
+                    body-subtitle: root.label-name;
+                    active <=> root.label-active;
+                    toggled(value) => { root.label-active-toggled(value); }
+                    body-tapped => { root.label-tap(); }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // Auto-Finish: greyed out where the session has no end (a
+                // guided file always has one).
+                SwitchRow {
+                    title: @tr("Auto-Finish");
+                    subtitle: @tr("Saves the session without asking when the time is up");
+                    enabled: root.setup-mode == 1 || !root.stopwatch-on;
+                    checked <=> root.auto-finish-on;
+                    toggled(value) => { root.auto-finish-toggled(value); }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // Keep Screen Awake — mirrors GTK's
+                // `keep_screen_awake_row`, in every mode.
+                SwitchRow {
+                    title: @tr("Keep Screen Awake");
+                    subtitle: @tr("Prevent display sleep during a session");
+                    checked <=> root.keep-awake-on;
+                    toggled(value) => { root.keep-awake-toggled(value); }
+                }
+            }
+            }
+        } // Flickable (session-scroll)
+
+        session-bar := StartBar {
+            y: parent.height - self.height;
+            width: parent.width;
+            time-text: root.remaining-text;
+            time-enabled: root.time-tappable;
+            start-enabled: root.start-enabled;
+            inset: root.bottom-bar-inset;
+            time-tap => { root.duration-tap(); }
+            start => { root.action-tap(); }
+        }
+    }
+
+    // ── Bells page (GitHub #20) ─────────────────────────────────
+    // Cues, the bells and the Box Breath cues, opened from the main
+    // screen's Bells row, with a start bar. Mirrors GTK's `bells_page`.
+    Rectangle {
+        x: parent.width - root.bells-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        // Swallow taps on empty areas so they never reach the
+        // page underneath (a background colour does not block input).
+        TouchArea {}
+
+        Flickable {
+            content-width: self.width;
+            content-height: bells-scroll.preferred-height;
+            interactive: !SliderTouch.held;
+
+            bells-scroll := VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            // Room for the start bar.
+            padding-bottom: bells-bar.height + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            PageHeader {
+                title: @tr("Bells");
+                back => { root.bells-page = false; }
+            }
+
+            // Starting and Interval Bells are Timer-only (core
+            // `setup_visibility`); End Bell shows in every mode.
+            BoxedList {
+                // Cues first, as GTK's Bells page (#20); not in
+                // Box Breath (it has phase cues).
+                if root.setup-mode != 2 : CuesRow {
+                    title: @tr("Cues");
+                    current-index <=> root.cues-mode;
+                    changed(idx) => { root.cues-changed(idx); }
+                }
+
+                // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
+                // row separator. Each hidden row hides its divider.
+                if root.setup-mode != 2 : Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // Starting Bell — an ExpanderGroup so its
+                // body can hold the Bell Sound row AND the
+                // nested Preparation Time expander, exactly
+                // like GTK's `starting_bell_row` with the
+                // `preparation_time_row` AdwExpanderRow
+                // nested inside it (`timer_view.blp:413`).
+                if root.setup-mode == 0 : ExpanderGroup {
+                    title: @tr("Starting Bell");
+                    subtitle: @tr("Play a signal when the session begins");
+                    active <=> root.starting-bell-active;
+                    toggled(value) => { root.starting-bell-toggled(value); }
+
+                    CuesRow {
+                        title: @tr("Type");
+                        current-index <=> root.starting-bell-signal-mode;
+                        changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
+                    }
+
+                    // Bell Sound — revealed when the mode
+                    // includes sound (Sound|Both); Pattern when
+                    // it includes vibration (Vibration|Both).
+                    // Mirrors GTK's `starting_bell_sound_revealer`
+                    // / `starting_bell_pattern_revealer`.
+                    RevealChooser {
+                        shown: root.starting-bell-signal-mode != 1;
+                        title: @tr("Bell Sound");
+                        subtitle: root.starting-bell-sound-name;
+                        tapped => { root.starting-bell-sound-tap(); }
+                    }
+                    RevealVolume {
+                        shown: root.starting-bell-signal-mode != 1;
+                        minimum: root.bell-volume-min;
+                        maximum: root.bell-volume-max;
+                        step: root.bell-volume-step;
+                        value <=> root.starting-bell-volume;
+                        previewing: root.volume-previewing == "start";
+                        value-changed(v) => { root.bell-volume-changed("start", v); }
+                        released(v) => { root.bell-volume-released("start", v); }
+                        stop-tap => { root.bell-volume-stop-tap(); }
+                    }
+                    RevealChooser {
+                        shown: root.starting-bell-signal-mode != 0;
+                        title: @tr("Pattern");
+                        subtitle: root.starting-bell-pattern-name;
+                        tapped => { root.starting-bell-pattern-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Nested Preparation Time expander —
+                    // child of Starting Bell, mirroring GTK.
+                    ExpanderRow {
+                        title: @tr("Preparation Time");
+                        subtitle: @tr("Silence before the starting bell");
+                        body-title: @tr("Duration");
+                        body-subtitle: Tr.secs(root.prep-time-secs);
+                        active <=> root.prep-time-active;
+                        toggled(value) => { root.prep-time-toggled(value); }
+                        body-tapped => { root.prep-time-tap(); }
+                    }
+                }
+
+                if root.setup-mode == 0 : Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // Interval Bells — between Starting and End
+                // Bell, mirroring GTK's group order
+                // (`timer_view.blp:482`). Body row drills
+                // into the library page.
+                if root.setup-mode == 0 : ExpanderRow {
+                    title: @tr("Interval Bells");
+                    subtitle: @tr("Ring during the session");
+                    body-title: @tr("Manage Bells");
+                    body-subtitle: root.interval-bells-summary;
+                    active <=> root.interval-bells-active;
+                    toggled(value) => { root.interval-bells-toggled(value); }
+                    body-tapped => { root.manage-bells-tap(); }
+                }
+
+                if root.setup-mode == 0 : Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                // End Bell — an ExpanderGroup (was a single-
+                // body ExpanderRow) so it can hold Type +
+                // Sound + Pattern, mirroring GTK's `end_bell_
+                // row` (`timer_view.blp:506`).
+                ExpanderGroup {
+                    title: @tr("End Bell");
+                    subtitle: @tr("Play a signal when the session ends");
+                    active <=> root.end-bell-active;
+                    enabled: root.end-bell-sensitive;
+                    toggled(value) => { root.end-bell-toggled(value); }
+
+                    CuesRow {
+                        title: @tr("Type");
+                        current-index <=> root.end-bell-signal-mode;
+                        changed(idx) => { root.end-bell-signal-mode-changed(idx); }
+                    }
+
+                    RevealChooser {
+                        shown: root.end-bell-signal-mode != 1;
+                        title: @tr("Bell Sound");
+                        subtitle: root.end-bell-sound-name;
+                        tapped => { root.end-bell-sound-tap(); }
+                    }
+                    RevealVolume {
+                        shown: root.end-bell-signal-mode != 1;
+                        minimum: root.bell-volume-min;
+                        maximum: root.bell-volume-max;
+                        step: root.bell-volume-step;
+                        value <=> root.end-bell-volume;
+                        previewing: root.volume-previewing == "end";
+                        value-changed(v) => { root.bell-volume-changed("end", v); }
+                        released(v) => { root.bell-volume-released("end", v); }
+                        stop-tap => { root.bell-volume-stop-tap(); }
+                    }
+                    RevealChooser {
+                        shown: root.end-bell-signal-mode != 0;
+                        title: @tr("Pattern");
+                        subtitle: root.end-bell-pattern-name;
+                        tapped => { root.end-bell-pattern-tap(); }
+                    }
+                }
+            }
+
+            // Box Breath cues — Box Breath only, after the bells.
+            if root.setup-mode == 2 : VerticalLayout {
+                spacing: 8px;
+
+                // Box Breath cues (B-7) — mirrors GTK's
+                // `boxbreath_phase_section` PreferencesGroup
+                // (`timer_view.blp:570`): a master "Cues during
+                // phases" expander wrapping the four phase cue
+                // expanders. Cue firing itself is already wired
+                // (B-6 feeds box_breath_cues_from_db into the
+                // session; dispatch_effects routes
+                // FireBoxBreathCue) — this is the config surface.
+                Text {
+                    text: @tr("Box Breath cues");
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                BoxedList {
+                    ExpanderGroup {
+                        title: @tr("Cues during phases");
+                        subtitle: @tr("Different cue per phase to feel the cycle");
+                        active <=> root.boxbreath-cues-active;
+                        toggled(v) => { root.boxbreath-cues-toggled(v); }
+
+                        PhaseCue {
+                            title: @tr("Inhale");
+                            active <=> root.bbc-in-active;
+                            signal-mode <=> root.bbc-in-signal-mode;
+                            sound-name: root.bbc-in-sound-name;
+                            pattern-name: root.bbc-in-pattern-name;
+                            toggled(v) => { root.bbc-in-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-in-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-in-sound-tap(); }
+                            pattern-tap => { root.bbc-in-pattern-tap(); }
+                            volume <=> root.bbc-in-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "in";
+                            volume-changed(v) => { root.bell-volume-changed("in", v); }
+                            volume-released(v) => { root.bell-volume-released("in", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: @tr("Hold (full)");
+                            active <=> root.bbc-holdin-active;
+                            signal-mode <=> root.bbc-holdin-signal-mode;
+                            sound-name: root.bbc-holdin-sound-name;
+                            pattern-name: root.bbc-holdin-pattern-name;
+                            toggled(v) => { root.bbc-holdin-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-holdin-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-holdin-sound-tap(); }
+                            pattern-tap => { root.bbc-holdin-pattern-tap(); }
+                            volume <=> root.bbc-holdin-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "holdin";
+                            volume-changed(v) => { root.bell-volume-changed("holdin", v); }
+                            volume-released(v) => { root.bell-volume-released("holdin", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: @tr("Exhale");
+                            active <=> root.bbc-out-active;
+                            signal-mode <=> root.bbc-out-signal-mode;
+                            sound-name: root.bbc-out-sound-name;
+                            pattern-name: root.bbc-out-pattern-name;
+                            toggled(v) => { root.bbc-out-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-out-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-out-sound-tap(); }
+                            pattern-tap => { root.bbc-out-pattern-tap(); }
+                            volume <=> root.bbc-out-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "out";
+                            volume-changed(v) => { root.bell-volume-changed("out", v); }
+                            volume-released(v) => { root.bell-volume-released("out", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: @tr("Hold (empty)");
+                            active <=> root.bbc-holdout-active;
+                            signal-mode <=> root.bbc-holdout-signal-mode;
+                            sound-name: root.bbc-holdout-sound-name;
+                            pattern-name: root.bbc-holdout-pattern-name;
+                            toggled(v) => { root.bbc-holdout-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-holdout-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-holdout-sound-tap(); }
+                            pattern-tap => { root.bbc-holdout-pattern-tap(); }
+                            volume <=> root.bbc-holdout-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "holdout";
+                            volume-changed(v) => { root.bell-volume-changed("holdout", v); }
+                            volume-released(v) => { root.bell-volume-released("holdout", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
+                        }
+                    }
+                }
+            }
+            }
+        } // Flickable (bells-scroll)
+
+        bells-bar := StartBar {
+            y: parent.height - self.height;
+            width: parent.width;
+            time-text: root.remaining-text;
+            time-enabled: root.time-tappable;
+            start-enabled: root.start-enabled;
+            inset: root.bottom-bar-inset;
+            time-tap => { root.duration-tap(); }
+            start => { root.action-tap(); }
+        }
+    }
+
+    // ── Interval Bells library (overlay, B-5c-1) ────────────────
+    // Slide-in list of the configured interval bells, opened
+    // from the Bells group's "Manage Bells" row. Read-only here
+    // (add / edit / delete are B-5c-2/3). Same slide + header
+    // shape as the labels / bell-sound choosers; declared after
+    // them so it z-stacks above the chrome (declare-overlays-
+    // last rule). Mirrors GTK's `push_bells_page`.
+    Rectangle {
+        x: parent.width - root.interval-bells-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        // Swallow taps on empty areas so they never reach the
+        // page underneath (a background colour does not block input).
+        TouchArea {}
+
+        Flickable {
+            content-width: self.width;
+            content-height: ib-scroll.preferred-height;
+
+            ib-scroll := VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            // Room for the start bar.
+            padding-bottom: ib-bar.height + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            PageHeader {
+                title: @tr("Interval Bells");
+                back => { root.interval-bells-back(); }
+            }
+
+            BoxedList {
+                // Synthetic "Create interval bell…" row — always
+                // first, mirrors the labels chooser's create row
+                // + GTK's `build_create_row` (`bells.rs:149`).
+                Rectangle {
+                    height: 56px;
+                    background: ib-create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+
+                    ib-create-touch := TouchArea {
+                        clicked => { root.create-interval-bell-tap(); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+
+                        Text {
+                            text: @tr("Create interval bell…");
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                for item[idx] in root.interval-bell-items : VerticalLayout {
+                    spacing: 0;
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: max(64px, ib-row-layout.preferred-height);
+                        background: ib-row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        // Row tap → edit. Declared BEFORE the
+                        // HorizontalLayout so the trash
+                        // IconButton's own click claims the
+                        // delete hit-area and the rest of the row
+                        // falls through here (same pattern as the
+                        // Log card tap-vs-trash split).
+                        ib-row-touch := TouchArea {
+                            clicked => { root.interval-bell-edit(item.uuid); }
+                        }
+
+                        ib-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            padding-left: 16px;
+                            padding-right: 8px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: item.title;
+                                    wrap: word-wrap;
+                                    font-size: 16px;
+                                    color: item.sensitive
+                                        ? MaterialPalette.on-surface
+                                        : MaterialPalette.on-surface-variant;
+                                }
+                                if item.sound != "" : Text {
+                                    text: item.sound;
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+                            // Per-row on/off, like GTK's row switch.
+                            // Fixed box like the other switches: in the
+                            // row's layout a bare Switch stretched wide.
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 52px;
+                                    height: 32px;
+                                    Switch {
+                                        min-width: 52px;
+                                        min-height: 32px;
+                                        checked: item.enabled;
+                                        enabled: item.sensitive;
+                                        checked-state-changed(value) => {
+                                            root.interval-bell-toggled(item.uuid, value);
+                                        }
+                                    }
+                                }
+                            }
+                            // Per-row delete — trash, error-tinted
+                            // (mirrors GTK's destructive delete on
+                            // each bell row).
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: @image-url("assets/delete.svg");
+                                    has-error: true;
+                                    clicked => {
+                                        root.interval-bell-delete-uuid = item.uuid;
+                                        root.modal = Modal.interval-bell-delete;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        } // Flickable (ib-scroll)
+
+        ib-bar := StartBar {
+            y: parent.height - self.height;
+            width: parent.width;
+            time-text: root.remaining-text;
+            time-enabled: root.time-tappable;
+            start-enabled: root.start-enabled;
+            inset: root.bottom-bar-inset;
+            time-tap => { root.duration-tap(); }
+            start => { root.action-tap(); }
+        }
+    }
+
+    // ── Running screen ──────────────────────────────────────────
+    // Hero + controls vertically centered on a pure-black canvas.
+    // GTK shell uses libadwaita's background-fade-to-black on the
+    // running page; Material 3 has no canonical equivalent, so we
+    // go straight to #000. Two layouts share this overlay: Timer
+    // hero (digit countdown) and Box Breath visualisation (square
+    // + perimeter dot). `bb-running-active` switches between them.
+    // Declared after the Session, Bells and Interval Bells pages: a
+    // session started from their start bar slides in over them (#20).
+    running-canvas := Rectangle {
+        visible: root.nav-page == 0;
+        x: parent.width - root.screen-offset;
+        width: parent.width;
+        height: parent.height;
+        background: #000000;
+        // Black in both themes, so the dark scheme's accent (#15).
+        property <color> accent: MaterialPalette.schemes.dark.primary;
+
+        // Swallow taps on empty areas so they never reach the
+        // page underneath (a background colour does not block input).
+        TouchArea {}
+
+        // Scrolls once the note and the keyboard need the room.
+        Flickable {
+            width: 100%;
+            height: 100%;
+            content-width: self.width;
+            content-height: max(self.height, running-stack.preferred-height);
+            // A tap on empty space lets go of the note.
+            TouchArea {
+                width: parent.content-width;
+                height: parent.content-height;
+                clicked => { running-note.release(); }
+            }
+
+            running-stack := VerticalLayout {
+                height: parent.content-height;
+                alignment: start;
+                // Short viewports (phone landscape): tighter spacing +
+                // smaller hero so the column fits ~360dp heights. The
+                // 220px Box Breath square itself stays fixed — its
+                // perimeter-dot coordinates are Rust-computed for that
+                // exact geometry (see bb-dot-x/y).
+                spacing: root.height < 560px ? 10px : 24px;
+                padding-left: 24px;
+                padding-right: 24px;
+                // Centres the time and the buttons between the bars, note or
+                // not, so pausing moves nothing; the note hangs below.
+                property <length> pad: 24px;
+                padding-top: root.status-bar-inset + self.pad + max(0px, (running-canvas.height - root.status-bar-inset - root.bottom-bar-inset - 2 * self.pad - running-block.preferred-height) / 2);
+                padding-bottom: root.bottom-bar-inset + self.pad;
+
+                running-block := VerticalLayout {
+                    spacing: running-stack.spacing;
+
+                    // Timer mode hero — digit countdown, inside the bell
+                    // ring when the session has a known length.
+                    if !root.bb-running-active && !root.ring-on : Text {
+                        text: root.remaining-text;
+                        font-size: root.height < 560px ? 56px : 80px;
+                        horizontal-alignment: center;
+                        color: #ffffff;
+                    }
+                    if !root.bb-running-active && root.ring-on : HorizontalLayout {
+                        alignment: center;
+                        BellRingView {
+                            width: min(root.height < 560px ? 220px : 320px, running-stack.width - 48px);
+                            height: self.width;
+                            filled: root.ring-filled;
+                            prep: root.ring-prep;
+                            start-filled: root.ring-start-filled;
+                            beads: root.ring-beads;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: root.remaining-text;
+                                // Hours don't fit inside the ring at the full size.
+                                font-size: root.remaining-text.character-count > 5
+                                    ? (root.height < 560px ? 40px : 56px)
+                                    : (root.height < 560px ? 48px : 72px);
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                color: #ffffff;
+                            }
+                        }
+                    }
+                    if !root.bb-running-active && root.bell-counts.length > 0 : HorizontalLayout {
+                        alignment: center;
+                        spacing: 20px;
+                        for count in root.bell-counts : HorizontalLayout {
+                            spacing: 6px;
+                            alignment: center;
+                            // The dot centred on the text's line.
+                            Rectangle {
+                                width: 8px;
+                                Rectangle {
+                                    y: parent.height / 2 - 4px;
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: MaterialPalette.schemes.dark.primary;
+                                }
+                            }
+                            Text {
+                                text: count.total >= 0 ? @tr("{} of {}", count.rung, count.total) : count.rung;
+                                font-size: 15px;
+                                color: #ffffffb3;
+                            }
+                        }
+                    }
+
+                    // Box Breath visualisation — mirrors GTK's
+                    // `push_breathing_running_page` content vbox at
+                    // `meditate-gtk/src/window/imp.rs:254-498`. Top strip
+                    // (eyebrow + counter) → 220×220 overlay (frame + dot
+                    // + phase label + phase seconds) → buttons (the
+                    // buttons live in `running-block`, shared with
+                    // Timer mode).
+                    if root.bb-running-active : VerticalLayout {
+                        spacing: root.height < 560px ? 10px : 24px;
+                        alignment: center;
+
+                        // Top strip: "Box Breathing" eyebrow + counter.
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: @tr("Box Breathing");
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                color: #ffffffaa;
+                            }
+                            Text {
+                                text: root.bb-counter-text;
+                                font-size: 28px;
+                                horizontal-alignment: center;
+                                color: #ffffff;
+                            }
+                        }
+
+                        // Square + dot overlay. The frame is a 196×196
+                        // rounded rectangle at (12, 12) inside a 220×220
+                        // container — matches GTK's pad=12, side=196
+                        // (cairo drawing area is 220px). Halo + dot are
+                        // positioned at the perimeter point Rust computes
+                        // via `Phase::perimeter_point(t, 12, 196)`; the
+                        // -7 / -11 offsets centre them on that coordinate.
+                        //
+                        // HorizontalLayout { alignment: center } keeps the
+                        // 220 px container horizontally centred in the
+                        // parent column (default VerticalLayout
+                        // packing left-aligns sub-parent-width children).
+                        HorizontalLayout {
+                            alignment: center;
+                        Rectangle {
+                            width: 220px;
+                            height: 220px;
+
+                            // Square frame — tinted fill + accent stroke.
+                            Rectangle {
+                                x: 12px;
+                                y: 12px;
+                                width: 196px;
+                                height: 196px;
+                                border-radius: 20px;
+                                background: running-canvas.accent.with-alpha(0.08);
+                                border-width: 1.5px;
+                                border-color: running-canvas.accent.with-alpha(0.45);
+                            }
+
+                            // Phase label + remaining-seconds overlay,
+                            // centred inside the square — mirrors GTK's
+                            // inner_stack at `imp.rs:305-312`.
+                            VerticalLayout {
+                                x: 12px;
+                                y: 12px;
+                                width: 196px;
+                                height: 196px;
+                                alignment: center;
+                                spacing: 2px;
+
+                                Text {
+                                    text: root.bb-phase-label;
+                                    font-size: 14px;
+                                    horizontal-alignment: center;
+                                    color: running-canvas.accent;
+                                }
+                                Text {
+                                    text: root.bb-phase-seconds;
+                                    font-size: 56px;
+                                    horizontal-alignment: center;
+                                    color: #ffffff;
+                                }
+                            }
+
+                            // Halo — semi-transparent accent disc behind
+                            // the dot. Drawn before the dot so the dot
+                            // body sits on top. `animate x, y` smooths the
+                            // 200 ms tick-driven steps into glide-y motion;
+                            // linear easing because the perimeter is
+                            // axis-aligned (only one of x / y changes per
+                            // phase) and corner crossings always land on
+                            // the same coordinate before / after, so
+                            // linear interpolation never cuts inside.
+                            Rectangle {
+                                x: root.bb-dot-x - 11px;
+                                y: root.bb-dot-y - 11px;
+                                width: 22px;
+                                height: 22px;
+                                border-radius: 11px;
+                                background: running-canvas.accent.with-alpha(0.30);
+                                animate x { duration: 200ms; easing: linear; }
+                                animate y { duration: 200ms; easing: linear; }
+                            }
+
+                            // Dot — white fill with accent ring. Matches
+                            // GTK's "white-filled, accent-bordered" dot
+                            // at `imp.rs:374-380`.
+                            Rectangle {
+                                x: root.bb-dot-x - 7px;
+                                y: root.bb-dot-y - 7px;
+                                width: 14px;
+                                height: 14px;
+                                border-radius: 7px;
+                                background: #ffffff;
+                                border-width: 2.5px;
+                                border-color: running-canvas.accent;
+                                animate x { duration: 200ms; easing: linear; }
+                                animate y { duration: 200ms; easing: linear; }
+                            }
+                        }
+                        }
+                    }
+
+                    // Core's button set (`EndButtons`): one or two in a row,
+                    // Discard always under them; the note once paused or over.
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: center;
+                        EndButtonView {
+                            kind: root.end-left;
+                            add-label: root.overtime-add-label;
+                            tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
+                        }
+                        if root.end-right >= 0 : EndButtonView {
+                            kind: root.end-right;
+                            add-label: root.overtime-add-label;
+                            tapped(kind) => { running-note.release(); root.end-button-tap(kind); }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        EndButtonView {
+                            kind: 4;
+                            tapped => { running-note.release(); root.discard-tap(); }
+                        }
+                    }
+                }
+                // Kept (not `if`) so its text survives Resume.
+                VerticalLayout {
+                    visible: root.end-note;
+                    height: root.end-note ? self.preferred-height : 0px;
+                    spacing: 6px;
+                    Text {
+                        text: @tr("Note (optional)");
+                        font-size: 12px;
+                        color: #ffffffaa;
+                        horizontal-alignment: left;
+                        wrap: word-wrap;
+                    }
+                    running-note := NoteField {
+                        dark: true;
+                        label: @tr("Note");
+                        text <=> root.note-text;
+                    }
+                }
+            }
+        }
+    }
+
     // ── Duration dialog (modal overlay, on top of both screens) ─
     // Declared after the Edit-Session overlay AND the AppBar /
     // NavigationBar so its scrim covers all of them (Slint
@@ -6319,170 +6702,6 @@ export component MainWindow inherits Window {
             }
         }
         } // Flickable (lab-scroll)
-    }
-
-    // ── Interval Bells library (overlay, B-5c-1) ────────────────
-    // Slide-in list of the configured interval bells, opened
-    // from the Bells group's "Manage Bells" row. Read-only here
-    // (add / edit / delete are B-5c-2/3). Same slide + header
-    // shape as the labels / bell-sound choosers; declared after
-    // them so it z-stacks above the chrome (declare-overlays-
-    // last rule). Mirrors GTK's `push_bells_page`.
-    Rectangle {
-        x: parent.width - root.interval-bells-offset;
-        width: parent.width;
-        height: parent.height;
-        background: MaterialPalette.surface;
-
-        // Scrollable (bug-audit): long lists overflowed with no
-        // scroll at all — same Flickable treatment as Setup.
-        // Swallow taps on empty areas so they never reach the
-        // page underneath (a background colour does not block input).
-        TouchArea {}
-
-        Flickable {
-            content-width: self.width;
-            content-height: ib-scroll.preferred-height;
-
-            ib-scroll := VerticalLayout {
-            padding-top: root.status-bar-inset + 24px;
-            padding-bottom: root.bottom-bar-inset + 24px;
-            padding-left: 16px;
-            padding-right: 16px;
-            spacing: 16px;
-            alignment: start;
-
-            PageHeader {
-                title: @tr("Interval Bells");
-                back => { root.interval-bells-back(); }
-            }
-
-            BoxedList {
-                // Synthetic "Create interval bell…" row — always
-                // first, mirrors the labels chooser's create row
-                // + GTK's `build_create_row` (`bells.rs:149`).
-                Rectangle {
-                    height: 56px;
-                    background: ib-create-touch.has-hover
-                        ? MaterialPalette.surface-container-high
-                        : transparent;
-
-                    ib-create-touch := TouchArea {
-                        clicked => { root.create-interval-bell-tap(); }
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        spacing: 12px;
-                        alignment: stretch;
-
-                        Text {
-                            text: @tr("Create interval bell…");
-                            font-size: 16px;
-                            color: MaterialPalette.on-surface;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        Text {
-                            text: "+";
-                            font-size: 22px;
-                            color: MaterialPalette.on-surface-variant;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
-                for item[idx] in root.interval-bell-items : VerticalLayout {
-                    spacing: 0;
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    Rectangle {
-                        height: max(64px, ib-row-layout.preferred-height);
-                        background: ib-row-touch.has-hover
-                            ? MaterialPalette.surface-container-high
-                            : transparent;
-
-                        // Row tap → edit. Declared BEFORE the
-                        // HorizontalLayout so the trash
-                        // IconButton's own click claims the
-                        // delete hit-area and the rest of the row
-                        // falls through here (same pattern as the
-                        // Log card tap-vs-trash split).
-                        ib-row-touch := TouchArea {
-                            clicked => { root.interval-bell-edit(item.uuid); }
-                        }
-
-                        ib-row-layout := HorizontalLayout {
-                            padding-top: 8px;
-                            padding-bottom: 8px;
-                            padding-left: 16px;
-                            padding-right: 8px;
-                            spacing: 12px;
-                            alignment: stretch;
-
-                            VerticalLayout {
-                                alignment: center;
-                                horizontal-stretch: 1;
-
-                                Text {
-                                    text: item.title;
-                                    wrap: word-wrap;
-                                    font-size: 16px;
-                                    color: item.sensitive
-                                        ? MaterialPalette.on-surface
-                                        : MaterialPalette.on-surface-variant;
-                                }
-                                if item.sound != "" : Text {
-                                    text: item.sound;
-                                    wrap: word-wrap;
-                                    font-size: 12px;
-                                    color: MaterialPalette.on-surface-variant;
-                                }
-                            }
-                            // Per-row on/off, like GTK's row switch.
-                            // Fixed box like the other switches: in the
-                            // row's layout a bare Switch stretched wide.
-                            VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    width: 52px;
-                                    height: 32px;
-                                    Switch {
-                                        min-width: 52px;
-                                        min-height: 32px;
-                                        checked: item.enabled;
-                                        enabled: item.sensitive;
-                                        checked-state-changed(value) => {
-                                            root.interval-bell-toggled(item.uuid, value);
-                                        }
-                                    }
-                                }
-                            }
-                            // Per-row delete — trash, error-tinted
-                            // (mirrors GTK's destructive delete on
-                            // each bell row).
-                            VerticalLayout {
-                                alignment: center;
-                                IconButton {
-                                    icon: @image-url("assets/delete.svg");
-                                    has-error: true;
-                                    clicked => {
-                                        root.interval-bell-delete-uuid = item.uuid;
-                                        root.modal = Modal.interval-bell-delete;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        } // Flickable (ib-scroll)
     }
 
     // ── Interval-bell editor (overlay, B-5c-2) ──────────────────

@@ -229,6 +229,14 @@ msgstr "Son de cloche"
 msgid "Bells"
 msgstr "Cloches"
 
+msgid "No bells"
+msgstr "Aucune cloche"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} cloche d'intervalle"
+msgstr[1] "{n} cloches d'intervalle"
+
 msgid "Box Breath"
 msgstr "Resp. carrée"
 

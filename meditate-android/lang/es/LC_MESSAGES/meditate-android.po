@@ -229,6 +229,14 @@ msgstr "Sonido de campana"
 msgid "Bells"
 msgstr "Campanas"
 
+msgid "No bells"
+msgstr "Sin campanas"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} campana de intervalo"
+msgstr[1] "{n} campanas de intervalo"
+
 msgid "Box Breath"
 msgstr "Resp. cuadrada"
 

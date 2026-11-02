@@ -654,6 +654,21 @@ impl MeditateWindow {
         });
         page.add_controller(esc);
 
+        // Started from Session, Bells or Manage Bells (#20): once the
+        // running page is in, they leave the stack unseen, so Stop and
+        // Done land on Setup. Editors and choosers stay (unsaved edits).
+        let nav_view = self.nav_view.clone();
+        page.connect_shown(move |_| {
+            let stack: Vec<adw::NavigationPage> = nav_view.navigation_stack()
+                .iter::<adw::NavigationPage>()
+                .filter_map(Result::ok)
+                .filter(|p| !matches!(p.tag().as_deref(), Some("setup-session" | "setup-bells" | "interval-bells")))
+                .collect();
+            if stack.len() < nav_view.navigation_stack().n_items() as usize {
+                nav_view.replace(&stack);
+            }
+        });
+
         self.nav_view.push(&page);
     }
 }

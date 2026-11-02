@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-02 15:47+0100\n"
+"POT-Creation-Date: 2026-11-02 21:14+0100\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -90,28 +90,28 @@ msgid "Meditate"
 msgstr "Meditate"
 
 #: src/application.rs:408 src/guided.rs:1229 src/log/imp.rs:717
-#: src/presets.rs:779 src/timer/imp.rs:2584 src/timer/imp.rs:3794
+#: src/presets.rs:779 src/timer/imp.rs:2633 src/timer/imp.rs:3844
 #: src/vibrations.rs:470 src/vibrations.rs:511
 msgid "Undo"
 msgstr "Desfazer"
 
-#: src/bells.rs:51 data/ui/timer_view.blp:494
+#: src/bells.rs:54 data/ui/timer_view.blp:596
 msgid "Interval Bells"
 msgstr "Sinos de intervalo"
 
-#: src/bells.rs:168
+#: src/bells.rs:171
 msgid "Create new interval bell…"
 msgstr "Criar novo sino de intervalo…"
 
-#: src/bells.rs:282
+#: src/bells.rs:285
 msgid "Delete bell"
 msgstr "Excluir sino"
 
-#: src/bells.rs:333 src/bells.rs:898
+#: src/bells.rs:336 src/bells.rs:901
 msgid "Delete Bell?"
 msgstr "Excluir sino?"
 
-#: src/bells.rs:334 src/bells.rs:899
+#: src/bells.rs:337 src/bells.rs:902
 msgid "This bell will no longer ring during sessions."
 msgstr "Este sino não tocará mais durante as sessões."
 
@@ -119,180 +119,180 @@ msgstr "Este sino não tocará mais durante as sessões."
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
+#: src/bells.rs:341 src/bells.rs:906 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:689 src/preferences.rs:763 src/presets.rs:525
+#: src/preferences.rs:690 src/preferences.rs:764 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
-#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2624
-#: src/timer/imp.rs:3923 src/vibration_editor.rs:129 src/vibrations.rs:546
+#: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2673
+#: src/timer/imp.rs:3973 src/vibration_editor.rs:129 src/vibrations.rs:546
 #: src/vibrations.rs:639
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/bells.rs:339 src/bells.rs:904 src/guided.rs:1080 src/labels.rs:405
+#: src/bells.rs:342 src/bells.rs:907 src/guided.rs:1080 src/labels.rs:405
 #: src/presets.rs:653 src/sounds.rs:989 src/vibrations.rs:640
 msgid "Delete"
 msgstr "Excluir"
 
-#: src/bells.rs:368
+#: src/bells.rs:371
 msgid "No interval bells configured"
 msgstr "Nenhum sino de intervalo configurado"
 
-#: src/bells.rs:369 src/guided.rs:921
+#: src/bells.rs:372 src/guided.rs:921
 msgid "Tap the row above to add one"
 msgstr "Toque na linha acima para adicionar"
 
-#: src/bells.rs:389
+#: src/bells.rs:392
 #, rust-format
 msgid "Every 1 min"
 msgid_plural "Every {n} min"
 msgstr[0] "A cada {n} min"
 msgstr[1] "A cada {n} min"
 
-#: src/bells.rs:391
+#: src/bells.rs:394
 #, rust-format
 msgid "Every 1 s"
 msgid_plural "Every {n} s"
 msgstr[0] "A cada {n} s"
 msgstr[1] "A cada {n} s"
 
-#: src/bells.rs:393
+#: src/bells.rs:396
 #, rust-format
 msgid "At 1 min"
 msgid_plural "At {n} min"
 msgstr[0] "No minuto {n}"
 msgstr[1] "No minuto {n}"
 
-#: src/bells.rs:395
+#: src/bells.rs:398
 #, rust-format
 msgid "At 1 s"
 msgid_plural "At {n} s"
 msgstr[0] "No segundo {n}"
 msgstr[1] "No segundo {n}"
 
-#: src/bells.rs:397
+#: src/bells.rs:400
 #, rust-format
 msgid "1 min before end"
 msgid_plural "{n} min before end"
 msgstr[0] "{n} min antes do fim"
 msgstr[1] "{n} min antes do fim"
 
-#: src/bells.rs:399
+#: src/bells.rs:402
 #, rust-format
 msgid "1 s before end"
 msgid_plural "{n} s before end"
 msgstr[0] "{n} s antes do fim"
 msgstr[1] "{n} s antes do fim"
 
-#: src/bells.rs:415
+#: src/bells.rs:418
 #, rust-format
 msgid "{n} min"
 msgstr "{n} min"
 
-#: src/bells.rs:416
+#: src/bells.rs:419
 #, rust-format
 msgid "{n} s"
 msgstr "{n} s"
 
-#: src/bells.rs:430
+#: src/bells.rs:433
 msgid "Missing"
 msgstr "Ausente"
 
-#: src/bells.rs:477
+#: src/bells.rs:480
 msgid "s"
 msgstr "s"
 
-#: src/bells.rs:477 src/vibration_editor.rs:172 data/ui/timer_view.blp:482
+#: src/bells.rs:480 src/vibration_editor.rs:172 data/ui/timer_view.blp:584
 msgid "Seconds"
 msgstr "Segundos"
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/bells.rs:478 src/log/imp.rs:458
+#: src/bells.rs:481 src/log/imp.rs:458
 msgid "min"
 msgstr "min"
 
-#: src/bells.rs:478 src/log/imp.rs:887 src/timer/imp.rs:3897
+#: src/bells.rs:481 src/log/imp.rs:887 src/timer/imp.rs:3947
 msgid "Minutes"
 msgstr "Minutos"
 
-#: src/bells.rs:544
+#: src/bells.rs:547
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Salvo como um novo sino, suas predefinições mantêm o antigo"
 
-#: src/bells.rs:579
+#: src/bells.rs:582
 msgid "Repeating"
 msgstr "Repetido"
 
-#: src/bells.rs:580
+#: src/bells.rs:583
 msgid "At time from start"
 msgstr "Tempo desde o início"
 
-#: src/bells.rs:581
+#: src/bells.rs:584
 msgid "Before end"
 msgstr "Antes do fim"
 
-#: src/bells.rs:585
+#: src/bells.rs:588
 msgid "Kind"
 msgstr "Tipo"
 
 #. Time — common to all kinds; its meaning shifts with kind.
-#: src/bells.rs:596
+#: src/bells.rs:599
 msgid "Time"
 msgstr "Tempo"
 
-#: src/bells.rs:602
+#: src/bells.rs:605
 msgid "Jitter"
 msgstr "Variação"
 
-#: src/bells.rs:603
+#: src/bells.rs:606
 msgid "Random shift of each ring"
 msgstr "Deslocamento aleatório de cada toque"
 
-#: src/bells.rs:610
+#: src/bells.rs:613
 msgid "Step"
 msgstr "Passo"
 
-#: src/bells.rs:611
+#: src/bells.rs:614
 msgid "Added to the gap after each ring"
 msgstr "Somado ao intervalo após cada toque"
 
-#: src/bells.rs:621 data/ui/timer_view.blp:422 data/ui/timer_view.blp:524
-#: data/ui/timer_view.blp:612 data/ui/timer_view.blp:660
-#: data/ui/timer_view.blp:708 data/ui/timer_view.blp:756
+#: src/bells.rs:624 data/ui/timer_view.blp:524 data/ui/timer_view.blp:626
+#: data/ui/timer_view.blp:714 data/ui/timer_view.blp:762
+#: data/ui/timer_view.blp:810 data/ui/timer_view.blp:858
 msgid "Type"
 msgstr "Tipo"
 
-#: src/bells.rs:636 src/bells.rs:656 src/timer/imp.rs:1583
-#: src/timer/imp.rs:1657 src/timer/imp.rs:1739 data/ui/timer_view.blp:625
-#: data/ui/timer_view.blp:673 data/ui/timer_view.blp:721
-#: data/ui/timer_view.blp:769
+#: src/bells.rs:639 src/bells.rs:659 src/timer/imp.rs:1628
+#: src/timer/imp.rs:1702 src/timer/imp.rs:1787 data/ui/timer_view.blp:727
+#: data/ui/timer_view.blp:775 data/ui/timer_view.blp:823
+#: data/ui/timer_view.blp:871
 msgid "Sound"
 msgstr "Som"
 
-#: src/bells.rs:640 src/timer/imp.rs:1587 src/timer/imp.rs:1659
-#: src/timer/imp.rs:1741
+#: src/bells.rs:643 src/timer/imp.rs:1632 src/timer/imp.rs:1704
+#: src/timer/imp.rs:1789
 msgid "Vibration"
 msgstr "Vibração"
 
-#: src/bells.rs:644 src/timer/imp.rs:1591 src/timer/imp.rs:1661
-#: src/timer/imp.rs:1743
+#: src/bells.rs:647 src/timer/imp.rs:1636 src/timer/imp.rs:1706
+#: src/timer/imp.rs:1791
 msgid "Both"
 msgstr "Ambos"
 
-#: src/bells.rs:674 src/vibration_editor.rs:229 data/ui/timer_view.blp:463
-#: data/ui/timer_view.blp:565 data/ui/timer_view.blp:646
-#: data/ui/timer_view.blp:694 data/ui/timer_view.blp:742
-#: data/ui/timer_view.blp:790
+#: src/bells.rs:677 src/vibration_editor.rs:229 data/ui/timer_view.blp:565
+#: data/ui/timer_view.blp:667 data/ui/timer_view.blp:748
+#: data/ui/timer_view.blp:796 data/ui/timer_view.blp:844
+#: data/ui/timer_view.blp:892
 msgid "Pattern"
 msgstr "Padrão"
 
-#: src/bells.rs:695
+#: src/bells.rs:698
 msgid "Delete Bell"
 msgstr "Excluir sino"
 
-#: src/bells.rs:713
+#: src/bells.rs:716
 msgid "Edit Bell"
 msgstr "Editar sino"
 
@@ -312,7 +312,7 @@ msgstr "Erro de leitura"
 msgid "Database error"
 msgstr "Erro de banco de dados"
 
-#: src/data_io.rs:33 src/preferences.rs:533
+#: src/data_io.rs:33 src/preferences.rs:534
 msgid "Database unavailable"
 msgstr "Banco de dados indisponível"
 
@@ -322,7 +322,7 @@ msgid "«{name}» is already taken"
 msgstr "«{name}» já está em uso"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:529 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:530 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Falha ao salvar"
 
@@ -399,7 +399,7 @@ msgstr "O arquivo escolhido não tem caminho local"
 msgid "This file has no audio track"
 msgstr "Este arquivo não tem faixa de áudio"
 
-#: src/guided.rs:164 src/timer/imp.rs:3596
+#: src/guided.rs:164 src/timer/imp.rs:3645
 msgid "Couldn't read audio file"
 msgstr "Não foi possível ler o arquivo de áudio"
 
@@ -411,7 +411,7 @@ msgstr "Nome da faixa"
 msgid "A guided file with this name already exists."
 msgstr "Já existe um arquivo guiado com este nome."
 
-#: src/guided.rs:200 src/preferences.rs:225 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:226 src/sounds.rs:501
 msgid "Import"
 msgstr "Importar"
 
@@ -441,7 +441,7 @@ msgstr "O processo de importação parou"
 msgid "Over 100 MB, too large to sync"
 msgstr "Mais de 100 MB: não sincronizável"
 
-#: src/guided.rs:586 data/ui/timer_view.blp:279
+#: src/guided.rs:586 data/ui/timer_view.blp:291
 msgid "Manage Imports"
 msgstr "Gerenciar importações"
 
@@ -611,7 +611,7 @@ msgstr[1] "{n} arquivos"
 msgid "{n}%"
 msgstr "{n}%"
 
-#: src/local_folder.rs:263 src/timer/imp.rs:3460
+#: src/local_folder.rs:263 src/timer/imp.rs:3509
 msgid "Unstar"
 msgstr "Remover estrela"
 
@@ -619,7 +619,7 @@ msgstr "Remover estrela"
 msgid "Star"
 msgstr "Marcar com estrela"
 
-#: src/local_folder.rs:327 src/local_folder.rs:353 data/ui/timer_view.blp:283
+#: src/local_folder.rs:327 src/local_folder.rs:353 data/ui/timer_view.blp:295
 msgid "Local Folder"
 msgstr "Pasta local"
 
@@ -719,7 +719,7 @@ msgid_plural "{n} sessions"
 msgstr[0] "{n} sessão"
 msgstr[1] "{n} sessões"
 
-#: src/log/imp.rs:874 src/timer/imp.rs:3890
+#: src/log/imp.rs:874 src/timer/imp.rs:3940
 msgid "Hours"
 msgstr "Horas"
 
@@ -739,15 +739,15 @@ msgstr "Hora"
 msgid "Minute"
 msgstr "Minuto"
 
-#: src/log/imp.rs:968 data/ui/timer_view.blp:358
+#: src/log/imp.rs:968 data/ui/timer_view.blp:409
 msgid "Selected"
 msgstr "Selecionado"
 
-#: src/log/imp.rs:983 data/ui/timer_view.blp:352 data/ui/window.blp:107
+#: src/log/imp.rs:983 data/ui/timer_view.blp:403 data/ui/window.blp:107
 msgid "Label"
 msgstr "Rótulo"
 
-#: src/log/imp.rs:984 data/ui/timer_view.blp:353
+#: src/log/imp.rs:984 data/ui/timer_view.blp:404
 msgid "Tag this session"
 msgstr "Rotule esta sessão"
 
@@ -755,8 +755,9 @@ msgstr "Rotule esta sessão"
 msgid "Note (optional)"
 msgstr "Anotação (opcional)"
 
-#: src/log/imp.rs:1062 src/vibration_editor.rs:171 data/ui/timer_view.blp:334
-#: data/ui/timer_view.blp:481
+#: src/log/imp.rs:1062 src/timer/imp.rs:4594 src/vibration_editor.rs:171
+#: data/ui/timer_view.blp:42 data/ui/timer_view.blp:385
+#: data/ui/timer_view.blp:583
 msgid "Duration"
 msgstr "Duração"
 
@@ -768,7 +769,7 @@ msgstr "Horário de início"
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: src/log/imp.rs:1101 src/preferences.rs:436
+#: src/log/imp.rs:1101 src/preferences.rs:437
 msgid "_Save"
 msgstr "_Salvar"
 
@@ -785,15 +786,15 @@ msgstr "Editar sessão"
 msgid "Add Session"
 msgstr "Adicionar sessão"
 
-#: src/log/imp.rs:1173 src/timer/imp.rs:3979
+#: src/log/imp.rs:1173 src/timer/imp.rs:4029
 msgid "(none, pick one)"
 msgstr "(nenhum, escolha um)"
 
-#: src/log/imp.rs:1272 src/timer/imp.rs:2545
+#: src/log/imp.rs:1272 src/timer/imp.rs:2594
 msgid "Couldn't save session: storage error"
 msgstr "Não foi possível salvar a sessão: erro de armazenamento"
 
-#: src/log/imp.rs:1277 src/timer/imp.rs:2563
+#: src/log/imp.rs:1277 src/timer/imp.rs:2612
 msgid "Couldn't save session: storage unavailable"
 msgstr "Não foi possível salvar a sessão: armazenamento indisponível"
 
@@ -817,11 +818,11 @@ msgstr "Meta diária"
 msgid "Minutes per day, shown as the ring on the Stats tab"
 msgstr "Minutos por dia, mostrados como o anel na aba Estatísticas"
 
-#: src/preferences.rs:101
+#: src/preferences.rs:102
 msgid "Bluetooth"
 msgstr "Bluetooth"
 
-#: src/preferences.rs:102
+#: src/preferences.rs:103
 msgid ""
 "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, "
 "they swallow the start of a bell, short bells even entirely. The lead-in "
@@ -839,84 +840,84 @@ msgstr ""
 "Ruído, depois sino: diminua a duração.\n"
 "Só o sino: certo."
 
-#: src/preferences.rs:115
+#: src/preferences.rs:116
 msgid "Wake-up Lead-in for Bluetooth"
 msgstr "Pré-despertar para Bluetooth"
 
-#: src/preferences.rs:129
+#: src/preferences.rs:130
 msgid "Length (Seconds)"
 msgstr "Duração (segundos)"
 
-#: src/preferences.rs:151 src/preferences.rs:173
+#: src/preferences.rs:152 src/preferences.rs:174
 msgid "Play"
 msgstr "Reproduzir"
 
-#: src/preferences.rs:166
+#: src/preferences.rs:167
 msgid "Stop"
 msgstr "Parar"
 
-#: src/preferences.rs:180
+#: src/preferences.rs:181
 msgid "Test"
 msgstr "Teste"
 
-#: src/preferences.rs:192
+#: src/preferences.rs:193
 msgid "Data"
 msgstr "Dados"
 
-#: src/preferences.rs:198
+#: src/preferences.rs:199
 msgid "Backup"
 msgstr "Backup"
 
-#: src/preferences.rs:199
+#: src/preferences.rs:200
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr ""
 "Exporte seu histórico de sessões para um arquivo CSV, ou restaure de um."
 
-#: src/preferences.rs:203
+#: src/preferences.rs:204
 msgid "Export session log"
 msgstr "Exportar histórico"
 
-#: src/preferences.rs:204
+#: src/preferences.rs:205
 msgid "Save every session to a CSV file"
 msgstr "Salvar todas as sessões em um arquivo CSV"
 
-#: src/preferences.rs:210
+#: src/preferences.rs:211
 msgid "Export"
 msgstr "Exportar"
 
-#: src/preferences.rs:218
+#: src/preferences.rs:219
 msgid "Import from Meditate CSV"
 msgstr "Importar do CSV do Meditate"
 
-#: src/preferences.rs:219
+#: src/preferences.rs:220
 msgid "Restore sessions from a file exported above"
 msgstr "Restaurar sessões de um arquivo exportado acima"
 
-#: src/preferences.rs:235
+#: src/preferences.rs:236
 msgid "Migrate"
 msgstr "Migrar"
 
-#: src/preferences.rs:236
+#: src/preferences.rs:237
 msgid "Import sessions from another meditation app."
 msgstr "Importar sessões de outro aplicativo de meditação."
 
-#: src/preferences.rs:240 src/preferences.rs:674
+#: src/preferences.rs:241 src/preferences.rs:675
 msgid "Import from Insight Timer"
 msgstr "Importar do Insight Timer"
 
-#: src/preferences.rs:241
+#: src/preferences.rs:242
 msgid "Upload an Insight Timer CSV export"
 msgstr "Envie uma exportação CSV do Insight Timer"
 
-#: src/preferences.rs:247
+#: src/preferences.rs:248
 msgid "Import Insight Timer CSV"
 msgstr "Importar CSV do Insight Timer"
 
-#: src/preferences.rs:265
+#: src/preferences.rs:266
 msgid "Nextcloud Sync"
 msgstr "Sincronização Nextcloud"
 
-#: src/preferences.rs:268
+#: src/preferences.rs:269
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -924,142 +925,144 @@ msgstr ""
 "Sincronize sessões, rótulos e preferências entre seus dispositivos pelo seu "
 "próprio servidor Nextcloud."
 
-#: src/preferences.rs:269
+#: src/preferences.rs:270
 msgid ""
 "Use the WebDAV address from Files → Files settings, and an app password from "
 "Personal settings → Security."
-msgstr "Use o endereço WebDAV de Arquivos → Configurações de arquivos e uma senha de aplicativo de Configurações pessoais → Segurança."
+msgstr ""
+"Use o endereço WebDAV de Arquivos → Configurações de arquivos e uma senha de "
+"aplicativo de Configurações pessoais → Segurança."
 
-#: src/preferences.rs:274
+#: src/preferences.rs:275
 msgid "WebDAV URL"
 msgstr "URL WebDAV"
 
-#: src/preferences.rs:278
+#: src/preferences.rs:279
 msgid "Username"
 msgstr "Nome de usuário"
 
-#: src/preferences.rs:281
+#: src/preferences.rs:282
 msgid "App password"
 msgstr "Senha de aplicativo"
 
-#: src/preferences.rs:310
+#: src/preferences.rs:311
 msgid "Test connection"
 msgstr "Testar conexão"
 
-#: src/preferences.rs:311
+#: src/preferences.rs:312
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Verifique se a URL e as credenciais alcançam o seu Nextcloud."
 
-#: src/preferences.rs:315
+#: src/preferences.rs:316
 msgid "_Test"
 msgstr "_Testar"
 
-#: src/preferences.rs:360 src/preferences.rs:471
+#: src/preferences.rs:361 src/preferences.rs:472
 msgid "Enter URL and username"
 msgstr "Informe a URL e o nome de usuário"
 
-#: src/preferences.rs:364 src/preferences.rs:479
+#: src/preferences.rs:365 src/preferences.rs:480
 msgid "Enter a password"
 msgstr "Informe uma senha"
 
-#: src/preferences.rs:368 src/preferences.rs:483
+#: src/preferences.rs:369 src/preferences.rs:484
 msgid "Keyring read failed"
 msgstr "Falha ao ler o chaveiro"
 
-#: src/preferences.rs:374 src/preferences.rs:475
+#: src/preferences.rs:375 src/preferences.rs:476
 msgid "URL must start with https://"
 msgstr "A URL deve começar com https://"
 
-#: src/preferences.rs:408
+#: src/preferences.rs:409
 msgid "Connection OK"
 msgstr "Conexão OK"
 
-#: src/preferences.rs:409
+#: src/preferences.rs:410
 msgid "Authentication failed"
 msgstr "Falha na autenticação"
 
-#: src/preferences.rs:410
+#: src/preferences.rs:411
 msgid "Not a WebDAV folder"
 msgstr "Não é uma pasta WebDAV"
 
-#: src/preferences.rs:411
+#: src/preferences.rs:412
 msgid "Network error"
 msgstr "Erro de rede"
 
-#: src/preferences.rs:412
+#: src/preferences.rs:413
 msgid "Server error"
 msgstr "Erro do servidor"
 
-#: src/preferences.rs:417
+#: src/preferences.rs:418
 msgid "Test failed"
 msgstr "Falha no teste"
 
-#: src/preferences.rs:431
+#: src/preferences.rs:432
 msgid "Save sync settings"
 msgstr "Salvar configurações de sincronização"
 
-#: src/preferences.rs:432
+#: src/preferences.rs:433
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "Guarda a URL e o nome de usuário localmente; a senha vai para o seu chaveiro."
 
-#: src/preferences.rs:510
+#: src/preferences.rs:511
 msgid "Keyring write failed"
 msgstr "Falha ao gravar no chaveiro"
 
-#: src/preferences.rs:538
+#: src/preferences.rs:539
 msgid "Sync settings saved"
 msgstr "Configurações de sincronização salvas"
 
-#: src/preferences.rs:547
+#: src/preferences.rs:548
 msgid "Danger Zone"
 msgstr "Zona de perigo"
 
-#: src/preferences.rs:548
+#: src/preferences.rs:549
 msgid "These actions cannot be undone."
 msgstr "Estas ações não podem ser desfeitas."
 
-#: src/preferences.rs:552
+#: src/preferences.rs:553
 msgid "Delete all sessions"
 msgstr "Excluir todas as sessões"
 
-#: src/preferences.rs:553
+#: src/preferences.rs:554
 msgid "Permanently remove every logged session"
 msgstr "Remove permanentemente cada sessão registrada"
 
-#: src/preferences.rs:557
+#: src/preferences.rs:558
 msgid "_Delete All"
 msgstr "_Excluir tudo"
 
-#: src/preferences.rs:627
+#: src/preferences.rs:628
 msgid "Export Session Log"
 msgstr "Exportar histórico de sessões"
 
-#: src/preferences.rs:631 src/preferences.rs:732
+#: src/preferences.rs:632 src/preferences.rs:733
 msgid "CSV files"
 msgstr "Arquivos CSV"
 
-#: src/preferences.rs:647
+#: src/preferences.rs:648
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "{n} sessão exportada"
 msgstr[1] "{n} sessões exportadas"
 
-#: src/preferences.rs:651
+#: src/preferences.rs:652
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Falha na exportação: {error}"
 
-#: src/preferences.rs:665
+#: src/preferences.rs:666
 msgid "Import Session Log"
 msgstr "Importar histórico de sessões"
 
-#: src/preferences.rs:684
+#: src/preferences.rs:685
 msgid "Delete Every Session?"
 msgstr "Excluir todas as sessões?"
 
-#: src/preferences.rs:685
+#: src/preferences.rs:686
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1067,57 +1070,57 @@ msgstr ""
 "Isso remove permanentemente todas as sessões do seu histórico. Exporte um "
 "backup antes se quiser guardar alguma coisa."
 
-#: src/preferences.rs:690
+#: src/preferences.rs:691
 msgid "Delete All"
 msgstr "Excluir tudo"
 
-#: src/preferences.rs:701
+#: src/preferences.rs:702
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "{n} sessão excluída"
 msgstr[1] "{n} sessões excluídas"
 
-#: src/preferences.rs:708
+#: src/preferences.rs:709
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Falha na exclusão: {error}"
 
-#: src/preferences.rs:748 src/preferences.rs:810
+#: src/preferences.rs:749 src/preferences.rs:811
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Falha na importação: {error}"
 
-#: src/preferences.rs:758
+#: src/preferences.rs:759
 msgid "Some Lines Can't Be Read"
 msgstr "Algumas linhas não podem ser lidas"
 
-#: src/preferences.rs:764
+#: src/preferences.rs:765
 msgid "Import the Rest"
 msgstr "Importar o restante"
 
-#: src/preferences.rs:777
+#: src/preferences.rs:778
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Linha {line}: não é possível ler o horário de início."
 
-#: src/preferences.rs:778
+#: src/preferences.rs:779
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Linha {line}: não é possível ler a duração."
 
-#: src/preferences.rs:785
+#: src/preferences.rs:786
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "Mais {n} linha também não pode ser lida."
 msgstr[1] "Mais {n} linhas também não podem ser lidas."
 
-#: src/preferences.rs:794
+#: src/preferences.rs:795
 msgid "Nothing in this file can be imported."
 msgstr "Nada neste arquivo pode ser importado."
 
-#: src/preferences.rs:803
+#: src/preferences.rs:804
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1131,7 +1134,7 @@ msgid_plural "{n} min"
 msgstr[0] "{n} min"
 msgstr[1] "{n} min"
 
-#: src/preset_subtitle.rs:33 src/preset_subtitle.rs:46
+#: src/preset_subtitle.rs:33 src/preset_subtitle.rs:46 src/timer/imp.rs:4325
 msgid "Stopwatch"
 msgstr "Cronômetro"
 
@@ -1146,7 +1149,7 @@ msgstr[1] "{n} sinos"
 msgid "Save Preset"
 msgstr "Salvar predefinição"
 
-#: src/presets.rs:66 data/ui/timer_view.blp:147
+#: src/presets.rs:66 data/ui/timer_view.blp:159
 msgid "Manage Presets"
 msgstr "Gerenciar"
 
@@ -1494,150 +1497,150 @@ msgid_plural "{duration} · {n} sessions"
 msgstr[0] "{duration} · {n} sessão"
 msgstr[1] "{duration} · {n} sessões"
 
-#: src/timer/imp.rs:1157
+#: src/timer/imp.rs:1202
 msgid "Meditation session running"
 msgstr "Sessão de meditação em andamento"
 
-#: src/timer/imp.rs:1160
+#: src/timer/imp.rs:1205
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Não foi possível manter o computador ativo para os sinos"
 
-#: src/timer/imp.rs:1776
+#: src/timer/imp.rs:1824
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Este dispositivo não pode vibrar, então nada vai tocar"
 
-#: src/timer/imp.rs:1777
+#: src/timer/imp.rs:1825
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Este dispositivo não pode vibrar, então só o som vai tocar"
 
-#: src/timer/imp.rs:1992
+#: src/timer/imp.rs:2041
 msgid "Paused"
 msgstr "Pausado"
 
-#: src/timer/imp.rs:2019 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:2068 data/ui/timer_view.blp:57
 msgid "Hours · Minutes"
 msgstr "Horas · Minutos"
 
-#: src/timer/imp.rs:2196
+#: src/timer/imp.rs:2245
 msgid "Couldn't start playback"
 msgstr "Não foi possível iniciar a reprodução"
 
-#: src/timer/imp.rs:2369
+#: src/timer/imp.rs:2418
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/timer/imp.rs:2370
+#: src/timer/imp.rs:2419
 msgid "Resume"
 msgstr "Retomar"
 
-#: src/timer/imp.rs:2371 src/vibration_editor.rs:130
+#: src/timer/imp.rs:2420 src/vibration_editor.rs:130
 msgid "Save"
 msgstr "Salvar"
 
-#: src/timer/imp.rs:2428
+#: src/timer/imp.rs:2477
 msgid "Meditation Complete"
 msgstr "Meditação concluída"
 
-#: src/timer/imp.rs:2434
+#: src/timer/imp.rs:2483
 #, rust-format
 msgid "Session: {duration}"
 msgstr "Sessão: {duration}"
 
-#: src/timer/imp.rs:2583
+#: src/timer/imp.rs:2632
 msgid "Session saved"
 msgstr "Sessão salva"
 
-#: src/timer/imp.rs:2615
+#: src/timer/imp.rs:2664
 msgid "Discard Session?"
 msgstr "Descartar sessão?"
 
-#: src/timer/imp.rs:2616
+#: src/timer/imp.rs:2665
 msgid "Your note will be lost."
 msgstr "Sua anotação será perdida."
 
-#: src/timer/imp.rs:2625 src/window/imp.rs:534
+#: src/timer/imp.rs:2674 src/window/imp.rs:534
 msgid "Discard"
 msgstr "Descartar"
 
-#: src/timer/imp.rs:3210
+#: src/timer/imp.rs:3259
 msgid "Start your streak today"
 msgstr "Comece sua sequência hoje"
 
-#: src/timer/imp.rs:3211 src/timer/imp.rs:3213
+#: src/timer/imp.rs:3260 src/timer/imp.rs:3262
 #, rust-format
 msgid "1 day streak"
 msgid_plural "{n} day streak"
 msgstr[0] "Sequência de {n} dia"
 msgstr[1] "Sequência de {n} dias"
 
-#: src/timer/imp.rs:3267
+#: src/timer/imp.rs:3316
 msgid "Tap Save Settings to create your first preset"
 msgstr "Toque em Salvar para criar sua primeira predefinição"
 
-#: src/timer/imp.rs:3342
+#: src/timer/imp.rs:3391
 msgid "No starred files"
 msgstr "Nenhum arquivo favorito"
 
-#: src/timer/imp.rs:3344
+#: src/timer/imp.rs:3393
 msgid "Tap Open File then Import File, or star a file in Manage Imports"
 msgstr ""
 "Toque em Abrir arquivo e depois em Importar arquivo, ou marque um arquivo "
 "com estrela em Gerenciar importações"
 
-#: src/timer/imp.rs:3438
+#: src/timer/imp.rs:3487
 msgid "not found"
 msgstr "não encontrado"
 
-#: src/timer/imp.rs:3442
+#: src/timer/imp.rs:3491
 msgid "Local file"
 msgstr "Arquivo local"
 
-#: src/timer/imp.rs:3474
+#: src/timer/imp.rs:3523
 msgid "File not found in the local folder"
 msgstr "Arquivo não encontrado na pasta local"
 
-#: src/timer/imp.rs:3491
+#: src/timer/imp.rs:3540
 msgid "Reading length"
 msgstr "Lendo duração"
 
-#: src/timer/imp.rs:3497 src/timer/imp.rs:3498
+#: src/timer/imp.rs:3546 src/timer/imp.rs:3547
 msgid "Local folder"
 msgstr "Pasta local"
 
-#: src/timer/imp.rs:3504 data/ui/timer_view.blp:234
+#: src/timer/imp.rs:3553 data/ui/timer_view.blp:246
 msgid "No file selected"
 msgstr "Nenhum arquivo selecionado"
 
-#: src/timer/imp.rs:3506 data/ui/timer_view.blp:235
+#: src/timer/imp.rs:3555 data/ui/timer_view.blp:247
 msgid "Tap Open File or pick from list below"
 msgstr "Toque em Abrir arquivo ou escolha na lista"
 
-#: src/timer/imp.rs:3514
+#: src/timer/imp.rs:3563
 msgid "Open New File"
 msgstr "Abrir novo arquivo"
 
-#: src/timer/imp.rs:3516 data/ui/timer_view.blp:251
+#: src/timer/imp.rs:3565 data/ui/timer_view.blp:263
 msgid "Open File"
 msgstr "Abrir arquivo"
 
-#: src/timer/imp.rs:3792
+#: src/timer/imp.rs:3842
 #, rust-format
 msgid "'{name}' applied"
 msgstr "'{name}' aplicada"
 
-#: src/timer/imp.rs:3917
+#: src/timer/imp.rs:3967
 msgid "Custom Time"
 msgstr "Tempo personalizado"
 
-#: src/timer/imp.rs:3918
+#: src/timer/imp.rs:3968
 msgid "Hours : Minutes"
 msgstr "Horas : Minutos"
 
-#: src/timer/imp.rs:3924
+#: src/timer/imp.rs:3974
 msgid "Set"
 msgstr "Definir"
 
-#: src/timer/imp.rs:3981
+#: src/timer/imp.rs:4031
 msgid "Off"
 msgstr "Desativado"
 
@@ -1646,43 +1649,70 @@ msgstr "Desativado"
 #. / position it anywhere in the localised string. Core returns the
 #. / formatted MM:SS via `format_time`; the shell owns word order via
 #. / this gettext template.
-#: src/timer/imp.rs:4265
+#: src/timer/imp.rs:4315
 #, rust-format
 msgid "+ {time} and Save"
 msgstr "+ {time} e salvar"
 
-#: src/timer/imp.rs:4275
+#: src/timer/imp.rs:4327 data/ui/timer_view.blp:431
+msgid "Auto-Finish"
+msgstr "Finalizar automaticamente"
+
+#: src/timer/imp.rs:4334
+msgid "No bells"
+msgstr "Nenhum sino"
+
+#: src/timer/imp.rs:4337 data/ui/timer_view.blp:518
+msgid "Starting Bell"
+msgstr "Sino inicial"
+
+#: src/timer/imp.rs:4338
+#, rust-format
+msgid "1 interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} sino de intervalo"
+msgstr[1] "{n} sinos de intervalo"
+
+#: src/timer/imp.rs:4340 data/ui/timer_view.blp:620
+msgid "End Bell"
+msgstr "Sino final"
+
+#: src/timer/imp.rs:4341 data/ui/timer_view.blp:703
+msgid "Cues during phases"
+msgstr "Sinais durante as fases"
+
+#: src/timer/imp.rs:4348
 msgid "None enabled"
 msgstr "Nenhum ativo"
 
-#: src/timer/imp.rs:4276 src/timer/imp.rs:4277
+#: src/timer/imp.rs:4349 src/timer/imp.rs:4350
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "{n} ativo"
 msgstr[1] "{n} ativos"
 
-#: src/timer/imp.rs:4301 data/ui/timer_view.blp:607
+#: src/timer/imp.rs:4374 data/ui/timer_view.blp:709
 msgid "Inhale"
 msgstr "Inspirar"
 
-#: src/timer/imp.rs:4302
+#: src/timer/imp.rs:4375
 msgid "Hold (full)"
 msgstr "Segurar (cheio)"
 
-#: src/timer/imp.rs:4303 data/ui/timer_view.blp:703
+#: src/timer/imp.rs:4376 data/ui/timer_view.blp:805
 msgid "Exhale"
 msgstr "Expirar"
 
-#: src/timer/imp.rs:4304
+#: src/timer/imp.rs:4377
 msgid "Hold (empty)"
 msgstr "Segurar (vazio)"
 
-#: src/timer/imp.rs:4366
+#: src/timer/imp.rs:4439
 msgid "Decrease"
 msgstr "Diminuir"
 
-#: src/timer/imp.rs:4377
+#: src/timer/imp.rs:4450
 msgid "Increase"
 msgstr "Aumentar"
 
@@ -1782,65 +1812,65 @@ msgstr "Segure"
 msgid "Breathe out"
 msgstr "Expire"
 
-#: src/window/imp.rs:786
+#: src/window/imp.rs:801
 msgid "Syncing with Nextcloud…"
 msgstr "Sincronizando com o Nextcloud…"
 
-#: src/window/imp.rs:796
+#: src/window/imp.rs:811
 msgid "Last sync failed, click to retry"
 msgstr "A última sincronização falhou, clique para tentar de novo"
 
-#: src/window/imp.rs:808
+#: src/window/imp.rs:823
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Alguns arquivos não foram enviados, clique para tentar de novo"
 
-#: src/window/imp.rs:818
+#: src/window/imp.rs:833
 msgid "No password saved, click to enter it"
 msgstr "Nenhuma senha salva, clique para digitá-la"
 
-#: src/window/imp.rs:833
+#: src/window/imp.rs:848
 msgid "Sync configured (waiting for first run)"
 msgstr "Sincronização configurada (aguardando a primeira execução)"
 
-#: src/window/imp.rs:862
+#: src/window/imp.rs:877
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: grande demais para sincronizar"
 
-#: src/window/imp.rs:863
+#: src/window/imp.rs:878
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: grande demais para o servidor"
 
-#: src/window/imp.rs:864
+#: src/window/imp.rs:879
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: o servidor está cheio"
 
-#: src/window/imp.rs:866
+#: src/window/imp.rs:881
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: recusado pelo servidor ({status})"
 
-#: src/window/imp.rs:877
+#: src/window/imp.rs:892
 msgid "Synced just now"
 msgstr "Sincronizado agora mesmo"
 
-#: src/window/imp.rs:879
+#: src/window/imp.rs:894
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "Sincronizado há {n} minuto"
 msgstr[1] "Sincronizado há {n} minutos"
 
-#: src/window/imp.rs:882
+#: src/window/imp.rs:897
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "Sincronizado há {n} hora"
 msgstr[1] "Sincronizado há {n} horas"
 
-#: src/window/imp.rs:885
+#: src/window/imp.rs:900
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
@@ -1920,135 +1950,119 @@ msgstr "Sessões"
 msgid "By label"
 msgstr "Por rótulo"
 
-#: data/ui/timer_view.blp:68 data/ui/window.blp:135 data/ui/shortcuts.ui:10
+#: data/ui/timer_view.blp:80 data/ui/window.blp:135 data/ui/shortcuts.ui:10
 msgid "Timer"
 msgstr "Temporizador"
 
-#: data/ui/timer_view.blp:73
+#: data/ui/timer_view.blp:85
 msgid "Guided"
 msgstr "Guiada"
 
-#: data/ui/timer_view.blp:78
+#: data/ui/timer_view.blp:90
 msgid "Box Breath"
 msgstr "Resp. quadrada"
 
-#: data/ui/timer_view.blp:100
+#: data/ui/timer_view.blp:112
 msgid "Start Session"
 msgstr "Iniciar sessão"
 
-#: data/ui/timer_view.blp:130
+#: data/ui/timer_view.blp:142
 msgid "Presets"
 msgstr "Predefinições"
 
-#: data/ui/timer_view.blp:142
+#: data/ui/timer_view.blp:154
 msgid "Save Settings"
 msgstr "Salvar"
 
-#: data/ui/timer_view.blp:184
+#: data/ui/timer_view.blp:196
 msgid "Breath Phases"
 msgstr "Fases da respiração"
 
-#: data/ui/timer_view.blp:231
+#: data/ui/timer_view.blp:243
 msgid "Current file"
 msgstr "Arquivo atual"
 
-#: data/ui/timer_view.blp:256
+#: data/ui/timer_view.blp:268
 msgid "Import File"
 msgstr "Importar arquivo"
 
-#: data/ui/timer_view.blp:265
+#: data/ui/timer_view.blp:277
 msgid "Starred Files"
 msgstr "Arquivos favoritos"
 
-#: data/ui/timer_view.blp:295
+#: data/ui/timer_view.blp:310 data/ui/timer_view.blp:337
 msgid "Session"
 msgstr "Sessão"
 
-#: data/ui/timer_view.blp:307
-msgid "Cues"
-msgstr "Sinais"
-
-#: data/ui/timer_view.blp:325
-msgid "Stopwatch Mode"
-msgstr "Modo cronômetro"
-
-#: data/ui/timer_view.blp:326
-msgid "Count up from zero"
-msgstr "Contar a partir do zero"
-
-#: data/ui/timer_view.blp:380
-msgid "Auto-Finish"
-msgstr "Finalizar automaticamente"
-
-#: data/ui/timer_view.blp:381
-msgid "Saves the session without asking when the time is up"
-msgstr "Salva a sessão sem perguntar quando o tempo acabar"
-
-#: data/ui/timer_view.blp:385
-msgid "Keep Screen Awake"
-msgstr "Manter a tela ligada"
-
-#: data/ui/timer_view.blp:386
-msgid "Prevent display sleep during a session"
-msgstr "Impede que a tela desligue durante uma sessão"
-
-#: data/ui/timer_view.blp:404
+#: data/ui/timer_view.blp:318 data/ui/timer_view.blp:451
 msgid "Bells"
 msgstr "Sinos"
 
-#: data/ui/timer_view.blp:416
-msgid "Starting Bell"
-msgstr "Sino inicial"
+#: data/ui/timer_view.blp:376
+msgid "Stopwatch Mode"
+msgstr "Modo cronômetro"
 
-#: data/ui/timer_view.blp:417
+#: data/ui/timer_view.blp:377
+msgid "Count up from zero"
+msgstr "Contar a partir do zero"
+
+#: data/ui/timer_view.blp:432
+msgid "Saves the session without asking when the time is up"
+msgstr "Salva a sessão sem perguntar quando o tempo acabar"
+
+#: data/ui/timer_view.blp:436
+msgid "Keep Screen Awake"
+msgstr "Manter a tela ligada"
+
+#: data/ui/timer_view.blp:437
+msgid "Prevent display sleep during a session"
+msgstr "Impede que a tela desligue durante uma sessão"
+
+#: data/ui/timer_view.blp:498
+msgid "Cues"
+msgstr "Sinais"
+
+#: data/ui/timer_view.blp:519
 msgid "Play a signal when the session begins"
 msgstr "Emitir um sinal quando a sessão começar"
 
-#: data/ui/timer_view.blp:437 data/ui/timer_view.blp:539
+#: data/ui/timer_view.blp:539 data/ui/timer_view.blp:641
 msgid "Bell Sound"
 msgstr "Som do sino"
 
-#: data/ui/timer_view.blp:475
+#: data/ui/timer_view.blp:577
 msgid "Preparation Time"
 msgstr "Tempo de preparação"
 
-#: data/ui/timer_view.blp:476
+#: data/ui/timer_view.blp:578
 msgid "Silence before the starting bell"
 msgstr "Silêncio antes do sino inicial"
 
-#: data/ui/timer_view.blp:495
+#: data/ui/timer_view.blp:597
 msgid "Ring during the session"
 msgstr "Tocam durante a sessão"
 
-#: data/ui/timer_view.blp:500
+#: data/ui/timer_view.blp:602
 msgid "Manage Bells"
 msgstr "Gerenciar sinos"
 
-#: data/ui/timer_view.blp:518
-msgid "End Bell"
-msgstr "Sino final"
-
-#: data/ui/timer_view.blp:519
+#: data/ui/timer_view.blp:621
 msgid "Play a signal when the session ends"
 msgstr "Emitir um sinal quando a sessão terminar"
 
-#: data/ui/timer_view.blp:598
+#: data/ui/timer_view.blp:700
 msgid "Box Breath cues"
 msgstr "Sinais da respiração quadrada"
 
-#: data/ui/timer_view.blp:601
-msgid "Cues during phases"
-msgstr "Sinais durante as fases"
-
-#: data/ui/timer_view.blp:602
+#: data/ui/timer_view.blp:704
 msgid "Different cue per phase to feel the cycle"
 msgstr "Um sinal diferente por fase para sentir o ciclo"
 
-#: data/ui/timer_view.blp:655
+#: data/ui/timer_view.blp:757
 msgid "Hold (in)"
 msgstr "Segurar (cheio)"
 
-#: data/ui/timer_view.blp:751
+#: data/ui/timer_view.blp:853
 msgid "Hold (out)"
 msgstr "Segurar (vazio)"
 

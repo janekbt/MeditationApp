@@ -39,8 +39,20 @@ impl MeditateWindow {
         crate::bells::push_bells_page(
             &self.imp().nav_view,
             app,
+            &timer_view.build_start_bar(),
             move || timer_view.refresh_interval_bells_count(),
         );
+    }
+
+    /// Push one of the timer's settings pages (Session, Bells).
+    pub fn push_page(&self, page: &adw::NavigationPage) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().nav_view.push(page);
+    }
+
+    pub fn timer_view(&self) -> crate::timer::TimerView {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().timer_view.get()
     }
 
     /// Push the bell-sound chooser onto the navigation view.

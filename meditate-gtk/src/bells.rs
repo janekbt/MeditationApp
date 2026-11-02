@@ -25,6 +25,7 @@ use crate::i18n::gettext;
 pub fn push_bells_page<F>(
     nav_view: &adw::NavigationView,
     app: &MeditateApplication,
+    start_bar: &gtk::Widget,
     on_changed: F,
 )
 where F: Fn() + Clone + 'static,
@@ -45,6 +46,8 @@ where F: Fn() + Clone + 'static,
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&toast_overlay));
+    toolbar.add_bottom_bar(start_bar);
+    toolbar.set_bottom_bar_style(adw::ToolbarStyle::Flat);
 
     let page = adw::NavigationPage::builder()
         .tag("interval-bells")

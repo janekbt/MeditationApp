@@ -49,6 +49,14 @@ msgstr "Klang"
 msgid "Bells"
 msgstr "Glocken"
 
+msgid "No bells"
+msgstr "Keine Glocken"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} Intervallglocke"
+msgstr[1] "{n} Intervallglocken"
+
 msgid "Box Breath"
 msgstr "Box-Atmung"
 

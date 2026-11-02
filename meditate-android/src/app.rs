@@ -1546,10 +1546,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let whole = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         // The setup only: Preferences has a Bells group of its own (#10).
-        let slint = &whole[..whole.find("text: @tr(\"Stats\");").unwrap()];
+        let slint = &whole[..whole.find("// ── Running screen").unwrap()];
         for once in [
-            "text: @tr(\"Session\");",
-            "text: @tr(\"Bells\");",
+            "title: @tr(\"Session\");\n                    subtitle: root.session-summary;",
+            "title: @tr(\"Bells\");\n                    subtitle: root.bells-summary;",
             "@tr(\"Stopwatch Mode\")",
             "@tr(\"Keep Screen Awake\")",
             "active <=> root.label-active;",
@@ -1565,9 +1565,9 @@ mod tests {
             let open = before.rfind(" : ").unwrap();
             assert!(before[..open].ends_with(guard), "{row} is shown {guard}");
         };
-        guarded("CuesRow {\n                        title: @tr(\"Cues\");", "if root.setup-mode != 2");
-        guarded("DurationRow {\n                        value-text: root.duration-text;", "if root.setup-mode != 1");
-        guarded("ExpanderGroup {\n                        title: @tr(\"Starting Bell\");", "if root.setup-mode == 0");
+        guarded("CuesRow {\n                    title: @tr(\"Cues\");", "if root.setup-mode != 2");
+        guarded("DurationRow {\n                    value-text: root.duration-text;", "if root.setup-mode != 1");
+        guarded("ExpanderGroup {\n                    title: @tr(\"Starting Bell\");", "if root.setup-mode == 0");
     }
 
     #[test]
@@ -1868,6 +1868,24 @@ mod tests {
         }
     }
 
+    /// The Session and Bells rows sum up their pages (GitHub #20).
+    #[test]
+    fn setup_summaries_are_translated() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for tr in ["@tr(\"No bells\")", "@tr(\"{n} interval bell\" | \"{n} interval bells\" % "] {
+            assert!(slint.contains(tr), "main.slint: {tr}");
+        }
+        let ids = ["msgid \"No bells\"\nmsgstr \"", "msgid \"{n} interval bell\"\nmsgid_plural \"{n} interval bells\"\nmsgstr[0] \""];
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in ids {
+                let at = po.find(id).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(!po[at + id.len()..].starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+    }
+
     /// "Server URL" didn't say the app needs the WebDAV address and an
     /// app password (GitHub #18).
     #[test]
@@ -1909,7 +1927,7 @@ mod tests {
         for cancel in ["edit-cancel-tap", "interval-editor-cancel", "vibration-editor-cancel"] {
             assert!(slint.contains(&format!("back => {{ root.{cancel}(); }}")), "{cancel}");
         }
-        assert_eq!(slint.matches("PageHeader {").count(), 13);
+        assert_eq!(slint.matches("PageHeader {").count(), 15);
         assert!(slint.contains("accessible-label: root.sync-indicator-tooltip;"));
     }
 
@@ -4750,7 +4768,7 @@ mod tests {
     #[test]
     fn the_session_buttons_keep_their_place() {
         let slint = slint_code();
-        let running = &slint[slint.find("// ── Running screen").unwrap()..slint.find("// ── Log page").unwrap()];
+        let running = &slint[slint.find("// ── Running screen").unwrap()..slint.find("// ── Duration dialog").unwrap()];
         assert!(!slint.contains("end-discard-below") && !ui_code().contains("end_discard_below"));
         // The time and the buttons form one block, centred by padding; the note follows it.
         let at = running.find("running-block := VerticalLayout {").expect("the centred block");
@@ -5408,7 +5426,7 @@ mod tests {
         let layout = slint_code();
         let lines: Vec<&str> = layout.lines().collect();
         let running = lines.iter().position(|l| l.contains("// ── Running screen")).unwrap();
-        let log_page = lines.iter().position(|l| l.contains("// ── Log page")).unwrap();
+        let log_page = lines.iter().position(|l| l.contains("// ── Duration dialog")).unwrap();
         for (n, line) in lines.iter().enumerate() {
             let code = line.split("//").next().unwrap();
             for off_role in [".darker(", ".brighter(", ".transparentize(", "rgb(", "rgba(", "hsv(", "hsl(", "oklch(", "Colors."] {
@@ -5432,7 +5450,7 @@ mod tests {
         // The session screen is black in both themes, so the light
         // theme's roles there are dark on black (#15).
         let layout = slint_code();
-        let running = &layout[layout.find("// ── Running screen").unwrap()..layout.find("// ── Log page").unwrap()];
+        let running = &layout[layout.find("// ── Running screen").unwrap()..layout.find("// ── Duration dialog").unwrap()];
         let buttons = component(&layout, "EndButtonView");
         // A bare WrapButton there would take the current theme's defaults.
         assert!(!running.contains("WrapButton {"), "use EndButtonView on the session screen");

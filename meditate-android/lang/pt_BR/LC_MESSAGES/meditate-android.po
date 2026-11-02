@@ -229,6 +229,14 @@ msgstr "Som do sino"
 msgid "Bells"
 msgstr "Sinos"
 
+msgid "No bells"
+msgstr "Nenhum sino"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} sino de intervalo"
+msgstr[1] "{n} sinos de intervalo"
+
 msgid "Box Breath"
 msgstr "Resp. quadrada"
 

@@ -229,6 +229,15 @@ msgstr "Dźwięk dzwonka"
 msgid "Bells"
 msgstr "Dzwonki"
 
+msgid "No bells"
+msgstr "Brak dzwonków"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} dzwonek interwałowy"
+msgstr[1] "{n} dzwonki interwałowe"
+msgstr[2] "{n} dzwonków interwałowych"
+
 msgid "Box Breath"
 msgstr "Oddech pudełkowy"
 

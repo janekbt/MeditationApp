@@ -229,6 +229,13 @@ msgstr "铃声"
 msgid "Bells"
 msgstr "铃声"
 
+msgid "No bells"
+msgstr "无铃声"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} 个间隔铃"
+
 msgid "Box Breath"
 msgstr "箱式呼吸"
 

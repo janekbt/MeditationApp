@@ -924,6 +924,8 @@ fn close_transient_overlays(ui: &MainWindow) {
     ui.set_vibration_editor_page(false);
     ui.set_interval_editor_page(false);
     ui.set_interval_bells_page(false);
+    ui.set_bells_page(false);
+    ui.set_session_page(false);
     ui.set_labels_page(false);
     ui.set_edit_session_page(false);
     ui.set_filter_sheet_open(false);
@@ -2442,6 +2444,7 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
 /// row off, so Save never writes an id that no longer exists.
 fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode) {
     refresh_setup_label_name(ui, mode);
+    refresh_setup_summaries(ui, mode);
     let edit_id = ui.get_edit_label_id();
     if edit_id > 0 {
         match lookup_label_name(i64::from(edit_id)) {
@@ -2724,6 +2727,30 @@ fn load_setup_for_mode(
         _ => timer_session_secs.get(),
     });
     refresh_breathing_tiles(ui, pattern);
+    refresh_setup_summaries(ui, mode);
+}
+
+/// The Session and Bells rows' subtitles, from core (GitHub #20).
+fn refresh_setup_summaries(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    use meditate_core::preset_config::{bells_summary, session_summary, BellsSummaryPart, SessionSummaryPart};
+    let Some(db) = lock_db() else { return; };
+    let (session, bells) = (session_summary(&db, mode), bells_summary(&db, mode));
+    drop(db);
+    // Core's parts in core's order, " · " as in preset_subtitle; GTK mirrors it.
+    let tr = ui.global::<Tr>();
+    let session: Vec<String> = session.into_iter().map(|part| match part {
+        SessionSummaryPart::Stopwatch => tr.invoke_stopwatch().to_string(),
+        SessionSummaryPart::Label(name) => name,
+        SessionSummaryPart::AutoFinish => tr.invoke_auto_finish().to_string(),
+    }).collect();
+    let bells: Vec<String> = bells.into_iter().map(|part| match part {
+        BellsSummaryPart::StartingBell => tr.invoke_starting_bell().to_string(),
+        BellsSummaryPart::IntervalBells(n) => tr.invoke_n_interval_bells(n as i32).to_string(),
+        BellsSummaryPart::EndBell => tr.invoke_end_bell().to_string(),
+        BellsSummaryPart::PhaseCues => tr.invoke_phase_cues().to_string(),
+    }).collect();
+    ui.set_session_summary(session.join(" · ").into());
+    ui.set_bells_summary(if bells.is_empty() { tr.invoke_no_bells().to_string() } else { bells.join(" · ") }.into());
 }
 
 /// Re-read every screen that shows synced data. Runs after a sync
@@ -7757,6 +7784,16 @@ fn build_ui() -> MainWindow {
             let _ = weak.clone();
         });
     }
+    // Session or Bells page closed (#20): no preview outlives the
+    // page, and the main rows sum up what changed on it.
+    {
+        let weak = ui.as_weak();
+        ui.on_setup_page_closed(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            stop_all_previews(&ui);
+            refresh_setup_summaries(&ui, setup_session_mode(&ui));
+        });
+    }
 
     // ── Interval-bell editor (B-5c-2/3): create / edit / delete ─
     {
@@ -9712,6 +9749,14 @@ fn build_ui() -> MainWindow {
             }
             if ui.get_interval_bells_page() {
                 ui.set_interval_bells_page(false);
+                return;
+            }
+            if ui.get_bells_page() {
+                ui.set_bells_page(false);
+                return;
+            }
+            if ui.get_session_page() {
+                ui.set_session_page(false);
                 return;
             }
             if ui.get_nav_page() != 0 {

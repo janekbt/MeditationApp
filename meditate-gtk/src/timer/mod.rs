@@ -32,6 +32,11 @@ impl TimerView {
         self.imp().refresh_interval_bells_count();
     }
 
+    /// A start bar for a settings page (#20).
+    pub fn build_start_bar(&self) -> gtk::Widget {
+        self.imp().build_start_bar()
+    }
+
     /// Rebuild the visible starred-preset list from the database.
     /// Called by the chooser pages (P.4c onward) after a preset is
     /// created, updated, deleted, or re-starred so the home-view chip

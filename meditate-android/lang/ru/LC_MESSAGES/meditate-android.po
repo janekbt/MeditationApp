@@ -229,6 +229,15 @@ msgstr "Звук колокола"
 msgid "Bells"
 msgstr "Колокола"
 
+msgid "No bells"
+msgstr "Нет колоколов"
+
+msgid "{n} interval bell"
+msgid_plural "{n} interval bells"
+msgstr[0] "{n} интервальный колокол"
+msgstr[1] "{n} интервальных колокола"
+msgstr[2] "{n} интервальных колоколов"
+
 msgid "Box Breath"
 msgstr "Кв. дыхание"
 

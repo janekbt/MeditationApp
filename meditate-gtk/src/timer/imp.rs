@@ -181,6 +181,13 @@ pub struct TimerView {
     #[template_child] pub boxbreath_phase_holdout_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdout_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
+    #[template_child] pub time_btn:               TemplateChild<gtk::Button>,
+    #[template_child] pub session_summary_row:    TemplateChild<adw::ActionRow>,
+    #[template_child] pub bells_summary_row:      TemplateChild<adw::ActionRow>,
+    #[template_child] pub session_page:           TemplateChild<adw::NavigationPage>,
+    #[template_child] pub bells_page:             TemplateChild<adw::NavigationPage>,
+    #[template_child] pub session_toolbar:        TemplateChild<adw::ToolbarView>,
+    #[template_child] pub bells_toolbar:          TemplateChild<adw::ToolbarView>,
 
     // ── Active session state ─────────────────────────────────────────
     // Only one session runs at a time across the three modes.
@@ -480,6 +487,51 @@ impl TimerView {
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_start()
         ));
+
+        // ── Session and Bells pages (#20) ───────────────────────────
+        // The time opens the Duration dialog wherever the Duration row
+        // would; elsewhere (Guided, Stopwatch) it doesn't react at all.
+        self.time_btn.connect_clicked(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().on_time_tapped()
+        ));
+        let follow_duration_row = clone!(
+            #[weak(rename_to = this)] obj,
+            move |row: &adw::ActionRow| {
+                let on = row.is_visible() && row.is_sensitive();
+                this.imp().time_btn.set_can_target(on);
+                this.imp().time_btn.set_focusable(on);
+            }
+        );
+        follow_duration_row(&self.duration_row);
+        for prop in ["visible", "sensitive"] {
+            let follow = follow_duration_row.clone();
+            self.duration_row.connect_notify_local(Some(prop), move |row, _| follow(row));
+        }
+        for (row, page) in [
+            (self.session_summary_row.get(), self.session_page.get()),
+            (self.bells_summary_row.get(), self.bells_page.get()),
+        ] {
+            row.connect_activated(clone!(
+                #[weak(rename_to = this)] obj,
+                #[weak] page,
+                move |_| {
+                    if let Some(window) = this.root().and_downcast::<crate::window::MeditateWindow>() {
+                        window.push_page(&page);
+                    }
+                }
+            ));
+            page.connect_hidden(clone!(
+                #[weak(rename_to = this)] obj,
+                move |_| {
+                    // The Bells page holds Volume rows; a preview stops with it.
+                    crate::sound::stop_preview();
+                    this.imp().refresh_setup_summaries();
+                }
+            ));
+        }
+        self.session_toolbar.add_bottom_bar(&self.build_start_bar());
+        self.bells_toolbar.add_bottom_bar(&self.build_start_bar());
 
         // ── Duration row: tap opens the H:M dialog ──────────────────
         // The only entry point for setting an ad-hoc Timer duration
@@ -1700,7 +1752,10 @@ pub(crate) fn setting_saved<T, E: std::fmt::Debug + 'static>(
     if crate::db::write_ok(anchor, tag, result, crate::db::Failed::Save) {
         return true;
     }
-    if let Some(view) = anchor.ancestor(super::TimerView::static_type()).and_downcast::<super::TimerView>() {
+    // The Session and Bells pages sit outside the view's widget tree (#20).
+    let view = anchor.ancestor(super::TimerView::static_type()).and_downcast::<super::TimerView>()
+        .or_else(|| anchor.root().and_downcast::<crate::window::MeditateWindow>().map(|w| w.timer_view()));
+    if let Some(view) = view {
         glib::idle_add_local_once(move || view.imp().reload_setup());
     }
     false
@@ -1959,6 +2014,7 @@ impl TimerView {
         self.interval_bells_enabled_row.set_visible(v.interval_bells);
         self.duration_row.set_visible(v.duration);
         self.presets_section.set_visible(v.presets);
+        self.refresh_setup_summaries();
     }
 
     /// Pull the right Cell into the shared Duration row's value label.
@@ -3099,6 +3155,8 @@ impl TimerView {
         self.refresh_phase_tiles();
         // A sync may have renamed or deleted the selected guided file.
         self.follow_selected_guided_file();
+        // ...or renamed the label or switched a bell the rows sum up (#20).
+        self.refresh_setup_summaries();
 
         // Batch every DB read this visit needs into a single borrow:
         // one get_app() walk, one RefCell lock, four SQL queries instead
@@ -4266,6 +4324,30 @@ fn overtime_add_button_label(overtime: std::time::Duration) -> String {
         .replace("{time}", &meditate_core::format::format_time(overtime))
 }
 
+/// The Session and Bells rows' subtitles: core's parts in core's order (#20).
+fn session_summary_text(parts: &[meditate_core::preset_config::SessionSummaryPart]) -> String {
+    use meditate_core::preset_config::SessionSummaryPart;
+    parts.iter().map(|p| match p {
+        SessionSummaryPart::Stopwatch => gettext("Stopwatch"),
+        SessionSummaryPart::Label(name) => glib::markup_escape_text(name).to_string(),
+        SessionSummaryPart::AutoFinish => gettext("Auto-Finish"),
+    }).collect::<Vec<_>>().join(" · ")
+}
+
+fn bells_summary_text(parts: &[meditate_core::preset_config::BellsSummaryPart]) -> String {
+    use meditate_core::preset_config::BellsSummaryPart;
+    if parts.is_empty() {
+        return gettext("No bells");
+    }
+    parts.iter().map(|p| match *p {
+        BellsSummaryPart::StartingBell => gettext("Starting Bell"),
+        BellsSummaryPart::IntervalBells(n) => ngettext("1 interval bell", "{n} interval bells", n as u32)
+            .replace("{n}", &n.to_string()),
+        BellsSummaryPart::EndBell => gettext("End Bell"),
+        BellsSummaryPart::PhaseCues => gettext("Cues during phases"),
+    }).collect::<Vec<_>>().join(" · ")
+}
+
 /// library's bells are currently enabled. Uses gettext so the count
 /// can be localised; "None" is its own string for grammatical reasons
 /// in some languages.
@@ -4486,6 +4568,66 @@ impl TimerView {
         self.refresh_setup_label_chooser_subtitle();
     }
 
+    /// The Session and Bells rows' subtitles on the main screen (#20).
+    pub(crate) fn refresh_setup_summaries(&self) {
+        use meditate_core::preset_config::{bells_summary, session_summary};
+        let Some(app) = self.get_app() else { return; };
+        let mode: SessionMode = self.current_mode().into();
+        let Some((session, bells)) = app.with_db(|db| (session_summary(db.core(), mode), bells_summary(db.core(), mode))) else { return; };
+        self.session_summary_row.set_subtitle(&session_summary_text(&session));
+        self.bells_summary_row.set_subtitle(&bells_summary_text(&bells));
+    }
+
+    fn on_time_tapped(&self) {
+        if self.duration_row.is_visible() && self.duration_row.is_sensitive() {
+            self.show_custom_time_dialog();
+        }
+    }
+
+    /// The start bar of Session, Bells and Manage Bells (#20): the main
+    /// screen's time and Start, so a session starts without going back.
+    pub(crate) fn build_start_bar(&self) -> gtk::Widget {
+        let obj = self.obj();
+        let time = gtk::Label::builder().css_classes(["start-bar-time"]).build();
+        let unit = gtk::Label::builder().css_classes(["caption", "dimmed"]).build();
+        for (from, to) in [(&*self.big_time_label, &time), (&*self.time_unit_label, &unit)] {
+            from.bind_property("label", to, "label").sync_create().build();
+        }
+        self.time_unit_label.bind_property("visible", &unit, "visible").sync_create().build();
+        let column = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).build();
+        column.append(&time);
+        column.append(&unit);
+        let time_btn = gtk::Button::builder()
+            .child(&column)
+            .tooltip_text(gettext("Duration"))
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .build();
+        for prop in ["can-target", "focusable"] {
+            self.time_btn.bind_property(prop, &time_btn, prop).sync_create().build();
+        }
+        time_btn.connect_clicked(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().on_time_tapped()
+        ));
+        let start = gtk::Button::builder()
+            .hexpand(true)
+            .valign(gtk::Align::Center)
+            .css_classes(["pill", "suggested-action", "start-bar-button"])
+            .build();
+        for prop in ["label", "sensitive", "visible"] {
+            self.start_btn.bind_property(prop, &start, prop).sync_create().build();
+        }
+        start.connect_clicked(clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().start_btn.emit_clicked()
+        ));
+        let bar = gtk::Box::builder().spacing(18).margin_top(6).margin_bottom(6).margin_start(18).margin_end(18).build();
+        bar.append(&time_btn);
+        bar.append(&start);
+        adw::Clamp::builder().maximum_size(360).tightening_threshold(300).child(&bar).build().upcast()
+    }
+
     fn persisted_label_active_for_mode(&self, mode: TimerMode) -> bool {
         self.get_app()
             .and_then(|app| {
@@ -4542,6 +4684,17 @@ mod tests {
         let apply = body(&code, "fn apply_config_once(&self");
         assert!(apply.contains("if !self.set_countdown_target("));
         assert!(body(&code, "fn set_countdown_target(&self, secs: u32) -> bool").contains("setting_saved("));
+    }
+
+    #[test]
+    fn setup_summaries_follow_a_sync_and_leaving_a_page_stops_a_preview() {
+        // #20 review: a sync pull and closing Preferences only call
+        // refresh_streak, so the rows' summaries must follow there; the
+        // Bells page holds Volume rows, so leaving it stops a preview.
+        let code = production();
+        assert!(body(&code, "    pub fn refresh_streak(&self)").contains("self.refresh_setup_summaries()"));
+        let hidden = code.find("page.connect_hidden(").expect("the pages refresh when left");
+        assert!(code[hidden..hidden + 300].contains("crate::sound::stop_preview()"));
     }
 
     #[test]

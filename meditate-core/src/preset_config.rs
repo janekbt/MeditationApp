@@ -407,6 +407,73 @@ pub fn setup_visibility(mode: SessionMode) -> ModeSetupVisibility {
     }
 }
 
+/// One piece of the main screen's Session row subtitle (GitHub #20).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionSummaryPart {
+    Stopwatch,
+    Label(String),
+    AutoFinish,
+}
+
+pub fn session_summary(db: &Database, mode: SessionMode) -> Vec<SessionSummaryPart> {
+    let mut parts = Vec::new();
+    let stopwatch = setup_visibility(mode).duration && crate::bells::display_mode_from_db(db, mode).is_stopwatch();
+    if stopwatch {
+        parts.push(SessionSummaryPart::Stopwatch);
+    }
+    if crate::labels::label_active_from_db(db, mode) {
+        if let Some(label) = crate::labels::resolve_label_for_mode(db, mode) {
+            parts.push(SessionSummaryPart::Label(label.name));
+        }
+    }
+    // A stopwatch has no end to finish at; both apps grey the switch then.
+    if !stopwatch && crate::settings_keys::auto_finish_from_db(db, mode) {
+        parts.push(SessionSummaryPart::AutoFinish);
+    }
+    parts
+}
+
+/// One piece of the main screen's Bells row subtitle; none at all
+/// reads "No bells" (GitHub #20).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BellsSummaryPart {
+    StartingBell,
+    IntervalBells(usize),
+    EndBell,
+    PhaseCues,
+}
+
+/// What will ring, not what is switched on: Stopwatch drops the end
+/// bell and bells timed from the end, as the Bells page greys them.
+pub fn bells_summary(db: &Database, mode: SessionMode) -> Vec<BellsSummaryPart> {
+    use crate::bells::{box_breath_cues_from_db, display_mode_from_db, end_bell_cue_from_db, interval_bells_count, starting_bell_cue_from_db};
+    use crate::settings_keys::read_bool;
+    let display = display_mode_from_db(db, mode);
+    let vis = setup_visibility(mode);
+    let mut parts = Vec::new();
+    if starting_bell_cue_from_db(db, mode).is_some() {
+        parts.push(BellsSummaryPart::StartingBell);
+    }
+    if vis.interval_bells && read_bool(db, "interval_bells_active", false) {
+        let n = interval_bells_count(db, display);
+        if n > 0 {
+            parts.push(BellsSummaryPart::IntervalBells(n));
+        }
+    }
+    if end_bell_cue_from_db(db, display, mode).is_some() {
+        parts.push(BellsSummaryPart::EndBell);
+    }
+    if vis.boxbreath_phase {
+        let cues = box_breath_cues_from_db(db);
+        if cues.master_enabled
+            && [&cues.in_phase, &cues.hold_in, &cues.out_phase, &cues.hold_out].iter().any(|c| c.is_some())
+        {
+            parts.push(BellsSummaryPart::PhaseCues);
+        }
+    }
+    parts
+}
+
 /// The starred presets of `mode` whose settings are exactly Setup's
 /// as stored: the ones Setup shows as active. Only what Setup shows
 /// for the mode counts (a Timer preset's saved Box Breath cues don't).
@@ -1781,5 +1848,101 @@ mod tests {
             assert_eq!(PresetConfig::from_json(&cfg.to_json()).unwrap(), cfg);
         }
     }
-}
 
+    // ── Setup row summaries (GitHub #20) ──────────────────────────
+
+    fn insert_bell(db: &Database, kind: IntervalBellKind) {
+        use crate::bells::{BellTime, TimeUnit};
+        db.insert_interval_bell(
+            kind, BellTime::new(5, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO,
+            BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+    }
+
+    fn set_phases(db: &Database, enabled: bool) {
+        db.seed_box_breath_phases().unwrap();
+        for phase in [BoxBreathPhaseId::In, BoxBreathPhaseId::HoldIn, BoxBreathPhaseId::Out, BoxBreathPhaseId::HoldOut] {
+            db.set_box_breath_phase(
+                phase, enabled, SignalMode::Sound, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID,
+                crate::bell_volume::BellVolume::default(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn session_summary_names_stopwatch_and_label() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Walking").unwrap();
+        let uuid = crate::db::list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == id).unwrap().uuid;
+        db.set_setting("timer_stopwatch_active", "true").unwrap();
+        db.set_setting("label_active_timer", "true").unwrap();
+        db.set_setting("default_label_uuid_timer", uuid.as_str()).unwrap();
+        db.set_setting(crate::settings_keys::auto_finish_key_for_mode(SessionMode::Timer), "true").unwrap();
+        // Stopwatch has no end to finish at, so Auto-Finish says nothing.
+        assert_eq!(
+            session_summary(&db, SessionMode::Timer),
+            vec![SessionSummaryPart::Stopwatch, SessionSummaryPart::Label("Walking".into())],
+        );
+        db.set_setting("timer_stopwatch_active", "false").unwrap();
+        assert_eq!(
+            session_summary(&db, SessionMode::Timer),
+            vec![SessionSummaryPart::Label("Walking".into()), SessionSummaryPart::AutoFinish],
+        );
+    }
+
+    #[test]
+    fn session_summary_is_empty_when_plain() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(session_summary(&db, SessionMode::Timer), vec![]);
+        // A label chosen but switched off says nothing.
+        db.set_setting("label_active_breathing", "false").unwrap();
+        assert_eq!(session_summary(&db, SessionMode::BoxBreath), vec![]);
+    }
+
+    #[test]
+    fn bells_summary_lists_what_rings_per_mode() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        db.set_setting("interval_bells_active", "true").unwrap();
+        for _ in 0..3 {
+            insert_bell(&db, IntervalBellKind::Interval);
+        }
+        let off = db.list_interval_bells().unwrap().remove(0);
+        db.set_interval_bell_enabled(off.uuid.as_str(), false).unwrap();
+        db.set_setting("boxbreath_cues_active", "true").unwrap();
+        set_phases(&db, true);
+        use BellsSummaryPart::*;
+        assert_eq!(bells_summary(&db, SessionMode::Timer), vec![StartingBell, IntervalBells(2), EndBell]);
+        assert_eq!(bells_summary(&db, SessionMode::BoxBreath), vec![EndBell, PhaseCues]);
+        assert_eq!(bells_summary(&db, SessionMode::Guided), vec![EndBell]);
+    }
+
+    #[test]
+    fn bells_summary_follows_what_rings_with_stopwatch() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_stopwatch_active", "true").unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        db.set_setting("interval_bells_active", "true").unwrap();
+        insert_bell(&db, IntervalBellKind::Interval);
+        insert_bell(&db, IntervalBellKind::FixedFromEnd);
+        use BellsSummaryPart::*;
+        assert_eq!(bells_summary(&db, SessionMode::Timer), vec![StartingBell, IntervalBells(1)]);
+    }
+
+    #[test]
+    fn bells_summary_says_no_bells() {
+        let db = Database::open_in_memory().unwrap();
+        for mode in [SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided] {
+            db.set_setting(end_bell_active_key_for_mode(mode), "false").unwrap();
+        }
+        // Switched on, but nothing in them can ring.
+        db.set_setting("interval_bells_active", "true").unwrap();
+        db.set_setting("boxbreath_cues_active", "true").unwrap();
+        set_phases(&db, false);
+        for mode in [SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided] {
+            assert_eq!(bells_summary(&db, mode), vec![], "{mode:?}");
+        }
+    }
+}

@@ -35,18 +35,30 @@ template $TimerView : Gtk.Widget {
               label: "";
             }
 
-            // Large time readout — updated reactively from the spin buttons
-            Gtk.Label big_time_label {
-              label: "00:10";
-              css-classes: ["timer-setup-display"];
+            // Large time readout — updated reactively from the spin buttons.
+            // A tap opens the Duration dialog, as the Duration row does (#20).
+            Gtk.Button time_btn {
               halign: center;
-            }
+              tooltip-text: _("Duration");
+              styles ["flat"]
 
-            // Subtitle shown only in countdown mode
-            Gtk.Label time_unit_label {
-              label: _("Hours · Minutes");
-              css-classes: ["caption", "dimmed"];
-              halign: center;
+              child: Gtk.Box {
+                orientation: vertical;
+                spacing: 4;
+
+                Gtk.Label big_time_label {
+                  label: "00:10";
+                  css-classes: ["timer-setup-display"];
+                  halign: center;
+                }
+
+                // Subtitle shown only in countdown mode
+                Gtk.Label time_unit_label {
+                  label: _("Hours · Minutes");
+                  css-classes: ["caption", "dimmed"];
+                  halign: center;
+                }
+              };
             }
           }
 
@@ -286,32 +298,71 @@ template $TimerView : Gtk.Widget {
             };
           }
 
+          // ── Session and Bells rows (GitHub #20) ───────────────────
+          // The groups live on their own pages (below the template);
+          // the subtitles sum them up (core preset_config summaries).
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Adw.PreferencesGroup {
+              Adw.ActionRow session_summary_row {
+                title: _("Session");
+                activatable: true;
+
+                [suffix]
+                Gtk.Image { icon-name: "go-next-symbolic"; }
+              }
+
+              Adw.ActionRow bells_summary_row {
+                title: _("Bells");
+                activatable: true;
+
+                [suffix]
+                Gtk.Image { icon-name: "go-next-symbolic"; }
+              }
+            };
+          }
+
+        };
+      };
+    }
+  }
+}
+
+// Pushed onto the window's NavigationView from the rows above; a start
+// bar is added at the bottom in Rust (`TimerView::build_start_bar`).
+Adw.NavigationPage session_page {
+  tag: "setup-session";
+  title: _("Session");
+
+  child: Adw.ToolbarView session_toolbar {
+    bottom-bar-style: flat;
+
+    [top]
+    Adw.HeaderBar {}
+
+    // Its own overlay: a failed save must show on this page.
+    content: Adw.ToastOverlay {
+      child: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 14;
+          valign: start;
+          margin-top: 24;
+          margin-bottom: 24;
+          margin-start: 12;
+          margin-end: 12;
+
           // ── Session group ──────────────────────────────────────────
           Adw.Clamp {
             maximum-size: 360;
             tightening-threshold: 300;
 
             child: Adw.PreferencesGroup session_group {
-              title: _("Session");
-
-              // Per-mode "what plays" toggle. Acts as a runtime
-              // override on top of per-bell + per-phase signal_mode:
-              // 'sound' silences all vibration in this mode, 'vibration'
-              // silences all sound, 'both' honours per-row intent.
-              // Persists to a mode-specific setting key
-              // (timer_signal_mode / guided_signal_mode /
-              // boxbreath_signal_mode). Toggle group is built in
-              // Rust; refresh on mode switch + on visit reloads the
-              // active value from the new mode's setting.
-              Adw.ActionRow cues_signal_mode_row {
-                title: _("Cues");
-
-                [suffix]
-                Gtk.Box cues_signal_toggle_host {
-                  orientation: horizontal;
-                  valign: center;
-                }
-              }
 
               // Stopwatch toggle. Shown in every mode that has a
               // non-zero session length (Timer + Box Breath both
@@ -387,6 +438,38 @@ template $TimerView : Gtk.Widget {
               }
             };
           }
+        };
+      };
+    };
+  };
+}
+
+// Pushed onto the window's NavigationView from the rows above; a start
+// bar is added at the bottom in Rust (`TimerView::build_start_bar`).
+Adw.NavigationPage bells_page {
+  tag: "setup-bells";
+  title: _("Bells");
+
+  child: Adw.ToolbarView bells_toolbar {
+    bottom-bar-style: flat;
+
+    [top]
+    Adw.HeaderBar {}
+
+    // Its own overlay: a failed save must show on this page.
+    content: Adw.ToastOverlay {
+      child: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 14;
+          valign: start;
+          margin-top: 24;
+          margin-bottom: 24;
+          margin-start: 12;
+          margin-end: 12;
 
           // ── Bells group ────────────────────────────────────────────
           // Starting Bell + Interval Bells + End Bell live in their own
@@ -401,7 +484,25 @@ template $TimerView : Gtk.Widget {
             tightening-threshold: 300;
 
             child: Adw.PreferencesGroup bells_group {
-              title: _("Bells");
+
+              // Per-mode "what plays" toggle. Acts as a runtime
+              // override on top of per-bell + per-phase signal_mode:
+              // 'sound' silences all vibration in this mode, 'vibration'
+              // silences all sound, 'both' honours per-row intent.
+              // Persists to a mode-specific setting key
+              // (timer_signal_mode / guided_signal_mode /
+              // boxbreath_signal_mode). Toggle group is built in
+              // Rust; refresh on mode switch + on visit reloads the
+              // active value from the new mode's setting.
+              Adw.ActionRow cues_signal_mode_row {
+                title: _("Cues");
+
+                [suffix]
+                Gtk.Box cues_signal_toggle_host {
+                  orientation: horizontal;
+                  valign: center;
+                }
+              }
 
               // ── Starting bell + preparation time ───────────────────
               // Progressive disclosure via nested Adw.ExpanderRow: the
@@ -797,9 +898,8 @@ template $TimerView : Gtk.Widget {
               }
             };
           }
-
         };
       };
-    }
-  }
+    };
+  };
 }
