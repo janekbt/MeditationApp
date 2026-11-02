@@ -42,7 +42,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
-| [ ] | X. Release pipeline (ask first) | #168, #169, #174 | builds that aren't what F-Droid or users get |
+| [ ] | X. Release pipeline (ask first) | #168, #169, #174, #201 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
 | [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
@@ -225,6 +225,11 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 - Where: `build.sh:167` runs `build-aux/setup-android.sh` before `ensure_rust` (`:171`); `setup-android.sh:300-303` exits when rustup is missing.
 - Problem: README promises that build.sh installs missing dependencies, but a fresh machine stops with a rustup error on `./build.sh android`.
 - Fix: call `ensure_rust` before the Android bootstrap. README/BUILDING say "install rustup first" until then.
+
+### #201 Android: targets API 34, and the native library isn't built for 16 KB pages
+- Where: `meditate-android/android/app/build.gradle` (`compileSdk 34`, `targetSdk 34`, `ndkVersion '27.2.12479018'`); the platform 34 pin in `rust-build.sh`.
+- Problem: Google Play takes new apps only at the current target level (35, probably 36 by now) and with native code aligned for 16 KB memory pages, which NDK 27 doesn't do by default. F-Droid doesn't require either yet, but a stale target makes Android treat the app as legacy and makes a later Play listing a build-environment change first.
+- Fix: check Google's current required level, raise compileSdk/targetSdk to it, and build for 16 KB pages (NDK 28, or `-z max-page-size=16384` for the Rust library). Re-test on the phone what the new target changes (notifications, the foreground service, exact timing), then run the repro probe and update the pins. Build environment: ask first. Raised while weighing a Play Store listing, 2026-11-02.
 
 ## Y2. Slint text fields (upstream)
 
