@@ -17,6 +17,7 @@
 <p align="center">
   <a href="https://f-droid.org/packages/io.github.janekbt.Meditate/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="83" align="middle"></a>
   <a href="https://flatpark.org/apps/io.github.janekbt.Meditate/"><img src="https://flatpark.org/badges/get-it-on-flatpark.svg" alt="Get it on FlatPark" height="56" align="middle"></a>
+  <a href="https://github.com/janekbt/MeditationApp/releases/latest"><img src="https://raw.githubusercontent.com/Kunzisoft/Github-badge/main/get-it-on-github.png" alt="Get it on GitHub" height="83" align="middle"></a>
 </p>
 
 ---
