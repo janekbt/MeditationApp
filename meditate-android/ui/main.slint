@@ -8207,9 +8207,16 @@ export component MainWindow inherits Window {
                 horizontal-alignment: left;
                 wrap: word-wrap;
             }
+            Text {
+                text: @tr("Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security.");
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
 
             TextField {
-                label: @tr("Server URL");
+                label: @tr("WebDAV URL");
                 text <=> root.prefs-url;
             }
             TextField {

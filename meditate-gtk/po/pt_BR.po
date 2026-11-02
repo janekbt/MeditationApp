@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 22:35+0100\n"
+"POT-Creation-Date: 2026-11-02 15:47+0100\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -121,7 +121,7 @@ msgstr "Este sino não tocará mais durante as sessões."
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:525
+#: src/preferences.rs:689 src/preferences.rs:763 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2624
@@ -312,7 +312,7 @@ msgstr "Erro de leitura"
 msgid "Database error"
 msgstr "Erro de banco de dados"
 
-#: src/data_io.rs:33 src/preferences.rs:531
+#: src/data_io.rs:33 src/preferences.rs:533
 msgid "Database unavailable"
 msgstr "Banco de dados indisponível"
 
@@ -322,7 +322,7 @@ msgid "«{name}» is already taken"
 msgstr "«{name}» já está em uso"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:527 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:529 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Falha ao salvar"
 
@@ -751,7 +751,7 @@ msgstr "Rótulo"
 msgid "Tag this session"
 msgstr "Rotule esta sessão"
 
-#: src/log/imp.rs:1042 src/window/imp.rs:514
+#: src/log/imp.rs:1042 src/window/imp.rs:546
 msgid "Note (optional)"
 msgstr "Anotação (opcional)"
 
@@ -768,7 +768,7 @@ msgstr "Horário de início"
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: src/log/imp.rs:1101 src/preferences.rs:434
+#: src/log/imp.rs:1101 src/preferences.rs:436
 msgid "_Save"
 msgstr "_Salvar"
 
@@ -900,7 +900,7 @@ msgstr "Migrar"
 msgid "Import sessions from another meditation app."
 msgstr "Importar sessões de outro aplicativo de meditação."
 
-#: src/preferences.rs:240 src/preferences.rs:672
+#: src/preferences.rs:240 src/preferences.rs:674
 msgid "Import from Insight Timer"
 msgstr "Importar do Insight Timer"
 
@@ -916,7 +916,7 @@ msgstr "Importar CSV do Insight Timer"
 msgid "Nextcloud Sync"
 msgstr "Sincronização Nextcloud"
 
-#: src/preferences.rs:267
+#: src/preferences.rs:268
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -924,136 +924,142 @@ msgstr ""
 "Sincronize sessões, rótulos e preferências entre seus dispositivos pelo seu "
 "próprio servidor Nextcloud."
 
-#: src/preferences.rs:272
-msgid "Server URL"
-msgstr "URL do servidor"
+#: src/preferences.rs:269
+msgid ""
+"Use the WebDAV address from Files → Files settings, and an app password from "
+"Personal settings → Security."
+msgstr "Use o endereço WebDAV de Arquivos → Configurações de arquivos e uma senha de aplicativo de Configurações pessoais → Segurança."
 
-#: src/preferences.rs:276
+#: src/preferences.rs:274
+msgid "WebDAV URL"
+msgstr "URL WebDAV"
+
+#: src/preferences.rs:278
 msgid "Username"
 msgstr "Nome de usuário"
 
-#: src/preferences.rs:279
+#: src/preferences.rs:281
 msgid "App password"
 msgstr "Senha de aplicativo"
 
-#: src/preferences.rs:308
+#: src/preferences.rs:310
 msgid "Test connection"
 msgstr "Testar conexão"
 
-#: src/preferences.rs:309
+#: src/preferences.rs:311
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Verifique se a URL e as credenciais alcançam o seu Nextcloud."
 
-#: src/preferences.rs:313
+#: src/preferences.rs:315
 msgid "_Test"
 msgstr "_Testar"
 
-#: src/preferences.rs:358 src/preferences.rs:469
+#: src/preferences.rs:360 src/preferences.rs:471
 msgid "Enter URL and username"
 msgstr "Informe a URL e o nome de usuário"
 
-#: src/preferences.rs:362 src/preferences.rs:477
+#: src/preferences.rs:364 src/preferences.rs:479
 msgid "Enter a password"
 msgstr "Informe uma senha"
 
-#: src/preferences.rs:366 src/preferences.rs:481
+#: src/preferences.rs:368 src/preferences.rs:483
 msgid "Keyring read failed"
 msgstr "Falha ao ler o chaveiro"
 
-#: src/preferences.rs:372 src/preferences.rs:473
+#: src/preferences.rs:374 src/preferences.rs:475
 msgid "URL must start with https://"
 msgstr "A URL deve começar com https://"
 
-#: src/preferences.rs:406
+#: src/preferences.rs:408
 msgid "Connection OK"
 msgstr "Conexão OK"
 
-#: src/preferences.rs:407
+#: src/preferences.rs:409
 msgid "Authentication failed"
 msgstr "Falha na autenticação"
 
-#: src/preferences.rs:408
+#: src/preferences.rs:410
 msgid "Not a WebDAV folder"
 msgstr "Não é uma pasta WebDAV"
 
-#: src/preferences.rs:409
+#: src/preferences.rs:411
 msgid "Network error"
 msgstr "Erro de rede"
 
-#: src/preferences.rs:410
+#: src/preferences.rs:412
 msgid "Server error"
 msgstr "Erro do servidor"
 
-#: src/preferences.rs:415
+#: src/preferences.rs:417
 msgid "Test failed"
 msgstr "Falha no teste"
 
-#: src/preferences.rs:429
+#: src/preferences.rs:431
 msgid "Save sync settings"
 msgstr "Salvar configurações de sincronização"
 
-#: src/preferences.rs:430
+#: src/preferences.rs:432
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "Guarda a URL e o nome de usuário localmente; a senha vai para o seu chaveiro."
 
-#: src/preferences.rs:508
+#: src/preferences.rs:510
 msgid "Keyring write failed"
 msgstr "Falha ao gravar no chaveiro"
 
-#: src/preferences.rs:536
+#: src/preferences.rs:538
 msgid "Sync settings saved"
 msgstr "Configurações de sincronização salvas"
 
-#: src/preferences.rs:545
+#: src/preferences.rs:547
 msgid "Danger Zone"
 msgstr "Zona de perigo"
 
-#: src/preferences.rs:546
+#: src/preferences.rs:548
 msgid "These actions cannot be undone."
 msgstr "Estas ações não podem ser desfeitas."
 
-#: src/preferences.rs:550
+#: src/preferences.rs:552
 msgid "Delete all sessions"
 msgstr "Excluir todas as sessões"
 
-#: src/preferences.rs:551
+#: src/preferences.rs:553
 msgid "Permanently remove every logged session"
 msgstr "Remove permanentemente cada sessão registrada"
 
-#: src/preferences.rs:555
+#: src/preferences.rs:557
 msgid "_Delete All"
 msgstr "_Excluir tudo"
 
-#: src/preferences.rs:625
+#: src/preferences.rs:627
 msgid "Export Session Log"
 msgstr "Exportar histórico de sessões"
 
-#: src/preferences.rs:629 src/preferences.rs:730
+#: src/preferences.rs:631 src/preferences.rs:732
 msgid "CSV files"
 msgstr "Arquivos CSV"
 
-#: src/preferences.rs:645
+#: src/preferences.rs:647
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "{n} sessão exportada"
 msgstr[1] "{n} sessões exportadas"
 
-#: src/preferences.rs:649
+#: src/preferences.rs:651
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Falha na exportação: {error}"
 
-#: src/preferences.rs:663
+#: src/preferences.rs:665
 msgid "Import Session Log"
 msgstr "Importar histórico de sessões"
 
-#: src/preferences.rs:682
+#: src/preferences.rs:684
 msgid "Delete Every Session?"
 msgstr "Excluir todas as sessões?"
 
-#: src/preferences.rs:683
+#: src/preferences.rs:685
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1061,57 +1067,57 @@ msgstr ""
 "Isso remove permanentemente todas as sessões do seu histórico. Exporte um "
 "backup antes se quiser guardar alguma coisa."
 
-#: src/preferences.rs:688
+#: src/preferences.rs:690
 msgid "Delete All"
 msgstr "Excluir tudo"
 
-#: src/preferences.rs:699
+#: src/preferences.rs:701
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "{n} sessão excluída"
 msgstr[1] "{n} sessões excluídas"
 
-#: src/preferences.rs:706
+#: src/preferences.rs:708
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Falha na exclusão: {error}"
 
-#: src/preferences.rs:746 src/preferences.rs:808
+#: src/preferences.rs:748 src/preferences.rs:810
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Falha na importação: {error}"
 
-#: src/preferences.rs:756
+#: src/preferences.rs:758
 msgid "Some Lines Can't Be Read"
 msgstr "Algumas linhas não podem ser lidas"
 
-#: src/preferences.rs:762
+#: src/preferences.rs:764
 msgid "Import the Rest"
 msgstr "Importar o restante"
 
-#: src/preferences.rs:775
+#: src/preferences.rs:777
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Linha {line}: não é possível ler o horário de início."
 
-#: src/preferences.rs:776
+#: src/preferences.rs:778
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Linha {line}: não é possível ler a duração."
 
-#: src/preferences.rs:783
+#: src/preferences.rs:785
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "Mais {n} linha também não pode ser lida."
 msgstr[1] "Mais {n} linhas também não podem ser lidas."
 
-#: src/preferences.rs:792
+#: src/preferences.rs:794
 msgid "Nothing in this file can be imported."
 msgstr "Nada neste arquivo pode ser importado."
 
-#: src/preferences.rs:801
+#: src/preferences.rs:803
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1549,7 +1555,7 @@ msgstr "Descartar sessão?"
 msgid "Your note will be lost."
 msgstr "Sua anotação será perdida."
 
-#: src/timer/imp.rs:2625 src/window/imp.rs:502
+#: src/timer/imp.rs:2625 src/window/imp.rs:534
 msgid "Discard"
 msgstr "Descartar"
 
@@ -1755,86 +1761,86 @@ msgstr "Volume"
 msgid "Meditating"
 msgstr "Meditando"
 
-#: src/window/imp.rs:264
+#: src/window/imp.rs:296
 #, rust-format
 msgid "{rung} of {total}"
 msgstr "{rung} de {total}"
 
-#: src/window/imp.rs:305 src/window/imp.rs:492
+#: src/window/imp.rs:337 src/window/imp.rs:524
 msgid "Box Breathing"
 msgstr "Respiração quadrada"
 
-#: src/window/imp.rs:468
+#: src/window/imp.rs:500
 msgid "Breathe in"
 msgstr "Inspire"
 
-#: src/window/imp.rs:469
+#: src/window/imp.rs:501
 msgid "Hold"
 msgstr "Segure"
 
-#: src/window/imp.rs:470
+#: src/window/imp.rs:502
 msgid "Breathe out"
 msgstr "Expire"
 
-#: src/window/imp.rs:754
+#: src/window/imp.rs:786
 msgid "Syncing with Nextcloud…"
 msgstr "Sincronizando com o Nextcloud…"
 
-#: src/window/imp.rs:764
+#: src/window/imp.rs:796
 msgid "Last sync failed, click to retry"
 msgstr "A última sincronização falhou, clique para tentar de novo"
 
-#: src/window/imp.rs:776
+#: src/window/imp.rs:808
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Alguns arquivos não foram enviados, clique para tentar de novo"
 
-#: src/window/imp.rs:786
+#: src/window/imp.rs:818
 msgid "No password saved, click to enter it"
 msgstr "Nenhuma senha salva, clique para digitá-la"
 
-#: src/window/imp.rs:801
+#: src/window/imp.rs:833
 msgid "Sync configured (waiting for first run)"
 msgstr "Sincronização configurada (aguardando a primeira execução)"
 
-#: src/window/imp.rs:830
+#: src/window/imp.rs:862
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: grande demais para sincronizar"
 
-#: src/window/imp.rs:831
+#: src/window/imp.rs:863
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: grande demais para o servidor"
 
-#: src/window/imp.rs:832
+#: src/window/imp.rs:864
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: o servidor está cheio"
 
-#: src/window/imp.rs:834
+#: src/window/imp.rs:866
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: recusado pelo servidor ({status})"
 
-#: src/window/imp.rs:845
+#: src/window/imp.rs:877
 msgid "Synced just now"
 msgstr "Sincronizado agora mesmo"
 
-#: src/window/imp.rs:847
+#: src/window/imp.rs:879
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
 msgstr[0] "Sincronizado há {n} minuto"
 msgstr[1] "Sincronizado há {n} minutos"
 
-#: src/window/imp.rs:850
+#: src/window/imp.rs:882
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
 msgstr[0] "Sincronizado há {n} hora"
 msgstr[1] "Sincronizado há {n} horas"
 
-#: src/window/imp.rs:853
+#: src/window/imp.rs:885
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
@@ -2163,43 +2169,61 @@ msgid ""
 "shark and @voidplayer, whose reports and ideas led to most of this release. "
 "On Android, bells now play as media instead of as an alarm, so they may "
 "sound louder or quieter than before: please check your bell volumes."
-msgstr "Um anel que mostra a sessão e seus sinos, Salvar ao lado de Pausar, predefinições na sua ordem e sinos que ficam nos seus fones. Obrigado a @marius-shark e @voidplayer, cujos relatos e ideias levaram à maior parte desta versão. No Android, os sinos agora tocam como mídia em vez de alarme, então podem soar mais altos ou mais baixos do que antes: confira os volumes dos seus sinos."
+msgstr ""
+"Um anel que mostra a sessão e seus sinos, Salvar ao lado de Pausar, "
+"predefinições na sua ordem e sinos que ficam nos seus fones. Obrigado a "
+"@marius-shark e @voidplayer, cujos relatos e ideias levaram à maior parte "
+"desta versão. No Android, os sinos agora tocam como mídia em vez de alarme, "
+"então podem soar mais altos ou mais baixos do que antes: confira os volumes "
+"dos seus sinos."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Timer: a ring round the time fills with the session and shows each bell as a "
 "bead, and the bells are counted under the time, \"2 of 5\""
-msgstr "Temporizador: um anel em volta do tempo se preenche com a sessão e mostra cada sino como uma conta, e os sinos são contados sob o tempo, “2 de 5”"
+msgstr ""
+"Temporizador: um anel em volta do tempo se preenche com a sessão e mostra "
+"cada sino como uma conta, e os sinos são contados sob o tempo, “2 de 5”"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Save sits next to Pause, so you can end early in one tap; the session "
 "buttons stay in place"
-msgstr "Salvar fica ao lado de Pausar, então você pode terminar antes com um toque; os botões da sessão ficam no lugar"
+msgstr ""
+"Salvar fica ao lado de Pausar, então você pode terminar antes com um toque; "
+"os botões da sessão ficam no lugar"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "Presets: drag them into your own order on the Manage page; editing a "
 "preset's bell makes a new bell, so other presets keep theirs"
-msgstr "Predefinições: arraste-as na sua ordem na página Gerenciar; editar o sino de uma predefinição cria um sino novo, assim as outras mantêm o seu"
+msgstr ""
+"Predefinições: arraste-as na sua ordem na página Gerenciar; editar o sino de "
+"uma predefinição cria um sino novo, assim as outras mantêm o seu"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "Random interval bells ring around their own planned time instead of drifting "
 "from the last ring"
-msgstr "Sinos de intervalo aleatórios tocam em torno do próprio horário planejado em vez de se deslocar a partir do último toque"
+msgstr ""
+"Sinos de intervalo aleatórios tocam em torno do próprio horário planejado em "
+"vez de se deslocar a partir do último toque"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid ""
 "Bluetooth: an optional wake-up lead-in, a soft noise before each bell, keeps "
 "sleeping headphones and speakers from swallowing it (Preferences)"
-msgstr "Bluetooth: um som de despertar opcional, um ruído suave antes de cada sino, evita que fones e caixas de som adormecidos o engulam (Preferências)"
+msgstr ""
+"Bluetooth: um som de despertar opcional, um ruído suave antes de cada sino, "
+"evita que fones e caixas de som adormecidos o engulam (Preferências)"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid ""
 "Android: bells play as media, only in connected headphones; a switch in "
 "Preferences plays them as an alarm again, also only in the headphones"
-msgstr "Android: os sinos tocam como mídia, só nos fones conectados; um botão em Preferências volta a tocá-los como alarme, também só nos fones"
+msgstr ""
+"Android: os sinos tocam como mídia, só nos fones conectados; um botão em "
+"Preferências volta a tocá-los como alarme, também só nos fones"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:101
 msgid ""
@@ -2210,19 +2234,25 @@ msgstr "Android: controle a sessão pela notificação e pelo botão dos fones"
 msgid ""
 "Android: follow the system colours on Android 14 and later, with a new lotus "
 "icon that takes them too"
-msgstr "Android: segue as cores do sistema no Android 14 e posteriores, com um novo ícone de lótus que também as adota"
+msgstr ""
+"Android: segue as cores do sistema no Android 14 e posteriores, com um novo "
+"ícone de lótus que também as adota"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
 "Android: dialogs stay above the keyboard and Enter confirms; the system bar "
 "symbols stay readable on light pages"
-msgstr "Android: as caixas de diálogo ficam acima do teclado e Enter confirma; os símbolos das barras do sistema ficam legíveis em páginas claras"
+msgstr ""
+"Android: as caixas de diálogo ficam acima do teclado e Enter confirma; os "
+"símbolos das barras do sistema ficam legíveis em páginas claras"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:104
 msgid ""
 "Dates follow each language's own order; the Stats numbers agree with the Log "
 "and the Timer"
-msgstr "As datas seguem a ordem própria de cada idioma; os números das Estatísticas batem com o Histórico e o Temporizador"
+msgstr ""
+"As datas seguem a ordem própria de cada idioma; os números das Estatísticas "
+"batem com o Histórico e o Temporizador"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "Linux: GNOME 51 runtime"
@@ -2813,6 +2843,9 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:264
 msgid "Initial release."
 msgstr "Primeira versão."
+
+#~ msgid "Server URL"
+#~ msgstr "URL do servidor"
 
 #, rust-format
 #~ msgid "{duration} · {count} sessions"

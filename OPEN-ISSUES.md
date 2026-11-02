@@ -285,6 +285,10 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 - Where: every "today" in core (`time::today_local`, goal, streak, heatmap, Log day groups) counts by calendar day.
 - Idea: a "day starts at" time (for example 3:00), so a 1 a.m. session counts for the day the user lived. It changes counting in both apps (goal, streak, heatmap, Log groups, synced sessions on another device), probably as a setting. Raised during batch J, 2026-10-13.
 
+### #200 Android: one test that every UI text is translated
+- Where: `meditate-android/src/app.rs` checks single texts per issue (`nextcloud_help_is_translated`, `ui_text_is_translated_whole`); GTK already checks every msgid (`meditate-gtk/src/i18n.rs::every_language_translates_every_text`).
+- Idea: one test that reads every `@tr("...")` in `ui/*.slint` and fails when a catalog lacks it or leaves it empty, so a new text can't ship untranslated without its own test. Existing gaps may show up first. Raised during GitHub #18, 2026-11-02.
+
 ## Deferred refactors
 
 Only together with other work in the same area; none has a bug behind it.

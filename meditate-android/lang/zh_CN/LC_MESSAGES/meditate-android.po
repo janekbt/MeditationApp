@@ -547,8 +547,11 @@ msgstr "选择会话时间"
 msgid "Selected"
 msgstr "已选择"
 
-msgid "Server URL"
-msgstr "服务器 URL"
+msgid "WebDAV URL"
+msgstr "WebDAV URL"
+
+msgid "Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security."
+msgstr "请使用“文件 > 文件设置”中的 WebDAV 地址，以及在“个人设置 > 安全”中创建的应用密码。"
 
 msgid "Server error"
 msgstr "服务器错误"

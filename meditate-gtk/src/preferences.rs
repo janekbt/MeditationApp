@@ -263,13 +263,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
     let sync_group = adw::PreferencesGroup::builder()
         .title(gettext("Nextcloud Sync"))
-        .description(gettext(
-            "Sync sessions, labels, and preferences between your devices via your own Nextcloud server.",
+        .description(format!(
+            "{} {}",
+            gettext("Sync sessions, labels, and preferences between your devices via your own Nextcloud server."),
+            gettext("Use the WebDAV address from Files → Files settings, and an app password from Personal settings → Security."),
         ))
         .build();
 
     let url_row = adw::EntryRow::builder()
-        .title(gettext("Server URL"))
+        .title(gettext("WebDAV URL"))
         .input_purpose(gtk::InputPurpose::Url)
         .build();
     let username_row = adw::EntryRow::builder()

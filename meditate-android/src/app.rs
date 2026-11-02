@@ -1868,6 +1868,26 @@ mod tests {
         }
     }
 
+    /// "Server URL" didn't say the app needs the WebDAV address and an
+    /// app password (GitHub #18).
+    #[test]
+    fn nextcloud_help_is_translated() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let texts = ["WebDAV URL", "Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security."];
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for text in texts {
+            assert!(slint.contains(&format!("@tr(\"{text}\")")), "main.slint: {text}");
+        }
+        let ids = texts.map(|t| format!("msgid \"{t}\"\nmsgstr \""));
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in &ids {
+                let at = po.find(id.as_str()).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(!po[at + id.len()..].starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+    }
+
     /// Page headers drifted (the editors' text Cancel pushed Save off
     /// screen in German, #23); one header keeps them alike. The sync
     /// icon had no label for TalkBack (#39).

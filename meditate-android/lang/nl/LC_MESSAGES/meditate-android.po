@@ -547,8 +547,11 @@ msgstr "Sessietijd kiezen"
 msgid "Selected"
 msgstr "Geselecteerd"
 
-msgid "Server URL"
-msgstr "Server-URL"
+msgid "WebDAV URL"
+msgstr "WebDAV URL"
+
+msgid "Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security."
+msgstr "Gebruik het WebDAV-adres uit Bestanden > Instellingen voor bestanden en een app-wachtwoord uit Persoonlijke instellingen > Beveiliging."
 
 msgid "Server error"
 msgstr "Serverfout"

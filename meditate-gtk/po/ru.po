@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-30 22:35+0100\n"
+"POT-Creation-Date: 2026-11-02 15:47+0100\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -124,7 +124,7 @@ msgstr "Этот колокол больше не будет звучать во
 #. still cover the common activations.
 #: src/bells.rs:338 src/bells.rs:903 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:687 src/preferences.rs:761 src/presets.rs:525
+#: src/preferences.rs:689 src/preferences.rs:763 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2624
@@ -321,7 +321,7 @@ msgstr "Ошибка разбора"
 msgid "Database error"
 msgstr "Ошибка базы данных"
 
-#: src/data_io.rs:33 src/preferences.rs:531
+#: src/data_io.rs:33 src/preferences.rs:533
 msgid "Database unavailable"
 msgstr "База данных недоступна"
 
@@ -331,7 +331,7 @@ msgid "«{name}» is already taken"
 msgstr "Название «{name}» уже занято"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:527 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:529 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Ошибка сохранения"
 
@@ -768,7 +768,7 @@ msgstr "Метка"
 msgid "Tag this session"
 msgstr "Отметьте эту сессию"
 
-#: src/log/imp.rs:1042 src/window/imp.rs:514
+#: src/log/imp.rs:1042 src/window/imp.rs:546
 msgid "Note (optional)"
 msgstr "Заметка (необязательно)"
 
@@ -785,7 +785,7 @@ msgstr "Время начала"
 msgid "_Cancel"
 msgstr "_Отмена"
 
-#: src/log/imp.rs:1101 src/preferences.rs:434
+#: src/log/imp.rs:1101 src/preferences.rs:436
 msgid "_Save"
 msgstr "_Сохранить"
 
@@ -916,7 +916,7 @@ msgstr "Миграция"
 msgid "Import sessions from another meditation app."
 msgstr "Импорт сессий из другого приложения для медитации."
 
-#: src/preferences.rs:240 src/preferences.rs:672
+#: src/preferences.rs:240 src/preferences.rs:674
 msgid "Import from Insight Timer"
 msgstr "Импорт из Insight Timer"
 
@@ -932,7 +932,7 @@ msgstr "Импортировать CSV Insight Timer"
 msgid "Nextcloud Sync"
 msgstr "Синхронизация с Nextcloud"
 
-#: src/preferences.rs:267
+#: src/preferences.rs:268
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -940,116 +940,122 @@ msgstr ""
 "Синхронизируйте сессии, метки и настройки между устройствами через "
 "собственный сервер Nextcloud."
 
-#: src/preferences.rs:272
-msgid "Server URL"
-msgstr "URL сервера"
+#: src/preferences.rs:269
+msgid ""
+"Use the WebDAV address from Files → Files settings, and an app password from "
+"Personal settings → Security."
+msgstr "Возьмите адрес WebDAV в Файлы → Параметры «Файлы», а пароль приложения создайте в Личные параметры → Безопасность."
 
-#: src/preferences.rs:276
+#: src/preferences.rs:274
+msgid "WebDAV URL"
+msgstr "Ссылка WebDAV"
+
+#: src/preferences.rs:278
 msgid "Username"
 msgstr "Имя пользователя"
 
-#: src/preferences.rs:279
+#: src/preferences.rs:281
 msgid "App password"
 msgstr "Пароль приложения"
 
-#: src/preferences.rs:308
+#: src/preferences.rs:310
 msgid "Test connection"
 msgstr "Проверить соединение"
 
-#: src/preferences.rs:309
+#: src/preferences.rs:311
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Проверить, что URL и учётные данные подходят для вашего Nextcloud."
 
-#: src/preferences.rs:313
+#: src/preferences.rs:315
 msgid "_Test"
 msgstr "_Проверить"
 
-#: src/preferences.rs:358 src/preferences.rs:469
+#: src/preferences.rs:360 src/preferences.rs:471
 msgid "Enter URL and username"
 msgstr "Введите URL и имя пользователя"
 
-#: src/preferences.rs:362 src/preferences.rs:477
+#: src/preferences.rs:364 src/preferences.rs:479
 msgid "Enter a password"
 msgstr "Введите пароль"
 
-#: src/preferences.rs:366 src/preferences.rs:481
+#: src/preferences.rs:368 src/preferences.rs:483
 msgid "Keyring read failed"
 msgstr "Ошибка чтения из связки ключей"
 
-#: src/preferences.rs:372 src/preferences.rs:473
+#: src/preferences.rs:374 src/preferences.rs:475
 msgid "URL must start with https://"
 msgstr "URL должен начинаться с https://"
 
-#: src/preferences.rs:406
+#: src/preferences.rs:408
 msgid "Connection OK"
 msgstr "Соединение установлено"
 
-#: src/preferences.rs:407
+#: src/preferences.rs:409
 msgid "Authentication failed"
 msgstr "Ошибка аутентификации"
 
-#: src/preferences.rs:408
+#: src/preferences.rs:410
 msgid "Not a WebDAV folder"
 msgstr "Это не папка WebDAV"
 
-#: src/preferences.rs:409
+#: src/preferences.rs:411
 msgid "Network error"
 msgstr "Ошибка сети"
 
-#: src/preferences.rs:410
+#: src/preferences.rs:412
 msgid "Server error"
 msgstr "Ошибка сервера"
 
-#: src/preferences.rs:415
+#: src/preferences.rs:417
 msgid "Test failed"
 msgstr "Проверка не удалась"
 
-#: src/preferences.rs:429
+#: src/preferences.rs:431
 msgid "Save sync settings"
 msgstr "Сохранить настройки синхронизации"
 
-#: src/preferences.rs:430
+#: src/preferences.rs:432
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "URL и имя пользователя хранятся локально; пароль сохраняется в связке ключей."
 
-#: src/preferences.rs:508
+#: src/preferences.rs:510
 msgid "Keyring write failed"
 msgstr "Ошибка записи в связку ключей"
 
-#: src/preferences.rs:536
+#: src/preferences.rs:538
 msgid "Sync settings saved"
 msgstr "Настройки синхронизации сохранены"
 
-#: src/preferences.rs:545
+#: src/preferences.rs:547
 msgid "Danger Zone"
 msgstr "Опасная зона"
 
-#: src/preferences.rs:546
+#: src/preferences.rs:548
 msgid "These actions cannot be undone."
 msgstr "Эти действия нельзя отменить."
 
-#: src/preferences.rs:550
+#: src/preferences.rs:552
 msgid "Delete all sessions"
 msgstr "Удалить все сессии"
 
-#: src/preferences.rs:551
+#: src/preferences.rs:553
 msgid "Permanently remove every logged session"
 msgstr "Безвозвратно удаляет все записанные сессии"
 
-#: src/preferences.rs:555
+#: src/preferences.rs:557
 msgid "_Delete All"
 msgstr "_Удалить всё"
 
-#: src/preferences.rs:625
+#: src/preferences.rs:627
 msgid "Export Session Log"
 msgstr "Экспортировать журнал сессий"
 
-#: src/preferences.rs:629 src/preferences.rs:730
+#: src/preferences.rs:631 src/preferences.rs:732
 msgid "CSV files"
 msgstr "Файлы CSV"
 
-#: src/preferences.rs:645
+#: src/preferences.rs:647
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
@@ -1057,20 +1063,20 @@ msgstr[0] "Экспортирована {n} сессия"
 msgstr[1] "Экспортированы {n} сессии"
 msgstr[2] "Экспортировано {n} сессий"
 
-#: src/preferences.rs:649
+#: src/preferences.rs:651
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Не удалось экспортировать: {error}"
 
-#: src/preferences.rs:663
+#: src/preferences.rs:665
 msgid "Import Session Log"
 msgstr "Импортировать журнал сессий"
 
-#: src/preferences.rs:682
+#: src/preferences.rs:684
 msgid "Delete Every Session?"
 msgstr "Удалить все сессии?"
 
-#: src/preferences.rs:683
+#: src/preferences.rs:685
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1078,11 +1084,11 @@ msgstr ""
 "Безвозвратно удаляет все сессии из журнала. Сначала экспортируйте резервную "
 "копию, если хотите сохранить историю."
 
-#: src/preferences.rs:688
+#: src/preferences.rs:690
 msgid "Delete All"
 msgstr "Удалить всё"
 
-#: src/preferences.rs:699
+#: src/preferences.rs:701
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
@@ -1090,35 +1096,35 @@ msgstr[0] "Удалена {n} сессия"
 msgstr[1] "Удалены {n} сессии"
 msgstr[2] "Удалено {n} сессий"
 
-#: src/preferences.rs:706
+#: src/preferences.rs:708
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Не удалось удалить: {error}"
 
-#: src/preferences.rs:746 src/preferences.rs:808
+#: src/preferences.rs:748 src/preferences.rs:810
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Не удалось импортировать: {error}"
 
-#: src/preferences.rs:756
+#: src/preferences.rs:758
 msgid "Some Lines Can't Be Read"
 msgstr "Некоторые строки не удаётся прочитать"
 
-#: src/preferences.rs:762
+#: src/preferences.rs:764
 msgid "Import the Rest"
 msgstr "Импортировать остальное"
 
-#: src/preferences.rs:775
+#: src/preferences.rs:777
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Строка {line}: не удаётся прочитать время начала."
 
-#: src/preferences.rs:776
+#: src/preferences.rs:778
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Строка {line}: не удаётся прочитать длительность."
 
-#: src/preferences.rs:783
+#: src/preferences.rs:785
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
@@ -1126,11 +1132,11 @@ msgstr[0] "Ещё {n} строку тоже не удаётся прочитат
 msgstr[1] "Ещё {n} строки тоже не удаётся прочитать."
 msgstr[2] "Ещё {n} строк тоже не удаётся прочитать."
 
-#: src/preferences.rs:792
+#: src/preferences.rs:794
 msgid "Nothing in this file can be imported."
 msgstr "Из этого файла ничего нельзя импортировать."
 
-#: src/preferences.rs:801
+#: src/preferences.rs:803
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1574,7 +1580,7 @@ msgstr "Удалить сессию?"
 msgid "Your note will be lost."
 msgstr "Заметка будет потеряна."
 
-#: src/timer/imp.rs:2625 src/window/imp.rs:502
+#: src/timer/imp.rs:2625 src/window/imp.rs:534
 msgid "Discard"
 msgstr "Удалить"
 
@@ -1782,72 +1788,72 @@ msgstr "Громкость"
 msgid "Meditating"
 msgstr "Идёт медитация"
 
-#: src/window/imp.rs:264
+#: src/window/imp.rs:296
 #, rust-format
 msgid "{rung} of {total}"
 msgstr "{rung} из {total}"
 
-#: src/window/imp.rs:305 src/window/imp.rs:492
+#: src/window/imp.rs:337 src/window/imp.rs:524
 msgid "Box Breathing"
 msgstr "Квадратное дыхание"
 
-#: src/window/imp.rs:468
+#: src/window/imp.rs:500
 msgid "Breathe in"
 msgstr "Вдох"
 
-#: src/window/imp.rs:469
+#: src/window/imp.rs:501
 msgid "Hold"
 msgstr "Задержка"
 
-#: src/window/imp.rs:470
+#: src/window/imp.rs:502
 msgid "Breathe out"
 msgstr "Выдох"
 
-#: src/window/imp.rs:754
+#: src/window/imp.rs:786
 msgid "Syncing with Nextcloud…"
 msgstr "Синхронизация с Nextcloud…"
 
-#: src/window/imp.rs:764
+#: src/window/imp.rs:796
 msgid "Last sync failed, click to retry"
 msgstr "Последняя синхронизация не удалась, нажмите, чтобы повторить"
 
-#: src/window/imp.rs:776
+#: src/window/imp.rs:808
 msgid "Some files weren't uploaded, click to retry"
 msgstr "Некоторые файлы не загружены, нажмите, чтобы повторить"
 
-#: src/window/imp.rs:786
+#: src/window/imp.rs:818
 msgid "No password saved, click to enter it"
 msgstr "Пароль не сохранён, нажмите, чтобы ввести его"
 
-#: src/window/imp.rs:801
+#: src/window/imp.rs:833
 msgid "Sync configured (waiting for first run)"
 msgstr "Синхронизация настроена (ожидание первого запуска)"
 
-#: src/window/imp.rs:830
+#: src/window/imp.rs:862
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: слишком большой для синхронизации"
 
-#: src/window/imp.rs:831
+#: src/window/imp.rs:863
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: слишком большой для сервера"
 
-#: src/window/imp.rs:832
+#: src/window/imp.rs:864
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: на сервере нет места"
 
-#: src/window/imp.rs:834
+#: src/window/imp.rs:866
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: сервер отклонил файл ({status})"
 
-#: src/window/imp.rs:845
+#: src/window/imp.rs:877
 msgid "Synced just now"
 msgstr "Синхронизировано только что"
 
-#: src/window/imp.rs:847
+#: src/window/imp.rs:879
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
@@ -1855,7 +1861,7 @@ msgstr[0] "Синхронизировано {n} минуту назад"
 msgstr[1] "Синхронизировано {n} минуты назад"
 msgstr[2] "Синхронизировано {n} минут назад"
 
-#: src/window/imp.rs:850
+#: src/window/imp.rs:882
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
@@ -1863,7 +1869,7 @@ msgstr[0] "Синхронизировано {n} час назад"
 msgstr[1] "Синхронизировано {n} часа назад"
 msgstr[2] "Синхронизировано {n} часов назад"
 
-#: src/window/imp.rs:853
+#: src/window/imp.rs:885
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
@@ -2193,43 +2199,62 @@ msgid ""
 "shark and @voidplayer, whose reports and ideas led to most of this release. "
 "On Android, bells now play as media instead of as an alarm, so they may "
 "sound louder or quieter than before: please check your bell volumes."
-msgstr "Кольцо, показывающее сессию и её колокола, «Сохранить» рядом с «Паузой», пресеты в своём порядке и колокола, которые остаются в наушниках. Спасибо @marius-shark и @voidplayer, чьи сообщения и идеи легли в основу большей части этой версии. На Android колокола теперь звучат как медиа, а не как будильник, поэтому могут быть громче или тише, чем раньше: проверьте громкость своих колоколов."
+msgstr ""
+"Кольцо, показывающее сессию и её колокола, «Сохранить» рядом с «Паузой», "
+"пресеты в своём порядке и колокола, которые остаются в наушниках. Спасибо "
+"@marius-shark и @voidplayer, чьи сообщения и идеи легли в основу большей "
+"части этой версии. На Android колокола теперь звучат как медиа, а не как "
+"будильник, поэтому могут быть громче или тише, чем раньше: проверьте "
+"громкость своих колоколов."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
 "Timer: a ring round the time fills with the session and shows each bell as a "
 "bead, and the bells are counted under the time, \"2 of 5\""
-msgstr "Таймер: кольцо вокруг времени заполняется по ходу сессии и показывает каждый колокол бусиной, а колокола считаются под временем, «2 из 5»"
+msgstr ""
+"Таймер: кольцо вокруг времени заполняется по ходу сессии и показывает каждый "
+"колокол бусиной, а колокола считаются под временем, «2 из 5»"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
 "Save sits next to Pause, so you can end early in one tap; the session "
 "buttons stay in place"
-msgstr "«Сохранить» стоит рядом с «Паузой», так что закончить раньше можно одним касанием; кнопки сессии остаются на месте"
+msgstr ""
+"«Сохранить» стоит рядом с «Паузой», так что закончить раньше можно одним "
+"касанием; кнопки сессии остаются на месте"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "Presets: drag them into your own order on the Manage page; editing a "
 "preset's bell makes a new bell, so other presets keep theirs"
-msgstr "Пресеты: перетаскивайте их в свой порядок на странице «Управлять»; изменение колокола пресета создаёт новый колокол, а остальные пресеты сохраняют свой"
+msgstr ""
+"Пресеты: перетаскивайте их в свой порядок на странице «Управлять»; изменение "
+"колокола пресета создаёт новый колокол, а остальные пресеты сохраняют свой"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "Random interval bells ring around their own planned time instead of drifting "
 "from the last ring"
-msgstr "Случайные интервальные колокола звучат около своего запланированного времени, а не смещаются от последнего удара"
+msgstr ""
+"Случайные интервальные колокола звучат около своего запланированного "
+"времени, а не смещаются от последнего удара"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid ""
 "Bluetooth: an optional wake-up lead-in, a soft noise before each bell, keeps "
 "sleeping headphones and speakers from swallowing it (Preferences)"
-msgstr "Bluetooth: необязательный звук пробуждения, тихий шум перед каждым колоколом, не даёт уснувшим наушникам и колонкам его проглотить (Параметры)"
+msgstr ""
+"Bluetooth: необязательный звук пробуждения, тихий шум перед каждым "
+"колоколом, не даёт уснувшим наушникам и колонкам его проглотить (Параметры)"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid ""
 "Android: bells play as media, only in connected headphones; a switch in "
 "Preferences plays them as an alarm again, also only in the headphones"
-msgstr "Android: колокола звучат как медиа, только в подключённых наушниках; переключатель в Параметрах снова включает их как будильник, тоже только в наушниках"
+msgstr ""
+"Android: колокола звучат как медиа, только в подключённых наушниках; "
+"переключатель в Параметрах снова включает их как будильник, тоже только в "
+"наушниках"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:101
 msgid ""
@@ -2240,19 +2265,25 @@ msgstr "Android: управление сессией из её уведомле�
 msgid ""
 "Android: follow the system colours on Android 14 and later, with a new lotus "
 "icon that takes them too"
-msgstr "Android: системные цвета на Android 14 и новее, с новым значком лотоса, который тоже их принимает"
+msgstr ""
+"Android: системные цвета на Android 14 и новее, с новым значком лотоса, "
+"который тоже их принимает"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:103
 msgid ""
 "Android: dialogs stay above the keyboard and Enter confirms; the system bar "
 "symbols stay readable on light pages"
-msgstr "Android: диалоги остаются над клавиатурой, а Enter подтверждает; значки системных панелей читаются на светлых страницах"
+msgstr ""
+"Android: диалоги остаются над клавиатурой, а Enter подтверждает; значки "
+"системных панелей читаются на светлых страницах"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:104
 msgid ""
 "Dates follow each language's own order; the Stats numbers agree with the Log "
 "and the Timer"
-msgstr "Даты следуют порядку каждого языка; числа в Статистике совпадают с Журналом и Таймером"
+msgstr ""
+"Даты следуют порядку каждого языка; числа в Статистике совпадают с Журналом "
+"и Таймером"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid "Linux: GNOME 51 runtime"
@@ -2844,6 +2875,9 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:264
 msgid "Initial release."
 msgstr "Первый выпуск."
+
+#~ msgid "Server URL"
+#~ msgstr "URL сервера"
 
 #, rust-format
 #~ msgid "{duration} · {count} sessions"

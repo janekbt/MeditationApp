@@ -547,8 +547,11 @@ msgstr "Время сессии"
 msgid "Selected"
 msgstr "Выбрано"
 
-msgid "Server URL"
-msgstr "URL сервера"
+msgid "WebDAV URL"
+msgstr "Ссылка WebDAV"
+
+msgid "Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security."
+msgstr "Возьмите адрес WebDAV в Файлы > Параметры «Файлы», а пароль приложения создайте в Личные параметры > Безопасность."
 
 msgid "Server error"
 msgstr "Ошибка сервера"

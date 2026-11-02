@@ -547,8 +547,11 @@ msgstr "Hora da sessão"
 msgid "Selected"
 msgstr "Selecionado"
 
-msgid "Server URL"
-msgstr "URL do servidor"
+msgid "WebDAV URL"
+msgstr "URL WebDAV"
+
+msgid "Use the WebDAV address from Files > Files settings, and an app password from Personal settings > Security."
+msgstr "Use o endereço WebDAV de Arquivos > Configurações de arquivos e uma senha de aplicativo de Configurações pessoais > Segurança."
 
 msgid "Server error"
 msgstr "Erro do servidor"
