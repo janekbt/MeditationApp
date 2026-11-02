@@ -71,7 +71,9 @@ How to add or update a translation: [BUILDING.md](BUILDING.md#translations)
 
 Meditate runs on:
 - **Android 8.0+**
-- **Linux** with **Flatpak**, on **x86_64** and **aarch64**
+- **Linux** on **x86_64** and **aarch64**:
+  - with **Flatpak**
+  - without Flatpak, built from source, with **GTK 4.18+** and **libadwaita 1.7+**
 
 ---
 
