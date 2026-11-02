@@ -2505,7 +2505,7 @@ export component MainWindow inherits Window {
     // bounds. Bounds are seeded from Rust (core
     // DAILY_GOAL_MIN/MAX) so the limits live in meditate-core
     // only — the defaults here just keep the host preview sane.
-    in property <int> goal-min-mins: 5;
+    in property <int> goal-min-mins: 1;
     in property <int> goal-max-mins: 1440;
     in-out property <string> goal-dialog-text: "20";
     callback goal-committed();

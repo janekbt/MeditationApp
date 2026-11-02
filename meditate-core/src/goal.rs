@@ -16,17 +16,14 @@
 
 use crate::db::Database;
 
-/// Lower bound (minutes per day) for the goal input. Lower would
-/// land every practised day in heatmap level 4 from minute one.
-pub const DAILY_GOAL_MIN: i64 = 5;
+/// Lower bound (minutes per day) for the goal input; 1 minute a day
+/// is a real goal for a beginner (GitHub #19).
+pub const DAILY_GOAL_MIN: i64 = 1;
 
 /// Upper bound. A minutes-per-day target can't mean more than a
 /// full day, so the only cap is the physical one (was 240 until
 /// 2026-07-28 — Janek wants retreat-length goals to fit).
 pub const DAILY_GOAL_MAX: i64 = 1440;
-
-/// Spin step for shells that use a stepper (the gtk `SpinRow`).
-pub const DAILY_GOAL_STEP: i64 = 5;
 
 /// Default for a fresh user — 20 min/day, the same ballpark the
 /// old weekly default (150/7 ≈ 21) resolved to.
@@ -142,6 +139,16 @@ mod tests {
         assert_eq!(g.today_mins, 20);
         assert_eq!(g.remaining_mins, 0);
         assert_eq!(g.status, GoalStatus::Reached);
+    }
+
+    /// 1 minute a day is a real goal (GitHub #19).
+    #[test]
+    fn a_one_minute_goal_is_allowed_and_kept() {
+        assert!((DAILY_GOAL_MIN..=DAILY_GOAL_MAX).contains(&1));
+        let db = Database::open_in_memory().unwrap();
+        write_daily_goal_mins(&db, 1).unwrap();
+        assert_eq!(daily_goal_mins_from_db(&db), 1);
+        assert_eq!(compute(60, 1).status, GoalStatus::Reached);
     }
 
     #[test]

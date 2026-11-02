@@ -7,7 +7,7 @@ use crate::i18n::{gettext, ngettext};
 use glib::clone;
 use meditate_core::goal::{
     daily_goal_mins_from_db, write_daily_goal_mins,
-    DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN, DAILY_GOAL_STEP,
+    DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN,
 };
 
 pub fn show_preferences(app: &MeditateApplication) {
@@ -70,11 +70,12 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             current_goal_mins as f64,
             DAILY_GOAL_MIN as f64,
             DAILY_GOAL_MAX as f64,
-            DAILY_GOAL_STEP as f64,
-            (DAILY_GOAL_STEP * 4) as f64,
+            1.0,
+            5.0,
             0.0,
         ))
-        .climb_rate(DAILY_GOAL_STEP as f64)
+        // Holding a button speeds up, up to the page step per tick.
+        .climb_rate(5.0)
         .digits(0)
         .build();
     goal_row.connect_notify_local(
