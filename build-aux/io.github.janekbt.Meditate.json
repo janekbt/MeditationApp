@@ -10,6 +10,7 @@
   "cleanup": [
     "/include",
     "/lib/pkgconfig",
+    "/lib/python*",
     "/share/doc",
     "/share/man",
     "*.a",
@@ -41,6 +42,7 @@
     {
       "name": "blueprint-compiler",
       "buildsystem": "meson",
+      "cleanup": ["*"],
       "sources": [
         {
           "type": "archive",

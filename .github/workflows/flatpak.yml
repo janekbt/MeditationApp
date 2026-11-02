@@ -124,7 +124,7 @@ jobs:
           path: meditate-x86_64.flatpak
       # FlatPark takes the installed tree, not a bundle (RELEASE.md 5b).
       - name: Pack the app tree for FlatPark
-        run: tar -C flatpak_app --transform 's,^files,meditate,' -czf meditate-x86_64.tar.gz files
+        run: tar -C flatpak_app --exclude=files/manifest.json --transform 's,^files,meditate,' -czf meditate-x86_64.tar.gz files
       - name: Upload app tree
         uses: actions/upload-artifact@v6
         with:
@@ -169,7 +169,7 @@ jobs:
                 meditate-aarch64.flatpak \
                 io.github.janekbt.Meditate
               # FlatPark takes the installed tree, not a bundle (RELEASE.md 5b).
-              tar -C flatpak_app --transform "s,^files,meditate," -czf meditate-aarch64.tar.gz files
+              tar -C flatpak_app --exclude=files/manifest.json --transform "s,^files,meditate," -czf meditate-aarch64.tar.gz files
             '
 
       - name: Upload artifact
