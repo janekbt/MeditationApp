@@ -48,7 +48,10 @@ Do these BEFORE bumping, so fixes land in the release:
       curl -fsSL -o /tmp/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
       python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o build-aux/cargo-sources.json
 - **Screenshots:** if the UI changed visibly, recapture the
-  fastlane screenshots for all 10 locales. Set the app language
+  fastlane screenshots for all 10 locales. The main screen:
+  `build-aux/android-screenshots.sh [adb-serial]` does all of the
+  below for `1-timer.png` (light and dark, joined by
+  `build-aux/compose-screenshot.py`). By hand for other screens: set the app language
   per locale with
   `adb shell cmd locale set-app-locales io.github.janekbt.Meditate --locales <tag>`,
   `am force-stop` + relaunch between locales (the recreate races
@@ -59,8 +62,12 @@ Do these BEFORE bumping, so fixes land in the release:
   mean a leak). Reset with the same command minus `--locales`.
   Linux: recapture the light/dark composites in
   `meditate-gtk/data/screenshots/composite-*.png` (README and store
-  listing) from a light and a dark window screenshot each, split
-  diagonally like the Android ones.
+  listing) from a light and a dark window screenshot each (same window
+  size), joined with `build-aux/compose-screenshot.py LIGHT DARK OUT 25`.
+  Run the dev build on a copy of the Flatpak data
+  (`~/.var/app/io.github.janekbt.Meditate/data/meditate`) under
+  `unshare -rn`, with the account rows removed from the copy's
+  `sync_state`, so it can't sync and shows no sync warning.
 
 ## 2. Bump
 
