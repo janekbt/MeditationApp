@@ -130,6 +130,8 @@ your sessions and settings in `~/.var/app/io.github.janekbt.Meditate` stay.
 
 ### Linux (Flatpak bundle)
 
+<a href="https://github.com/janekbt/MeditationApp/releases/latest"><img src="https://raw.githubusercontent.com/Kunzisoft/Github-badge/main/get-it-on-github.png" alt="Get it on GitHub" height="83"></a>
+
 Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every
 [release](../../releases) as `meditate-<version>-<arch>.flatpak`. (Flathub is
 not an option for this app.) CI runs attach the same bundles on the
