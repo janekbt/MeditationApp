@@ -1,0 +1,38 @@
+name: Update check
+
+# Lists newer versions of every library and tool the apps build with in
+# one issue, the "Dependency Dashboard". Renovate only reads: no branch,
+# no pull request (settings in .github/renovate-config.json5). The
+# schedule runs from main only, so until this file is there it runs on
+# a push to the renovate-test branch.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [renovate-test]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: renovatebot/github-action@a63d9a7bc606f7336fd20b47f2f32259a35e6213 # v46.3.9
+        with:
+          configurationFile: .github/renovate-config.json5
+          renovate-version: 44.171.1
+          token: ${{ secrets.GITHUB_TOKEN }}
+          additional-env-list: LOG_FILE
+        env:
+          LOG_FILE: /tmp/renovate-log.json
+      # Renovate exits 0 when it aborts on a host error, leaving last
+      # week's list; its log says whether the check really finished.
+      - name: Check that Renovate finished
+        run: |
+          grep -q 'Repository result: done' /tmp/renovate-log.json

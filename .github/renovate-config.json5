@@ -1,0 +1,97 @@
+// Renovate settings for .github/workflows/renovate.yml. All of them live
+// here rather than in a repo renovate.json, which Renovate reads only
+// from the default branch (main).
+{
+  repositories: ["janekbt/MeditationApp"],
+  onboarding: false,
+  requireConfig: "ignored",
+  baseBranchPatterns: ["beta"],
+
+  // Info only: approval keeps every update a line in the issue, and the
+  // token can't push, so a ticked box creates nothing.
+  dependencyDashboard: true,
+  dependencyDashboardApproval: true,
+  dependencyDashboardHeader: "Newer versions of what Meditate builds with, checked every Monday. The boxes below do nothing here: Renovate can't push to this repo. Updates go through /spec; the Android pins (Rust, NDK, Gradle, AGP, JDK) also need a go and the repro probe (AGENTS.md). A slint update means re-applying the patches in third_party/.",
+
+  // The patched Slint copies follow the slint line.
+  ignorePaths: ["third_party/**"],
+
+  // The indirect crates as one line. Its default schedule (before 4am
+  // Monday) would miss the 05:00 run.
+  lockFileMaintenance: { enabled: true, schedule: ["at any time"] },
+
+  packageRules: [
+    // The repro dexer needs JDK 17; #201 owns moving past it.
+    { matchDepNames: ["java"], allowedVersions: "/^17\\./" },
+    { matchDepNames: ["ghcr.io/flathub-infra/flatpak-github-actions"], versioning: "regex:^gnome-(?<major>\\d+)$" },
+  ],
+
+  // NDK tags write the patch as a letter (r27d) that no versioning
+  // compares; each release's notes carry the sdkmanager version
+  // (27.3.13750724), the form PINNED_NDK uses.
+  customDatasources: {
+    "android-ndk": {
+      defaultRegistryUrlTemplate: "https://api.github.com/repos/android/ndk/releases?per_page=100",
+      transformTemplates: [
+        '{"releases": [$[prerelease = false].{"version": $match(body, /\\d+\\.\\d+\\.\\d{7,}/, 1).match, "releaseTimestamp": published_at}][version]}',
+      ],
+    },
+  },
+
+  // GNOME's own GitLab answers its API with 503, so the GNOME pins are
+  // looked up on GNOME's GitHub mirror.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/setup-android\\.sh$/"],
+      matchStrings: ['PINNED_NDK="(?<currentValue>[\\d.]+)"'],
+      depNameTemplate: "android/ndk",
+      datasourceTemplate: "custom.android-ndk",
+      versioningTemplate: "loose",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/setup-android\\.sh$/"],
+      matchStrings: ['PINNED_GRADLE="(?<currentValue>[^"]+)"'],
+      depNameTemplate: "gradle (setup-android)",
+      packageNameTemplate: "gradle",
+      datasourceTemplate: "gradle-version",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/setup-android\\.sh$/"],
+      matchStrings: ['PINNED_KOTLIN="(?<currentValue>[^"]+)"'],
+      depNameTemplate: "kotlinc",
+      packageNameTemplate: "JetBrains/kotlin",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v(?<version>\\d+\\.\\d+\\.\\d+)$",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/setup-android\\.sh$/"],
+      matchStrings: ['PINNED_JDK="(?<currentValue>[^"]+)"'],
+      depNameTemplate: "java",
+      packageNameTemplate: "java-jdk",
+      datasourceTemplate: "java-version",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/io\\.github\\.janekbt\\.Meditate\\.json$/"],
+      matchStrings: ['"runtime-version": "(?<currentValue>\\d+)"'],
+      depNameTemplate: "GNOME runtime",
+      packageNameTemplate: "GNOME/gnome-build-meta",
+      datasourceTemplate: "github-tags",
+      extractVersionTemplate: "^(?<version>\\d+)\\.\\d+$",
+      versioningTemplate: "loose",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^build-aux/io\\.github\\.janekbt\\.Meditate\\.json$/"],
+      matchStrings: ['blueprint-compiler/-/archive/v(?<currentValue>[^/]+)/'],
+      depNameTemplate: "blueprint-compiler",
+      packageNameTemplate: "GNOME/blueprint-compiler",
+      datasourceTemplate: "github-tags",
+      extractVersionTemplate: "^v(?<version>.+)$",
+    },
+  ],
+}
