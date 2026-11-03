@@ -45,7 +45,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
 | [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
-| [ ] | AA. Library major versions (Android ones: ask first) | #202-#208 | crates stuck on an old major get no more fixes |
+| [ ] | AA. Library major versions (Android ones: ask first) | #203-#208 | crates stuck on an old major get no more fixes |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -248,11 +248,6 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 ## AA. Library major versions (Android ones: ask first)
 
 Found with the first update list (#21), 2026-11-03. Each is its own change: read the crate's changelog, adapt the code, run the suites, and test on a device. The ones in the Android build change the APK, so they need a go and the repro probe.
-
-### #202 rusqlite 0.32 -> 0.41 (Android too)
-- Where: `meditate-core/src/db/`, `meditate-core/src/data_io.rs`, `meditate-gtk/src/db/`; both Cargo.toml.
-- Problem: nine releases behind; the bundled SQLite and its C build (libsqlite3-sys) come with it.
-- Fix: bump in both crates together and test opening a database written by the last release on both apps.
 
 ### #203 ureq 2 -> 3 (Android too)
 - Where: `meditate-core/src/sync/webdav.rs`, `meditate-core/Cargo.toml`.
