@@ -291,16 +291,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let known_events = self.db.known_event_uuids()?;
         let mut new_events: Vec<Event> = Vec::new();
         let mut newly_ingested_files: Vec<String> = Vec::new();
-        let mut skipped_unparseable: Vec<String> = Vec::new();
         for name in &listing {
-            let Some(batch_uuid) = parse_batch_uuid_from_filename(name) else {
-                // Unrecognised filename — skip so a stray file in
-                // the dir doesn't block sync; record the name for a
-                // post-loop diag line so the user can investigate
-                // when missing-data complaints arise.
-                skipped_unparseable.push(name.clone());
-                continue;
-            };
+            // Unrecognised filename: skip so a stray file in the dir
+            // doesn't block sync; the diag line below names it.
+            let Some(batch_uuid) = parse_batch_uuid_from_filename(name) else { continue };
             if known_files.contains(&batch_uuid) { continue; }
             let path = format!("{events_dir}/{name}");
             let body = match self.webdav.get(&path, MAX_EVENT_BUNDLE_BYTES) {
@@ -319,6 +313,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             }
             newly_ingested_files.push(batch_uuid);
         }
+        let skipped_unparseable = unreadable_names_to_report(&listing);
         if !skipped_unparseable.is_empty() {
             crate::diag::log(
                 "sync.pull",
@@ -807,8 +802,9 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // gstreamer decoders.
         match put_atomic_with_rate_limit_retry(self.webdav, remote, &bytes) {
             Ok(()) => Ok(true),
-            Err(WebDavError::Server { status, body }) => {
-                crate::diag::log("sync.push.refused", &format!("uuid={uuid} status={status} body={body}"));
+            // The page itself is already in the log (`sync.http`).
+            Err(WebDavError::Server { status, .. }) => {
+                crate::diag::log("sync.push.refused", &format!("uuid={uuid} status={status}"));
                 refused.push(settings::RefusedUpload { uuid: uuid.into(), reason: settings::UploadRefusal::from_status(status) });
                 Ok(false)
             }
@@ -1003,6 +999,9 @@ fn put_with_rate_limit_retry<W: WebDav>(
     }
 }
 
+/// An upload goes to `<name>.tmp` first and is renamed when complete.
+const UPLOAD_SUFFIX: &str = ".tmp";
+
 /// PUT-then-MOVE pattern: upload to `{path}.tmp` first, MOVE to the
 /// canonical `path` only on PUT success. A TCP RST mid-body leaves
 /// at most a partial `.tmp` file behind, never a half-written file at
@@ -1016,7 +1015,7 @@ fn put_atomic_with_rate_limit_retry<W: WebDav>(
     path: &str,
     body: &[u8],
 ) -> Result<(), WebDavError> {
-    let tmp_path = format!("{path}.tmp");
+    let tmp_path = format!("{path}{UPLOAD_SUFFIX}");
     if let Err(e) = put_with_rate_limit_retry(webdav, &tmp_path, body) {
         // It may have landed even so (a timeout after the last byte),
         // and the next push picks a new name: don't leave it behind.
@@ -1036,6 +1035,16 @@ fn put_atomic_with_rate_limit_retry<W: WebDav>(
             Err(e)
         }
     }
+}
+
+/// The listed names a pull can't read and should report. A `.tmp` is
+/// an upload some device never finished renaming (see
+/// `put_atomic_with_rate_limit_retry`); it is harmless and would be
+/// reported on every pull.
+fn unreadable_names_to_report(listing: &[String]) -> Vec<&str> {
+    listing.iter().map(String::as_str)
+        .filter(|n| parse_batch_uuid_from_filename(n).is_none() && !n.ends_with(UPLOAD_SUFFIX))
+        .collect()
 }
 
 /// Extract the batch_uuid portion of a remote filename. Returns `None`
@@ -1083,6 +1092,16 @@ mod tests {
     /// both. Each test sets up its own state.
     fn setup() -> (Database, FakeWebDav) {
         (Database::open_in_memory().unwrap(), FakeWebDav::new())
+    }
+
+    #[test]
+    fn a_leftover_upload_is_not_reported_as_unreadable() {
+        let listing: Vec<String> = [
+            "00000000000001__aaaa.json",
+            "notes.txt",
+            "00000000021265__7b91feb1.json.tmp",
+        ].map(String::from).into();
+        assert_eq!(unreadable_names_to_report(&listing), vec!["notes.txt"]);
     }
 
     fn insert_session(db: &Database, start_iso: &str, secs: u32) -> i64 {

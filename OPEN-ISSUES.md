@@ -45,7 +45,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
 | [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
-| [ ] | AA. Library major versions (Android ones: ask first) | #203-#208 | crates stuck on an old major get no more fixes |
+| [ ] | AA. Library major versions (Android ones: ask first) | #204-#208 | crates stuck on an old major get no more fixes |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -189,10 +189,10 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 - Problem: above about 463 s, `(2*i+1)*duration_ms` overflows: a panic in debug, a wrong envelope in release. Only a corrupt or hostile synced pattern gets there, because the editors cap the length.
 - Fix: compute in u64 and clamp `duration_ms` to the editor's range on replay. One test.
 
-### #173 Server text ends up in the sync status and log; the release-notes parser is fragile
-- Where: `meditate-core/src/sync/webdav.rs:97` (whole error body), `:107` (full redirect Location), `:282` etc. (`into_string()`); stored by `sync/settings.rs:134-138`. `release_notes.rs:24, 63-64, 74-77, 91-93`.
-- Problem: an error page (up to 10 MB) or a Location with user name and host goes into `last_sync_error`, the tooltip and the shared diagnostics log. The About release-notes parser escapes `<em>`/`<code>`, misses `<p class=...>` and treats `type='development'` as stable; latent while the metainfo stays plain.
-- Fix: show the status code only and log a truncated, control-character-stripped excerpt (as `MalformedResponse` does with 512 chars). Parser: a test per markup case when the metainfo next changes.
+### #173 The release-notes parser is fragile
+- Where: `meditate-core/src/release_notes.rs:24, 63-64, 74-77, 91-93`.
+- Problem: the About release-notes parser escapes `<em>`/`<code>`, misses `<p class=...>` and treats `type='development'` as stable; latent while the metainfo stays plain.
+- Fix: a test per markup case when the metainfo next changes.
 
 ### #184 Saving an unchanged vibration pattern overwrites another device's edit
 - Where: `meditate-core/src/db/vibration_patterns.rs:266-312` (`update_vibration_pattern` always writes and emits).
@@ -207,8 +207,8 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 ### #192 GTK: a sync can wait minutes after its push, past the 60 s read limit
 - Seen: laptop, 2026-10-14 11:15:55, during batch K's device test (after deleting a guided file). The log ends at `[sync.push] ok events=1 sounds=0 guided=0` with no `sync.done`; the spinner kept turning. The worker thread sat in `recvfrom` on the Nextcloud TLS connection, which had neither sent nor received anything since the push (`ss`: lastsnd/lastrcv equal, over 3 min), although `webdav.rs` sets `timeout_read(60 s)`. The next step after the push is `maybe_compact_events`. At 11:19:50 it ended on its own without an error: `sync.done ... in 235.95s`, so a read waited about 4 min although each read is capped at 60 s.
 - Problem: while one sync waits, the in-flight flag stays set and no later sync runs; the user sees a spinner for minutes. If the server never answers, it may never end.
-- Fix: first find where it blocks (a body read on a pooled connection, ureq 2's timeouts on reuse); then make every request bounded (`AgentBuilder::timeout` as an overall cap), and test with a fake server that answers the headers and then goes silent.
-- Also seen: every pull skips the server file `00000000021265__7b91feb1-….json.tmp` as unparseable (a leftover from an interrupted upload by some device); nothing removes it.
+- Ruled out (2026-11-03, with the ureq 3 port): a plain-HTTP read on a fresh or reused connection. `webdav.rs` tests `a_server_silent_after_the_headers_ends_the_request` and `a_server_silent_on_a_reused_connection_ends_the_request` end within the read limit on ureq 2 and on ureq 3; the TLS path is unchecked.
+- Fix: find where it blocks, most likely a read inside TLS (test with a self-signed certificate that only the test client trusts); then bound it and test that.
 
 ## X. Release pipeline (build environment: ask first)
 
@@ -248,11 +248,6 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 ## AA. Library major versions (Android ones: ask first)
 
 Found with the first update list (#21), 2026-11-03. Each is its own change: read the crate's changelog, adapt the code, run the suites, and test on a device. The ones in the Android build change the APK, so they need a go and the repro probe.
-
-### #203 ureq 2 -> 3 (Android too)
-- Where: `meditate-core/src/sync/webdav.rs`, `meditate-core/Cargo.toml`.
-- Problem: ureq 3 is a rewrite of the API the WebDAV sync is built on.
-- Fix: port the WebDAV client, run the sync tests against the fake server, then sync two devices against a real Nextcloud. Do it with or after #192, keeping its overall request cap and its silent-server test.
 
 ### #204 jni 0.21 -> 0.22 (Android)
 - Where: every JNI call in `meditate-android/src/`.
@@ -319,8 +314,8 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 - Idea: when a scan of a folder that had files comes back with none, keep the files as they were and show the "Folder not reachable" banner with Choose Again, instead of marking all missing. A really emptied folder then needs one confirmation.
 
 ### #183 Nextcloud with a self-signed or private-CA certificate can't connect
-- Where: `meditate-core/Cargo.toml:20` (`ureq = "2"`, built-in roots only), `sync/webdav.rs:176`.
-- Idea: also trust the system store or a user-pinned certificate. A new dependency changes Cargo.lock: ask first.
+- Where: `meditate-core/src/sync/webdav.rs` (`HttpWebDav::with_read_timeout`, the Agent config; ureq 3 with its built-in webpki roots only).
+- Idea: ureq 3's `TlsConfig` takes other roots: the system store (`RootCerts::PlatformVerifier`, its `platform-verifier` feature) or one pinned certificate. A new feature or crate changes Cargo.lock: ask first.
 
 ### #190 The day ends at midnight, also for night owls
 - Where: every "today" in core (`time::today_local`, goal, streak, heatmap, Log day groups) counts by calendar day.

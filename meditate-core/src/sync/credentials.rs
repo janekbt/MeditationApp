@@ -238,18 +238,13 @@ mod tests {
                     status: *status,
                     body: body.clone(),
                 },
-                WebDavError::MalformedResponse { detail, body_excerpt } => {
-                    WebDavError::MalformedResponse {
-                        detail: detail.clone(),
-                        body_excerpt: body_excerpt.clone(),
-                    }
+                WebDavError::MalformedResponse { detail } => {
+                    WebDavError::MalformedResponse { detail: detail.clone() }
                 }
                 WebDavError::ResponseTooLarge { limit } => {
                     WebDavError::ResponseTooLarge { limit: *limit }
                 }
-                WebDavError::Redirected { location } => {
-                    WebDavError::Redirected { location: location.clone() }
-                }
+                WebDavError::Redirected => WebDavError::Redirected,
             }
         }
     }
@@ -336,7 +331,7 @@ mod tests {
 
     #[test]
     fn prepare_save_rejects_scheme_less_url() {
-        // A typo without scheme would otherwise fall through to ureq
+        // A typo without scheme would otherwise reach the HTTP client,
         // which infers http — also cleartext.
         assert_eq!(
             prepare_save("nx.example", "user", "pw", ok_none),

@@ -1,7 +1,7 @@
 //! WebDAV client for talking to a personal Nextcloud instance.
 //!
-//! The `WebDav` trait abstracts the five operations sync needs
-//! (PROPFIND, GET, PUT, MKCOL, DELETE) so Phase D's pull/push
+//! The `WebDav` trait abstracts the six operations sync needs
+//! (PROPFIND, GET, PUT, MKCOL, MOVE, DELETE) so Phase D's pull/push
 //! orchestration can be tested against an in-memory fake. The
 //! production impl `HttpWebDav` is ureq-backed and Basic-auth'd
 //! with an app-password from the user's Nextcloud security panel.
@@ -10,12 +10,13 @@ use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
-/// TCP connect cap. Network-unreachable / DNS-failure should
-/// surface as a `Network(_)` error quickly so the sync runner
-/// records the failure and the UI's spinner clears. ureq has no
-/// default — without this, a stuck connect blocks the worker
-/// thread indefinitely and the in-flight flag never clears.
-const TIMEOUT_CONNECT: Duration = Duration::from_secs(10);
+/// Connect cap, TCP and TLS handshake together. Network-unreachable /
+/// DNS-failure should surface as a `Network(_)` error quickly so the
+/// sync runner records the failure and the UI's spinner clears. ureq
+/// has no default — without this, a stuck connect blocks the worker
+/// thread indefinitely and the in-flight flag never clears. 20 s
+/// leaves room for the handshake on a slow CPU (Librem 5).
+const TIMEOUT_CONNECT: Duration = Duration::from_secs(20);
 
 /// Per-read cap inside an established connection. Generous enough
 /// to absorb a slow phone uplink mid-PUT but short enough that a
@@ -50,12 +51,10 @@ pub enum WebDavError {
     /// Body is included so logs can show what the server complained about.
     Server { status: u16, body: String },
     /// PROPFIND parser bailed — server responded but the XML wasn't a
-    /// shape we recognise. `detail` is the parser's error string;
-    /// `body_excerpt` is the first ~512 bytes of the response so
-    /// a hand-debug doesn't have to reproduce the request to see what
-    /// the server actually sent (truncated to keep the diag log
-    /// readable for HTML error pages, multistatus dumps, etc.).
-    MalformedResponse { detail: String, body_excerpt: String },
+    /// shape we recognise. `detail` is the parser's error string; the
+    /// page itself (a proxy's login page can name the host) only goes
+    /// to the diag log, as an `error_excerpt`.
+    MalformedResponse { detail: String },
     /// GET body exceeded the per-call cap. A malicious or compromised
     /// server could otherwise serve a multi-GB body and OOM the
     /// client before any post-read size check fires. `limit` is the
@@ -63,16 +62,15 @@ pub enum WebDavError {
     /// "which cap did we hit" obvious.
     ResponseTooLarge { limit: u64 },
     /// Server returned a 3xx redirect. The client follows zero
-    /// redirects (`.redirects(0)` on the Agent) so the Authorization
+    /// redirects (`max_redirects(0)` on the Agent) so the Authorization
     /// header can never leak to a destination different from the
-    /// configured base URL. The user's recovery action is to update
-    /// their stored Nextcloud URL to the new location.
-    /// `location` is the `Location` header value when present.
-    Redirected { location: Option<String> },
+    /// configured base URL. The target is not kept: it can carry a user
+    /// name and host, and this error lands in the status and the log.
+    Redirected,
 }
 
 /// Strip URL-shaped tokens from a transport-error message.
-/// ureq's `Transport` Display embeds the full request URL; these
+/// A ureq error's Display may embed the request URL; these
 /// strings land in the user-shareable diagnostics log and the
 /// last-sync-error tooltip, so the server hostname must not ride
 /// along. Keeps the cause ("Connection refused", DNS failure...).
@@ -81,6 +79,11 @@ fn sanitize_transport_msg(raw: &str) -> String {
         .filter(|w| !w.contains("://"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A transport or body-read error as `Network`, without the server address.
+fn network(e: impl fmt::Display) -> WebDavError {
+    WebDavError::Network(sanitize_transport_msg(&e.to_string()))
 }
 
 impl fmt::Display for WebDavError {
@@ -94,20 +97,14 @@ impl fmt::Display for WebDavError {
                 Some(s) => write!(f, "WebDAV: rate limited (retry after {s}s)"),
                 None => write!(f, "WebDAV: rate limited"),
             },
-            Self::Server { status, body } => {
-                write!(f, "WebDAV: server returned {status}: {body}")
-            }
-            Self::MalformedResponse { detail, body_excerpt } => write!(
-                f,
-                "WebDAV: malformed response: {detail} (body excerpt: {body_excerpt:?})",
-            ),
+            // The page can name the host or the user; this text lands in
+            // the status and the shared log.
+            Self::Server { status, .. } => write!(f, "WebDAV: server returned {status}"),
+            Self::MalformedResponse { detail } => write!(f, "WebDAV: malformed response: {detail}"),
             Self::ResponseTooLarge { limit } => {
                 write!(f, "WebDAV: response exceeded {limit}-byte cap")
             }
-            Self::Redirected { location } => match location {
-                Some(loc) => write!(f, "WebDAV: server redirected to {loc}"),
-                None => write!(f, "WebDAV: server redirected (no Location header)"),
-            },
+            Self::Redirected => write!(f, "WebDAV: server redirected"),
         }
     }
 }
@@ -164,29 +161,44 @@ pub struct HttpWebDav {
     auth_header: String,
 }
 
+type Response = ureq::http::Response<ureq::Body>;
+
 impl HttpWebDav {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+        Self::with_read_timeout(base_url, username, password, TIMEOUT_READ)
+    }
+
+    /// `new` with its own per-read limit, so a test can wait 1 s, not 60.
+    fn with_read_timeout(base_url: &str, username: &str, password: &str, read: Duration) -> Self {
         // Pre-compute the Basic-auth header once. Credentials shouldn't
         // change for the lifetime of this client.
         use std::io::Write;
         let mut creds = Vec::new();
         write!(&mut creds, "{username}:{password}").unwrap();
         let encoded = base64_encode(&creds);
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(TIMEOUT_CONNECT))
+            .timeout_per_read(Some(read))
+            .timeout_per_write(Some(TIMEOUT_WRITE))
+            // No automatic redirect following: ureq strips
+            // Authorization on cross-host redirects, but mixed-case
+            // host / IDN tricks have historical bypasses and we'd
+            // rather not depend on the client library's defense. A
+            // redirect surfaces as `Redirected` so the user knows their
+            // stored URL needs updating rather than the client silently
+            // chasing a new host with their app password.
+            .max_redirects(0)
+            // Every status comes back as a response, so `check` can read
+            // a 429's Retry-After and an error page's body.
+            .http_status_as_error(false)
+            // PROPFIND, MKCOL and MOVE.
+            .allow_non_standard_methods(true)
+            // ureq 3 would take ALL_PROXY / HTTPS_PROXY from the
+            // environment; the sync has always connected directly.
+            .proxy(None)
+            .build();
         Self {
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(TIMEOUT_CONNECT)
-                .timeout_read(TIMEOUT_READ)
-                .timeout_write(TIMEOUT_WRITE)
-                // No automatic redirect following: ureq 2.4+ strips
-                // Authorization on cross-host redirects, but mixed-
-                // case host / IDN tricks have historical bypasses
-                // and we'd rather not depend on the client library's
-                // defense. A redirect surfaces as `Redirected` so
-                // the user knows their stored URL needs updating
-                // rather than the client silently chasing a new
-                // host with their app password.
-                .redirects(0)
-                .build(),
+            agent: config.into(),
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {encoded}"),
         }
@@ -196,7 +208,51 @@ impl HttpWebDav {
     /// not lead with a slash; either way produces a single slash join.
     fn url(&self, path: &str) -> String {
         let trimmed = path.trim_start_matches('/');
-        format!("{}/{}", self.base_url, trimmed)
+        percent_encode_url(&format!("{}/{}", self.base_url, trimmed))
+    }
+
+    /// Send one request with Basic auth and turn every answer that isn't
+    /// a 2xx into its `WebDavError`.
+    fn send(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: impl ureq::AsSendBody,
+    ) -> WebDavResult<Response> {
+        let mut request = ureq::http::Request::builder()
+            .method(method)
+            .uri(self.url(path))
+            .header("Authorization", &self.auth_header);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let request = request.body(body).map_err(network)?;
+        let resp = self.agent.run(request).map_err(network)?;
+        Self::check(resp)
+    }
+
+    fn check(mut resp: Response) -> WebDavResult<Response> {
+        let status = resp.status().as_u16();
+        match status {
+            // With `max_redirects(0)` a 3xx is an answer, not an error;
+            // processing its empty body as data would claim a write
+            // succeeded against a path that doesn't exist.
+            300..=399 => Err(WebDavError::Redirected),
+            // The header MAY be an integer (seconds), an HTTP-date (rare)
+            // or missing: anything but seconds leaves exponential backoff
+            // to the caller.
+            429 => Err(WebDavError::RateLimited {
+                retry_after: resp.headers().get("Retry-After")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse().ok()),
+            }),
+            400.. => {
+                let body = resp.body_mut().read_to_string().unwrap_or_default();
+                Err(Self::map_status_error(status, body))
+            }
+            _ => Ok(resp),
+        }
     }
 
     fn map_status_error(status: u16, body: String) -> WebDavError {
@@ -209,121 +265,41 @@ impl HttpWebDav {
             // race signal. Treat all three as Conflict so the caller
             // can act on "resource state collided with my expectation".
             405 | 409 | 412 => WebDavError::Conflict,
-            // 429 should NEVER reach this function — verbs intercept
-            // it before the body is consumed so the Retry-After header
-            // can be read. If we see it here, the verb forgot to call
-            // `extract_rate_limit` first; surface as Server so it's
-            // visible (rather than a silent-bad-mapping bug).
-            _ => WebDavError::Server { status, body },
+            _ => {
+                let body = error_excerpt(&body);
+                crate::diag::log("sync.http", &format!("status={status} body={body}"));
+                WebDavError::Server { status, body }
+            }
         }
-    }
-
-    /// Read the `Retry-After` header off a ureq Response and return a
-    /// `RateLimited` variant. The header MAY be:
-    /// - an integer (seconds) — what every modern server emits;
-    /// - an HTTP-date — RFC-allowed but rare;
-    /// - missing or unparseable — degrade to None and let exponential
-    ///   backoff take over.
-    ///
-    /// Splitting this out so every verb can call it on a 429 response
-    /// before consuming the body, keeping the behaviour consistent.
-    fn extract_rate_limit(resp: &ureq::Response) -> WebDavError {
-        let retry_after = resp.header("Retry-After")
-            .and_then(|s| s.trim().parse::<u64>().ok());
-        WebDavError::RateLimited { retry_after }
-    }
-
-    /// Promote a 3xx response to `WebDavError::Redirected`. With
-    /// `.redirects(0)` on the Agent ureq lands 3xx in the `Ok(resp)`
-    /// arm rather than `Err(Status(...))` — every verb has to ask
-    /// "is this a redirect?" before treating the body as a success
-    /// payload, otherwise we'd silently process an empty redirect
-    /// body as data or claim a write succeeded against a non-
-    /// existent path.
-    fn reject_if_redirect(resp: &ureq::Response) -> WebDavResult<()> {
-        let status = resp.status();
-        if (300..400).contains(&status) {
-            let location = resp.header("Location").map(str::to_owned);
-            return Err(WebDavError::Redirected { location });
-        }
-        Ok(())
     }
 }
 
 impl WebDav for HttpWebDav {
     fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
-        match self.agent
-            .get(&self.url(path))
-            .set("Authorization", &self.auth_header)
-            .call()
-        {
-            Ok(resp) => {
-                Self::reject_if_redirect(&resp)?;
-                // `take(max_bytes + 1)` lets us detect overflow:
-                // a body at-or-under the cap fits in `max_bytes`
-                // bytes; a body OVER the cap reads exactly
-                // `max_bytes + 1`. Bailing here keeps the in-
-                // memory allocation bounded even when a malicious
-                // server claims a small Content-Length and then
-                // streams gigabytes.
-                let cap = max_bytes.saturating_add(1);
-                let mut body = Vec::new();
-                resp.into_reader()
-                    .take(cap)
-                    .read_to_end(&mut body)
-                    .map_err(|e| WebDavError::Network(e.to_string()))?;
-                if body.len() as u64 > max_bytes {
-                    return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
-                }
-                Ok(body)
-            }
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                Err(Self::map_status_error(status, body))
-            }
-            Err(ureq::Error::Transport(t)) => {
-                Err(WebDavError::Network(sanitize_transport_msg(&t.to_string())))
-            }
+        let resp = self.send("GET", path, &[], ())?;
+        // `take(max_bytes + 1)` lets us detect overflow: a body
+        // at-or-under the cap fits in `max_bytes` bytes; a body OVER the
+        // cap reads exactly `max_bytes + 1`. Bailing here keeps the
+        // in-memory allocation bounded even when a malicious server
+        // claims a small Content-Length and then streams gigabytes.
+        let cap = max_bytes.saturating_add(1);
+        let mut body = Vec::new();
+        resp.into_body().into_reader()
+            .take(cap)
+            .read_to_end(&mut body)
+            .map_err(network)?;
+        if body.len() as u64 > max_bytes {
+            return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
         }
+        Ok(body)
     }
 
     fn put(&self, path: &str, body: &[u8]) -> WebDavResult<()> {
-        match self.agent
-            .put(&self.url(path))
-            .set("Authorization", &self.auth_header)
-            .send_bytes(body)
-        {
-            Ok(resp) => {
-                Self::reject_if_redirect(&resp)?;
-                drain_response_body(resp);
-                Ok(())
-            }
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                Err(Self::map_status_error(status, body))
-            }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
-        }
+        self.send("PUT", path, &[], body).map(drain_response_body)
     }
 
     fn mkcol(&self, path: &str) -> WebDavResult<()> {
-        // MKCOL is a custom WebDAV verb; ureq's `request(method, url)`
-        // handles arbitrary methods.
-        match self.agent
-            .request("MKCOL", &self.url(path))
-            .set("Authorization", &self.auth_header)
-            .call()
-        {
-            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                Err(Self::map_status_error(status, body))
-            }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
-        }
+        self.send("MKCOL", path, &[], ()).map(drain_response_body)
     }
 
     fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
@@ -331,41 +307,14 @@ impl WebDav for HttpWebDav {
         // header as an absolute URL. `Overwrite: F` would make the
         // verb refuse to clobber an existing target — we omit it
         // because the caller (atomic-PUT helper) treats overwriting
-        // as the success case.
-        // The header takes the parsed, percent-encoded form: ureq
-        // refuses non-ASCII header bytes ("Übungen" in the folder).
-        let destination = self.agent.request("MOVE", &self.url(to)).request_url()
-            .map_err(|e| WebDavError::Network(sanitize_transport_msg(&e.to_string())))?;
-        match self.agent
-            .request("MOVE", &self.url(from))
-            .set("Authorization", &self.auth_header)
-            .set("Destination", destination.as_url().as_str())
-            .call()
-        {
-            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                Err(Self::map_status_error(status, body))
-            }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
-        }
+        // as the success case. The header takes the percent-encoded
+        // form: header bytes outside ASCII are refused ("Übungen").
+        let destination = self.url(to);
+        self.send("MOVE", from, &[("Destination", &destination)], ()).map(drain_response_body)
     }
 
     fn delete(&self, path: &str) -> WebDavResult<()> {
-        match self.agent
-            .delete(&self.url(path))
-            .set("Authorization", &self.auth_header)
-            .call()
-        {
-            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                Err(Self::map_status_error(status, body))
-            }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
-        }
+        self.send("DELETE", path, &[], ()).map(drain_response_body)
     }
 
     fn list_collection(&self, path: &str) -> WebDavResult<Vec<String>> {
@@ -374,30 +323,43 @@ impl WebDav for HttpWebDav {
         // resource, which is the cheapest variant.
         const BODY: &str =
             r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:propname/></d:propfind>"#;
-        let response = match self.agent
-            .request("PROPFIND", &self.url(path))
-            .set("Authorization", &self.auth_header)
-            .set("Depth", "1")
-            .set("Content-Type", "application/xml")
-            .send_string(BODY)
-        {
-            Ok(resp) => { Self::reject_if_redirect(&resp)?; resp },
-            Err(ureq::Error::Status(status, resp)) => {
-                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
-                let body = resp.into_string().unwrap_or_default();
-                return Err(Self::map_status_error(status, body));
-            }
-            Err(ureq::Error::Transport(t)) => {
-                return Err(WebDavError::Network(sanitize_transport_msg(&t.to_string())));
-            }
-        };
-        let body = response.into_string()
-            .map_err(|e| WebDavError::Network(e.to_string()))?;
-        parse_multistatus_filenames(&body, path)
+        let mut resp = self.send(
+            "PROPFIND",
+            path,
+            &[("Depth", "1"), ("Content-Type", "application/xml")],
+            BODY,
+        )?;
+        // 10 MB, lossy UTF-8.
+        let body = resp.body_mut().read_to_string().map_err(network)?;
+        parse_multistatus_filenames(&body, path).map_err(|e| {
+            crate::diag::log("sync.http", &format!("malformed listing body={}", error_excerpt(&body)));
+            e
+        })
     }
 }
 
 use std::io::Read;
+
+/// Percent-encode what an HTTP path can't carry as typed: controls,
+/// space, `"<>`{}` and every non-ASCII byte ("Übungen"). `%`, `?` and
+/// `#` stay, so an address typed already encoded is not encoded twice.
+fn percent_encode_url(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b <= b' ' || b >= 0x7f || b"\"<>`{}".contains(&b) {
+            let _ = write!(out, "%{b:02X}");
+        } else {
+            out.push(b as char);
+        }
+    }
+    out
+}
+
+/// What of a server's error page may reach the diagnostics log.
+fn error_excerpt(body: &str) -> String {
+    body.chars().filter(|c| !c.is_control()).take(512).collect()
+}
 
 /// Read and discard a Response's body so ureq returns the underlying
 /// connection to its idle-connection pool. ureq's pool-return
@@ -408,9 +370,8 @@ use std::io::Read;
 /// full TLS handshake. On a slow CPU (Librem 5) those handshakes add
 /// up; calling this on success paths preserves keep-alive across the
 /// PROPFIND → MKCOL → PUT sequence within one sync.
-fn drain_response_body(resp: ureq::Response) {
-    let mut sink = std::io::sink();
-    let _ = std::io::copy(&mut resp.into_reader(), &mut sink);
+fn drain_response_body(resp: Response) {
+    let _ = std::io::copy(&mut resp.into_body().into_reader(), &mut std::io::sink());
 }
 
 /// Parse a WebDAV multistatus response body into a list of child file
@@ -421,11 +382,13 @@ fn drain_response_body(resp: ureq::Response) {
 fn parse_multistatus_filenames(body: &str, requested_path: &str)
     -> WebDavResult<Vec<String>>
 {
-    let doc = roxmltree::Document::parse(body)
-        .map_err(|e| WebDavError::MalformedResponse {
-            detail: e.to_string(),
-            body_excerpt: body.chars().take(512).collect(),
-        })?;
+    let malformed = |detail: String| WebDavError::MalformedResponse { detail };
+    let doc = roxmltree::Document::parse(body).map_err(|e| malformed(e.to_string()))?;
+    // A login page in well-formed XHTML parses too; read as a listing it
+    // would be an empty folder.
+    if !doc.root_element().has_tag_name(("DAV:", "multistatus")) {
+        return Err(malformed("not a WebDAV multistatus".into()));
+    }
 
     // The "self" path: the directory we asked about. Strip leading /
     // and trailing / so the comparison is path-segment based.
@@ -566,6 +529,15 @@ mod tests {
     }
 
     #[test]
+    fn url_encodes_what_a_path_cannot_carry_and_keeps_existing_escapes() {
+        let client = HttpWebDav::new("https://nc/files/me/Meine Übungen", "u", "p");
+        assert_eq!(
+            client.url("/a%20b \"<>`{}\u{7f}.json"),
+            "https://nc/files/me/Meine%20%C3%9Cbungen/a%20b%20%22%3C%3E%60%7B%7D%7F.json",
+        );
+    }
+
+    #[test]
     fn url_construction_handles_nested_paths() {
         let client = HttpWebDav::new("http://nc/remote.php/dav/files/janek", "u", "p");
         assert_eq!(
@@ -633,12 +605,12 @@ mod tests {
     }
 
     #[test]
-    fn get_3xx_returns_redirected_with_location() {
+    fn get_3xx_returns_redirected() {
         // Authorization on a 3xx is the credential-exfil shape we
-        // want to refuse. `.redirects(0)` keeps ureq from chasing
+        // want to refuse. `max_redirects(0)` keeps ureq from chasing
         // the new host; this verb-level check turns the 3xx into a
-        // typed error so the shell can prompt the user to update
-        // their stored URL.
+        // typed error so the shell can tell the user to update their
+        // stored URL.
         let mut server = mockito::Server::new();
         let _mock = server.mock("GET", "/old.json")
             .with_status(301)
@@ -648,15 +620,7 @@ mod tests {
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.get("/old.json", u64::MAX).unwrap_err();
-        match err {
-            WebDavError::Redirected { location } => {
-                assert_eq!(
-                    location.as_deref(),
-                    Some("https://attacker.example/new.json"),
-                );
-            }
-            other => panic!("expected Redirected, got {other:?}"),
-        }
+        assert_matches!(err, WebDavError::Redirected);
     }
 
     #[test]
@@ -675,7 +639,7 @@ mod tests {
         mock.assert();
         let err = result.unwrap_err();
         assert!(
-            matches!(err, WebDavError::Redirected { .. }),
+            matches!(err, WebDavError::Redirected),
             "expected Redirected, got {err:?}",
         );
     }
@@ -761,6 +725,149 @@ mod tests {
         );
     }
 
+    // ── A server that goes silent mid-answer (#192) ──────────────────────
+    //
+    // mockito always answers in full, so these use a hand-written server:
+    // each accepted connection answers `full` requests completely, then
+    // sends only the headers of the next one and holds the socket open.
+
+    /// Start the server; returns its URL and a counter of accepted connections.
+    fn silent_after_headers_server(full: usize) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let accepted = std::sync::Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                count.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    for answered in 0.. {
+                        // Read one request's head (our GETs carry no body).
+                        let mut line = String::new();
+                        loop {
+                            line.clear();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 { return; }
+                            if line == "\r\n" { break; }
+                        }
+                        if answered < full {
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+                        } else {
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n");
+                            std::thread::sleep(Duration::from_secs(10));
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (url, accepted)
+    }
+
+    #[test]
+    fn a_server_silent_after_the_headers_ends_the_request() {
+        let (url, _) = silent_after_headers_server(0);
+        let client = HttpWebDav::with_read_timeout(&url, "u", "p", Duration::from_secs(1));
+        let started = std::time::Instant::now();
+        let err = client.get("/a.json", u64::MAX).unwrap_err();
+        assert_matches!(err, WebDavError::Network(_));
+        assert!(started.elapsed() < Duration::from_secs(5), "waited {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_server_silent_on_a_reused_connection_ends_the_request() {
+        let (url, accepted) = silent_after_headers_server(1);
+        let client = HttpWebDav::with_read_timeout(&url, "u", "p", Duration::from_secs(1));
+        assert_eq!(client.get("/a.json", u64::MAX).unwrap(), b"ok");
+        let started = std::time::Instant::now();
+        let err = client.get("/b.json", u64::MAX).unwrap_err();
+        assert_matches!(err, WebDavError::Network(_));
+        assert!(started.elapsed() < Duration::from_secs(5), "waited {:?}", started.elapsed());
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1, "the second request must reuse the connection");
+    }
+
+    /// ureq 3 reads at most 10 MB through `read_to_vec`; a guided file
+    /// may be 100 MB, so GET must not use it.
+    #[test]
+    fn get_reads_a_body_over_ten_megabytes() {
+        let size = 11 * 1024 * 1024;
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", "/big.ogg")
+            .with_status(200)
+            .with_body(vec![7u8; size])
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        assert_eq!(client.get("/big.ogg", u64::MAX).unwrap().len(), size);
+        mock.assert();
+    }
+
+    // ── Server text stays out of the sync status (#173) ──────────────────
+
+    #[test]
+    fn a_server_error_shows_only_its_status() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", "/a.json")
+            .with_status(500)
+            .with_body("<html>nc.example.com: DB connection lost</html>")
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/a.json", u64::MAX).unwrap_err();
+        assert_eq!(err.to_string(), "WebDAV: server returned 500");
+        mock.assert();
+    }
+
+    #[test]
+    fn a_redirect_error_hides_its_target() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", "/a.json")
+            .with_status(302)
+            .with_header("Location", "https://janek@other.example/remote.php/dav/files/janek/a.json")
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/a.json", u64::MAX).unwrap_err();
+        assert_eq!(err.to_string(), "WebDAV: server redirected");
+        mock.assert();
+    }
+
+    #[test]
+    fn a_listing_that_is_a_web_page_shows_no_page_text() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("PROPFIND", "/x/")
+            .with_status(200)
+            .with_body("<html><body>Sign in to sso.nc.example.com<br></body></html>")
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let shown = client.list_collection("/x/").unwrap_err().to_string();
+        assert!(shown.starts_with("WebDAV: malformed response: "), "{shown}");
+        assert!(!shown.contains("nc.example.com") && !shown.contains("Sign in"), "{shown}");
+        mock.assert();
+    }
+
+    /// A login page that is well-formed XHTML parses as XML; it must not
+    /// pass as an empty events folder.
+    #[test]
+    fn a_listing_that_is_an_xhtml_page_is_malformed() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("PROPFIND", "/x/")
+            .with_status(200)
+            .with_body(r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>Sign in to sso.nc.example.com</body></html>"#)
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.list_collection("/x/").unwrap_err();
+        assert_matches!(err, WebDavError::MalformedResponse { .. });
+        assert!(!err.to_string().contains("nc.example.com"), "{err}");
+        mock.assert();
+    }
+
+    #[test]
+    fn the_logged_error_excerpt_is_short_and_clean() {
+        let body = format!("a\nb\u{1b}[31mc\r\t{}", "Ü".repeat(600));
+        assert_eq!(error_excerpt(&body), format!("ab[31mc{}", "Ü".repeat(505)));
+    }
+
     #[test]
     fn get_against_unreachable_server_maps_to_network_error() {
         // Bind to a port nobody's listening on — the OS will refuse the
@@ -770,6 +877,7 @@ mod tests {
         let err = client.get("/whatever", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::Network(_)),
             "expected Network, got {err:?}");
+        assert!(!err.to_string().contains("127.0.0.1"), "the address must not reach the status: {err}");
     }
 
     // ── C1.B: PUT, DELETE, MKCOL ─────────────────────────────────────────
