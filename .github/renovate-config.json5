@@ -23,6 +23,8 @@
   packageRules: [
     // The repro dexer needs JDK 17; #201 owns moving past it.
     { matchDepNames: ["java"], allowedVersions: "/^17\\./" },
+    // The CI APK's JDK: Gradle 8.5 runs on JDK 21 at most.
+    { matchDepNames: ["java-jdk"], allowedVersions: "/^21(\\.|$)/" },
     { matchDepNames: ["ghcr.io/flathub-infra/flatpak-github-actions"], versioning: "regex:^gnome-(?<major>\\d+)$" },
   ],
 

@@ -354,9 +354,9 @@ git push origin HEAD:fresh-build             # before that, then delete the bran
 toolchain, the Gradle plugins and wrapper, the pins in
 `build-aux/setup-android.sh`, the GNOME runtime, blueprint-compiler and the
 GitHub Actions. The NDK shows as `PINNED_NDK` writes it (r27d =
-27.3.13750724, from its release notes), the JDK only as 17.x, while the
-CI APK's `setup-java` JDK shows every major. Its settings are in
-`.github/renovate-config.json5`. It only reads: no branch, no pull request,
+27.3.13750724, from its release notes), the JDK only as 17.x, and the
+CI APK's `setup-java` JDK only as 21.x (Gradle 8.5's limit). Its settings
+are in `.github/renovate-config.json5`. It only reads: no branch, no pull request,
 and its boxes do nothing. A run that aborts on an unreachable source turns
 red instead of leaving last week's list; a source that is gone (404) only
 shows under "Repository problems" in the issue. Not watched: the Android

@@ -42,9 +42,10 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [x] | U2. Docs for contributors | #163 | stale docs an AI trusts |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
-| [ ] | X. Release pipeline (ask first) | #168, #169, #201 | builds that aren't what F-Droid or users get |
+| [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
 | [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
+| [ ] | AA. Library major versions (Android ones: ask first) | #202-#208 | crates stuck on an old major get no more fixes |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
 ---
@@ -217,7 +218,7 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 - Fix: for `PROFILE=release`, fail when either pin is missing (debug keeps the warning); use `CARGO_ENCODED_RUSTFLAGS`. Build environment: ask first, then run the repro probe.
 
 ### #169 Release CI: unpinned actions and images, and a light run can be picked
-- Where: `.github/workflows/flatpak.yml:27-165` (`@v5`/`@v6`, image by tag, `tonistiigi/binfmt` untagged and privileged at 137); `build-aux/attach-flatpaks.sh:24-26`.
+- Where: `.github/workflows/flatpak.yml:27-181` (`@v6`/`@v7`, image by tag, `tonistiigi/binfmt` untagged and privileged at 146); `build-aux/attach-flatpaks.sh:24-26`.
 - Problem: whoever controls those tags can change what Linux users install. attach-flatpaks takes any successful run for the commit, including a `scope=light` run with no bundles (`flatpak.yml:107, 131`), and then fails at the download without saying why.
 - Fix: pin each `uses:` to a commit SHA and each image to `@sha256:`; in attach-flatpaks, pick a run that has both artifacts.
 
@@ -226,6 +227,11 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 - Problem: Google Play takes new apps only at the current target level (35, probably 36 by now) and with native code aligned for 16 KB memory pages, which NDK 27 doesn't do by default. F-Droid doesn't require either yet, but a stale target makes Android treat the app as legacy and makes a later Play listing a build-environment change first.
 - Fix: check Google's current required level, raise compileSdk/targetSdk to it, and build for 16 KB pages (NDK 28, or `-z max-page-size=16384` for the Rust library). Re-test on the phone what the new target changes (notifications, the foreground service, exact timing), then run the repro probe and update the pins. Build environment: ask first. Raised while weighing a Play Store listing, 2026-11-02.
 - Same change could end the JDK 17 pin: it exists because the d8 from build-tools 31.0.0 (F-Droid's buildserver) rejects classes from a newer javac, and AGP 7.3 stops at JDK 17. A newer AGP brings its own pinned d8, so both sides match again; needs a fdroiddata MR to the recipe (newer JDK) landing with that release.
+
+### #209 The pinned toolchain is behind, and two crates wait for it
+- Where: `rust-toolchain.toml`, `build-aux/setup-android.sh` (`PINNED_NDK`, `PINNED_GRADLE`, `PINNED_KOTLIN`), `meditate-android/android/build.gradle` (Kotlin plugin), the Gradle wrapper, the CI APK's own JDK 21 and NDK (`.github/workflows/flatpak.yml:73-81`, and its JDK rule in `.github/renovate-config.json5`); F-Droid's recipe pins Rust and the NDK as well.
+- Problem: the update list (#21) shows newer Rust, NDK patches (r27d), Gradle and Kotlin; AGP and NDK 28 are #201. Two crates are held in `Cargo.lock` for them: kstring 2.0.2 (2.0.5 needs Rust 1.96) and cc 1.2.60 (it compiles the APK's C code; only F-Droid's own rebuild can show that a newer one keeps the bytes).
+- Fix: one toolchain step at a time, each with the repro probe, and a fdroiddata MR that changes the recipe in the same release; then lift the two holds (`cargo update -p kstring -p cc`). Until then a bare `cargo update` moves them too: re-hold both with `--precise` afterwards. For kstring, `rust-version = "1.95"` on the workspace crates (meditate-gtk still says 1.75) with Cargo's `incompatible-rust-versions = "fallback"` would hold it and any later crate by itself. Build environment: ask first. Found with the first update list, 2026-11-03.
 
 ## Y2. Slint text fields (upstream)
 
@@ -238,6 +244,45 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 - Where: Slint's Android backend, not our code. It maps `KEYCODE_MOVE_HOME` to Home (`androidwindowadapter.rs` `map_key_code`), so the cause is unknown.
 - Problem: in Gboard's text editing panel, the |< key left the cursor where it was in a Slint text field; the arrow keys and Select worked. Seen once in the material gallery on the API 35 emulator (2026-10-19), while testing Slint PR #14205; not reproduced, not tried in Meditate or on the FP5.
 - Fix: first reproduce it (with and without Select), log which key event or `setSelection` arrives, then fix or report upstream.
+
+## AA. Library major versions (Android ones: ask first)
+
+Found with the first update list (#21), 2026-11-03. Each is its own change: read the crate's changelog, adapt the code, run the suites, and test on a device. The ones in the Android build change the APK, so they need a go and the repro probe.
+
+### #202 rusqlite 0.32 -> 0.41 (Android too)
+- Where: `meditate-core/src/db/`, `meditate-core/src/data_io.rs`, `meditate-gtk/src/db/`; both Cargo.toml.
+- Problem: nine releases behind; the bundled SQLite and its C build (libsqlite3-sys) come with it.
+- Fix: bump in both crates together and test opening a database written by the last release on both apps.
+
+### #203 ureq 2 -> 3 (Android too)
+- Where: `meditate-core/src/sync/webdav.rs`, `meditate-core/Cargo.toml`.
+- Problem: ureq 3 is a rewrite of the API the WebDAV sync is built on.
+- Fix: port the WebDAV client, run the sync tests against the fake server, then sync two devices against a real Nextcloud. Do it with or after #192, keeping its overall request cap and its silent-server test.
+
+### #204 jni 0.21 -> 0.22 (Android)
+- Where: every JNI call in `meditate-android/src/`.
+- Problem: one major behind on the bridge to the Kotlin services.
+- Fix: test every Android feature that crosses JNI on the phone (sessions in the background, bells, vibration, the keychain, the widget, file picking).
+
+### #205 oo7 0.4 -> 0.6 (Linux)
+- Where: `meditate-gtk/src/keychain.rs`, `meditate-gtk/Cargo.toml`.
+- Problem: two minors behind (0.x, so breaking) on the keyring client that stores the Nextcloud app password.
+- Fix: test that an existing stored password is still found after the update, in the Flatpak and the native build.
+
+### #206 gettext-rs 0.7 -> 0.8 (Linux)
+- Where: `meditate-gtk/src/main.rs`, `meditate-gtk/src/i18n.rs`, `meditate-gtk/Cargo.toml`.
+- Problem: one breaking release behind on the Linux translations.
+- Fix: run `cargo test -p meditate i18n::` and start the app in two languages.
+
+### #207 roxmltree 0.20 -> 0.21 (Android too)
+- Where: `meditate-core/src/sync/webdav.rs` (WebDAV PROPFIND replies), `meditate-core/Cargo.toml`.
+- Problem: one breaking release behind on the XML parser for server replies.
+- Fix: the sync tests cover the parsing.
+
+### #208 material-colors 0.4 -> 0.5 (Android)
+- Where: `meditate-android/src/theme.rs`, `meditate-android/Cargo.toml`.
+- Problem: one breaking release behind on the library that turns the system colour into the Material palette.
+- Fix: compare screenshots of light and dark mode before and after.
 
 ## Z. Android touch targets
 
