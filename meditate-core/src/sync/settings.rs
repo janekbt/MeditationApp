@@ -14,6 +14,7 @@
 //! stayed split out.
 
 use crate::db::{Database, Result};
+use crate::sync::indicator::SyncFailureKey;
 
 pub const KEY_URL: &str = "nextcloud_url";
 pub const KEY_USERNAME: &str = "nextcloud_username";
@@ -126,22 +127,28 @@ pub fn get_last_sync_error(db: &Database) -> Result<Option<String>> {
 
 /// Record a sync failure. Doesn't touch the last-sync-success timestamp
 /// — the user wants to see "last successful sync" stay accurate even
-/// when the most recent attempt has failed. Resets the error-kind tag
-/// to `""` (generic): a previous remote-data-lost tag must NOT persist
-/// once a different error has occurred, otherwise the status
-/// indicator would route the click to the recovery dialog despite
-/// the wipe-detection no longer being the live failure.
-pub fn record_sync_error(db: &Database, message: &str) -> Result<()> {
+/// when the most recent attempt has failed. The error-kind tag holds
+/// the reason (empty for none), so a previous remote-data-lost tag
+/// can't outlive the failure that set it and route the tap to the
+/// recovery dialog.
+pub fn record_sync_error(db: &Database, message: &str, reason: Option<SyncFailureKey>) -> Result<()> {
+    let kind = reason.map(|r| serde_json::to_string(&r).unwrap_or_default()).unwrap_or_default();
     db.set_sync_state(KEY_LAST_SYNC_ERROR, message)?;
-    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
+    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, &kind)?;
     Ok(())
 }
 
+/// The reason `record_sync_error` stored; `None` for none, for the
+/// other kinds, and for an error stored before reasons existed.
+pub fn last_sync_failure_key(db: &Database) -> Result<Option<SyncFailureKey>> {
+    let kind = db.get_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
+    Ok(serde_json::from_str(&kind).ok())
+}
+
 /// Record a sync failure caused by `SyncError::RemoteDataLost`.
-/// Tags the kind so the status indicator's click handler routes to
-/// the recovery dialog instead of a plain retry. The Display message
-/// is still recorded so existing surfaces (tooltip, diagnostics log)
-/// stay informative.
+/// Tags the kind so a tap on the status indicator opens the recovery
+/// dialog instead of the status. The Display message is still
+/// recorded for the diagnostics log.
 pub fn record_remote_data_lost(db: &Database, message: &str) -> Result<()> {
     db.set_sync_state(KEY_LAST_SYNC_ERROR, message)?;
     db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "remote_data_lost")?;
@@ -150,8 +157,8 @@ pub fn record_remote_data_lost(db: &Database, message: &str) -> Result<()> {
 
 /// Whether the latest recorded sync failure was a remote-data-lost
 /// detection (as opposed to a generic error or no error at all).
-/// Used by the status-indicator click handler to decide between
-/// "retry sync" and "open recovery dialog".
+/// Used by the status indicator to decide between the status and the
+/// recovery dialog.
 pub fn is_last_sync_remote_data_lost(db: &Database) -> Result<bool> {
     let kind = db.get_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
     Ok(kind == "remote_data_lost")
@@ -363,7 +370,7 @@ mod tests {
         assert!(is_last_sync_password_missing(&db).unwrap());
         assert!(get_last_sync_error(&db).unwrap().is_some());
         assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
-        record_sync_error(&db, "network down").unwrap();
+        record_sync_error(&db, "network down", None).unwrap();
         assert!(!is_last_sync_password_missing(&db).unwrap());
     }
 
@@ -456,7 +463,7 @@ mod tests {
     fn record_sync_error_does_not_clobber_last_success_ts() {
         let db = fresh();
         record_successful_sync(&db, 1_700_000_000).unwrap();
-        record_sync_error(&db, "boom").unwrap();
+        record_sync_error(&db, "boom", None).unwrap();
         assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
         assert_eq!(get_last_sync_error(&db).unwrap(), Some("boom".to_string()));
     }
@@ -478,7 +485,7 @@ mod tests {
         // for a generic error.
         let db = fresh();
         record_remote_data_lost(&db, "wiped").unwrap();
-        record_sync_error(&db, "network down").unwrap();
+        record_sync_error(&db, "network down", None).unwrap();
         assert_eq!(get_last_sync_error(&db).unwrap(), Some("network down".to_string()));
         assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }

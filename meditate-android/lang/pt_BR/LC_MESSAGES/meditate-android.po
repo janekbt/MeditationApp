@@ -414,9 +414,6 @@ msgstr "Tipo"
 msgid "LAST 13 WEEKS"
 msgstr "ÚLTIMAS 13 SEMANAS"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "A última sincronização falhou, toque para tentar de novo\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "MINUTOS / DIA"
 
@@ -1013,9 +1010,6 @@ msgstr "Nada neste arquivo pode ser importado."
 msgid "Over 100 MB, too large to sync"
 msgstr "Mais de 100 MB: não sincronizável"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Alguns arquivos não foram enviados, toque para tentar de novo\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: grande demais para sincronizar"
 
@@ -1027,9 +1021,6 @@ msgstr "{}: o servidor está cheio"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: recusado pelo servidor ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Nenhuma senha salva, toque para digitá-la"
 
 msgid "Local folder"
 msgstr "Pasta local"
@@ -1216,3 +1207,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Salvo como um novo sino, suas predefinições mantêm o antigo"
+
+msgid "Last sync failed"
+msgstr "A última sincronização falhou"
+
+msgid "Some files weren't uploaded"
+msgstr "Alguns arquivos não foram enviados"
+
+msgid "No password saved"
+msgstr "Nenhuma senha salva"
+
+msgid "Enter Password"
+msgstr "Inserir senha"
+
+msgid "Sync Now"
+msgstr "Sincronizar agora"
+
+msgid "The server's reply can't be read"
+msgstr "Não é possível ler a resposta do servidor"
+
+msgid "Local database error"
+msgstr "Erro no banco de dados local"
+
+msgid "The password couldn't be read"
+msgstr "Não foi possível ler a senha"
+
+msgid "Server error ({})"
+msgstr "Erro do servidor ({})"
+
+msgid "The server redirected the address"
+msgstr "O servidor redirecionou o endereço"

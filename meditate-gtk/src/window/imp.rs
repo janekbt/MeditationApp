@@ -13,7 +13,7 @@ use crate::log::LogView;
 use crate::stats::StatsView;
 use crate::timer::TimerView;
 use meditate_core::breath::PhaseRunningLabelKey;
-use meditate_core::sync::indicator::{action_for, SyncIndicatorAction};
+use meditate_core::sync::indicator::{action_for, status_buttons, StatusButton, SyncFailureKey, SyncIndicatorAction};
 use glib::subclass::prelude::ObjectSubclassIsExt;
 
 #[derive(Debug, Default, CompositeTemplate)]
@@ -34,6 +34,13 @@ pub struct MeditateWindow {
     #[template_child] pub sync_status_stack:   TemplateChild<gtk::Stack>,
     #[template_child] pub sync_status_icon:    TemplateChild<gtk::Image>,
     #[template_child] pub sync_status_spinner: TemplateChild<gtk::Spinner>,
+    #[template_child] pub sync_status_popover: TemplateChild<gtk::Popover>,
+    #[template_child] pub sync_status_title:   TemplateChild<gtk::Label>,
+    #[template_child] pub sync_status_body:    TemplateChild<gtk::Label>,
+    #[template_child] pub sync_status_scroll:  TemplateChild<gtk::ScrolledWindow>,
+    #[template_child] pub sync_status_prefs_btn:    TemplateChild<gtk::Button>,
+    #[template_child] pub sync_status_sync_btn:     TemplateChild<gtk::Button>,
+    #[template_child] pub sync_status_password_btn: TemplateChild<gtk::Button>,
 }
 
 #[glib::object_subclass]
@@ -55,6 +62,11 @@ impl ObjectSubclass for MeditateWindow {
 }
 
 impl ObjectImpl for MeditateWindow {
+    fn dispose(&self) {
+        // Parented by hand in `wire_sync_status`.
+        self.sync_status_popover.unparent();
+    }
+
     fn constructed(&self) {
         self.parent_constructed();
         self.wire_timer_signals();
@@ -679,18 +691,9 @@ impl MeditateWindow {
     fn wire_sync_status(&self) {
         let obj = self.obj();
 
-        // Click semantics depend on the current state:
-        // - Warning AND last error was remote-data-lost: open the
-        //   recovery dialog so the user picks Push-Local / Cancel.
-        //   This case is destructive enough that auto-retrying
-        //   silently would surprise the user.
-        // - Warning (any other error): retry the sync. On Phosh
-        //   especially, transient network/DNS failures stick the
-        //   icon at warning until the next mutation; a manual retry
-        //   path closes that gap without requiring the user to
-        //   author something.
-        // - Anything else: open Preferences → Data so the user can
-        //   adjust settings or check status.
+        // A wiped server opens the recovery dialog, so the user picks
+        // Push-Local / Cancel; every other state shows the status.
+        self.sync_status_popover.set_parent(&*self.sync_status_btn);
         self.sync_status_btn.connect_clicked(clone!(
             #[weak] obj,
             move |_| {
@@ -700,16 +703,37 @@ impl MeditateWindow {
                 let state = sync_indicator_state_now(&app);
                 match action_for(&state) {
                     SyncIndicatorAction::OpenRecovery => crate::recovery_dialog::show(&app),
-                    SyncIndicatorAction::RetrySync => {
-                        app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
-                        app.trigger_sync();
-                    }
-                    SyncIndicatorAction::OpenPrefsData => {
-                        crate::preferences::show_preferences_on_page(&app, Some("data"));
+                    SyncIndicatorAction::ShowStatus => {
+                        obj.imp().refresh_sync_status();
+                        obj.imp().sync_status_popover.popup();
                     }
                 }
             }
         ));
+        for (btn, button) in [
+            (&*self.sync_status_prefs_btn, StatusButton::Preferences),
+            (&*self.sync_status_sync_btn, StatusButton::SyncNow),
+            (&*self.sync_status_password_btn, StatusButton::EnterPassword),
+        ] {
+            btn.connect_clicked(clone!(
+                #[weak] obj,
+                move |_| {
+                    obj.imp().sync_status_popover.popdown();
+                    let Some(app) = obj.application()
+                        .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                    else { return; };
+                    match button {
+                        StatusButton::SyncNow => {
+                            app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
+                            app.trigger_sync();
+                        }
+                        StatusButton::Preferences | StatusButton::EnterPassword => {
+                            crate::preferences::show_preferences_on_page(&app, Some("data"));
+                        }
+                    }
+                }
+            ));
+        }
 
         // Defer the initial paint to `connect_map`. At `constructed()`
         // time the window isn't yet linked to its application, so
@@ -767,7 +791,6 @@ impl MeditateWindow {
     /// few in-memory SQLite reads + an atomic load. Safe to call on
     /// every timer tick (every 2s) without measurable load.
     pub fn refresh_sync_status(&self) {
-        use crate::i18n::gettext;
         use meditate_core::sync::indicator::SyncIndicatorState;
         let Some(app) = self.obj().application()
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
@@ -777,7 +800,6 @@ impl MeditateWindow {
 
         let btn     = &*self.sync_status_btn;
         let stack   = &*self.sync_status_stack;
-        let icon    = &*self.sync_status_icon;
         let spinner = &*self.sync_status_spinner;
 
         // Icon-tint classes (`success`, `warning`) are exclusive — at
@@ -785,12 +807,14 @@ impl MeditateWindow {
         btn.remove_css_class("success");
         btn.remove_css_class("warning");
 
-        match state {
+        let buttons = status_buttons(&state);
+        let (title, body) = match &state {
             SyncIndicatorState::Hidden => {
                 // No account: hide the indicator. Nothing useful for
                 // the user to see or click on.
                 btn.set_visible(false);
                 spinner.set_spinning(false);
+                (String::new(), String::new())
             }
             SyncIndicatorState::Syncing => {
                 btn.set_visible(true);
@@ -798,56 +822,68 @@ impl MeditateWindow {
                 // distinguishes "actively syncing" from "idle".
                 spinner.set_spinning(true);
                 stack.set_visible_child_name("syncing");
-                btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
+                (gettext("Syncing with Nextcloud…"), String::new())
             }
-            SyncIndicatorState::Error { detail, .. } => {
-                btn.set_visible(true);
-                spinner.set_spinning(false);
-                stack.set_visible_child_name("idle");
-                icon.set_icon_name(Some("dialog-warning-symbolic"));
-                btn.add_css_class("warning");
-                btn.set_tooltip_text(Some(
-                    &format!("{}\n{}",
-                        gettext("Last sync failed, click to retry"),
-                        detail)));
+            SyncIndicatorState::Error { reason, .. } => {
+                self.show_idle_icon("dialog-warning-symbolic", "warning");
+                (gettext("Last sync failed"), reason.map(failure_reason_text).unwrap_or_default())
             }
             SyncIndicatorState::NotUploaded(files) => {
-                btn.set_visible(true);
-                spinner.set_spinning(false);
-                stack.set_visible_child_name("idle");
-                icon.set_icon_name(Some("dialog-warning-symbolic"));
-                btn.add_css_class("warning");
+                self.show_idle_icon("dialog-warning-symbolic", "warning");
                 let lines: Vec<String> = files.iter().map(not_uploaded_line).collect();
-                btn.set_tooltip_text(Some(&format!(
-                    "{}\n{}",
-                    gettext("Some files weren't uploaded, click to retry"),
-                    lines.join("\n"),
-                )));
+                (gettext("Some files weren't uploaded"), lines.join("\n"))
             }
             SyncIndicatorState::NeedsPassword => {
-                btn.set_visible(true);
-                spinner.set_spinning(false);
-                stack.set_visible_child_name("idle");
-                icon.set_icon_name(Some("dialog-warning-symbolic"));
-                btn.add_css_class("warning");
-                btn.set_tooltip_text(Some(&gettext("No password saved, click to enter it")));
+                self.show_idle_icon("dialog-warning-symbolic", "warning");
+                (gettext("No password saved"), String::new())
             }
             SyncIndicatorState::OkWithTs(ts) => {
-                btn.set_visible(true);
-                spinner.set_spinning(false);
-                stack.set_visible_child_name("idle");
-                icon.set_icon_name(Some("object-select-symbolic"));
-                btn.add_css_class("success");
-                btn.set_tooltip_text(Some(&format_synced_ago(ts)));
+                self.show_idle_icon("object-select-symbolic", "success");
+                (format_synced_ago(*ts), String::new())
             }
             SyncIndicatorState::OkNoTs => {
-                btn.set_visible(true);
-                spinner.set_spinning(false);
-                stack.set_visible_child_name("idle");
-                icon.set_icon_name(Some("object-select-symbolic"));
-                btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+                // Neutral until the first sync.
+                self.show_idle_icon("object-select-symbolic", "");
+                (gettext("Sync configured (waiting for first run)"), String::new())
             }
+        };
+        btn.set_tooltip_text((!title.is_empty()).then_some(title.as_str()));
+        self.sync_status_title.set_label(&title);
+        self.sync_status_body.set_label(&body);
+        self.sync_status_scroll.set_visible(!body.is_empty());
+        self.sync_status_prefs_btn.set_visible(buttons.contains(&StatusButton::Preferences));
+        self.sync_status_sync_btn.set_visible(buttons.contains(&StatusButton::SyncNow));
+        self.sync_status_password_btn.set_visible(buttons.contains(&StatusButton::EnterPassword));
+        if buttons.is_empty() {
+            self.sync_status_popover.popdown();
         }
+    }
+
+    /// The button with a still icon and its tint class ("" for none).
+    fn show_idle_icon(&self, icon_name: &str, css: &str) {
+        self.sync_status_btn.set_visible(true);
+        self.sync_status_spinner.set_spinning(false);
+        self.sync_status_stack.set_visible_child_name("idle");
+        self.sync_status_icon.set_icon_name(Some(icon_name));
+        if !css.is_empty() {
+            self.sync_status_btn.add_css_class(css);
+        }
+    }
+}
+
+/// Why the last sync failed, in the user's language.
+fn failure_reason_text(key: SyncFailureKey) -> String {
+    match key {
+        SyncFailureKey::Network => gettext("Network error"),
+        SyncFailureKey::Unauthorized => gettext("Authentication failed"),
+        SyncFailureKey::Server(None) => gettext("Server error"),
+        SyncFailureKey::Server(Some(status)) => {
+            gettext("Server error ({status})").replace("{status}", &status.to_string())
+        }
+        SyncFailureKey::Redirected => gettext("The server redirected the address"),
+        SyncFailureKey::UnreadableReply => gettext("The server's reply can't be read"),
+        SyncFailureKey::LocalDatabase => gettext("Local database error"),
+        SyncFailureKey::Keyring => gettext("The password couldn't be read"),
     }
 }
 

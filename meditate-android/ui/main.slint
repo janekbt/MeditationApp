@@ -115,14 +115,19 @@ export global Tr {
     public pure function conn-server() -> string { return @tr("Server error"); }
     // Sync indicator tooltips
     public pure function syncing() -> string { return @tr("Syncing with Nextcloud…"); }
-    public pure function sync-failed-tap(detail: string) -> string { return @tr("Last sync failed, tap to retry\n{}", detail); }
-    public pure function not-uploaded-tap(files: string) -> string { return @tr("Some files weren't uploaded, tap to retry\n{}", files); }
+    public pure function sync-failed() -> string { return @tr("Last sync failed"); }
+    public pure function not-uploaded() -> string { return @tr("Some files weren't uploaded"); }
+    public pure function reason-server(status: int) -> string { return @tr("Server error ({})", status); }
+    public pure function reason-redirected() -> string { return @tr("The server redirected the address"); }
+    public pure function reason-unreadable() -> string { return @tr("The server's reply can't be read"); }
+    public pure function reason-database() -> string { return @tr("Local database error"); }
+    public pure function reason-keyring() -> string { return @tr("The password couldn't be read"); }
     public pure function upload-too-large-to-sync(name: string) -> string { return @tr("{}: too large to sync", name); }
     public pure function upload-too-large-for-server(name: string) -> string { return @tr("{}: too large for the server", name); }
     public pure function upload-server-full(name: string) -> string { return @tr("{}: the server is full", name); }
     public pure function upload-refused(name: string, status: int) -> string { return @tr("{0}: refused by the server ({1})", name, status); }
     public pure function sync-waiting-first() -> string { return @tr("Sync configured (waiting for first run)"); }
-    public pure function sync-needs-password() -> string { return @tr("No password saved, tap to enter it"); }
+    public pure function sync-needs-password() -> string { return @tr("No password saved"); }
     public pure function synced-just-now() -> string { return @tr("Synced just now"); }
     public pure function synced-min(n: int) -> string { return @tr("Synced {n} minute ago" | "Synced {n} minutes ago" % n); }
     public pure function synced-hours(n: int) -> string { return @tr("Synced {n} hour ago" | "Synced {n} hours ago" % n); }
@@ -2370,6 +2375,7 @@ export enum Modal {
     prep,
     recovery-wipe-confirm,
     import-unreadable,
+    sync-status,
 }
 
 export component MainWindow inherits Window {
@@ -3408,6 +3414,13 @@ export component MainWindow inherits Window {
     // on Android yet).
     in property <int> sync-indicator-state: 0;
     in property <string> sync-indicator-tooltip: "";
+    // The status dialog: its text, and which buttons it shows.
+    in property <string> sync-status-body: "";
+    in property <bool> sync-status-prefs;
+    in property <bool> sync-status-sync;
+    in property <bool> sync-status-password;
+    callback sync-status-prefs-tap();
+    callback sync-status-sync-tap();
     callback sync-indicator-tap();
 
     // Stats page (Phase 4). S-1 ships the Mini-stats row only;
@@ -9209,6 +9222,95 @@ export component MainWindow inherits Window {
                                 root.modal = Modal.none;
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // The sync status, opened from the sync symbol.
+    if root.modal == Modal.sync-status : Rectangle {
+        background: MaterialPalette.scrim.with-alpha(0.32);
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: KeyboardArea.card-y(self.height);
+            width: min(340px, root.width - 32px);
+            height: sync-status-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            sync-status-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: root.sync-indicator-tooltip;
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                    wrap: word-wrap;
+                }
+                // A full server can refuse many files: the list scrolls.
+                if root.sync-status-body != "" : Flickable {
+                    height: min(sync-status-text.preferred-height, 240px);
+                    content-height: sync-status-text.preferred-height;
+                    sync-status-text := Text {
+                        width: parent.width;
+                        text: root.sync-status-body;
+                        font-size: 14px;
+                        color: MaterialPalette.on-surface-variant;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Three buttons stack, one per line, like the recovery
+                // dialog's; two sit side by side.
+                if root.sync-status-prefs && root.sync-status-sync : VerticalLayout {
+                    spacing: 4px;
+
+                    HorizontalLayout {
+                        alignment: end;
+                        ConfirmButton {
+                            text: @tr("Sync Now");
+                            clicked => { root.sync-status-sync-tap(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        TextButton {
+                            text: @tr("Preferences");
+                            clicked => { root.sync-status-prefs-tap(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        TextButton {
+                            text: @tr("Close");
+                            clicked => { root.modal = Modal.none; }
+                        }
+                    }
+                }
+                if !(root.sync-status-prefs && root.sync-status-sync) : HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: @tr("Close");
+                        clicked => { root.modal = Modal.none; }
+                    }
+                    if root.sync-status-prefs : TextButton {
+                        text: @tr("Preferences");
+                        clicked => { root.sync-status-prefs-tap(); }
+                    }
+                    if root.sync-status-password : ConfirmButton {
+                        text: @tr("Enter Password");
+                        clicked => { root.sync-status-prefs-tap(); }
                     }
                 }
             }

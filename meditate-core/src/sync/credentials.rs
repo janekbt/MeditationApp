@@ -214,51 +214,11 @@ pub fn prepare_test<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{FakeWebDav, WebDavResult};
+    use crate::sync::fake::AlwaysErrs;
+    use crate::sync::FakeWebDav;
     use crate::test_macros::assert_matches;
 
     // ── test_connection_with ─────────────────────────────────────────────
-
-    /// Tiny scripted WebDav that returns a fixed error from every
-    /// method. Lets us exercise the error-mapping branches one
-    /// variant at a time without touching the network.
-    struct AlwaysErrs(WebDavError);
-
-    impl AlwaysErrs {
-        fn clone_err(&self) -> WebDavError {
-            match &self.0 {
-                WebDavError::NotFound => WebDavError::NotFound,
-                WebDavError::Unauthorized => WebDavError::Unauthorized,
-                WebDavError::Conflict => WebDavError::Conflict,
-                WebDavError::Network(s) => WebDavError::Network(s.clone()),
-                WebDavError::RateLimited { retry_after } => {
-                    WebDavError::RateLimited { retry_after: *retry_after }
-                }
-                WebDavError::Server { status, body } => WebDavError::Server {
-                    status: *status,
-                    body: body.clone(),
-                },
-                WebDavError::MalformedResponse { detail } => {
-                    WebDavError::MalformedResponse { detail: detail.clone() }
-                }
-                WebDavError::ResponseTooLarge { limit } => {
-                    WebDavError::ResponseTooLarge { limit: *limit }
-                }
-                WebDavError::Redirected => WebDavError::Redirected,
-            }
-        }
-    }
-
-    impl WebDav for AlwaysErrs {
-        fn list_collection(&self, _: &str) -> WebDavResult<Vec<String>> {
-            Err(self.clone_err())
-        }
-        fn get(&self, _: &str, _: u64) -> WebDavResult<Vec<u8>> { unreachable!() }
-        fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> { unreachable!() }
-        fn mkcol(&self, _: &str) -> WebDavResult<()> { unreachable!() }
-        fn delete(&self, _: &str) -> WebDavResult<()> { unreachable!() }
-        fn move_to(&self, _: &str, _: &str) -> WebDavResult<()> { unreachable!() }
-    }
 
     #[test]
     fn test_connection_with_ok_when_propfind_succeeds() {

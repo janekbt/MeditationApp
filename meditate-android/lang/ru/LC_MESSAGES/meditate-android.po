@@ -415,9 +415,6 @@ msgstr "Вид"
 msgid "LAST 13 WEEKS"
 msgstr "ПОСЛЕДНИЕ 13 НЕДЕЛЬ"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "Последняя синхронизация не удалась, нажмите, чтобы повторить\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "МИНУТЫ / ДЕНЬ"
 
@@ -1036,9 +1033,6 @@ msgstr "Из этого файла ничего нельзя импортиро�
 msgid "Over 100 MB, too large to sync"
 msgstr "Больше 100 МБ: нельзя синхронизировать"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Некоторые файлы не загружены, нажмите, чтобы повторить\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: слишком большой для синхронизации"
 
@@ -1050,9 +1044,6 @@ msgstr "{}: на сервере нет места"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: сервер отклонил файл ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Пароль не сохранён, нажмите, чтобы ввести его"
 
 msgid "Local folder"
 msgstr "Локальная папка"
@@ -1246,3 +1237,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Сохранено как новый колокол, ваши пресеты сохраняют старый"
+
+msgid "Last sync failed"
+msgstr "Последняя синхронизация не удалась"
+
+msgid "Some files weren't uploaded"
+msgstr "Некоторые файлы не загружены"
+
+msgid "No password saved"
+msgstr "Пароль не сохранён"
+
+msgid "Enter Password"
+msgstr "Ввести пароль"
+
+msgid "Sync Now"
+msgstr "Синхронизировать"
+
+msgid "The server's reply can't be read"
+msgstr "Не удаётся прочитать ответ сервера"
+
+msgid "Local database error"
+msgstr "Ошибка локальной базы данных"
+
+msgid "The password couldn't be read"
+msgstr "Не удалось прочитать пароль"
+
+msgid "Server error ({})"
+msgstr "Ошибка сервера ({})"
+
+msgid "The server redirected the address"
+msgstr "Сервер перенаправил адрес"

@@ -414,9 +414,6 @@ msgstr "Type"
 msgid "LAST 13 WEEKS"
 msgstr "13 DERNIÈRES SEMAINES"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "Échec de la dernière synchronisation, touchez pour réessayer\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "MINUTES / JOUR"
 
@@ -1013,9 +1010,6 @@ msgstr "Rien dans ce fichier ne peut être importé."
 msgid "Over 100 MB, too large to sync"
 msgstr "Plus de 100 Mo, non synchronisable"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Certains fichiers n’ont pas été envoyés, touchez pour réessayer\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{} : trop volumineux pour la synchronisation"
 
@@ -1027,9 +1021,6 @@ msgstr "{} : le serveur est plein"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0} : refusé par le serveur ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Aucun mot de passe enregistré, touchez pour le saisir"
 
 msgid "Local folder"
 msgstr "Dossier local"
@@ -1216,3 +1207,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Enregistrée comme nouvelle cloche, vos préréglages gardent l'ancienne"
+
+msgid "Last sync failed"
+msgstr "La dernière synchronisation a échoué"
+
+msgid "Some files weren't uploaded"
+msgstr "Certains fichiers n'ont pas été envoyés"
+
+msgid "No password saved"
+msgstr "Aucun mot de passe enregistré"
+
+msgid "Enter Password"
+msgstr "Saisir le mot de passe"
+
+msgid "Sync Now"
+msgstr "Synchroniser maintenant"
+
+msgid "The server's reply can't be read"
+msgstr "La réponse du serveur est illisible"
+
+msgid "Local database error"
+msgstr "Erreur de la base de données locale"
+
+msgid "The password couldn't be read"
+msgstr "Impossible de lire le mot de passe"
+
+msgid "Server error ({})"
+msgstr "Erreur du serveur ({})"
+
+msgid "The server redirected the address"
+msgstr "Le serveur a redirigé l'adresse"

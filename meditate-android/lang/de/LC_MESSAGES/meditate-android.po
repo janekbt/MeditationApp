@@ -315,9 +315,6 @@ msgstr "Label"
 msgid "Label name"
 msgstr "Label-Name"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "Letzte Synchronisation fehlgeschlagen – zum Wiederholen tippen\n{}"
-
 msgid "Less"
 msgstr "Weniger"
 
@@ -1013,9 +1010,6 @@ msgstr "Aus dieser Datei lässt sich nichts importieren."
 msgid "Over 100 MB, too large to sync"
 msgstr "Über 100 MB: nicht synchronisierbar"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Einige Dateien wurden nicht hochgeladen, zum Wiederholen tippen\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: zu groß für die Synchronisation"
 
@@ -1027,9 +1021,6 @@ msgstr "{}: Der Server ist voll"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: vom Server abgelehnt ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Kein Passwort gespeichert, zum Eingeben tippen"
 
 msgid "Local folder"
 msgstr "Lokaler Ordner"
@@ -1216,3 +1207,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Als neue Glocke gespeichert, deine Voreinstellungen behalten die alte"
+
+msgid "Last sync failed"
+msgstr "Letzte Synchronisation fehlgeschlagen"
+
+msgid "Some files weren't uploaded"
+msgstr "Einige Dateien wurden nicht hochgeladen"
+
+msgid "No password saved"
+msgstr "Kein Passwort gespeichert"
+
+msgid "Enter Password"
+msgstr "Passwort eingeben"
+
+msgid "Sync Now"
+msgstr "Jetzt synchronisieren"
+
+msgid "The server's reply can't be read"
+msgstr "Die Antwort des Servers ist nicht lesbar"
+
+msgid "Local database error"
+msgstr "Fehler in der lokalen Datenbank"
+
+msgid "The password couldn't be read"
+msgstr "Das Passwort konnte nicht gelesen werden"
+
+msgid "Server error ({})"
+msgstr "Serverfehler ({})"
+
+msgid "The server redirected the address"
+msgstr "Der Server hat die Adresse umgeleitet"

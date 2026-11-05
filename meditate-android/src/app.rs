@@ -1392,7 +1392,7 @@ mod tests {
         // Centered above the keyboard, below the status bar; a card too tall
         // keeps its buttons above the keyboard first.
         assert!(slint.contains("return max(0px, min(root.top, root.bottom - h), (root.bottom - h) / 2);"));
-        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 8, "every modal card");
+        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 9, "every modal card");
         assert_eq!(slint.matches("y: (parent.height - self.height) / 2;").count(), 3, "only the volume slider's bars and thumb");
         // Enter confirms, while the button would.
         assert!(slint.contains("public function accept() {\n        if (root.confirm-enabled) {\n            root.confirm();"));
@@ -1981,7 +1981,7 @@ mod tests {
         assert!(card.contains("@children"), "name dialogs add their field");
         assert!(card.contains("enabled: root.confirm-enabled;"), "a name dialog gates its button");
         assert_eq!(card.matches("horizontal-alignment: center;").count(), 2, "title and body centred");
-        assert_eq!(slint.matches("min(340px").count(), 2, "only Recovery and the label conflict, for their button rows");
+        assert_eq!(slint.matches("min(340px").count(), 3, "only Recovery, the label conflict and the sync status, for their button rows");
 
         let by_hand: Vec<&str> = slint
             .match_indices("if root.modal == Modal.")
@@ -1990,7 +1990,7 @@ mod tests {
                 line.ends_with(": Rectangle {").then(|| &line["if root.modal == Modal.".len()..line.find(" :").unwrap()])
             })
             .collect();
-        assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "label-conflict"]);
+        assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "sync-status", "label-conflict"]);
         // Ten plain, six with an id for Enter in their field (#11).
         assert_eq!(slint.matches(" ConfirmDialog {").count(), 16);
     }
@@ -2056,30 +2056,28 @@ mod tests {
     #[test]
     fn refused_uploads_show_by_name_and_retry_sends_them_again() {
         // Like GTK: automatic syncs skip a refused file, the status
-        // names it, a tap on the status tries it again.
+        // names it, Sync Now in the status dialog tries it again.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("SyncIndicatorState::NotUploaded(files) => {"));
         assert!(lib.contains(
-            "SyncIndicatorAction::RetrySync => {\n                        \
-             if let Some(db) = lock_db() {\n                            \
-             let _ = meditate_core::sync::settings::clear_refused_uploads(&db);\n                        }\n                        \
-             trigger_sync(\"indicator tap (retry)\");"
+            "if let Some(db) = lock_db() {\n                \
+             let _ = meditate_core::sync::settings::clear_refused_uploads(&db);\n            }\n            \
+             trigger_sync(\"status dialog (sync now)\");"
         ));
     }
 
     /// A sync that never started for want of a password only reached
     /// the log. Core's runner records it; the status says what to do,
-    /// and a tap opens Preferences (core's action).
+    /// and its status offers only Enter Password (core's buttons).
     #[test]
     fn a_missing_password_shows_in_the_status() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         let runner = std::fs::read_to_string(root.join("src/sync_runner.rs")).unwrap();
-        assert!(lib.contains("SyncIndicatorState::NeedsPassword => {"));
-        assert!(lib.contains("tr.invoke_sync_needs_password()"));
-        assert!(slint.contains("@tr(\"No password saved, tap to enter it\")"));
+        assert!(lib.contains("SyncIndicatorState::NeedsPassword => (2, tr.invoke_sync_needs_password()"));
+        assert!(slint.contains("@tr(\"No password saved\")"));
         assert!(runner.contains("meditate_core::sync::runner::run_attempt("));
     }
 
@@ -2158,7 +2156,7 @@ mod tests {
         let def = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(def.contains("abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px"));
         let scrims: Vec<_> = slint.match_indices("background: MaterialPalette.scrim.with-alpha(0.32);").map(|(i, _)| i).collect();
-        assert_eq!(scrims.len(), 8, "ConfirmDialog holds the scrim of the simple dialogs");
+        assert_eq!(scrims.len(), 9, "ConfirmDialog holds the scrim of the simple dialogs");
         for at in scrims {
             let next = &slint[at..];
             let area = next.find("TouchArea {").unwrap_or(usize::MAX);
@@ -2528,12 +2526,12 @@ mod tests {
         assert_eq!(
             reasons,
             [
-                "app resume",            // launch and every return to the app
-                "indicator tap (retry)", // retry after a failed sync
-                "local change",          // every synced write
-                "prefs save",            // new account; not a synced write
-                "recovery push-local",   // re-queues events, records none
-                "recovery wipe-local",   // pull everything back
+                "app resume",                // launch and every return to the app
+                "local change",              // every synced write
+                "prefs save",                // new account; not a synced write
+                "recovery push-local",       // re-queues events, records none
+                "recovery wipe-local",       // pull everything back
+                "status dialog (sync now)",  // Sync Now in the status dialog
             ],
             "write paths must not trigger sync themselves",
         );

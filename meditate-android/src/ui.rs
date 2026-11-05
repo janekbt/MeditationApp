@@ -1882,37 +1882,58 @@ fn refresh_setup_label_name(ui: &MainWindow, mode: meditate_core::SessionMode) {
 /// `SyncIndicatorState` enum to the int the Slint surface
 /// switches on (0 Hidden / 1 Syncing / 2 Error / 3 Ok).
 fn refresh_sync_indicator(ui: &MainWindow) {
-    use meditate_core::sync::indicator::{state_from_db, SyncIndicatorState};
+    use meditate_core::sync::indicator::{state_from_db, status_buttons, StatusButton, SyncIndicatorState};
     let Some(db) = lock_db() else {
         ui.set_sync_indicator_state(0);
+        close_modal(ui, Modal::SyncStatus);
         return;
     };
     let syncing = SYNC_COORDINATOR.is_in_flight();
     let tr = ui.global::<Tr>();
-    let (state, tooltip) = match state_from_db(&db, syncing) {
-        SyncIndicatorState::Hidden => (0, String::new()),
-        SyncIndicatorState::Syncing => {
-            (1, tr.invoke_syncing().to_string())
-        }
-        SyncIndicatorState::Error { detail, .. } => {
-            (2, tr.invoke_sync_failed_tap(detail.into()).to_string())
-        }
+    let state = state_from_db(&db, syncing);
+    let buttons = status_buttons(&state);
+    let (icon, title, body) = match &state {
+        SyncIndicatorState::Hidden => (0, String::new(), String::new()),
+        SyncIndicatorState::Syncing => (1, tr.invoke_syncing().to_string(), String::new()),
+        SyncIndicatorState::Error { reason, .. } => (
+            2,
+            tr.invoke_sync_failed().to_string(),
+            reason.map(|r| failure_reason_text(ui, r)).unwrap_or_default(),
+        ),
         SyncIndicatorState::NotUploaded(files) => {
             let lines: Vec<String> = files.iter().map(|f| not_uploaded_line(ui, f)).collect();
-            (2, tr.invoke_not_uploaded_tap(lines.join("\n").into()).to_string())
+            (2, tr.invoke_not_uploaded().to_string(), lines.join("\n"))
         }
-        SyncIndicatorState::NeedsPassword => {
-            (2, tr.invoke_sync_needs_password().to_string())
-        }
-        SyncIndicatorState::OkWithTs(ts) => {
-            (3, sync_ago_text(ui, ts))
-        }
-        SyncIndicatorState::OkNoTs => {
-            (3, tr.invoke_sync_waiting_first().to_string())
-        }
+        SyncIndicatorState::NeedsPassword => (2, tr.invoke_sync_needs_password().to_string(), String::new()),
+        SyncIndicatorState::OkWithTs(ts) => (3, sync_ago_text(ui, *ts), String::new()),
+        SyncIndicatorState::OkNoTs => (3, tr.invoke_sync_waiting_first().to_string(), String::new()),
     };
-    ui.set_sync_indicator_state(state);
-    ui.set_sync_indicator_tooltip(tooltip.into());
+    ui.set_sync_indicator_state(icon);
+    ui.set_sync_indicator_tooltip(title.into());
+    ui.set_sync_status_body(body.into());
+    ui.set_sync_status_prefs(buttons.contains(&StatusButton::Preferences));
+    ui.set_sync_status_sync(buttons.contains(&StatusButton::SyncNow));
+    ui.set_sync_status_password(buttons.contains(&StatusButton::EnterPassword));
+    if buttons.is_empty() {
+        close_modal(ui, Modal::SyncStatus);
+    }
+}
+
+/// Why the last sync failed. Like GTK's.
+fn failure_reason_text(ui: &MainWindow, key: meditate_core::sync::indicator::SyncFailureKey) -> String {
+    use meditate_core::sync::indicator::SyncFailureKey;
+    let tr = ui.global::<Tr>();
+    match key {
+        SyncFailureKey::Network => tr.invoke_conn_network(),
+        SyncFailureKey::Unauthorized => tr.invoke_conn_unauthorized(),
+        SyncFailureKey::Server(None) => tr.invoke_conn_server(),
+        SyncFailureKey::Server(Some(status)) => tr.invoke_reason_server(i32::from(status)),
+        SyncFailureKey::Redirected => tr.invoke_reason_redirected(),
+        SyncFailureKey::UnreadableReply => tr.invoke_reason_unreadable(),
+        SyncFailureKey::LocalDatabase => tr.invoke_reason_database(),
+        SyncFailureKey::Keyring => tr.invoke_reason_keyring(),
+    }
+    .to_string()
 }
 
 /// One refused upload, as the status lists it. Like GTK's.
@@ -9547,10 +9568,8 @@ fn build_ui() -> MainWindow {
     }
 
     // Sync-indicator tap (SY-4): core `action_for` routes the
-    // current state — error → retry sync, data-lost → recovery
-    // dialog (SY-5; toasts the detail until it lands), anything
-    // else → open Preferences (GTK's OpenPrefsData). Reuses the
-    // prefill logic by invoking the sandwich-button callback.
+    // current state — data-lost → recovery dialog, anything else →
+    // the status dialog (GTK's popover).
     {
         let weak = ui.as_weak();
         ui.on_sync_indicator_tap(move || {
@@ -9567,21 +9586,35 @@ fn build_ui() -> MainWindow {
                     )
                 };
                 match action_for(&state) {
-                    SyncIndicatorAction::RetrySync => {
-                        if let Some(db) = lock_db() {
-                            let _ = meditate_core::sync::settings::clear_refused_uploads(&db);
-                        }
-                        trigger_sync("indicator tap (retry)");
-                    }
                     SyncIndicatorAction::OpenRecovery => {
                         ui.set_modal(Modal::Recovery);
                     }
-                    SyncIndicatorAction::OpenPrefsData => {
-                        ui.invoke_preferences_tap();
+                    SyncIndicatorAction::ShowStatus => {
+                        refresh_sync_indicator(&ui);
+                        ui.set_modal(Modal::SyncStatus);
                     }
                 }
             }
             let _ = weak.clone();
+        });
+    }
+
+    // The status dialog's buttons.
+    {
+        let weak = ui.as_weak();
+        ui.on_sync_status_sync_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            close_modal(&ui, Modal::SyncStatus);
+            if let Some(db) = lock_db() {
+                let _ = meditate_core::sync::settings::clear_refused_uploads(&db);
+            }
+            trigger_sync("status dialog (sync now)");
+        });
+        let weak = ui.as_weak();
+        ui.on_sync_status_prefs_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            close_modal(&ui, Modal::SyncStatus);
+            ui.invoke_preferences_tap();
         });
     }
 

@@ -414,9 +414,6 @@ msgstr "Tipo"
 msgid "LAST 13 WEEKS"
 msgstr "ÚLTIMAS 13 SEMANAS"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "La última sincronización falló; toca para reintentar\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "MINUTOS / DÍA"
 
@@ -1013,9 +1010,6 @@ msgstr "No se puede importar nada de este archivo."
 msgid "Over 100 MB, too large to sync"
 msgstr "Más de 100 MB: no se puede sincronizar"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Algunos archivos no se subieron, toca para reintentar\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: demasiado grande para sincronizar"
 
@@ -1027,9 +1021,6 @@ msgstr "{}: el servidor está lleno"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: rechazado por el servidor ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "No hay contraseña guardada, toca para introducirla"
 
 msgid "Local folder"
 msgstr "Carpeta local"
@@ -1216,3 +1207,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Guardada como campana nueva, tus preajustes conservan la anterior"
+
+msgid "Last sync failed"
+msgstr "La última sincronización falló"
+
+msgid "Some files weren't uploaded"
+msgstr "Algunos archivos no se subieron"
+
+msgid "No password saved"
+msgstr "No hay ninguna contraseña guardada"
+
+msgid "Enter Password"
+msgstr "Introducir contraseña"
+
+msgid "Sync Now"
+msgstr "Sincronizar ahora"
+
+msgid "The server's reply can't be read"
+msgstr "No se puede leer la respuesta del servidor"
+
+msgid "Local database error"
+msgstr "Error de la base de datos local"
+
+msgid "The password couldn't be read"
+msgstr "No se pudo leer la contraseña"
+
+msgid "Server error ({})"
+msgstr "Error del servidor ({})"
+
+msgid "The server redirected the address"
+msgstr "El servidor redirigió la dirección"

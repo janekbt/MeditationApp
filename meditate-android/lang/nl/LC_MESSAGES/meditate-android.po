@@ -414,9 +414,6 @@ msgstr "Soort"
 msgid "LAST 13 WEEKS"
 msgstr "LAATSTE 13 WEKEN"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "Laatste synchronisatie mislukt, tik om opnieuw te proberen\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "MINUTEN / DAG"
 
@@ -1013,9 +1010,6 @@ msgstr "Niets uit dit bestand kan worden geïmporteerd."
 msgid "Over 100 MB, too large to sync"
 msgstr "Boven 100 MB: niet te synchroniseren"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Sommige bestanden zijn niet geüpload, tik om opnieuw te proberen\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: te groot om te synchroniseren"
 
@@ -1027,9 +1021,6 @@ msgstr "{}: de server is vol"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: geweigerd door de server ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Geen wachtwoord opgeslagen, tik om het in te voeren"
 
 msgid "Local folder"
 msgstr "Lokale map"
@@ -1216,3 +1207,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Opgeslagen als nieuwe bel, je voorinstellingen houden de oude"
+
+msgid "Last sync failed"
+msgstr "Laatste synchronisatie mislukt"
+
+msgid "Some files weren't uploaded"
+msgstr "Sommige bestanden zijn niet geüpload"
+
+msgid "No password saved"
+msgstr "Geen wachtwoord opgeslagen"
+
+msgid "Enter Password"
+msgstr "Wachtwoord invoeren"
+
+msgid "Sync Now"
+msgstr "Nu synchroniseren"
+
+msgid "The server's reply can't be read"
+msgstr "Het antwoord van de server is onleesbaar"
+
+msgid "Local database error"
+msgstr "Fout in de lokale database"
+
+msgid "The password couldn't be read"
+msgstr "Het wachtwoord kon niet worden gelezen"
+
+msgid "Server error ({})"
+msgstr "Serverfout ({})"
+
+msgid "The server redirected the address"
+msgstr "De server heeft het adres omgeleid"

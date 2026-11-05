@@ -174,6 +174,8 @@ Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base su
 
 ## W. Sync that stops on one bad item
 
+Decided 2026-11-03: each skipped item stays visible in the sync status that the sync symbol opens (popover on Linux, dialog on Android, since the change sync-status-on-tap), never in the log only. #173 waits for the next metainfo change; #192 waits until it happens again on ureq 3.
+
 ### #164 A batch this build can't read or apply stops every later pull
 - Where: `meditate-core/src/sync/orchestrator.rs:311-312` (an unparseable batch is fatal and never recorded as known); `db/sessions.rs:882, 889-900` writes an unknown `mode` straight into the CHECK column (`schema.rs:151`; the same for bell `category`, interval-bell `kind`, `signal_mode`, `chart_kind`); `db/events.rs:717-749` replays the whole pull in one transaction.
 - Problem: since #43 the device still uploads, but it never pulls again. A damaged batch file on the server never heals, and a newer peer's new mode or category blocks every later event from every device until this device updates; the status stays red.

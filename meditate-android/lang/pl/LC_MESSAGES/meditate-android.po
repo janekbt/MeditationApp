@@ -415,9 +415,6 @@ msgstr "Rodzaj"
 msgid "LAST 13 WEEKS"
 msgstr "OSTATNIE 13 TYGODNI"
 
-msgid "Last sync failed, tap to retry\n{}"
-msgstr "Ostatnia synchronizacja nie powiodła się, dotknij, aby ponowić\n{}"
-
 msgid "MINUTES / DAY"
 msgstr "MINUTY / DZIEŃ"
 
@@ -1036,9 +1033,6 @@ msgstr "Z tego pliku nie można nic zaimportować."
 msgid "Over 100 MB, too large to sync"
 msgstr "Ponad 100 MB: nie do synchronizacji"
 
-msgid "Some files weren't uploaded, tap to retry\n{}"
-msgstr "Niektóre pliki nie zostały przesłane, dotknij, aby ponowić\n{}"
-
 msgid "{}: too large to sync"
 msgstr "{}: za duży do synchronizacji"
 
@@ -1050,9 +1044,6 @@ msgstr "{}: serwer jest pełny"
 
 msgid "{0}: refused by the server ({1})"
 msgstr "{0}: odrzucony przez serwer ({1})"
-
-msgid "No password saved, tap to enter it"
-msgstr "Nie zapisano hasła, dotknij, aby je wpisać"
 
 msgid "Local folder"
 msgstr "Folder lokalny"
@@ -1246,3 +1237,33 @@ msgstr "Bluetooth"
 
 msgid "Saved as a new bell, your presets keep the old one"
 msgstr "Zapisano jako nowy dzwonek, Twoje szablony zachowują stary"
+
+msgid "Last sync failed"
+msgstr "Ostatnia synchronizacja nie powiodła się"
+
+msgid "Some files weren't uploaded"
+msgstr "Niektóre pliki nie zostały wysłane"
+
+msgid "No password saved"
+msgstr "Nie zapisano hasła"
+
+msgid "Enter Password"
+msgstr "Wpisz hasło"
+
+msgid "Sync Now"
+msgstr "Synchronizuj teraz"
+
+msgid "The server's reply can't be read"
+msgstr "Nie można odczytać odpowiedzi serwera"
+
+msgid "Local database error"
+msgstr "Błąd lokalnej bazy danych"
+
+msgid "The password couldn't be read"
+msgstr "Nie udało się odczytać hasła"
+
+msgid "Server error ({})"
+msgstr "Błąd serwera ({})"
+
+msgid "The server redirected the address"
+msgstr "Serwer przekierował adres"

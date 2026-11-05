@@ -8,7 +8,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::{settings, HttpWebDav, Sync, SyncError, SyncStats, WebDav, REMOTE_BASE_PATH};
+use super::indicator::SyncFailureKey;
+use super::{settings, HttpWebDav, Sync, SyncError, SyncStats, WebDav, WebDavError, REMOTE_BASE_PATH};
 use crate::db::{Database, DbError};
 
 #[derive(Debug)]
@@ -125,16 +126,41 @@ fn record_outcome(db: &Database, result: &Result<SyncStats, RunError>) -> Result
         Err(RunError::Sync(e @ SyncError::RemoteDataLost)) => {
             settings::record_remote_data_lost(db, &e.to_string())?
         }
-        Err(e) => settings::record_sync_error(db, &e.to_string())?,
+        Err(e) => settings::record_sync_error(db, &e.to_string(), failure_key(e))?,
     }
     Ok(())
+}
+
+/// The reason the status names for a failed attempt.
+fn failure_key(e: &RunError) -> Option<SyncFailureKey> {
+    use WebDavError as W;
+    Some(match e {
+        RunError::OpenDb(_) | RunError::Unconfigured | RunError::PasswordMissing => return None,
+        RunError::Keyring(_) => SyncFailureKey::Keyring,
+        RunError::Db(_) | RunError::Sync(SyncError::Db(_)) => SyncFailureKey::LocalDatabase,
+        RunError::Sync(SyncError::RemoteDataLost) => return None,
+        RunError::Sync(SyncError::InvalidEvent(_)) => SyncFailureKey::UnreadableReply,
+        RunError::Sync(SyncError::WebDav(w)) => match w {
+            W::Network(_) => SyncFailureKey::Network,
+            W::Unauthorized => SyncFailureKey::Unauthorized,
+            // A missing folder lists as empty; this is a file's 404.
+            W::NotFound => SyncFailureKey::Server(Some(404)),
+            // 405, 409 and 412 share it.
+            W::Conflict => SyncFailureKey::Server(None),
+            W::RateLimited { .. } => SyncFailureKey::Server(Some(429)),
+            W::Server { status, .. } => SyncFailureKey::Server(Some(*status)),
+            W::Redirected => SyncFailureKey::Redirected,
+            W::MalformedResponse { .. } | W::ResponseTooLarge { .. } => SyncFailureKey::UnreadableReply,
+        },
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::indicator::{state_from_db, SyncIndicatorState};
+    use crate::sync::indicator::{state_from_db, status_buttons, StatusButton, SyncIndicatorState};
     use crate::sync::settings::{self, KEY_LAST_SYNC_UNIX_TS};
+    use crate::sync::fake::AlwaysErrs;
     use crate::sync::FakeWebDav;
 
     fn configured_db() -> Database {
@@ -167,10 +193,10 @@ mod tests {
         let db = configured_db();
         let server = FakeWebDav::new();
         assert!(matches!(run(&db, Err("keychain: locked".into()), &server), Err(RunError::Keyring(_))));
-        match state_from_db(&db, false) {
-            SyncIndicatorState::Error { detail, data_lost: false } => assert!(detail.contains("keychain: locked")),
-            other => panic!("expected a retryable error, got {other:?}"),
-        }
+        assert_eq!(
+            state_from_db(&db, false),
+            SyncIndicatorState::Error { reason: Some(SyncFailureKey::Keyring), data_lost: false },
+        );
     }
 
     #[test]
@@ -185,7 +211,7 @@ mod tests {
     #[test]
     fn a_pass_uploads_and_records_its_time() {
         let db = configured_db();
-        settings::record_sync_error(&db, "401 Unauthorized").unwrap();
+        settings::record_sync_error(&db, "401 Unauthorized", None).unwrap();
         let server = FakeWebDav::new();
         let stats = run(&db, Ok(Some("pw".into())), &server).unwrap();
         assert_eq!(stats.pushed, 1);
@@ -193,29 +219,65 @@ mod tests {
         assert!(matches!(state_from_db(&db, false), SyncIndicatorState::OkWithTs(ts) if ts > 1_700_000_000));
     }
 
+    fn run_broken(db: &Database, error: WebDavError) -> Result<SyncStats, RunError> {
+        let dir = tempfile::tempdir().unwrap();
+        run_with(db, dir.path().join("s"), dir.path().join("g"), |_, _| Ok(Some("pw".into())), |_, _, _| AlwaysErrs(error))
+    }
+
     #[test]
     fn a_failed_pass_records_why_and_keeps_the_last_success() {
-        struct Broken;
-        impl WebDav for Broken {
-            fn list_collection(&self, _: &str) -> crate::sync::WebDavResult<Vec<String>> {
-                Err(crate::sync::WebDavError::Server { status: 500, body: "boom".into() })
-            }
-            fn get(&self, _: &str, _: u64) -> crate::sync::WebDavResult<Vec<u8>> { unreachable!() }
-            fn put(&self, _: &str, _: &[u8]) -> crate::sync::WebDavResult<()> { unreachable!() }
-            fn mkcol(&self, _: &str) -> crate::sync::WebDavResult<()> { unreachable!() }
-            fn delete(&self, _: &str) -> crate::sync::WebDavResult<()> { unreachable!() }
-            fn move_to(&self, _: &str, _: &str) -> crate::sync::WebDavResult<()> { unreachable!() }
-        }
         let db = configured_db();
         settings::record_successful_sync(&db, 1_700_000_000).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let result = run_with(&db, dir.path().join("s"), dir.path().join("g"), |_, _| Ok(Some("pw".into())), |_, _, _| Broken);
+        let result = run_broken(&db, WebDavError::Server { status: 500, body: "boom".into() });
         assert!(matches!(result, Err(RunError::Sync(_))));
-        match state_from_db(&db, false) {
-            SyncIndicatorState::Error { detail, data_lost: false } => assert!(detail.contains("500"), "{detail}"),
-            other => panic!("expected an error, got {other:?}"),
-        }
+        assert_eq!(
+            state_from_db(&db, false),
+            SyncIndicatorState::Error { reason: Some(SyncFailureKey::Server(Some(500))), data_lost: false },
+        );
         assert_eq!(db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(), "1700000000");
+    }
+
+    /// The status showed the English transport text, unreadable on a
+    /// phone set to another language.
+    #[test]
+    fn a_network_failure_records_its_reason() {
+        let db = configured_db();
+        settings::record_successful_sync(&db, 1_700_000_000).unwrap();
+        assert!(run_broken(&db, WebDavError::Network("dns failed".into())).is_err());
+        let state = state_from_db(&db, false);
+        assert_eq!(state, SyncIndicatorState::Error { reason: Some(SyncFailureKey::Network), data_lost: false });
+        assert_eq!(status_buttons(&state), [StatusButton::Preferences, StatusButton::SyncNow]);
+        assert_eq!(db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(), "1700000000");
+    }
+
+    #[test]
+    fn each_failure_records_its_reason() {
+        use SyncFailureKey as K;
+        let web = |e: WebDavError| RunError::Sync(SyncError::WebDav(e));
+        let cases: Vec<(RunError, SyncFailureKey)> = vec![
+            (web(WebDavError::Server { status: 503, body: "<html>".into() }), K::Server(Some(503))),
+            (web(WebDavError::Conflict), K::Server(None)),
+            (web(WebDavError::RateLimited { retry_after: Some(5) }), K::Server(Some(429))),
+            (web(WebDavError::Redirected), K::Redirected),
+            (web(WebDavError::ResponseTooLarge { limit: 10 }), K::UnreadableReply),
+            (web(WebDavError::MalformedResponse { detail: "not xml".into() }), K::UnreadableReply),
+            (RunError::Sync(SyncError::InvalidEvent("batch.json: eof".into())), K::UnreadableReply),
+            (web(WebDavError::Unauthorized), K::Unauthorized),
+            (web(WebDavError::NotFound), K::Server(Some(404))),
+            (RunError::Sync(SyncError::Db(DbError::Decode("x".into()))), K::LocalDatabase),
+            (RunError::Db(DbError::Decode("x".into())), K::LocalDatabase),
+            (RunError::Keyring("locked".into()), K::Keyring),
+        ];
+        for (error, expected) in cases {
+            let db = configured_db();
+            let text = error.to_string();
+            record_outcome(&db, &Err(error)).unwrap();
+            assert_eq!(
+                state_from_db(&db, false),
+                SyncIndicatorState::Error { reason: Some(expected), data_lost: false },
+                "{text}",
+            );
+        }
     }
 
     #[test]

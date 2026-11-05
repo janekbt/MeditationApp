@@ -166,6 +166,60 @@ template $MeditateWindow : Adw.ApplicationWindow {
   };
 }
 
+// The sync status: parented to sync_status_btn in code, so a tap after
+// a wiped server can open the recovery dialog instead.
+Popover sync_status_popover {
+  child: Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-top: 6;
+    margin-bottom: 6;
+    margin-start: 6;
+    margin-end: 6;
+
+    Label sync_status_title {
+      wrap: true;
+      max-width-chars: 32;
+      xalign: 0;
+      styles ["heading"]
+    }
+
+    // A full server can refuse many files: the list scrolls.
+    ScrolledWindow sync_status_scroll {
+      hscrollbar-policy: never;
+      propagate-natural-height: true;
+      propagate-natural-width: true;
+      max-content-height: 240;
+
+      child: Label sync_status_body {
+        wrap: true;
+        max-width-chars: 32;
+        xalign: 0;
+        valign: start;
+      };
+    }
+
+    Box {
+      spacing: 6;
+      halign: end;
+
+      Button sync_status_prefs_btn {
+        label: _("Preferences");
+      }
+
+      Button sync_status_sync_btn {
+        label: _("Sync Now");
+        styles ["suggested-action"]
+      }
+
+      Button sync_status_password_btn {
+        label: _("Enter Password");
+        styles ["suggested-action"]
+      }
+    }
+  };
+}
+
 menu primary_menu {
   section {
     item {

@@ -1,15 +1,8 @@
-//! Headerbar sync-status indicator: state derivation + click-action
-//! dispatch. The visual rendering (icon, CSS class, tooltip) stays
-//! shell-side; this module owns the rule for which state applies
-//! given the persisted sync facts and whether a sync is in flight,
-//! plus the rule for which action a tap on the indicator should
-//! trigger.
-//!
-//! The gtk shell currently runs the rules in two places —
-//! `wire_sync_status`'s click handler reads `last_error` +
-//! `is_data_lost` to pick its action, and `refresh_sync_status`
-//! reads `account` + `last_ts` + `last_error` + `is_syncing` to
-//! decide the visual. Both want the same source of truth.
+//! Headerbar sync-status indicator: state derivation, the action a
+//! tap triggers and the status panel's buttons. The visual rendering
+//! (icon, CSS class, the panel's text) stays shell-side; this module
+//! owns the rules, from the persisted sync facts and whether a sync
+//! is in flight, so both apps behave alike.
 
 /// What the headerbar sync-status indicator should display right
 /// now. The shell maps each variant to its icon / css class /
@@ -23,12 +16,13 @@ pub enum SyncIndicatorState {
     Hidden,
     /// A sync is currently running. Show the animated spinner.
     Syncing,
-    /// Last sync attempt failed. `detail` is the error message the
-    /// tooltip surfaces; `data_lost` is true when the orchestrator
-    /// reported the remote-data-lost variant (i.e. the WebDAV root
-    /// is missing the events tree we expect).
+    /// Last sync attempt failed. `reason` is what the status names,
+    /// `None` for an error stored before reasons existed; `data_lost`
+    /// is true when the orchestrator reported the remote-data-lost
+    /// variant (i.e. the WebDAV root is missing the events tree we
+    /// expect).
     Error {
-        detail: String,
+        reason: Option<SyncFailureKey>,
         data_lost: bool,
     },
     /// At least one sync succeeded. `ts` is the Unix timestamp of
@@ -52,23 +46,42 @@ pub struct NotUploaded {
     pub reason: crate::sync::settings::UploadRefusal,
 }
 
-/// What a tap on the sync-status button should trigger given the
-/// indicator's current state. The shell routes each variant to its
-/// own UI path: `OpenRecovery` pushes the recovery dialog,
-/// `RetrySync` calls `app.trigger_sync()`, and `OpenPrefsData`
-/// opens preferences on the Data page.
+/// Why the last sync failed, as the status names it. Each app
+/// translates it; the English detail stays in the diagnostics log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SyncFailureKey {
+    Network,
+    Unauthorized,
+    /// The server's HTTP status, `None` where several share one error.
+    Server(Option<u16>),
+    /// A redirect: usually a wrong address or http for https.
+    Redirected,
+    UnreadableReply,
+    LocalDatabase,
+    Keyring,
+}
+
+/// What a tap on the sync-status button does: the recovery dialog
+/// after a wiped server, else the status panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncIndicatorAction {
     /// Remote-data-lost variant — the WebDAV root was wiped. Send
     /// the user to the recovery dialog where they can pick push-
     /// local or wipe-local-and-pull.
     OpenRecovery,
-    /// Generic sync failure — let the user retry. Often resolves
-    /// transient network errors without dialog ceremony.
-    RetrySync,
-    /// All other states — the click is informational; opening
-    /// preferences lets the user check / change settings.
-    OpenPrefsData,
+    /// Show the status panel with `status_buttons`.
+    ShowStatus,
+}
+
+/// A button on the status panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusButton {
+    /// Preferences on the sync page.
+    Preferences,
+    /// Clear the refused uploads and start a sync.
+    SyncNow,
+    /// Preferences on the sync page, to enter the password.
+    EnterPassword,
 }
 
 /// Resolve the indicator state from the inputs the shell already
@@ -91,9 +104,9 @@ pub fn derive(
     if is_syncing {
         return SyncIndicatorState::Syncing;
     }
-    if let Some(detail) = last_error {
+    if last_error.is_some() {
         return SyncIndicatorState::Error {
-            detail,
+            reason: None,
             data_lost: is_data_lost,
         };
     }
@@ -123,10 +136,12 @@ pub fn state_from_db(
     let last_error = settings::get_last_sync_error(db).unwrap_or(None);
     let is_data_lost = settings::is_last_sync_remote_data_lost(db).unwrap_or(false);
     let state = derive(has_account, is_syncing, last_ts, last_error, is_data_lost);
-    if matches!(state, SyncIndicatorState::Error { .. })
-        && settings::is_last_sync_password_missing(db).unwrap_or(false)
-    {
-        return SyncIndicatorState::NeedsPassword;
+    if let SyncIndicatorState::Error { data_lost, .. } = state {
+        if settings::is_last_sync_password_missing(db).unwrap_or(false) {
+            return SyncIndicatorState::NeedsPassword;
+        }
+        let reason = settings::last_sync_failure_key(db).unwrap_or(None);
+        return SyncIndicatorState::Error { reason, data_lost };
     }
     if matches!(state, SyncIndicatorState::OkWithTs(_) | SyncIndicatorState::OkNoTs) {
         let not_uploaded = not_uploaded(db);
@@ -155,12 +170,26 @@ fn not_uploaded(db: &crate::db::Database) -> Vec<NotUploaded> {
 }
 
 /// Click-action dispatch. Errors with the data-lost flag route to
-/// recovery; plain errors retry; everything else opens prefs.
+/// recovery; everything else shows the status.
 pub fn action_for(state: &SyncIndicatorState) -> SyncIndicatorAction {
     match state {
         SyncIndicatorState::Error { data_lost: true, .. } => SyncIndicatorAction::OpenRecovery,
-        SyncIndicatorState::Error { .. } | SyncIndicatorState::NotUploaded(_) => SyncIndicatorAction::RetrySync,
-        _ => SyncIndicatorAction::OpenPrefsData,
+        _ => SyncIndicatorAction::ShowStatus,
+    }
+}
+
+/// The status panel's buttons. Empty where no panel shows (no account,
+/// a wiped server): an open panel closes.
+pub fn status_buttons(state: &SyncIndicatorState) -> &'static [StatusButton] {
+    use StatusButton::*;
+    match state {
+        SyncIndicatorState::Hidden | SyncIndicatorState::Error { data_lost: true, .. } => &[],
+        SyncIndicatorState::Syncing => &[Preferences],
+        SyncIndicatorState::NeedsPassword => &[EnterPassword],
+        SyncIndicatorState::Error { .. }
+        | SyncIndicatorState::NotUploaded(_)
+        | SyncIndicatorState::OkWithTs(_)
+        | SyncIndicatorState::OkNoTs => &[Preferences, SyncNow],
     }
 }
 
@@ -191,23 +220,71 @@ mod tests {
             state,
             SyncIndicatorState::NotUploaded(vec![NotUploaded { name: "Body scan".into(), reason: UploadRefusal::ServerFull }]),
         );
-        assert_eq!(action_for(&state), SyncIndicatorAction::RetrySync);
+        assert_eq!(action_for(&state), SyncIndicatorAction::ShowStatus);
+        assert_eq!(status_buttons(&state), [StatusButton::Preferences, StatusButton::SyncNow]);
         settings::clear_refused_uploads(&db).unwrap();
         assert_eq!(state_from_db(&db, false), SyncIndicatorState::OkNoTs);
     }
 
     /// A sync that never started for want of a password showed as
-    /// healthy; and "retry" can't help there, so a tap opens the settings.
+    /// healthy; and "retry" can't help there, so only the settings.
     #[test]
-    fn a_missing_password_shows_and_opens_the_sync_settings() {
+    fn a_missing_password_offers_only_enter_password() {
         use crate::sync::settings;
         let db = crate::db::Database::open_in_memory().unwrap();
         settings::set_nextcloud_account(&db, "https://cloud.example", "me").unwrap();
         settings::record_password_missing(&db).unwrap();
         let state = state_from_db(&db, false);
         assert_eq!(state, SyncIndicatorState::NeedsPassword);
-        assert_eq!(action_for(&state), SyncIndicatorAction::OpenPrefsData);
+        assert_eq!(action_for(&state), SyncIndicatorAction::ShowStatus);
+        assert_eq!(status_buttons(&state), [StatusButton::EnterPassword]);
         assert_eq!(state_from_db(&db, true), SyncIndicatorState::Syncing);
+    }
+
+    #[test]
+    fn a_good_sync_offers_preferences_and_sync_now() {
+        use crate::sync::settings;
+        let db = crate::db::Database::open_in_memory().unwrap();
+        settings::set_nextcloud_account(&db, "https://cloud.example", "me").unwrap();
+        let s = state_from_db(&db, false);
+        assert_eq!(s, SyncIndicatorState::OkNoTs);
+        assert_eq!(status_buttons(&s), [StatusButton::Preferences, StatusButton::SyncNow]);
+        settings::record_successful_sync(&db, 1_700_000_000).unwrap();
+        let s = state_from_db(&db, false);
+        // The time the status turns into "Synced N ago".
+        assert_eq!(s, SyncIndicatorState::OkWithTs(1_700_000_000));
+        assert_eq!(action_for(&s), SyncIndicatorAction::ShowStatus);
+        assert_eq!(status_buttons(&s), [StatusButton::Preferences, StatusButton::SyncNow]);
+    }
+
+    #[test]
+    fn a_running_sync_offers_no_second_sync() {
+        let s = SyncIndicatorState::Syncing;
+        assert_eq!(action_for(&s), SyncIndicatorAction::ShowStatus);
+        assert_eq!(status_buttons(&s), [StatusButton::Preferences]);
+    }
+
+    /// 26.11.0 stored only the English text; a tag this build doesn't
+    /// know reads the same way.
+    #[test]
+    fn an_error_from_before_reasons_shows_no_reason() {
+        use crate::sync::settings::{self, KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_ERROR_KIND};
+        let db = crate::db::Database::open_in_memory().unwrap();
+        settings::set_nextcloud_account(&db, "https://cloud.example", "me").unwrap();
+        db.set_sync_state(KEY_LAST_SYNC_ERROR, "sync: webdav: network error: dns").unwrap();
+        for kind in ["", "server:", "server:abc", "from_a_newer_build"] {
+            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, kind).unwrap();
+            assert_eq!(
+                state_from_db(&db, false),
+                SyncIndicatorState::Error { reason: None, data_lost: false },
+                "{kind}",
+            );
+        }
+        settings::record_sync_error(&db, "dns", Some(SyncFailureKey::Network)).unwrap();
+        assert_eq!(
+            state_from_db(&db, false),
+            SyncIndicatorState::Error { reason: Some(SyncFailureKey::Network), data_lost: false },
+        );
     }
 
     #[test]
@@ -232,7 +309,7 @@ mod tests {
         let s = derive(true, false, Some(100), Some("fail".into()), true);
         assert_eq!(
             s,
-            SyncIndicatorState::Error { detail: "fail".into(), data_lost: true },
+            SyncIndicatorState::Error { reason: None, data_lost: true },
         );
     }
 
@@ -241,7 +318,7 @@ mod tests {
         let s = derive(true, false, Some(100), Some("fail".into()), false);
         assert_eq!(
             s,
-            SyncIndicatorState::Error { detail: "fail".into(), data_lost: false },
+            SyncIndicatorState::Error { reason: None, data_lost: false },
         );
     }
 
@@ -259,25 +336,10 @@ mod tests {
 
     #[test]
     fn action_for_data_lost_error_opens_recovery() {
-        let s = SyncIndicatorState::Error { detail: "x".into(), data_lost: true };
+        let s = SyncIndicatorState::Error { reason: None, data_lost: true };
         assert_eq!(action_for(&s), SyncIndicatorAction::OpenRecovery);
-    }
-
-    #[test]
-    fn action_for_other_error_retries() {
-        let s = SyncIndicatorState::Error { detail: "x".into(), data_lost: false };
-        assert_eq!(action_for(&s), SyncIndicatorAction::RetrySync);
-    }
-
-    #[test]
-    fn action_for_non_error_states_opens_prefs() {
-        for s in [
-            SyncIndicatorState::Hidden,
-            SyncIndicatorState::Syncing,
-            SyncIndicatorState::OkWithTs(0),
-            SyncIndicatorState::OkNoTs,
-        ] {
-            assert_eq!(action_for(&s), SyncIndicatorAction::OpenPrefsData);
-        }
+        // No panel for it: an open one closes.
+        assert!(status_buttons(&s).is_empty());
+        assert!(status_buttons(&SyncIndicatorState::Hidden).is_empty());
     }
 }
