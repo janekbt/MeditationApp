@@ -1237,3 +1237,26 @@ msgstr "Serverfout ({})"
 
 msgid "The server redirected the address"
 msgstr "De server heeft het adres omgeleid"
+
+msgid "{n} min left"
+msgid_plural "{n} min left"
+msgstr[0] "Nog {n} min"
+msgstr[1] "Nog {n} min"
+
+msgid "Paused, {n} min left"
+msgid_plural "Paused, {n} min left"
+msgstr[0] "Gepauzeerd, nog {n} min"
+msgstr[1] "Gepauzeerd, nog {n} min"
+
+msgid "Paused, {n} min"
+msgid_plural "Paused, {n} min"
+msgstr[0] "Gepauzeerd, {n} min"
+msgstr[1] "Gepauzeerd, {n} min"
+
+msgid "Overtime +{n} min"
+msgid_plural "Overtime +{n} min"
+msgstr[0] "Extra tijd +{n} min"
+msgstr[1] "Extra tijd +{n} min"
+
+msgid "Preparation"
+msgstr "Voorbereiding"

@@ -247,6 +247,12 @@ class MeditateSessionService : Service() {
     private var started = false
     private var buttons: List<Pair<Int, String>> = emptyList()
     private var accent: Int? = null
+    // The header's title and line (the session's time), its bar, and
+    // the lotus art drawn once per accent.
+    private var title: String? = null
+    private var line: String? = null
+    private var total = 0L
+    private var art: Bitmap? = null
     // Held in a field: a collected lock is released early.
     private var tapWakeLock: PowerManager.WakeLock? = null
 
@@ -337,38 +343,70 @@ class MeditateSessionService : Service() {
     }
 
     // Android 13+ draws the media control from the playback state's
-    // custom actions and colours it from the artwork; older versions
-    // use the notification's actions (buildNotification).
+    // custom actions, the metadata (title, line, length, art) and the
+    // playback position; older versions use the notification's text
+    // and actions (buildNotification). The payload is the accent's
+    // ARGB, the header (app.rs media_header), then the buttons.
     private fun showButtons(payload: String) {
         val lines = payload.split("\n")
         val newAccent = lines.first().toLongOrNull()?.toInt()
-        buttons = lines.drop(1).mapNotNull { line ->
+        val header = lines.getOrNull(1)?.split("\t")
+        val newButtons = lines.drop(2).mapNotNull { line ->
             val (code, label) = line.split("\t", limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
             code.toIntOrNull()?.let { it to label }
         }
         val session = mediaSession ?: return
+        val newBar = header?.getOrNull(3).orEmpty()
+        // Rust sends only a changed payload, and the bar's start is
+        // exact (app.rs media_header), so a resent bar doesn't jump.
+        buttons = newButtons
+        session.setPlaybackState(playbackState(newBar))
+        if (newAccent != null && newAccent != accent) {
+            accent = newAccent
+            art = lotusArt(newAccent)
+        }
+        if (header != null) {
+            title = header.getOrNull(0)
+            line = header.getOrNull(1)
+            total = header.getOrNull(2)?.toLongOrNull() ?: 0L
+        }
+        session.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, title ?: getString(R.string.app_name))
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, line ?: getString(R.string.notification_session_running))
+                // No length, no bar: a session without an end.
+                .apply { if (total > 0) putLong(MediaMetadata.METADATA_KEY_DURATION, total * 1000) }
+                .apply { art?.let { putBitmap(MediaMetadata.METADATA_KEY_ART, it) } }
+                .build(),
+        )
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+    }
+
+    // A moving bar plays from its start on the boot clock, which is
+    // elapsedRealtime's clock; a standing one plays at speed 0 where it
+    // stands. Always PLAYING: SystemUI drops a paused session's control
+    // after 10 minutes, and a long pause or overtime still needs it.
+    // No seek action: the bar can't be dragged.
+    private fun playbackState(bar: String): PlaybackState {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val start = bar.toLongOrNull()
+        val stand = bar.removePrefix("p").takeIf { bar.startsWith("p") }?.toLongOrNull()
         val state = PlaybackState.Builder().setState(
             PlaybackState.STATE_PLAYING,
-            PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-            1.0f,
+            when {
+                start != null -> (now - start).coerceAtLeast(0)
+                stand != null -> stand
+                else -> PlaybackState.PLAYBACK_POSITION_UNKNOWN
+            },
+            if (start != null) 1.0f else 0.0f,
+            now,
         )
         for ((code, label) in buttons) {
             state.addCustomAction(
                 PlaybackState.CustomAction.Builder(code.toString(), label, buttonIcon(code)).build(),
             )
         }
-        session.setPlaybackState(state.build())
-        if (newAccent != null && newAccent != accent) {
-            accent = newAccent
-            session.setMetadata(
-                MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, getString(R.string.app_name))
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, getString(R.string.notification_session_running))
-                    .putBitmap(MediaMetadata.METADATA_KEY_ART, lotusArt(newAccent))
-                    .build(),
-            )
-        }
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        return state.build()
     }
 
     private fun buttonIcon(code: Int): Int = when (code) {
@@ -382,13 +420,18 @@ class MeditateSessionService : Service() {
 
     // The app icon's white lotus on the accent colour. Large on
     // purpose: MediaSession scales it down to what the system shows.
+    // Drawn once per accent, since the metadata is resent with every line.
     private fun lotusArt(color: Int): Bitmap {
         val size = 1024
         val art = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(art)
         canvas.drawColor(color)
-        getDrawable(R.drawable.ic_launcher_foreground)?.apply {
-            setBounds(0, 0, size, size)
+        // A little smaller and paler than the icon, still in the middle,
+        // so the title and line over it stay readable.
+        getDrawable(R.drawable.ic_launcher_foreground)?.mutate()?.apply {
+            val inset = size / 8
+            setBounds(inset, inset, size - inset, size - inset)
+            alpha = 150
             draw(canvas)
         }
         return art
@@ -519,8 +562,8 @@ class MeditateSessionService : Service() {
             )
         }
         return builder
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.notification_session_running))
+            .setContentTitle(title ?: getString(R.string.app_name))
+            .setContentText(line ?: getString(R.string.notification_session_running))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)

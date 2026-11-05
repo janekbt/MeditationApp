@@ -313,14 +313,19 @@ thread_local! {
     static MEDIA_SENT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
-/// Hand the session's buttons, their labels and the accent to the
-/// media control: the accent's ARGB, then one "code<TAB>label" line
-/// per button.
+/// Hand the session's title, time, bar, buttons, their labels and the
+/// accent to the media control: the accent's ARGB, the header
+/// (`app::media_header`), then one "code<TAB>label" line per button.
 fn send_media_buttons(app: &slint::android::AndroidApp, ui: &MainWindow, state: &AppState) {
-    if !state.is_active() {
+    let now = now_since_epoch();
+    let Some(status) = state.media_status(now) else {
         return;
-    }
+    };
     let mut payload = ui.global::<MaterialPalette>().get_schemes().light.primary.as_argb_encoded().to_string();
+    let guided_name = session_guided_name();
+    let title = meditate_core::session::media_title(guided_name.as_deref());
+    payload += "\n";
+    payload += &app::media_header(title, &media_line_text(ui, status), status, now);
     for code in app::media_buttons(state, ui.get_note_text().is_empty()) {
         let label = ui.global::<Tr>().invoke_end_button(code, ui.get_overtime_add_label());
         payload += &format!("\n{code}\t{label}");
@@ -328,6 +333,22 @@ fn send_media_buttons(app: &slint::android::AndroidApp, ui: &MainWindow, state: 
     if MEDIA_SENT.replace(payload.clone()) != payload {
         service::show_buttons(app, &payload);
     }
+}
+
+/// The media control's line in the app's language, in whole minutes.
+fn media_line_text(ui: &MainWindow, status: meditate_core::session::MediaStatus) -> String {
+    use meditate_core::session::MediaLine as L;
+    let tr = ui.global::<Tr>();
+    let n = i32::try_from(app::media_minutes(status.line)).unwrap_or(i32::MAX);
+    match status.line {
+        L::Left(_) if status.standing => tr.invoke_media_paused_left(n),
+        L::Left(_) => tr.invoke_media_left(n),
+        L::SoFar(_) if status.standing => tr.invoke_media_paused(n),
+        L::SoFar(_) => tr.invoke_n_min(n),
+        L::Preparing(_) => tr.invoke_media_preparing(),
+        L::Overtime(_) => tr.invoke_media_overtime(n),
+    }
+    .into()
 }
 
 /// Guided audio follows the session across a pause or resume: the

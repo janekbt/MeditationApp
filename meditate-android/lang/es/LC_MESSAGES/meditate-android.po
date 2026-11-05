@@ -1237,3 +1237,26 @@ msgstr "Error del servidor ({})"
 
 msgid "The server redirected the address"
 msgstr "El servidor redirigió la dirección"
+
+msgid "{n} min left"
+msgid_plural "{n} min left"
+msgstr[0] "Queda {n} min"
+msgstr[1] "Quedan {n} min"
+
+msgid "Paused, {n} min left"
+msgid_plural "Paused, {n} min left"
+msgstr[0] "En pausa, queda {n} min"
+msgstr[1] "En pausa, quedan {n} min"
+
+msgid "Paused, {n} min"
+msgid_plural "Paused, {n} min"
+msgstr[0] "En pausa, {n} min"
+msgstr[1] "En pausa, {n} min"
+
+msgid "Overtime +{n} min"
+msgid_plural "Overtime +{n} min"
+msgstr[0] "Tiempo extra +{n} min"
+msgstr[1] "Tiempo extra +{n} min"
+
+msgid "Preparation"
+msgstr "Preparación"

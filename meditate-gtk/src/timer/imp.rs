@@ -333,6 +333,10 @@ pub struct TimerView {
     /// `Some` between start_session and on_stop / finish_overtime /
     /// add_overtime_and_finish; `None` while idle.
     core_session: RefCell<Option<CoreSession>>,
+    /// The session as a media player in the shell; `None` without one.
+    media_player: RefCell<Option<crate::mpris::Player>>,
+    /// The player couldn't be registered: no retry until the next session.
+    media_failed: Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -2309,6 +2313,8 @@ impl TimerView {
         // blank screen doesn't stop the session; Box Breath's
         // DrawingArea frame callback only draws.
         self.start_tick();
+        self.media_failed.set(false);
+        self.refresh_media();
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
@@ -2335,6 +2341,7 @@ impl TimerView {
             self.acquire_screen_awake_lock(&app);
         }
         self.refresh_end_buttons();
+        self.refresh_media();
         // Refresh the hero label NOW instead of waiting up to ~1s for
         // the first post-resume tick. The cores' elapsed reading is
         // correct the moment resumed_at fires — without this push,
@@ -2379,6 +2386,7 @@ impl TimerView {
         }
 
         self.refresh_end_buttons();
+        self.refresh_media();
 
         self.show_paused_ui(self.current_display_secs());
         self.obj().emit_by_name::<()>("timer-paused", &[]);
@@ -2410,6 +2418,43 @@ impl TimerView {
             self.write_in_progress_snapshot(secs.try_into().unwrap_or(u32::MAX));
         }
         self.refresh_end_buttons();
+        self.refresh_media();
+    }
+
+    /// Show the session in the shell's media controls, or take it
+    /// off once there is no live session.
+    fn refresh_media(&self) {
+        // A failed registration leaves no player to update or drop.
+        if self.media_failed.get() {
+            return;
+        }
+        let now = self.elapsed_since_start();
+        let guided = self.guided_file_name(self.tick_mode.get() == TimerMode::Guided);
+        let shown = self.core_session.borrow().as_ref().and_then(|s| crate::mpris::shown(s, now, guided.as_deref()));
+        let Some(shown) = shown else {
+            self.media_player.take();
+            return;
+        };
+        if let Some(player) = self.media_player.borrow().as_ref() {
+            player.update(shown);
+            return;
+        }
+        let Some(conn) = self.get_app().and_then(|app| app.dbus_connection()) else { return; };
+        let weak = self.obj().downgrade();
+        let toggle = move || {
+            if let Some(obj) = weak.upgrade() {
+                obj.imp().toggle_playback();
+            }
+        };
+        let weak = self.obj().downgrade();
+        let raise = move || {
+            if let Some(win) = weak.upgrade().and_then(|o| o.root()).and_downcast::<gtk::Window>() {
+                win.present();
+            }
+        };
+        let player = crate::mpris::Player::start(&conn, shown, toggle, raise);
+        self.media_failed.set(player.is_none());
+        *self.media_player.borrow_mut() = player;
     }
 
     /// Set the running page's buttons and note from core's button set.
@@ -2716,6 +2761,7 @@ impl TimerView {
         // mode-specific gtk-side artefact left that still needs
         // explicit teardown.
         *self.core_session.borrow_mut() = None;
+        self.media_player.take();
         match mode {
             TimerMode::Timer => {}
             TimerMode::Breathing => {}
@@ -2880,13 +2926,15 @@ impl TimerView {
             interval,
             move || {
                 let imp = obj.imp();
-                match imp.ui_state() {
+                let flow = match imp.ui_state() {
                     UiState::Preparing => imp.tick_prep(&obj),
                     UiState::Running if breathing => imp.tick_breathing(),
                     UiState::Running => imp.tick_running(&obj),
                     UiState::Overtime => imp.tick_overtime(&obj),
                     _ => glib::ControlFlow::Break,
-                }
+                };
+                imp.refresh_media();
+                flow
             },
         );
         *self.tick_source.borrow_mut() = Some(source_id);

@@ -15,6 +15,7 @@ src/local_folder.rs
 src/log/imp.rs
 src/log/mod.rs
 src/main.rs
+src/mpris.rs
 src/preferences.rs
 src/preset_subtitle.rs
 src/presets.rs

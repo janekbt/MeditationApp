@@ -1267,3 +1267,30 @@ msgstr "Błąd serwera ({})"
 
 msgid "The server redirected the address"
 msgstr "Serwer przekierował adres"
+
+msgid "{n} min left"
+msgid_plural "{n} min left"
+msgstr[0] "Pozostało {n} min"
+msgstr[1] "Pozostało {n} min"
+msgstr[2] "Pozostało {n} min"
+
+msgid "Paused, {n} min left"
+msgid_plural "Paused, {n} min left"
+msgstr[0] "Wstrzymano, pozostało {n} min"
+msgstr[1] "Wstrzymano, pozostało {n} min"
+msgstr[2] "Wstrzymano, pozostało {n} min"
+
+msgid "Paused, {n} min"
+msgid_plural "Paused, {n} min"
+msgstr[0] "Wstrzymano, {n} min"
+msgstr[1] "Wstrzymano, {n} min"
+msgstr[2] "Wstrzymano, {n} min"
+
+msgid "Overtime +{n} min"
+msgid_plural "Overtime +{n} min"
+msgstr[0] "Dodatkowy czas +{n} min"
+msgstr[1] "Dodatkowy czas +{n} min"
+msgstr[2] "Dodatkowy czas +{n} min"
+
+msgid "Preparation"
+msgstr "Przygotowanie"

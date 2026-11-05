@@ -1207,3 +1207,22 @@ msgstr "服务器错误（{}）"
 
 msgid "The server redirected the address"
 msgstr "服务器重定向了该地址"
+
+msgid "{n} min left"
+msgid_plural "{n} min left"
+msgstr[0] "剩余 {n} 分钟"
+
+msgid "Paused, {n} min left"
+msgid_plural "Paused, {n} min left"
+msgstr[0] "已暂停，剩余 {n} 分钟"
+
+msgid "Paused, {n} min"
+msgid_plural "Paused, {n} min"
+msgstr[0] "已暂停，{n} 分钟"
+
+msgid "Overtime +{n} min"
+msgid_plural "Overtime +{n} min"
+msgstr[0] "超时 +{n} 分钟"
+
+msgid "Preparation"
+msgstr "准备中"

@@ -11,6 +11,7 @@ pub mod keychain;
 pub mod labels;
 pub mod local_folder;
 pub mod log;
+mod mpris;
 mod preferences;
 pub mod preset_subtitle;
 pub mod presets;

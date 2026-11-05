@@ -156,6 +156,42 @@ pub struct BellCounter {
     pub total: Option<u32>,
 }
 
+/// What the session's media control (the phone's notification, the
+/// Linux media player) shows: one line, and the bar for a session
+/// with an end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaStatus {
+    pub line: MediaLine,
+    pub bar: Option<MediaBar>,
+    /// The time stands: paused, or in overtime.
+    pub standing: bool,
+}
+
+/// The media control's title: the guided file's name, else the app's.
+pub fn media_title(guided_name: Option<&str>) -> &str {
+    guided_name.unwrap_or("Meditate")
+}
+
+/// The media control's line; each app words it, with "Paused" for a
+/// standing `Left` or `SoFar`. Whole seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaLine {
+    Left(u64),
+    SoFar(u64),
+    Preparing(u64),
+    Overtime(u64),
+}
+
+/// The bar: how far in and how long. It moves on by itself unless
+/// the status is `standing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaBar {
+    /// Exact, so `now - elapsed` (the bar's start) stays the same
+    /// from tick to tick.
+    pub elapsed: Duration,
+    pub total_secs: u64,
+}
+
 /// Default Timer-mode countdown in seconds for a fresh user
 /// (10 minutes). Used by the shell when restoring on first launch
 /// before any persisted value exists, AND as the fallback when the
@@ -563,7 +599,7 @@ impl Session {
         // (k-1, k] remaining → display k, matching the existing
         // gtk shell's tick_prep behaviour.
         let remaining = target.saturating_sub(elapsed);
-        let display = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
+        let display = ceil_secs(remaining);
         vec![Effect::UpdateDisplay { secs: display }]
     }
 
@@ -840,7 +876,7 @@ impl Session {
         let target_secs = self.settings.prep_secs?;
         let target = Duration::from_secs(u64::from(target_secs));
         let remaining = target.saturating_sub(self.phase_clock.elapsed(now));
-        Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
+        Some(ceil_secs(remaining))
     }
 
     /// The ring and the bell counters for the running page right now.
@@ -924,6 +960,37 @@ impl Session {
         BellRing { ring, counters }
     }
 
+    /// The media control's line and bar; `None` once stopped.
+    pub fn media_status(&self, now: Duration) -> Option<MediaStatus> {
+        let elapsed = self.phase_clock.elapsed(now);
+        let total = self.settings.shape.target_secs().map(u64::from);
+        let (line, bar) = match self.phase {
+            SessionPhase::Stopped => return None,
+            SessionPhase::Prep => {
+                let prep = u64::from(self.settings.prep_secs?);
+                let end = Duration::from_secs(prep);
+                let bar = MediaBar { elapsed: elapsed.min(end), total_secs: prep };
+                (MediaLine::Preparing(ceil_secs(end.saturating_sub(elapsed))), Some(bar))
+            }
+            SessionPhase::Overtime => {
+                let total = total.unwrap_or(0);
+                let over = elapsed.as_secs().saturating_sub(total);
+                let full = MediaBar { elapsed: Duration::from_secs(total), total_secs: total };
+                (MediaLine::Overtime(over), Some(full))
+            }
+            SessionPhase::Running | SessionPhase::Paused => match total {
+                Some(total) => {
+                    let end = Duration::from_secs(total);
+                    let left = MediaLine::Left(ceil_secs(end.saturating_sub(elapsed)));
+                    (left, Some(MediaBar { elapsed: elapsed.min(end), total_secs: total }))
+                }
+                None => (MediaLine::SoFar(elapsed.as_secs()), None),
+            },
+        };
+        let standing = self.is_paused || self.phase == SessionPhase::Overtime;
+        Some(MediaStatus { line, bar, standing })
+    }
+
     /// The whole-seconds value the running label should show right
     /// now, dispatching on phase + display mode:
     ///
@@ -958,6 +1025,11 @@ impl Session {
     }
 }
 
+/// Whole seconds, rounded up: what a countdown shows.
+fn ceil_secs(d: Duration) -> u64 {
+    d.as_secs() + u64::from(d.subsec_nanos() > 0)
+}
+
 fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
     match phase {
         Phase::In => BoxBreathPhaseId::In,
@@ -987,7 +1059,7 @@ fn display_secs_for_running(shape: &SessionShape, elapsed: Duration) -> u64 {
     let ceiling_remaining = |target_secs: u32| -> u64 {
         let target = Duration::from_secs(u64::from(target_secs));
         let remaining = target.saturating_sub(elapsed);
-        remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+        ceil_secs(remaining)
     };
     match shape {
         SessionShape::TimerStopwatch | SessionShape::BoxBreathStopwatch { .. } => {
@@ -2587,6 +2659,86 @@ mod tests {
         assert_eq!(by_phase["HoldIn"], 40);
         assert_eq!(by_phase["Out"], 60);
         assert_eq!(by_phase["HoldOut"], 80);
+    }
+
+    // ── Media control ────────────────────────────────────────────────
+
+    fn bar(elapsed_ms: u64, total_secs: u64) -> Option<MediaBar> {
+        Some(MediaBar { elapsed: Duration::from_millis(elapsed_ms), total_secs })
+    }
+
+    #[test]
+    fn the_media_control_counts_down_a_timed_session() {
+        let s = Session::start_running(timer_countdown_settings(1200), Duration::from_secs(100));
+        assert_eq!(
+            s.media_status(Duration::from_millis(100_000 + 312_400)),
+            Some(MediaStatus { line: MediaLine::Left(888), bar: bar(312_400, 1200), standing: false }),
+        );
+    }
+
+    #[test]
+    fn the_media_control_shows_the_time_left_when_the_app_counts_up() {
+        let breath = Session::start_running(box_breath_settings(Some(1200)), Duration::from_secs(100));
+        let guided = Session::start_running(guided_settings(1200, true), Duration::from_secs(100));
+        for s in [breath, guided] {
+            assert_eq!(
+                s.media_status(Duration::from_secs(412)),
+                Some(MediaStatus { line: MediaLine::Left(888), bar: bar(312_000, 1200), standing: false }),
+            );
+        }
+    }
+
+    #[test]
+    fn the_media_control_counts_up_without_an_end() {
+        let timer = Session::start_running(timer_stopwatch_settings(), Duration::from_secs(100));
+        let breath = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        for s in [timer, breath] {
+            assert_eq!(
+                s.media_status(Duration::from_millis(854_900)),
+                Some(MediaStatus { line: MediaLine::SoFar(754), bar: None, standing: false }),
+            );
+        }
+    }
+
+    #[test]
+    fn the_media_control_shows_the_preparation() {
+        let mut s = Session::start_prep(timer_prep_settings(10, 1200), Duration::from_secs(100));
+        let preparing = |standing: bool| {
+            let bar = bar(5_000, 10);
+            Some(MediaStatus { line: MediaLine::Preparing(5), bar, standing })
+        };
+        assert_eq!(s.media_status(Duration::from_secs(105)), preparing(false));
+        s.pause(Duration::from_secs(105));
+        assert_eq!(s.media_status(Duration::from_secs(160)), preparing(true));
+    }
+
+    #[test]
+    fn the_media_control_stands_still_while_paused() {
+        let mut timer = Session::start_running(timer_countdown_settings(1200), Duration::from_secs(100));
+        timer.pause(Duration::from_secs(412));
+        assert_eq!(
+            timer.media_status(Duration::from_secs(900)),
+            Some(MediaStatus { line: MediaLine::Left(888), bar: bar(312_000, 1200), standing: true }),
+        );
+        let mut watch = Session::start_running(timer_stopwatch_settings(), Duration::from_secs(100));
+        watch.pause(Duration::from_secs(854));
+        assert_eq!(
+            watch.media_status(Duration::from_secs(900)),
+            Some(MediaStatus { line: MediaLine::SoFar(754), bar: None, standing: true }),
+        );
+    }
+
+    #[test]
+    fn the_media_control_shows_overtime_with_a_full_bar() {
+        let mut s = Session::start_running(timer_countdown_settings(1200), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_secs(1300));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        assert_eq!(
+            s.media_status(Duration::from_millis(1_433_700)),
+            Some(MediaStatus { line: MediaLine::Overtime(133), bar: bar(1_200_000, 1200), standing: true }),
+        );
+        let _ = s.finish_overtime();
+        assert_eq!(s.media_status(Duration::from_secs(1500)), None, "gone once stopped");
     }
 
     // ── Guided audio stops when the session enters Overtime ─────────

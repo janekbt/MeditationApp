@@ -1267,3 +1267,30 @@ msgstr "Ошибка сервера ({})"
 
 msgid "The server redirected the address"
 msgstr "Сервер перенаправил адрес"
+
+msgid "{n} min left"
+msgid_plural "{n} min left"
+msgstr[0] "Осталось {n} мин"
+msgstr[1] "Осталось {n} мин"
+msgstr[2] "Осталось {n} мин"
+
+msgid "Paused, {n} min left"
+msgid_plural "Paused, {n} min left"
+msgstr[0] "Пауза, осталось {n} мин"
+msgstr[1] "Пауза, осталось {n} мин"
+msgstr[2] "Пауза, осталось {n} мин"
+
+msgid "Paused, {n} min"
+msgid_plural "Paused, {n} min"
+msgstr[0] "Пауза, {n} мин"
+msgstr[1] "Пауза, {n} мин"
+msgstr[2] "Пауза, {n} мин"
+
+msgid "Overtime +{n} min"
+msgid_plural "Overtime +{n} min"
+msgstr[0] "Сверх времени +{n} мин"
+msgstr[1] "Сверх времени +{n} мин"
+msgstr[2] "Сверх времени +{n} мин"
+
+msgid "Preparation"
+msgstr "Подготовка"

@@ -177,6 +177,13 @@ export global Tr {
         return kind == 0 ? @tr("Pause") : kind == 1 ? @tr("Resume") : kind == 2 ? @tr("Save") : kind == 3 ? add-label : @tr("Discard");
     }
     public pure function add-overtime(t: string) -> string { return @tr("+ {} and Save", t); }
+    // The media control's line in whole minutes (send_media_buttons,
+    // media_minutes): Android animates every change of it.
+    public pure function media-left(n: int) -> string { return @tr("{n} min left" | "{n} min left" % n); }
+    public pure function media-preparing() -> string { return @tr("Preparation"); }
+    public pure function media-paused-left(n: int) -> string { return @tr("Paused, {n} min left" | "Paused, {n} min left" % n); }
+    public pure function media-paused(n: int) -> string { return @tr("Paused, {n} min" | "Paused, {n} min" % n); }
+    public pure function media-overtime(n: int) -> string { return @tr("Overtime +{n} min" | "Overtime +{n} min" % n); }
     // Preset-chip / widget subtitles (preset_subtitle)
     public pure function stopwatch() -> string { return @tr("Stopwatch"); }
     public pure function n-min(n: int) -> string { return @tr("{n} min" | "{n} min" % n); }

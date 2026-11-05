@@ -99,6 +99,34 @@ pub fn media_tap(state: &AppState, note_empty: bool, code: i32) -> Option<i32> {
     offered.contains(&code).then_some(code)
 }
 
+/// The phone's media line in whole minutes, so the line (which Android
+/// animates on every change) changes once a minute: time left rounded
+/// up like the countdown, time so far and overtime rounded down.
+/// Preparation says no number.
+pub fn media_minutes(line: meditate_core::session::MediaLine) -> u64 {
+    use meditate_core::session::MediaLine as L;
+    match line {
+        L::Left(s) => s.div_ceil(60),
+        L::SoFar(s) | L::Overtime(s) => s / 60,
+        L::Preparing(_) => 0,
+    }
+}
+
+/// The media control's header line for `MeditateSessionService`:
+/// `title<TAB>line<TAB>total_secs<TAB>bar`, where `bar` is a moving
+/// bar's start on the boot clock in ms, `p<elapsed_ms>` for a standing
+/// one, and empty without a bar (`total_secs` is then 0). Tabs and
+/// newlines in the title become spaces.
+pub fn media_header(title: &str, line: &str, status: meditate_core::session::MediaStatus, now: Duration) -> String {
+    let title: String = title.chars().map(|c| if c == '\t' || c == '\n' { ' ' } else { c }).collect();
+    let (total, bar) = match status.bar {
+        None => (0, String::new()),
+        Some(b) if !status.standing => (b.total_secs, now.saturating_sub(b.elapsed).as_millis().to_string()),
+        Some(b) => (b.total_secs, format!("p{}", b.elapsed.as_millis())),
+    };
+    format!("{title}\t{line}\t{total}\t{bar}")
+}
+
 /// The duration core says to save for the session that just ended:
 /// `EndSession` (Stop, Finish, Add) or `EndBoxBreath` (a Box Breath
 /// session reaching its cycle-aligned end). `None` when the effects
@@ -491,6 +519,14 @@ impl AppState {
     /// state stored in the Stopwatch.
     pub fn is_active(&self) -> bool {
         matches!(self, Self::Active(_))
+    }
+
+    /// The media control's line and bar; `None` without a live session.
+    pub fn media_status(&self, now: Duration) -> Option<meditate_core::session::MediaStatus> {
+        match self {
+            Self::Active(s) => s.media_status(now),
+            Self::Idle | Self::Finished => None,
+        }
     }
 
     /// Start a fresh session from fully-built `SessionSettings`.
@@ -4553,6 +4589,50 @@ mod tests {
         assert_eq!(media_buttons(&over, true), vec![2, 3, 4], "Save, Add, Discard");
         assert!(media_buttons(&AppState::idle(), true).is_empty());
         assert!(media_buttons(&AppState::Finished, true).is_empty(), "the service is gone");
+    }
+
+    #[test]
+    fn the_media_control_title_names_the_guided_file() {
+        use meditate_core::session::media_title;
+        assert_eq!(media_title(Some("Morning breath")), "Morning breath");
+        assert_eq!(media_title(None), "Meditate");
+        // ui.rs is Android-only: the title comes from the name fixed at
+        // session start, which is only set for a Guided session.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let send = &ui[ui.find("fn send_media_buttons(").unwrap()..];
+        let send = &send[..send.find("\n}\n").unwrap()];
+        assert!(send.contains("media_title(guided_name.as_deref())") && send.contains("session_guided_name()"), "title from the session's name");
+        assert!(ui.contains("let sel = sel.as_ref().filter(|_| guided);") && ui.contains("set_session_guided_name(sel.map(|g| g.name.clone()));"), "a Timer after a Guided session has no name");
+    }
+
+    #[test]
+    fn the_phone_line_counts_whole_minutes() {
+        use meditate_core::session::MediaLine as L;
+        assert_eq!(media_minutes(L::Left(888)), 15, "14:48 left");
+        assert_eq!(media_minutes(L::Left(840)), 14, "14:00 left");
+        assert_eq!(media_minutes(L::Left(1)), 1, "the last second");
+        assert_eq!(media_minutes(L::SoFar(754)), 12, "12:34 so far");
+        assert_eq!(media_minutes(L::Overtime(133)), 2, "2:13 over");
+        assert_eq!(media_minutes(L::Preparing(5)), 0, "not shown");
+    }
+
+    #[test]
+    fn the_media_header_carries_the_bar_for_the_service() {
+        use meditate_core::session::{MediaBar, MediaLine, MediaStatus};
+        let now = Duration::from_micros(1_000_000_700);
+        let status = |elapsed, standing| MediaStatus {
+            line: MediaLine::Left(0),
+            bar: Some(MediaBar { elapsed, total_secs: 1200 }),
+            standing,
+        };
+        // The start is now - elapsed, exact: no rounding jitter between ticks.
+        let moving = status(Duration::from_micros(312_400_900), false);
+        assert_eq!(media_header("Meditate", "14:48 left", moving, now), "Meditate\t14:48 left\t1200\t687599");
+        let standing = status(Duration::from_millis(312_000), true);
+        assert_eq!(media_header("A\tB\nC", "x", standing, now), "A B C\tx\t1200\tp312000");
+        let no_bar = MediaStatus { line: MediaLine::SoFar(754), bar: None, standing: false };
+        assert_eq!(media_header("Meditate", "12:34", no_bar, now), "Meditate\t12:34\t0\t");
     }
 
     #[test]
