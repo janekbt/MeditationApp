@@ -72,6 +72,19 @@ pub fn is_bluetooth_sink(api: Option<&str>, node: Option<&str>) -> bool {
     api.is_some_and(|a| a.starts_with("bluez")) || node.is_some_and(|n| n.starts_with("bluez_"))
 }
 
+/// One device as the sound server lists it: class ("Audio/Sink",
+/// "Audio/Source"), whether it is the default, `device.api`, `node.name`.
+pub type ServerDevice<'a> = (&'a str, bool, Option<&'a str>, Option<&'a str>);
+
+/// Whether the default output is Bluetooth; None when no sink is the
+/// default. Inputs are listed too and never decide.
+pub fn default_sink_is_bluetooth<'a>(devices: impl IntoIterator<Item = ServerDevice<'a>>) -> Option<bool> {
+    devices
+        .into_iter()
+        .find(|&(class, is_default, ..)| class == "Audio/Sink" && is_default)
+        .map(|(_, _, api, node)| is_bluetooth_sink(api, node))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +127,16 @@ mod tests {
         assert!(is_bluetooth_sink(None, Some("bluez_sink.AA_BB.a2dp_sink")));
         assert!(!is_bluetooth_sink(Some("alsa"), Some("alsa_output.pci-0000_00_1f.3.analog-stereo")));
         assert!(!is_bluetooth_sink(None, None));
+    }
+
+    #[test]
+    fn only_the_default_sink_decides_the_lead_in() {
+        let mic: ServerDevice = ("Audio/Source", true, Some("bluez5"), Some("bluez_input.AA_BB.0"));
+        let speakers: ServerDevice = ("Audio/Sink", true, Some("alsa"), Some("alsa_output.pci-0000_00_1f.3.analog-stereo"));
+        let phones: ServerDevice = ("Audio/Sink", true, Some("bluez5"), Some("bluez_output.AA_BB.1"));
+        let quiet_speakers: ServerDevice = ("Audio/Sink", false, Some("alsa"), Some("alsa_output.pci-0000_00_1f.3.analog-stereo"));
+        assert_eq!(default_sink_is_bluetooth([mic, speakers]), Some(false));
+        assert_eq!(default_sink_is_bluetooth([quiet_speakers, phones]), Some(true));
+        assert_eq!(default_sink_is_bluetooth([("Audio/Sink", false, Some("bluez5"), None), quiet_speakers]), None);
     }
 }

@@ -394,8 +394,18 @@ With "Wake-up Lead-in for Bluetooth" on, every bell and preview whose output is 
 
 #### Scenario: The player on Linux
 - **WHEN** a bell or preview starts with the lead-in on and the default sink is Bluetooth
-- **THEN** core's noise plays first and the bell starts at the noise's end of stream (its silence included), or 5 s after the planned end if that never comes; a bell due meanwhile waits for it; Stop cancels both; closing a chooser drops only its preview; another sink starts the bell at once; not finding the default sink is logged
+- **THEN** core's noise plays first and the bell starts at the noise's end of stream (its silence included), or 5 s after the planned end if that never comes; a bell due meanwhile waits for it; Stop cancels both; closing a chooser drops only its preview; another sink starts the bell at once; not finding the default sink is logged; finding the default sink asks the sound server only, so it never waits for a sleeping sound card and the window never stalls
 - **TEST** `meditate-gtk/src/sound.rs::the_lead_in_plays_before_a_bluetooth_bell`
+
+#### Scenario: The Linux default sink among the sound server's devices
+- **WHEN** the sound server lists a Bluetooth microphone as the default input and the built-in speakers as the default output; the Bluetooth headphones as the default output next to the built-in speakers; no device marked default
+- **THEN** not Bluetooth; Bluetooth; no default sink found (logged, the bell starts at once)
+- **TEST** `meditate-core/src/lead_in.rs::only_the_default_sink_decides_the_lead_in`
+
+#### Scenario: A bell in the Linux sandbox with the HDMI audio asleep
+- **WHEN** the laptop runs the app without a PipeWire connection (as in the Flatpak), the lead-in is on, and Test is played after 60 s of silence, three times
+- **THEN** the window never stalls (before: 2 s each time, the HDMI audio of the graphics card waking); the GStreamer log shows no ALSA probing
+- **MANUAL** a sleeping sound card exists only on real hardware
 
 #### Scenario: On the devices
 - **WHEN** the FP5 with the Bluetooth box, media and then "Play Bells as Alarm", lead-in off then on at 0,10 s and 1,00 s, Test tapped after 60 s of silence, a Timer session with interval bells, a Box Breath session with sound cues; the laptop with the box

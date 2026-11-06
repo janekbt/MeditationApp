@@ -485,28 +485,60 @@ fn held(media: &gtk::MediaFile) -> bool {
 /// Whether the default sound output is Bluetooth, asked from GStreamer
 /// each time so a changed output counts at once.
 fn default_output_is_bluetooth() -> bool {
-    use gstreamer::prelude::{DeviceExt, DeviceMonitorExt, DeviceMonitorExtManual};
+    use gstreamer::prelude::{DeviceExt, DeviceProviderExt, DeviceProviderExtManual};
     if let Err(e) = gstreamer::init() {
         meditate_core::log("sound.lead_in", &format!("gstreamer init failed: {e}"));
         return false;
     }
+    // The sound server only: the full monitor also opens every ALSA card
+    // when PipeWire is out of reach (the Flatpak), 2 s for a sleeping one.
+    let devices = match gstreamer::DeviceProviderFactory::by_name("pulsedeviceprovider") {
+        Some(server) => match server.start() {
+            Ok(()) => {
+                let devices = DeviceProviderExtManual::devices(&server);
+                server.stop();
+                Some(devices)
+            }
+            Err(e) => {
+                meditate_core::log("sound.lead_in", &format!("sound server query failed ({e}), using the device monitor"));
+                monitor_devices()
+            }
+        },
+        None => {
+            meditate_core::log("sound.lead_in", "pulse device provider missing, using the device monitor");
+            monitor_devices()
+        }
+    };
+    let Some(devices) = devices else { return false };
+    let listed: Vec<_> = devices.iter().map(|d| (d.device_class(), d.properties())).collect();
+    let found = meditate_core::lead_in::default_sink_is_bluetooth(listed.iter().map(|(class, p)| {
+        let p = p.as_ref();
+        (
+            class.as_str(),
+            p.and_then(|p| p.get::<bool>("is-default").ok()).unwrap_or(false),
+            p.and_then(|p| p.get::<&str>("device.api").ok()),
+            p.and_then(|p| p.get::<&str>("node.name").ok()),
+        )
+    }));
+    found.unwrap_or_else(|| {
+        meditate_core::log("sound.lead_in", "no default sink found");
+        false
+    })
+}
+
+/// Every sink from every provider: the old, slow way (it opens each ALSA
+/// card when PipeWire is out of reach), only for when the server can't answer.
+fn monitor_devices() -> Option<gstreamer::glib::List<gstreamer::Device>> {
+    use gstreamer::prelude::{DeviceMonitorExt, DeviceMonitorExtManual};
     let monitor = gstreamer::DeviceMonitor::new();
     monitor.add_filter(Some("Audio/Sink"), None);
     if let Err(e) = monitor.start() {
         meditate_core::log("sound.lead_in", &format!("device monitor failed: {e}"));
-        return false;
+        return None;
     }
-    let default = monitor
-        .devices()
-        .iter()
-        .filter_map(|d| d.properties())
-        .find(|p| p.get::<bool>("is-default").unwrap_or(false));
+    let devices = monitor.devices();
     monitor.stop();
-    let Some(p) = default else {
-        meditate_core::log("sound.lead_in", "no default sink found");
-        return false;
-    };
-    meditate_core::lead_in::is_bluetooth_sink(p.get::<&str>("device.api").ok(), p.get::<&str>("node.name").ok())
+    Some(devices)
 }
 
 #[cfg(test)]
@@ -570,8 +602,13 @@ mod tests {
         assert!(stop.contains("m.notify(\"playing\");"));
         assert!(fn_body(&src, "play_preview").contains("old.notify(\"playing\");"), "a replaced waiting preview too");
         let bt = fn_body(&src, "default_output_is_bluetooth");
-        assert!(bt.contains(".find(|p| p.get::<bool>(\"is-default\").unwrap_or(false))"));
-        assert!(bt.contains("meditate_core::lead_in::is_bluetooth_sink("));
+        // The sound server only: the full monitor opens every ALSA card in the sandbox (2 s for a sleeping HDMI one).
+        assert!(bt.contains("gstreamer::DeviceProviderFactory::by_name(\"pulsedeviceprovider\")"));
+        assert!(bt.contains("meditate_core::lead_in::default_sink_is_bluetooth("));
+        // A missing plugin or a server that doesn't answer falls back to the full monitor.
+        assert!(bt.contains("sound server query failed ({e}), using the device monitor"));
+        assert!(bt.contains("pulse device provider missing, using the device monitor"));
+        assert_eq!(bt.matches("monitor_devices()").count(), 2, "both fall back");
         // Not finding the output is logged, never silent.
         assert!(bt.contains("meditate_core::log(\"sound.lead_in\", \"no default sink found\");"));
         // Every bell returns its wait, and the vibration waits for it.
