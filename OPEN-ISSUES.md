@@ -44,7 +44,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #184, #188, #192 | one bad file or event blocks sync |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
 | [x] | Y. Slint library fixes (build environment: ask first) | #148, #160 | vendored Slint code; needs the repro probe |
-| [ ] | Y2. Slint text fields (upstream) | #196, #198 | a long press that selects nothing, a key that does nothing |
+| [ ] | Y2. Slint text fields (upstream) | #196, #198, #210 | a long press that selects nothing, a key that does nothing |
 | [ ] | AA. Library major versions (Android ones: ask first) | #204-#208 | crates stuck on an old major get no more fixes |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
 
@@ -241,6 +241,11 @@ Decided 2026-11-03: each skipped item stays visible in the sync status that the 
 - Where: Slint's Android backend, not our code. It maps `KEYCODE_MOVE_HOME` to Home (`androidwindowadapter.rs` `map_key_code`), so the cause is unknown.
 - Problem: in Gboard's text editing panel, the |< key left the cursor where it was in a Slint text field; the arrow keys and Select worked. Seen once in the material gallery on the API 35 emulator (2026-10-19), while testing Slint PR #14205; not reproduced, not tried in Meditate or on the FP5.
 - Fix: first reproduce it (with and without Select), log which key event or `setSelection` arrives, then fix or report upstream.
+
+### #210 Android: the word under the cursor flickers in the accent colour and changes by itself (GitHub #23)
+- Where: Slint's Android backend, not our code. `callback_update_text` (`third_party/i-slint-backend-android-activity/javahelper.rs`) turns the keyboard's composing region into a TextInput preedit: it shows as a selection and moves the cursor to the word's end, the keyboard re-composes, and the loop repeats; Gboard may then insert a suggestion.
+- Problem: tapping into a field (sync server URL, session note) highlights a word, flickers and can change it without any typing. Reported in GitHub #23 with a video.
+- Fix: upstream in Slint PR #14216 (merged 2026-11-07, after 1.18.1). Decided 2026-11-07 to wait for the release that carries it, then update Slint (see `third_party/README.md`), test on the FP5 and close GitHub #23. A local minimal port (always commit the whole text, drop the preedit branch) was weighed and not taken.
 
 ## AA. Library major versions (Android ones: ask first)
 
