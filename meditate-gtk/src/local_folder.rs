@@ -263,6 +263,7 @@ fn star_button(file: &LocalGuidedFile, app: &MeditateApplication) -> gtk::Button
         .tooltip_text(if file.is_starred { gettext("Unstar") } else { gettext("Star") })
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
+        .name("star")
         .build();
     if file.is_starred {
         button.add_css_class("preset-star-on");
@@ -293,6 +294,7 @@ fn file_row(
         .title(glib::markup_escape_text(lf::file_name(&file.rel_path)))
         .subtitle(glib::markup_escape_text(&parts.join(" · ")))
         .activatable(true)
+        .name(format!("file-{}", file.id))
         .build();
     row.add_suffix(&star_button(file, app));
     let (file, app, on_pick, nav_view) = (file.clone(), app.clone(), on_pick.clone(), nav_view.clone());
@@ -448,6 +450,15 @@ fn fill_page(
     rebuild: impl Fn() + Clone + 'static,
 ) {
     let Page { toolbar, banner, scroller, clamp } = page;
+    // #212: the rebuild drops the focused row or star, and the focus
+    // move scrolls the list; the focus goes back to the same row's widget.
+    let refocus = scroller
+        .root()
+        .and_then(|r| r.focus())
+        .filter(|w| w.is_ancestor(clamp))
+        .and_then(|w| Some((w.ancestor(adw::ActionRow::static_type())?.widget_name(), w.widget_name())))
+        // Only file and folder rows carry a name of their own.
+        .filter(|(row, _)| row.starts_with("file-") || row.starts_with("folder-"));
     let Some(root) = chosen_folder(app) else {
         banner.set_revealed(false);
         let button = gtk::Button::builder()
@@ -480,7 +491,18 @@ fn fill_page(
         .margin_end(12)
         .build();
     let show = |prefs: &gtk::Box| {
+        // A focus change inside the list scrolls it only while this is on.
+        let viewport = scroller.child().and_downcast::<gtk::Viewport>();
+        if let Some(v) = &viewport {
+            v.set_scroll_to_focus(false);
+        }
         clamp.set_child(Some(prefs));
+        if let Some(w) = refocus.as_ref().and_then(|(row, focus)| named(&named(prefs.upcast_ref(), row)?, focus)) {
+            w.grab_focus();
+        }
+        if let Some(v) = &viewport {
+            v.set_scroll_to_focus(true);
+        }
         if toolbar.content().as_ref() != Some(scroller.upcast_ref()) {
             toolbar.set_content(Some(scroller));
         }
@@ -566,6 +588,7 @@ fn fill_page(
                     .title(glib::markup_escape_text(name))
                     .subtitle(counts_text(*folders, *files))
                     .activatable(true)
+                    .name(format!("folder-{path}"))
                     .build();
                 folder_row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
                 folder_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
@@ -584,6 +607,14 @@ fn fill_page(
     }
     prefs.append(&group);
     show(&prefs);
+}
+
+/// The first widget below `root` (itself included) named `name`.
+fn named(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    std::iter::successors(root.first_child(), |c| c.next_sibling()).find_map(|c| named(&c, name))
 }
 
 fn empty_row() -> adw::ActionRow {

@@ -501,6 +501,10 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
             // Setup hides Auto-Finish while counting up.
             c.auto_finish = false;
         }
+        if !c.label.enabled {
+            // #211: the label kept behind a switched-off switch shows nowhere.
+            c.label.uuid = None;
+        }
         if !vis.starting_bell {
             c.starting_bell = PresetStartingBell::default();
         }
@@ -1480,6 +1484,19 @@ mod tests {
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "switched off, it doesn't count");
     }
 
+    /// The names of the presets that show their check, sorted.
+    fn active_names(db: &Database, mode: SessionMode) -> Vec<String> {
+        let uuids = active_presets(db, mode);
+        let mut names: Vec<String> = crate::db::list_presets_for_mode_from_db(db, mode)
+            .unwrap()
+            .into_iter()
+            .filter(|p| uuids.contains(p.uuid.as_str()))
+            .map(|p| p.name)
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
     fn the_active_preset_is_the_one_matching_setup() {
         let (db, sound, pattern) = fresh_db();
@@ -1493,17 +1510,7 @@ mod tests {
         let other = snapshot(&db, SessionMode::Timer, timing.clone());
         db.insert_preset("Other", SessionMode::Timer, true, &other.to_json()).unwrap();
         db.insert_preset("Unstarred", SessionMode::Timer, false, &other.to_json()).unwrap();
-        let names = || -> Vec<String> {
-            let uuids = active_presets(&db, SessionMode::Timer);
-            let mut names: Vec<String> = crate::db::list_presets_for_mode_from_db(&db, SessionMode::Timer)
-                .unwrap()
-                .into_iter()
-                .filter(|p| uuids.contains(p.uuid.as_str()))
-                .map(|p| p.name)
-                .collect();
-            names.sort();
-            names
-        };
+        let names = || active_names(&db, SessionMode::Timer);
         assert_eq!(names(), ["Other"], "only starred ones show");
         db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "true" } else { "false" }).unwrap();
         assert_eq!(names(), ["Quiet"], "set back, it matches again");
@@ -1512,6 +1519,22 @@ mod tests {
         db.set_setting("timer_session_secs", "1200").unwrap();
         db.set_setting("timer_stopwatch_active", "true").unwrap();
         assert!(names().is_empty(), "the stopwatch toggle counts too");
+    }
+
+    #[test]
+    fn a_preset_saved_with_the_label_off_keeps_its_check() {
+        let (db, sound, pattern) = fresh_db();
+        let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
+        let mut plain = cfg_with_known_uuids(timing.clone(), &sound, &pattern);
+        plain.label = PresetLabel { enabled: false, uuid: None };
+        let mut labelled = plain.clone();
+        labelled.label = PresetLabel { enabled: true, uuid: Some("label-uuid".into()) };
+        db.insert_preset("A", SessionMode::Timer, true, &plain.to_json()).unwrap();
+        db.insert_preset("B", SessionMode::Timer, true, &labelled.to_json()).unwrap();
+        db.set_setting("timer_session_secs", "1200").unwrap();
+        apply(&db, &labelled, SessionMode::Timer).unwrap();
+        apply(&db, &plain, SessionMode::Timer).unwrap();
+        assert_eq!(active_names(&db, SessionMode::Timer), ["A"], "A, applied last, shows its check");
     }
 
     #[test]
