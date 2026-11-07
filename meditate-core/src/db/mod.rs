@@ -45,18 +45,20 @@ mod known_remote;
 pub(crate) mod local_guided_files;
 mod labels;
 mod local_changes;
+mod order_key;
 mod presets;
 mod schema;
 mod seeds;
 mod session_in_progress;
 mod sessions;
+mod starred_order;
 mod settings;
 mod sync_state;
 mod uuids;
 mod vibration_patterns;
 
 #[cfg(test)]
-mod test_helpers;
+pub(crate) mod test_helpers;
 
 pub use bell_sounds::{BellSound, BellSoundCategory};
 pub use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};

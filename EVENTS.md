@@ -257,8 +257,8 @@ Recompute: `recompute_preset`. `target_id` is the preset uuid.
 - `config_json`: JSON string stored as given; the schema is
   `PresetConfig` in `meditate-core/src/preset_config.rs`. Missing
   means `{}`.
-- `is_starred`: bool. Whether the preset appears in the visible
-  chip list above the Save / Manage buttons.
+- `is_starred`: bool. Whether the preset appears in the Setup
+  page's preset list above the Save / Manage buttons.
 - `created_iso` / `updated_iso`: RFC 3339 in UTC, written by
   chrono as `+00:00` with fractional seconds; a moved preset's
   `created_iso` is a sort key instead (below). `updated_iso` bumps on
@@ -469,6 +469,17 @@ file's title in `guided_file_name`, like an Open File pick.
   view doesn't re-decode on every render.
 - `is_starred`: starred files are listed directly on the Setup
   Guided list; unstarred ones appear only in Manage Imports.
+- `created_iso` is the file's place, as a preset's is (above): Manage
+  Imports and Starred Files sort by it as text (then uuid), and
+  nothing reads it as a time. A move rewrites only the moved file's
+  `created_iso`, one `guided_file_update`, with the same key rules;
+  only when two neighbours leave no room does every library file get a
+  fresh time, one event each, as for presets.
+  Starred Files also holds Local Folder files, whose places are
+  device-local keys in the same text order (`local_guided_files`
+  `star_key`), never synced; a move that leaves the library files'
+  order among themselves as it was writes no event, except in the
+  no-room case above.
 
 ### `guided_file_delete`
 

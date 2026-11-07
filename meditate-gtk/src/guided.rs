@@ -674,11 +674,24 @@ fn rebuild_chooser_rows(
         return;
     }
 
-    for file in files {
+    let move_to: crate::presets::MoveTo = {
+        let (app, rows, rebuilder, on_changed) = (app.clone(), rows.clone(), rebuilder.clone(), on_changed.clone());
+        Rc::new(move |anchor, uuid, to| {
+            let written = app.with_db_mut(|db| db.move_guided_file(uuid, to));
+            write_ok(anchor, "guided.move", written, Failed::Save);
+            on_changed();
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+            // The create row comes first.
+            let rows = rows.borrow();
+            if let Some(row) = rows.get(to + 1).or(rows.last()) { row.grab_focus(); }
+        })
+    };
+    for (index, file) in files.into_iter().enumerate() {
         let row = build_guided_file_row(
             &file, app, rebuilder.clone(), on_changed.clone(),
             toast_overlay, toast_slot.clone(), preview.clone(),
         );
+        crate::presets::add_reordering(&row, file.uuid.0.clone(), index, move_to.clone());
         group.add(&row);
         rows.borrow_mut().push(row);
     }

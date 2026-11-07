@@ -39,6 +39,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str, Option<&str>)] = &[
     ("interval_bells", "jitter_unit", "TEXT", None),
     ("interval_bells", "step_secs", "INTEGER", None),
     ("interval_bells", "step_unit", "TEXT", None),
+    // A starred local file's place in Starred Files, a key from the
+    // order-key scheme (`order_key.rs`). Local only; NULL: after every
+    // keyed row, by name.
+    ("local_guided_files", "star_key", "TEXT", None),
     // A peer's name the older release received is still in its event.
     ("sessions", "guided_file_name", "TEXT", Some(
         "UPDATE sessions SET guided_file_name = (

@@ -1745,6 +1745,17 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
     });
 }
 
+/// The name of the row that has the keyboard focus, so a rebuild can
+/// give it back (a list rebuilt after every change would otherwise drop
+/// the focus on the page's first row).
+fn focused_row_name<'a>(mut rows: impl Iterator<Item = &'a adw::ActionRow>) -> Option<String> {
+    rows.find(|row| row.is_focus() || row.focus_child().is_some()).map(|row| row.widget_name().to_string())
+}
+
+fn refocus_row<'a>(name: Option<&str>, mut rows: impl Iterator<Item = &'a adw::ActionRow>) {
+    if let Some(row) = name.and_then(|n| rows.find(|row| row.widget_name() == n)) { row.grab_focus(); }
+}
+
 /// #191: a Timer page setting that failed to save says so, and the
 /// page shows the saved value again on the next turn (a spin row or
 /// toggle is still mid-change inside its handler).
@@ -3351,6 +3362,7 @@ impl TimerView {
     pub fn rebuild_starred_presets_list(&self) {
         // Drop any rows from the previous mode / refresh — Adw groups
         // don't expose a .clear() so we walk the tracking vec.
+        let focused = focused_row_name(self.starred_preset_rows.borrow().iter().map(|(row, _)| row));
         for (row, _) in self.starred_preset_rows.borrow_mut().drain(..) {
             self.presets_group.remove(&row);
         }
@@ -3392,8 +3404,19 @@ impl TimerView {
             .unwrap_or_default();
 
         let obj = self.obj();
+        let move_to: crate::presets::MoveTo = {
+            let obj = obj.downgrade();
+            std::rc::Rc::new(move |anchor, uuid, to| {
+                let Some(obj) = obj.upgrade() else { return };
+                let imp = obj.imp();
+                let Some(app) = imp.get_app() else { return };
+                let written = app.with_db_mut(|db| db.move_starred_preset(uuid, to));
+                setting_saved(anchor, "preset.move", written);
+                imp.rebuild_starred_presets_list();
+            })
+        };
         let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(presets.len());
-        for p in presets {
+        for (index, p) in presets.into_iter().enumerate() {
             let row = adw::ActionRow::builder()
                 .title(&p.name)
                 .subtitle(preset_subtitle(&p, &label_names))
@@ -3414,9 +3437,12 @@ impl TimerView {
                 #[strong] uuid,
                 move |_| this.imp().on_preset_row_activated(&uuid),
             ));
+            crate::presets::add_reordering(&row, p.uuid.0.clone(), index, move_to.clone());
+            row.set_widget_name(&p.uuid.0);
             self.presets_group.add(&row);
             tracked.push((row, p.uuid.0));
         }
+        refocus_row(focused.as_deref(), tracked.iter().map(|(row, _)| row));
         *self.starred_preset_rows.borrow_mut() = tracked;
     }
 
@@ -3427,6 +3453,7 @@ impl TimerView {
     /// stashes the uuid in `guided_selected_uuid` so the session-save
     /// path can record per-file attribution.
     pub fn rebuild_starred_guided_list(&self) {
+        let focused = focused_row_name(self.starred_guided_rows.borrow().iter());
         for row in self.starred_guided_rows.borrow_mut().drain(..) {
             self.guided_files_group.remove(&row);
         }
@@ -3458,9 +3485,22 @@ impl TimerView {
             return;
         }
 
+        let move_to: crate::presets::MoveTo = {
+            let obj = self.obj().downgrade();
+            std::rc::Rc::new(move |anchor, key, to| {
+                let Some(obj) = obj.upgrade() else { return };
+                let imp = obj.imp();
+                let Some(app) = imp.get_app() else { return };
+                let id = meditate_core::local_folder::StarredGuidedId::from_key(key);
+                let written = app.with_db_mut(|db| db.move_starred_guided(&id, to));
+                setting_saved(anchor, "guided.move", written);
+                imp.rebuild_starred_guided_list();
+            })
+        };
         let mut tracked: Vec<adw::ActionRow> = Vec::with_capacity(starred.len());
         let mut checks = Vec::with_capacity(starred.len());
-        for entry in starred {
+        for (index, entry) in starred.into_iter().enumerate() {
+            let drag_key = entry.id().key();
             let (row, key) = match entry {
                 meditate_core::local_folder::StarredGuided::Library(f) => {
                     let key = f.uuid.0.clone();
@@ -3477,9 +3517,12 @@ impl TimerView {
                 row.add_suffix(&check);
                 checks.push((key, row.clone(), check));
             }
+            row.set_widget_name(&drag_key);
+            crate::presets::add_reordering(&row, drag_key, index, move_to.clone());
             self.guided_files_group.add(&row);
             tracked.push(row);
         }
+        refocus_row(focused.as_deref(), tracked.iter());
         *self.starred_guided_rows.borrow_mut() = tracked;
         *self.starred_guided_checks.borrow_mut() = checks;
         self.mark_selected_starred_row();

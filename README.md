@@ -54,7 +54,7 @@ How to add or update a translation: [BUILDING.md](BUILDING.md#translations)
 
 ## Features
 
-- **Four modes**: countdown, stopwatch, Box Breath and Guided, which plays your own recordings
+- **Four modes**: countdown, stopwatch, Box Breath and Guided, which plays your own recordings, starred in your own order
 - **Bells**: starting, interval and end bells as sound, vibration or both, with your own sounds and a volume for each
 - **Presets** for one-tap starts, in your own order
 - **Session log** with labels and notes, filters, and undo

@@ -184,7 +184,7 @@ export global Tr {
     public pure function media-paused-left(n: int) -> string { return @tr("Paused, {n} min left" | "Paused, {n} min left" % n); }
     public pure function media-paused(n: int) -> string { return @tr("Paused, {n} min" | "Paused, {n} min" % n); }
     public pure function media-overtime(n: int) -> string { return @tr("Overtime +{n} min" | "Overtime +{n} min" % n); }
-    // Preset-chip / widget subtitles (preset_subtitle)
+    // Preset list / widget subtitles (preset_subtitle)
     public pure function stopwatch() -> string { return @tr("Stopwatch"); }
     public pure function n-min(n: int) -> string { return @tr("{n} min" | "{n} min" % n); }
     public pure function n-bells(n: int) -> string { return @tr("{n} bell" | "{n} bells" % n); }
@@ -333,7 +333,7 @@ export struct VeXLabel {
 
 // One preset (Phase 6 / P-1). `uuid` is the row identity used
 // for apply / override / rename / delete; `is-starred` drives
-// the home chip-list visibility + the Manage star toggle.
+// the home preset list visibility + the Manage star toggle.
 // Mirrors GTK's `Preset` row consumed by `presets.rs`.
 export struct PresetItem {
     uuid: string,
@@ -471,6 +471,60 @@ export struct ContribCellData {
 // LogDaySection { items: [..] } pattern.
 export struct ContribCol {
     cells: [ContribCellData],
+}
+
+// The drop target of a reorderable row, with the line where the
+// dragged row lands: above this row when it comes from below, else
+// under it. Only drags from its own list (`drag-index` set) count.
+component RowDrop inherits Rectangle {
+    in property <int> index;
+    in-out property <int> drag-index;
+    callback moved(data-transfer);
+    width: 100%;
+    height: 100%;
+
+    drop := DropArea {
+        width: 100%;
+        height: 100%;
+        can-drop(event) => root.drag-index >= 0 ? DragAction.move : DragAction.none;
+        dropped(event) => {
+            // The move rebuilds the rows, so the dragged one's
+            // `changed dragging` may never run.
+            root.drag-index = -1;
+            root.moved(event.data);
+            return DragAction.move;
+        }
+    }
+    if drop.has-drag && root.drag-index != root.index : Rectangle {
+        y: root.drag-index > root.index ? 0px : parent.height - self.height;
+        height: 2px;
+        background: MaterialPalette.primary;
+    }
+}
+
+// A row's drag handle (GTK `add_reordering`): press briefly, then
+// drag it onto another row of the same list. A quick swipe scrolls.
+component DragHandle inherits VerticalLayout {
+    in property <data-transfer> data;
+    out property <bool> dragging: area.dragging;
+    alignment: center;
+
+    Rectangle {
+        width: 32px;
+        height: 40px;
+        area := DragArea {
+            width: 100%;
+            height: 100%;
+            data: root.data;
+            allow-move: true;
+        }
+        Image {
+            source: @image-url("assets/drag_handle.svg");
+            width: 20px;
+            height: 20px;
+            colorize: MaterialPalette.on-surface-variant;
+        }
+    }
 }
 
 // A pill button whose text wraps onto a second line where one
@@ -2907,7 +2961,7 @@ export component MainWindow inherits Window {
     // a row applies it (apply path is P-3 — the callback is a
     // no-op stub until then).
     in property <[PresetItem]> presets-list: [];
-    callback preset-chip-tap(string);
+    callback preset-row-tap(string);
 
     // Save / Manage (P-4). `presets-supported` mirrors GTK
     // gating the whole presets section on
@@ -2955,6 +3009,14 @@ export component MainWindow inherits Window {
     pure callback preset-drag-uuid(data-transfer) -> string;
     callback preset-move(string, int);
     property <int> preset-drag-index: -1;
+    // The same on the Setup lists; each list has its own drag index,
+    // since the Manage chooser sits over Setup.
+    callback preset-setup-move(string, int);
+    property <int> setup-preset-drag-index: -1;
+    callback guided-starred-move(string, int);
+    property <int> guided-starred-drag-index: -1;
+    callback guided-manage-move(string, int);
+    property <int> guided-manage-drag-index: -1;
     in-out property <string> rename-preset-text: "";
     in property <bool> rename-preset-valid: false;
     callback rename-preset-changed(string);
@@ -3851,14 +3913,21 @@ export component MainWindow inherits Window {
                             background: item.selected ? MaterialPalette.secondary-container
                                 : preset-row-touch.has-hover ? MaterialPalette.surface-container-high
                                 : transparent;
+                            opacity: root.setup-preset-drag-index == idx ? 0.4 : 1.0;
                             accessible-role: button;
                             accessible-label: item.name;
                             accessible-checkable: true;
                             accessible-checked: item.selected;
 
+                            RowDrop {
+                                index: idx;
+                                drag-index <=> root.setup-preset-drag-index;
+                                moved(data) => { root.preset-setup-move(root.preset-drag-uuid(data), idx); }
+                            }
+
                             preset-row-touch := TouchArea {
                                 clicked => {
-                                    root.preset-chip-tap(item.uuid);
+                                    root.preset-row-tap(item.uuid);
                                 }
                             }
 
@@ -3869,6 +3938,13 @@ export component MainWindow inherits Window {
                                 padding-right: 16px;
                                 spacing: 12px;
                                 alignment: stretch;
+
+                                DragHandle {
+                                    data: root.preset-drag-data(item.uuid);
+                                    changed dragging => {
+                                        root.setup-preset-drag-index = self.dragging ? idx : -1;
+                                    }
+                                }
 
                                 VerticalLayout {
                                     alignment: center;
@@ -4000,6 +4076,12 @@ export component MainWindow inherits Window {
                                 : gf-touch.has-hover
                                     ? MaterialPalette.surface-container-high
                                     : transparent;
+                            opacity: root.guided-starred-drag-index == idx ? 0.4 : 1.0;
+                            RowDrop {
+                                index: idx;
+                                drag-index <=> root.guided-starred-drag-index;
+                                moved(data) => { root.guided-starred-move(root.preset-drag-uuid(data), idx); }
+                            }
                             gf-touch := TouchArea {
                                 clicked => {
                                     root.guided-file-tap(item.uuid);
@@ -4012,6 +4094,12 @@ export component MainWindow inherits Window {
                                 padding-bottom: 8px;
                                 spacing: 12px;
                                 alignment: stretch;
+                                DragHandle {
+                                    data: root.preset-drag-data(item.uuid);
+                                    changed dragging => {
+                                        root.guided-starred-drag-index = self.dragging ? idx : -1;
+                                    }
+                                }
                                 if item.missing : VerticalLayout {
                                     alignment: center;
                                     Image {
@@ -7668,26 +7756,10 @@ export component MainWindow inherits Window {
                             // outline dimmed when not (GTK's
                             // starred-symbolic / non-starred-
                             // symbolic + preset-star-on / dimmed).
-                            if !root.preset-chooser-save-mode : VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    width: 32px;
-                                    height: 40px;
-                                    DragArea {
-                                        width: 100%;
-                                        height: 100%;
-                                        data: root.preset-drag-data(item.uuid);
-                                        allow-move: true;
-                                        changed dragging => {
-                                            root.preset-drag-index = self.dragging ? idx : -1;
-                                        }
-                                    }
-                                    Image {
-                                        source: @image-url("assets/drag_handle.svg");
-                                        width: 20px;
-                                        height: 20px;
-                                        colorize: MaterialPalette.on-surface-variant;
-                                    }
+                            if !root.preset-chooser-save-mode : DragHandle {
+                                data: root.preset-drag-data(item.uuid);
+                                changed dragging => {
+                                    root.preset-drag-index = self.dragging ? idx : -1;
                                 }
                             }
 
@@ -8031,12 +8103,28 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 64px;
-                        HorizontalLayout {
+                        // Grows when a long name wraps (like GTK's rows).
+                        height: max(64px, gm-row-layout.preferred-height);
+                        opacity: root.guided-manage-drag-index == idx ? 0.4 : 1.0;
+                        RowDrop {
+                            index: idx;
+                            drag-index <=> root.guided-manage-drag-index;
+                            moved(data) => { root.guided-manage-move(root.preset-drag-uuid(data), idx); }
+                        }
+                        gm-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 16px;
                             spacing: 12px;
                             alignment: stretch;
+
+                            DragHandle {
+                                data: root.preset-drag-data(item.uuid);
+                                changed dragging => {
+                                    root.guided-manage-drag-index = self.dragging ? idx : -1;
+                                }
+                            }
 
                             // Star toggle prefix (GTK's
                             // add_prefix(star_button)).
@@ -8071,7 +8159,7 @@ export component MainWindow inherits Window {
                                     text: item.name;
                                     font-size: 16px;
                                     color: MaterialPalette.on-surface;
-                                    overflow: elide;
+                                    wrap: word-wrap;
                                 }
                                 if item.subtitle != "" : Text {
                                     text: item.subtitle;

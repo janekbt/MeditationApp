@@ -182,22 +182,51 @@ pub enum StarredGuided {
     Local { file: LocalGuidedFile, found: bool },
 }
 
-/// Starred library files in their usual order, then starred local
-/// files by name.
+/// A Starred Files row: a library file by uuid or a local file by id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StarredGuidedId {
+    Library(String),
+    Local(i64),
+}
+
+impl StarredGuidedId {
+    /// The row's key in both apps: the uuid, or `local:<id>`.
+    pub fn key(&self) -> String {
+        match self {
+            StarredGuidedId::Library(uuid) => uuid.clone(),
+            StarredGuidedId::Local(id) => format!("local:{id}"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key.strip_prefix("local:").map(str::parse::<i64>) {
+            Some(Ok(id)) => StarredGuidedId::Local(id),
+            _ => StarredGuidedId::Library(key.to_string()),
+        }
+    }
+}
+
+/// Starred library and local files in the user's order: by order key
+/// (a library file's `created_iso`, a local file's `star_key`), library
+/// first on a tie; local files without a key after them, by name.
 pub fn starred_guided_from_db(db: &Database) -> Result<Vec<StarredGuided>> {
-    let mut rows: Vec<StarredGuided> = crate::db::list_guided_files_from_db(db)?
+    let current = crate::db::local_folder_from_db(db)?;
+    let local = |file: LocalGuidedFile| {
+        let found = !file.missing && current.as_deref() == Some(file.root.as_str());
+        StarredGuided::Local { file, found }
+    };
+    let mut keyed: Vec<StarredGuided> = crate::db::list_guided_files_from_db(db)?
         .into_iter()
         .filter(|g| g.is_starred)
         .map(StarredGuided::Library)
         .collect();
-    let current = crate::db::local_folder_from_db(db)?;
-    let mut local = crate::db::list_starred_local_files_from_db(db)?;
-    local.sort_by(by_name);
-    rows.extend(local.into_iter().map(|file| {
-        let found = !file.missing && current.as_deref() == Some(file.root.as_str());
-        StarredGuided::Local { file, found }
-    }));
-    Ok(rows)
+    let (with_key, mut unkeyed): (Vec<_>, Vec<_>) =
+        crate::db::list_starred_local_files_from_db(db)?.into_iter().partition(|f| f.star_key.is_some());
+    keyed.extend(with_key.into_iter().map(local));
+    keyed.sort_by(|a, b| a.key().cmp(&b.key()));
+    unkeyed.sort_by(by_name);
+    keyed.extend(unkeyed.into_iter().map(local));
+    Ok(keyed)
 }
 
 /// Synced `settings` keys, like the rest of the UI state.
@@ -248,6 +277,7 @@ mod tests {
             is_starred: false,
             play_count: plays,
             missing: false,
+            star_key: None,
         }
     }
 
@@ -454,6 +484,154 @@ mod tests {
         db.set_local_folder("/other").unwrap();
         let rows = starred_guided_from_db(&db).unwrap();
         assert!(rows.iter().all(|r| !matches!(r, StarredGuided::Local { found: true, .. })));
+    }
+
+    fn starred_names(db: &Database) -> Vec<String> {
+        starred_guided_from_db(db)
+            .unwrap()
+            .iter()
+            .map(|r| match r {
+                StarredGuided::Library(g) => g.name.clone(),
+                StarredGuided::Local { file, .. } => file_name(&file.rel_path).to_string(),
+            })
+            .collect()
+    }
+
+    fn pending(db: &Database) -> usize {
+        db.pending_events().unwrap().len()
+    }
+
+    /// Starred library files with uuids "a", "b", ... named "A", "B",
+    /// ... in that order; local files under /m named by `locals`,
+    /// starred.
+    fn starred_setup(db: &Database, library: &[&str], locals: &[&str]) {
+        for name in library {
+            let uuid = name.to_lowercase();
+            db.insert_guided_file_with_uuid(&uuid, name, &format!("guided/{uuid}.ogg"), 60, true).unwrap();
+        }
+        db.set_local_folder("/m").unwrap();
+        let files = locals.iter().map(|n| ScannedFile { rel_path: format!("{n}.ogg"), size: 1, mtime: 1 }).collect();
+        db.apply_local_scan("/m", &FolderScan::Found(files)).unwrap();
+        for file in crate::db::list_local_files_from_db(db, "/m").unwrap() {
+            db.set_local_file_starred(file.id, true).unwrap();
+        }
+    }
+
+    fn local(db: &Database, name: &str) -> StarredGuidedId {
+        let path = format!("{name}.ogg");
+        let id = crate::db::list_local_files_from_db(db, "/m").unwrap().into_iter().find(|f| f.rel_path == path).unwrap().id;
+        StarredGuidedId::Local(id)
+    }
+
+    fn library(uuid: &str) -> StarredGuidedId {
+        StarredGuidedId::Library(uuid.into())
+    }
+
+    fn swap_events(from: &Database, to: &Database) {
+        let events: Vec<_> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+        to.replay_events(&events).unwrap();
+    }
+
+    #[test]
+    fn a_local_file_moves_between_library_files_without_sync() {
+        let db = Database::open_in_memory().unwrap();
+        starred_setup(&db, &["A", "B"], &["x"]);
+        assert_eq!(starred_names(&db), ["A", "B", "x"]);
+        let before = pending(&db);
+        db.move_starred_guided(&local(&db, "x"), 1).unwrap();
+        assert_eq!(starred_names(&db), ["A", "x", "B"]);
+        assert_eq!(pending(&db), before);
+    }
+
+    #[test]
+    fn a_library_file_moved_past_only_local_files_writes_no_sync() {
+        let db = Database::open_in_memory().unwrap();
+        starred_setup(&db, &["A", "B"], &["x", "y"]);
+        let before = pending(&db);
+        db.move_starred_guided(&library("b"), 3).unwrap();
+        assert_eq!(starred_names(&db), ["A", "x", "y", "B"]);
+        db.move_starred_guided(&library("a"), 2).unwrap();
+        assert_eq!(starred_names(&db), ["x", "y", "A", "B"]);
+        assert_eq!(pending(&db), before);
+    }
+
+    #[test]
+    fn a_library_reorder_reaches_the_other_device() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        starred_setup(&one, &["A", "B"], &["x"]);
+        one.move_starred_guided(&local(&one, "x"), 1).unwrap();
+        swap_events(&one, &two);
+        let before = pending(&one);
+        one.move_starred_guided(&library("b"), 0).unwrap();
+        assert_eq!(starred_names(&one), ["B", "A", "x"]);
+        assert_eq!(pending(&one), before + 1);
+        swap_events(&one, &two);
+        assert_eq!(starred_names(&two), ["B", "A"]);
+    }
+
+    #[test]
+    fn a_reorder_from_another_device_keeps_local_files_in_place() {
+        let one = Database::open_in_memory().unwrap();
+        let two = Database::open_in_memory().unwrap();
+        starred_setup(&one, &["A", "B", "C"], &["x"]);
+        one.move_starred_guided(&local(&one, "x"), 1).unwrap();
+        assert_eq!(starred_names(&one), ["A", "x", "B", "C"]);
+        swap_events(&one, &two);
+        two.move_starred_guided(&library("c"), 0).unwrap();
+        swap_events(&two, &one);
+        assert_eq!(starred_names(&one), ["C", "A", "x", "B"]);
+    }
+
+    #[test]
+    fn a_move_on_manage_imports_shows_in_starred_files() {
+        let db = Database::open_in_memory().unwrap();
+        starred_setup(&db, &["A", "B", "C"], &["x"]);
+        db.set_guided_file_starred("b", crate::db::StarredState::Unstarred).unwrap();
+        db.move_starred_guided(&local(&db, "x"), 1).unwrap();
+        assert_eq!(starred_names(&db), ["A", "x", "C"]);
+        let before = pending(&db);
+        db.move_guided_file("c", 0).unwrap();
+        let all: Vec<String> = crate::db::list_guided_files_from_db(&db).unwrap().into_iter().map(|g| g.name).collect();
+        assert_eq!(all, ["C", "A", "B"]);
+        assert_eq!(starred_names(&db), ["C", "A", "x"]);
+        assert_eq!(pending(&db), before + 1);
+    }
+
+    #[test]
+    fn a_newly_starred_local_file_comes_last() {
+        let db = Database::open_in_memory().unwrap();
+        starred_setup(&db, &["A", "B"], &["x", "y"]);
+        let (x, y) = (local(&db, "x"), local(&db, "y"));
+        let (StarredGuidedId::Local(x_id), StarredGuidedId::Local(y_id)) = (&x, &y) else { unreachable!() };
+        db.set_local_file_starred(*y_id, false).unwrap();
+        db.move_starred_guided(&x, 1).unwrap();
+        assert_eq!(starred_names(&db), ["A", "x", "B"]);
+        db.set_local_file_starred(*y_id, true).unwrap();
+        assert_eq!(starred_names(&db), ["A", "x", "B", "y"]);
+        db.set_local_file_starred(*x_id, false).unwrap();
+        db.set_local_file_starred(*x_id, true).unwrap();
+        assert_eq!(starred_names(&db), ["A", "B", "y", "x"]);
+    }
+
+    #[test]
+    fn a_starred_file_dropped_on_its_place_writes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        starred_setup(&db, &["A", "B"], &["x"]);
+        let StarredGuidedId::Local(x_id) = local(&db, "x") else { unreachable!() };
+        let x_key = || crate::db::find_local_file_from_db(&db, x_id).unwrap().unwrap().star_key;
+        let (before, key_before) = (pending(&db), x_key());
+        db.move_starred_guided(&library("b"), 1).unwrap();
+        db.move_starred_guided(&local(&db, "x"), 2).unwrap();
+        assert_eq!(starred_names(&db), ["A", "B", "x"]);
+        assert_eq!(pending(&db), before);
+        assert_eq!(x_key(), key_before);
+    }
+
+    #[test]
+    fn starred_files_from_an_older_database_keep_their_order() {
+        let db = crate::db::test_helpers::release_v26_11_0_database();
+        assert_eq!(starred_names(&db), ["Earlier", "Later", "b", "c"]);
     }
 
     #[test]

@@ -47,6 +47,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 | [ ] | Y2. Slint text fields (upstream) | #196, #198, #210 | a long press that selects nothing, a key that does nothing |
 | [ ] | AA. Library major versions (Android ones: ask first) | #204-#208 | crates stuck on an old major get no more fixes |
 | [ ] | Z. Android touch targets | #147 | controls under 48 dp; needs some UI rework |
+| [ ] | BB. Found in the Starred Files test | #211, #212, #213 | small ones, each its own change, next |
 
 ---
 
@@ -358,3 +359,20 @@ So these aren't proposed again:
 - Where: Preferences backup in both apps; the CSV export (`meditate-core/src/data_io.rs`) carries sessions and labels only.
 - Problem: without sync, presets, interval bells, Box Breath patterns, vibration patterns, imported sounds and guided files, and every setting live only on the device. A lost or reset phone or laptop loses them; the CSV restores the Log alone.
 - Idea: a full backup file (the database, e.g. `VACUUM INTO`, which needs no new dependency, plus the sounds and guided audio) and a restore for it, in both apps. Open questions: what a restore does to the device id, the event log and sync state on a device that syncs, and whether it replaces or merges. Raised by the maintainer, 2026-10-18.
+
+## BB. Found in the Starred Files test
+
+### #211 A preset saved with the label off loses its check
+- Where: `meditate-core/src/preset_config.rs` `active_presets` (its `shown` normalisation); `apply` leaves the label uuid setting alone when the preset has none.
+- Problem: a preset saved while no label uuid was set ({enabled: false, uuid: null}) never shows its check or highlight once another preset has set a label uuid, although it applies correctly. Found on the laptop 2026-11-07, probed in core.
+- Fix: compare a switched-off label as "off" only, ignoring the uuid behind it; both apps, a core test.
+
+### #212 Linux: starring a local file scrolls the Local Folder page to the top
+- Where: `meditate-gtk/src/local_folder.rs` `fill_page` (rebuilt after every star through `notify`).
+- Problem: the rebuild destroys the focused star button and GTK moves the focus, and with it the view, to the top. Found 2026-11-07; code read, not reproduced in isolation.
+- Fix: keep the focus (and the scroll position) across the rebuild, as the Setup lists do since setup-lists-order.
+
+### #213 Linux: the green sync check opens no status
+- Where: the GTK sync status button (`StatusButton` in `meditate-gtk/src/window/imp.rs`).
+- Problem: after a good sync, clicking the check shows nothing, so Linux has no Sync Now there; Android shows the status. The sync spec ("Tapping after a good sync") asks for it on both. Found by Janek 2026-11-07.
+- Fix: find why the good-sync state is not clickable or shows no popover; test against the spec scenario.

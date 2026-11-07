@@ -5,6 +5,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
+use super::order_key::key_between;
 use super::{
     map_unique_err, mint_uuid,
     Database, DbError, Result, SessionMode,
@@ -394,6 +395,26 @@ impl Database {
         Ok(())
     }
 
+    /// Move a starred preset to place `to` among its mode's starred
+    /// presets (the Setup list): the same move as `move_preset`.
+    /// Unknown uuids write nothing.
+    pub fn move_starred_preset(&self, uuid_str: &str, to: usize) -> Result<()> {
+        let Some(row) = find_preset_by_uuid_from_db(self, uuid_str)? else { return Ok(()); };
+        let mut others = list_presets_for_mode_from_db(self, row.mode)?;
+        let from = others.iter().filter(|p| p.is_starred).position(|p| p.uuid == row.uuid);
+        let to = to.min(others.iter().filter(|p| p.is_starred).count().saturating_sub(1));
+        if from == Some(to) { return Ok(()); }
+        others.retain(|p| p.uuid != row.uuid);
+        let starred: Vec<usize> = (0..others.len()).filter(|&i| others[i].is_starred).collect();
+        // Before the starred preset now at `to`, else right after the last one.
+        let place = match (starred.get(to), starred.last()) {
+            (Some(&i), _) => i,
+            (None, Some(&last)) => last + 1,
+            (None, None) => 0,
+        };
+        self.move_preset(uuid_str, place)
+    }
+
     /// Remove a preset row and emit a tombstone. Unknown uuids are
     /// silent no-ops with no event — peers would otherwise receive a
     /// tombstone for a preset they never knew existed.
@@ -457,87 +478,6 @@ impl Database {
         }
         Ok(())
     }
-}
-
-// ponytail: moves dropped again and again at the same edge of one gap
-// add a digit every 5 to 10 moves (about 160 characters after 1000);
-// count in the neighbour's tail, as count_up does, if that ever shows.
-/// A `created_iso` that sorts as text strictly between `before` and
-/// `after` (`None`: the list's end). Between two neighbours it extends
-/// `before` with digits, so there is always room; a tail from the
-/// moved preset's uuid keeps two devices' moves into one gap apart.
-/// `None` only for neighbours with equal text, or a first preset with
-/// no digit above 0.
-fn key_between(before: Option<&str>, after: Option<&str>, uuid: &str) -> Option<String> {
-    let core = match (before, after) {
-        (Some(lo), Some(hi)) if lo < hi => match hi.strip_prefix(lo) {
-            Some(rest) => format!("{lo}{}", digits_below(rest)?),
-            None => just_above(lo, hi),
-        },
-        // The first digit above 0 lowered: below `hi` for any text. The
-        // 9 after it gives the next moves to the top room to lower.
-        (None, Some(hi)) => {
-            let j = hi.bytes().position(|b| (b'1'..=b'9').contains(&b))?;
-            format!("{}{}9", &hi[..j], char::from(hi.as_bytes()[j] - 1))
-        }
-        // Now, so a preset saved later still comes after it. With the
-        // clock behind `lo`: `lo` without its tail, counted up by one in
-        // its last digits, so it stays as long and as early as it is.
-        (Some(lo), None) => {
-            let now = chrono::Utc::now().to_rfc3339();
-            if now.as_str() > lo { now } else { count_up(lo) }
-        }
-        _ => return None,
-    };
-    // The last 8 hex digits (the bundled ids share their first ones),
-    // each as two digits 1-9: never ending in 0, so digits_below always
-    // finds room, and two ids never give one tail.
-    let tail: String = uuid.chars().rev().filter_map(|c| c.to_digit(16)).take(8)
-        .flat_map(|v| [char::from(b'1' + (v / 9) as u8), char::from(b'1' + (v % 9) as u8)]).collect();
-    let key = core + &tail;
-    (before.map_or(true, |lo| lo < key.as_str()) && after.map_or(true, |hi| key.as_str() < hi)).then_some(key)
-}
-
-/// The shortest start of `lo`, with one digit raised, that sorts above
-/// `lo` and below `hi`, where `hi` doesn't start with `lo`; so moves
-/// back and forth don't grow the text.
-fn just_above(lo: &str, hi: &str) -> String {
-    let (l, h) = (lo.as_bytes(), hi.as_bytes());
-    let split = l.iter().zip(h).position(|(a, b)| a != b).unwrap_or(l.len());
-    (split..l.len())
-        .find_map(|j| {
-            let digit = l[j].saturating_add(1).max(b'1');
-            let start = lo.get(..j).filter(|_| digit <= b'9' && (j > split || digit < h[j]))?;
-            Some(format!("{start}{}", char::from(digit)))
-        })
-        .unwrap_or_else(|| format!("{lo}5"))
-}
-
-/// The next text above `lo`: its last digit below 9 raised and the
-/// digits after it set to 0. The count runs in a move's 16-digit tail
-/// (or a plain time's offset), never in the time before it, so the
-/// place stays as early as it is; a second tail on top is dropped
-/// first, so the text stays as long. Every tail holds a digit below 9.
-fn count_up(lo: &str) -> String {
-    let n = lo.len();
-    let core = if n >= 32 && lo.as_bytes()[n - 32..].iter().all(u8::is_ascii_digit) { &lo[..n - 16] } else { lo };
-    let mut bytes = core.as_bytes().to_vec();
-    let Some(j) = bytes.iter().rposition(|b| (b'0'..=b'8').contains(b)) else { return format!("{lo}5"); };
-    bytes[j] += 1;
-    bytes[j + 1..].iter_mut().filter(|b| b.is_ascii_digit()).for_each(|b| *b = b'0');
-    String::from_utf8(bytes).expect("only ASCII digits changed")
-}
-
-/// A digit string that sorts below `rest` and is not a start of it;
-/// `rest` is digits not ending in 0, as `key_between` writes them.
-fn digits_below(rest: &str) -> Option<String> {
-    let zeros = rest.bytes().take_while(|&b| b == b'0').count();
-    let low = match *rest.as_bytes().get(zeros)? {
-        first @ b'2'..=b'9' => char::from(first - 1).to_string(),
-        b'1' => "05".into(),
-        _ => return None,
-    };
-    Some(format!("{}{low}", &rest[..zeros]))
 }
 
 #[cfg(test)]
@@ -1059,6 +999,37 @@ mod tests {
     fn swap_events(from: &Database, to: &Database) {
         let events: Vec<Event> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
         to.replay_events(&events).unwrap();
+    }
+
+    fn starred_order(db: &Database, mode: SessionMode) -> Vec<String> {
+        list_presets_for_mode_from_db(db, mode).unwrap().into_iter().filter(|p| p.is_starred).map(|p| p.name).collect()
+    }
+
+    #[test]
+    fn a_starred_preset_moved_on_setup_takes_its_place() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A"]);
+        db.insert_preset("u", SessionMode::Timer, false, "{}").unwrap();
+        timer_presets(&db, &["B"]);
+        let before = db.pending_events().unwrap().len();
+        db.move_starred_preset(&uuid_of(&db, "A"), 0).unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before, "a drop on its own place writes nothing");
+        db.move_starred_preset(&uuid_of(&db, "B"), 2).unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), before, "past the end of the Setup list: nothing");
+        assert_eq!(order(&db, SessionMode::Timer), ["A", "u", "B"]);
+        db.move_starred_preset(&uuid_of(&db, "B"), 0).unwrap();
+        assert_eq!(starred_order(&db, SessionMode::Timer), ["B", "A"]);
+        assert_eq!(order(&db, SessionMode::Timer), ["B", "A", "u"]);
+    }
+
+    #[test]
+    fn a_starred_preset_moved_down_on_setup_lands_last() {
+        let db = Database::open_in_memory().unwrap();
+        timer_presets(&db, &["A"]);
+        db.insert_preset("u", SessionMode::Timer, false, "{}").unwrap();
+        timer_presets(&db, &["B", "C"]);
+        db.move_starred_preset(&uuid_of(&db, "A"), 2).unwrap();
+        assert_eq!(starred_order(&db, SessionMode::Timer), ["B", "C", "A"]);
     }
 
     #[test]

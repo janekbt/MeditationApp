@@ -69,7 +69,9 @@ out of order still end deleted. A peer can drop the cache and
 rebuild it from the log at any time.
 
 One table is not a cache and writes no events: `local_guided_files`,
-the Guided Local Folder's files (length, star, play count) on this
+the Guided Local Folder's files (length, star, play count, and
+`star_key`, a starred file's place in Starred Files from the same
+text order key as the synced `created_iso`, `db/order_key.rs`) on this
 device only, with the chosen folder in the local-only `sync_state`
 under `local_guided_folder`. Wipe Local keeps both, and no row is
 ever deleted, so a file that goes away for a while keeps its star

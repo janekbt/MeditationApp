@@ -242,7 +242,16 @@ fn build_preset_row(
     );
     row.add_prefix(&star_btn);
     if matches!(**chooser_mode, ChooserMode::Manage) {
-        add_reordering(&row, preset, index, app, rows, on_changed.clone(), rebuilder.clone());
+        let (app, rows, on_changed, rebuilder) = (app.clone(), rows.clone(), on_changed.clone(), rebuilder.clone());
+        let move_to: MoveTo = Rc::new(move |anchor, uuid, to| {
+            let written = app.with_db_mut(|db| db.move_preset(uuid, to));
+            write_ok(anchor, "preset.move", written, Failed::Save);
+            on_changed();
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+            let rows = rows.borrow();
+            if let Some(row) = rows.get(to).or(rows.last()) { row.grab_focus(); }
+        });
+        add_reordering(&row, preset.uuid.0.clone(), index, move_to);
     }
 
     // Manage-only suffixes: rename + delete buttons. In Save mode
@@ -331,30 +340,14 @@ fn build_preset_row(
     row
 }
 
-/// Manage mode: a drag handle (added after the star: `add_prefix` puts
-/// each new prefix in front), the row as a drop target, and Alt+Up /
-/// Alt+Down on the focused row.
-fn add_reordering(
-    row: &adw::ActionRow,
-    preset: &Preset,
-    index: usize,
-    app: &MeditateApplication,
-    rows: &Rc<RefCell<Vec<gtk::Widget>>>,
-    on_changed: Rc<dyn Fn()>,
-    rebuilder: crate::Rebuilder,
-) {
-    let move_to = {
-        let (app, rows) = (app.clone(), rows.clone());
-        Rc::new(move |anchor: &gtk::Widget, uuid: &str, to: usize| {
-            let written = app.with_db_mut(|db| db.move_preset(uuid, to));
-            write_ok(anchor, "preset.move", written, Failed::Save);
-            on_changed();
-            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
-            let rows = rows.borrow();
-            if let Some(row) = rows.get(to).or(rows.last()) { row.grab_focus(); }
-        })
-    };
+/// The move a reorderable row runs: (row, its drag key, new place).
+pub(crate) type MoveTo = Rc<dyn Fn(&gtk::Widget, &str, usize)>;
 
+/// A drag handle (added after the other prefixes: `add_prefix` puts
+/// each new prefix in front), the row as a drop target, and Alt+Up /
+/// Alt+Down on the focused row. `key` travels with the drag; a drop or
+/// a key press calls `move_to` with the place in this row's list.
+pub(crate) fn add_reordering(row: &adw::ActionRow, key: String, index: usize, move_to: MoveTo) {
     let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
     handle.add_css_class("dimmed");
     handle.set_tooltip_text(Some(&gettext("Drag to reorder")));
@@ -362,7 +355,7 @@ fn add_reordering(
     row.add_prefix(&handle);
 
     let source = gtk::DragSource::builder().actions(gtk::gdk::DragAction::MOVE).build();
-    let uuid = preset.uuid.0.clone();
+    let uuid = key.clone();
     let grab = Rc::new(std::cell::Cell::new((0.0, 0.0)));
     let (row_weak, grab_at) = (row.downgrade(), grab.clone());
     source.connect_prepare(move |src, x, y| {
@@ -394,7 +387,7 @@ fn add_reordering(
     row.add_controller(target);
 
     let keys = gtk::EventControllerKey::new();
-    let uuid = preset.uuid.0.clone();
+    let uuid = key;
     keys.connect_key_pressed(move |keys, key, _, state| {
         if !state.contains(gtk::gdk::ModifierType::ALT_MASK) { return gtk::glib::Propagation::Proceed; }
         let to = match key {

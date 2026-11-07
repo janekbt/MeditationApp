@@ -666,7 +666,7 @@ fn resolved_label_for_mode(
 // ── Preset read/validate wrappers (Phase 6 / P-1) ───────────
 // Thin DATABASE-lock shims over `meditate_core::db` preset
 // queries, mirroring GTK's `presets.rs` data flow exactly:
-// the home chip list uses *starred* presets gated on
+// the home preset list uses *starred* presets gated on
 // `mode_supports_presets` (Guided has its own files library,
 // no presets — `timer/imp.rs:3159`); the Manage / chooser list
 // uses *all* presets for the mode (`presets.rs:209`); name
@@ -682,7 +682,7 @@ fn presets_supported(mode: meditate_core::SessionMode) -> bool {
     meditate_core::preset_config::mode_supports_presets(mode)
 }
 
-/// Starred presets for the home chip list. Empty (chips hidden)
+/// Starred presets for the home preset list. Empty (list hidden)
 /// when the mode doesn't support presets or none are starred —
 /// same as GTK's `list_starred_presets_for_mode` behind the
 /// `mode_supports_presets` guard.
@@ -781,7 +781,7 @@ fn preset_subtitle(
 /// `presets-list` (empty for Guided / no-presets → the section
 /// hides itself). Mirrors GTK's `rebuild_starred_preset_rows`
 /// on mode switch + after preset CRUD.
-fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
+fn refresh_preset_list(ui: &MainWindow, mode: meditate_core::SessionMode) {
     // `presets-supported` shows the Save/Manage buttons even with
     // zero presets (GTK keeps the button box visible while the
     // section is); the row list hides itself when empty.
@@ -1827,7 +1827,7 @@ fn apply_preset_once(
     }
     load_setup_for_mode(ui, mode, timer_session_secs);
     refresh_bell_rows(ui);
-    refresh_preset_chips(ui, mode);
+    refresh_preset_list(ui, mode);
     true
 }
 
@@ -2506,8 +2506,8 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
         LabelTarget::Setup => None,
     };
     refresh_chooser_items(ui, current_id);
-    // Preset subtitles on the chips and the widget name labels.
-    refresh_preset_chips(ui, mode);
+    // Preset subtitles in the preset list and the widget name labels.
+    refresh_preset_list(ui, mode);
     refresh_widget(ui);
 }
 
@@ -4767,7 +4767,7 @@ fn build_ui() -> MainWindow {
                 if local_watch.as_mut().is_some_and(|w| w.take_new()) {
                     trigger_sync("local change");
                     // A changed setting can make another preset active.
-                    refresh_preset_chips(&ui, current_mode.get().into());
+                    refresh_preset_list(&ui, current_mode.get().into());
                 }
                 // Sync started/finished (SY-4): refresh the
                 // indicator exactly on the edges the trigger +
@@ -5337,7 +5337,7 @@ fn build_ui() -> MainWindow {
                 show_guided_sel(&ui, guided_sel.borrow().as_ref());
                 load_setup_for_mode(&ui, core_mode, &timer_session_secs);
                 // Starred presets are per-mode (P-2).
-                refresh_preset_chips(&ui, core_mode);
+                refresh_preset_list(&ui, core_mode);
                 // Guided starred-files list (GM-F3).
                 if new_mode == TimerMode::Guided {
                     refresh_guided_files(&ui);
@@ -5924,7 +5924,7 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
         let timer_session_secs = timer_session_secs.clone();
-        ui.on_preset_chip_tap(move |uuid| {
+        ui.on_preset_row_tap(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let core_mode: meditate_core::SessionMode =
@@ -6089,7 +6089,7 @@ fn build_ui() -> MainWindow {
                     Some(Ok(_)) => {
                         close_modal(&ui, Modal::CreatePreset);
                         ui.set_preset_chooser_page(false);
-                        refresh_preset_chips(&ui, mode);
+                        refresh_preset_list(&ui, mode);
                         // New preset is starred by default → it
                         // enters the widget projection. Lock-free
                         // here: the `db` guard above dropped with
@@ -6147,7 +6147,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 ui.set_preset_chooser_page(false);
-                refresh_preset_chips(&ui, core_mode);
+                refresh_preset_list(&ui, core_mode);
                 // Overriding a starred preset rewrites its
                 // subtitle on the widget too.
                 refresh_widget(&ui);
@@ -6182,7 +6182,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 populate_preset_chooser(&ui, core_mode);
-                refresh_preset_chips(&ui, core_mode);
+                refresh_preset_list(&ui, core_mode);
                 // The whole point of the widget: star/unstar is
                 // exactly what adds/removes a widget row.
                 refresh_widget(&ui);
@@ -6203,8 +6203,42 @@ fn build_ui() -> MainWindow {
                 return;
             }
             populate_preset_chooser(&ui, core_mode);
-            refresh_preset_chips(&ui, core_mode);
+            refresh_preset_list(&ui, core_mode);
             refresh_widget(&ui);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_preset_setup_move(move |uuid, to| {
+            let Some(ui) = weak.upgrade() else { return; };
+            let core_mode: meditate_core::SessionMode = current_mode.get().into();
+            let to = usize::try_from(to).unwrap_or(0);
+            if !setting_saved(&ui, "preset.move", lock_db().map(|db| db.move_starred_preset(uuid.as_str(), to))) {
+                return;
+            }
+            refresh_preset_list(&ui, core_mode);
+            refresh_widget(&ui);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_starred_move(move |key, to| {
+            let Some(ui) = weak.upgrade() else { return; };
+            let id = meditate_core::local_folder::StarredGuidedId::from_key(&key);
+            let to = usize::try_from(to).unwrap_or(0);
+            write_ok(&ui, "guided.move", lock_db().map(|db| db.move_starred_guided(&id, to)));
+            refresh_guided_files(&ui);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_manage_move(move |uuid, to| {
+            let Some(ui) = weak.upgrade() else { return; };
+            let to = usize::try_from(to).unwrap_or(0);
+            write_ok(&ui, "guided.move", lock_db().map(|db| db.move_guided_file(uuid.as_str(), to)));
+            refresh_guided_manage(&ui);
+            refresh_guided_files(&ui);
         });
     }
     {
@@ -6265,7 +6299,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 populate_preset_chooser(&ui, core_mode);
-                refresh_preset_chips(&ui, core_mode);
+                refresh_preset_list(&ui, core_mode);
                 // Renaming a starred preset changes its widget
                 // title.
                 refresh_widget(&ui);
@@ -6311,7 +6345,7 @@ fn build_ui() -> MainWindow {
                 // Manage Presets stays open (like GTK), so several
                 // presets can go in a row; the snackbar shows above it.
                 populate_preset_chooser(&ui, core_mode);
-                refresh_preset_chips(&ui, core_mode);
+                refresh_preset_list(&ui, core_mode);
                 // Deleting a starred preset drops its widget row.
                 refresh_widget(&ui);
 
@@ -8415,7 +8449,7 @@ fn build_ui() -> MainWindow {
         refresh_sync_indicator(&ui);
         refresh_stats(&ui);
         refresh_bell_rows(&ui);
-        refresh_preset_chips(&ui, core_mode);
+        refresh_preset_list(&ui, core_mode);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
@@ -8514,14 +8548,14 @@ fn build_ui() -> MainWindow {
                 U::PresetDelete(p) => {
                     write_ok(&ui, "preset.undo", lock_db().map(|db| db.restore_preset(&p)));
                     populate_preset_chooser(&ui, core_mode);
-                    refresh_preset_chips(&ui, core_mode);
+                    refresh_preset_list(&ui, core_mode);
                     refresh_widget(&ui);
                 }
                 U::Override(u, prior) => {
                     write_ok(&ui, "preset.override.undo", lock_db().map(|db| db.update_preset_config(&u, &prior)));
-                    // The chips on screen are the current mode's; the
+                    // The preset rows on screen are the current mode's; the
                     // override may belong to the mode switched away from.
-                    refresh_preset_chips(&ui, core_mode);
+                    refresh_preset_list(&ui, core_mode);
                     refresh_widget(&ui);
                 }
                 // The file was kept for Undo, so the row comes back whole.

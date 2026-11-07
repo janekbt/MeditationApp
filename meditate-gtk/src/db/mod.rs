@@ -641,6 +641,18 @@ impl Database {
         self.inner.move_preset(uuid, to).map_err(map_core_err)
     }
 
+    pub fn move_starred_preset(&self, uuid: &str, to: usize) -> Result<()> {
+        self.inner.move_starred_preset(uuid, to).map_err(map_core_err)
+    }
+
+    pub fn move_starred_guided(&self, id: &meditate_core::local_folder::StarredGuidedId, to: usize) -> Result<()> {
+        self.inner.move_starred_guided(id, to).map_err(map_core_err)
+    }
+
+    pub fn move_guided_file(&self, uuid: &str, to: usize) -> Result<()> {
+        self.inner.move_guided_file(uuid, to).map_err(map_core_err)
+    }
+
     pub fn delete_preset(&self, uuid: &str) -> Result<()> {
         self.inner.delete_preset(uuid).map_err(map_core_err)
     }

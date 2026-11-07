@@ -5,7 +5,7 @@
 //! that has no access to the rusqlite handle. So the data path is:
 //! the app writes a flat JSON projection of the *starred* presets
 //! (across every preset-supporting mode — the widget is not
-//! mode-scoped the way the in-app chip list is) into the app-
+//! mode-scoped the way the in-app preset list is) into the app-
 //! private files dir, then pokes `AppWidgetManager` over JNI to
 //! re-pull it. Mirrors nothing in the GTK shell (no desktop
 //! widget); the *content* still goes through the same

@@ -1903,7 +1903,7 @@ mod tests {
         let starred = &lib[lib.find("fn list_starred_presets_for_mode(").unwrap()..];
         assert!(starred[..starred.find("\n}\n").unwrap()].contains("meditate_core::preset_config::active_presets(&db, mode)"));
         let watch = lib.find("if local_watch.as_mut().is_some_and(|w| w.take_new()) {").unwrap();
-        assert!(lib[watch..watch + 300].contains("refresh_preset_chips(&ui, current_mode.get().into());"));
+        assert!(lib[watch..watch + 300].contains("refresh_preset_list(&ui, current_mode.get().into());"));
     }
 
     /// Units and sentences come from the translations: Rust wrote
@@ -2583,7 +2583,7 @@ mod tests {
 
         // One re-read list covering every synced surface.
         let refresh = body_of("fn refresh_after_pull(");
-        // Preset chips and the widget come through refresh_after_label_change.
+        // The preset list and the widget come through refresh_after_label_change.
         for call in [
             "refresh_bell_rows(",
             "populate_interval_bells(",
@@ -2948,7 +2948,7 @@ mod tests {
     }
 
     /// A preset that can't be applied (a failed write) says so instead
-    /// of doing nothing — chip, widget and Undo alike, as they all go
+    /// of doing nothing — preset row, widget and Undo alike, as they all go
     /// through apply_preset_json. GTK shows the same message.
     #[test]
     fn a_preset_that_cannot_apply_says_so() {
@@ -3238,7 +3238,7 @@ mod tests {
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         for list in [
             "root.presets-list", "root.preset-chooser-items", "root.label-items",
-            "root.bell-chooser-items", "root.pattern-chooser-items",
+            "root.bell-chooser-items", "root.pattern-chooser-items", "root.guided-manage-items",
         ] {
             let at = slint.find(&format!("in {list} : VerticalLayout {{")).unwrap_or_else(|| panic!("{list}"));
             let row = &slint[at..at + 6500];
@@ -3737,13 +3737,13 @@ mod tests {
 
     #[test]
     fn undoing_an_override_refreshes_the_visible_mode() {
-        // After a mode switch, Undo refreshed the chips with the
+        // After a mode switch, Undo refreshed the preset list with the
         // override's mode, so Setup listed the other mode's presets.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("U::Override(u, prior) => {").unwrap();
         let branch = &lib[at..at + lib[at..].find("\n                }").unwrap()];
-        assert!(branch.contains("refresh_preset_chips(&ui, core_mode);"));
+        assert!(branch.contains("refresh_preset_list(&ui, core_mode);"));
     }
 
     #[test]
@@ -5525,13 +5525,13 @@ mod tests {
 
     #[test]
     fn label_and_sound_renames_reach_widget_and_bell_list() {
-        // #84: a renamed label shows its new name in the preset chips
+        // #84: a renamed label shows its new name in the preset list
         // and on the widget; a renamed or deleted sound in the
         // Interval Bells list.
         let code = ui_code();
         let at = code.find("fn refresh_after_label_change(").unwrap();
         let labels = &code[at..at + code[at..].find("\n}\n").unwrap()];
-        assert!(labels.contains("refresh_preset_chips(ui, mode);") && labels.contains("refresh_widget(ui);"));
+        assert!(labels.contains("refresh_preset_list(ui, mode);") && labels.contains("refresh_widget(ui);"));
         for name in ["bell_rename_confirm", "bell_delete_confirm"] {
             assert!(handler(&code, name).contains("populate_interval_bells(&ui);"), "{name}");
         }

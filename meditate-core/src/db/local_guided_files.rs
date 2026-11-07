@@ -23,13 +23,16 @@ pub struct LocalGuidedFile {
     pub play_count: u32,
     /// The last scan of its folder did not find it.
     pub missing: bool,
+    /// Its place in Starred Files (an order key); None until it is
+    /// moved or starred anew.
+    pub star_key: Option<String>,
 }
 
 /// `sync_state` key: local-only, and kept by Wipe Local.
 const LOCAL_FOLDER_KEY: &str = "local_guided_folder";
 
 const COLUMNS: &str =
-    "id, root, rel_path, size, mtime, duration_secs, is_starred, play_count, missing";
+    "id, root, rel_path, size, mtime, duration_secs, is_starred, play_count, missing, star_key";
 
 fn from_row(row: &rusqlite::Row) -> rusqlite::Result<LocalGuidedFile> {
     Ok(LocalGuidedFile {
@@ -42,6 +45,7 @@ fn from_row(row: &rusqlite::Row) -> rusqlite::Result<LocalGuidedFile> {
         is_starred: row.get::<_, i64>(6)? != 0,
         play_count: row.get::<_, i64>(7)? as u32,
         missing: row.get::<_, i64>(8)? != 0,
+        star_key: row.get(9)?,
     })
 }
 
@@ -147,11 +151,25 @@ impl Database {
         self.set_sync_state(LOCAL_FOLDER_KEY, root)
     }
 
+    /// A newly starred file comes last in Starred Files; unstarring
+    /// forgets its place. Starring a starred file keeps it.
     pub fn set_local_file_starred(&self, id: i64, starred: bool) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some(file) = find_local_file_from_db(self, id)? else { return Ok(()); };
+        if file.is_starred == starred { return Ok(()); }
+        let key = if starred {
+            let mut rows = crate::local_folder::starred_guided_from_db(self)?;
+            self.key_unkeyed_locals(&mut rows)?;
+            let highest = rows.iter().filter_map(crate::local_folder::StarredGuided::key).max();
+            super::order_key::key_between(highest, None, &super::starred_order::local_tail(id))
+        } else {
+            None
+        };
         self.conn.execute(
-            "UPDATE local_guided_files SET is_starred = ?2 WHERE id = ?1",
-            rusqlite::params![id, starred as i64],
+            "UPDATE local_guided_files SET is_starred = ?2, star_key = ?3 WHERE id = ?1",
+            rusqlite::params![id, starred as i64, key],
         )?;
+        tx.commit()?;
         Ok(())
     }
 }

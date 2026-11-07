@@ -225,3 +225,23 @@ pub(super) fn release_v26_10_1_database() -> rusqlite::Connection {
     .unwrap();
     conn
 }
+
+/// A database as v26.11.0 left it: library files g1 (imported first)
+/// and g2, both starred, and the local folder /m with "b.ogg" and
+/// "Sub/c.ogg" starred (by name: b, c; by path: Sub/c, b).
+pub(crate) fn release_v26_11_0_database() -> super::Database {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(include_str!("fixtures/schema_v26_11_0.sql")).unwrap();
+    conn.execute_batch(
+        "PRAGMA user_version = 1;
+         INSERT INTO sync_state (key, value) VALUES ('cache_schema_version', '2');
+         INSERT INTO guided_files (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
+             VALUES ('g2', 'Later', 'guided/g2.ogg', 600, 1, '2026-10-02T00:00:00Z', '2026-10-02T00:00:00Z'),
+                    ('g1', 'Earlier', 'guided/g1.ogg', 900, 1, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
+         INSERT INTO sync_state (key, value) VALUES ('local_guided_folder', '/m');
+         INSERT INTO local_guided_files (root, rel_path, size, mtime, is_starred)
+             VALUES ('/m', 'b.ogg', 1, 1, 1), ('/m', 'Sub/c.ogg', 1, 1, 1);",
+    )
+    .unwrap();
+    super::Database::init(conn).unwrap()
+}
