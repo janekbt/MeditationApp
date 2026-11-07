@@ -78,7 +78,7 @@ ever deleted, so a file that goes away for a while keeps its star
 and plays.
 
 Device-local tables that never sync: `device`, `sync_state` (account,
-cursors, cache version), the `known_remote_*` trackers and
+cursors, cache version, the mode and Guided file open last), the `known_remote_*` trackers and
 `session_in_progress` (see "Crash resilience"). The diagnostics log
 is a plain file (`<data>/diagnostics.log`) and does not sync either.
 

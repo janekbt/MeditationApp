@@ -175,3 +175,11 @@ On Linux, Preferences SHALL show every group on one page without tabs, in this o
 - **WHEN** the sync status in the headerbar is clicked and its Preferences button pressed; then again with the password missing and its Enter Password button pressed
 - **THEN** the dialog opens scrolled to Nextcloud Sync, with no cursor in any field and nothing selected
 - **MANUAL** Janek on the laptop: scrolling only happens in a running app
+
+### Requirement: The Danger Zone comes last in Preferences
+On the phone, the Danger Zone SHALL be the last group in Preferences, below About; Linux shows it last too.
+
+#### Scenario: Scrolling to the end of Preferences
+- **WHEN** the user scrolls Preferences on the phone to the end
+- **THEN** the last group is the Danger Zone with "Delete all sessions"
+- **MANUAL** on the phone; layout needs the device

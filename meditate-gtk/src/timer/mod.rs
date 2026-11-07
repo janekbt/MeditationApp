@@ -14,6 +14,11 @@ glib::wrapper! {
 }
 
 impl TimerView {
+    /// Open the mode and Guided file this device had last.
+    pub fn restore_last_choice(&self) {
+        self.imp().restore_last_choice();
+    }
+
     /// Refresh the streak label from the database.
     pub fn refresh_streak(&self) {
         self.imp().refresh_streak();

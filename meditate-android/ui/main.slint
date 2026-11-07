@@ -8745,21 +8745,6 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: @tr("Danger Zone");
-                font-size: 14px;
-                font-weight: 700;
-                color: MaterialPalette.error;
-                horizontal-alignment: left;
-            }
-            BoxedList {
-                DurationRow {
-                    label: @tr("Delete all sessions");
-                    value-text: "";
-                    tapped => { root.modal = Modal.delete-all; }
-                }
-            }
-
-            Text {
                 text: @tr("Appearance");
                 font-size: 14px;
                 font-weight: 700;
@@ -8881,6 +8866,21 @@ export component MainWindow inherits Window {
                     label: @tr("Diagnostics");
                     value-text: "";
                     tapped => { root.diag-open-tap(); }
+                }
+            }
+
+            Text {
+                text: @tr("Danger Zone");
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.error;
+                horizontal-alignment: left;
+            }
+            BoxedList {
+                DurationRow {
+                    label: @tr("Delete all sessions");
+                    value-text: "";
+                    tapped => { root.modal = Modal.delete-all; }
                 }
             }
                 } // prefs-body

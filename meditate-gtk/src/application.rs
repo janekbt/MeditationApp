@@ -113,7 +113,11 @@ mod imp {
                 return;
             }
 
-            MeditateWindow::new(&*app).present();
+            let window = MeditateWindow::new(&*app);
+            // The mode and Guided file used last, before the first frame
+            // and before the recovery toast below.
+            window.timer_view().restore_last_choice();
+            window.present();
             // First activation after startup: pull whatever a peer
             // device authored while we were closed.
             app.trigger_sync();

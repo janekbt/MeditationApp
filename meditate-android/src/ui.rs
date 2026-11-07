@@ -833,22 +833,13 @@ fn populate_preset_chooser(
     );
 }
 
-/// Modes whose starred presets the home-screen widget lists.
-/// Fixed order → the widget list is stable across refreshes
-/// (the `RemoteViewsFactory` preserves array order). Guided is
-/// excluded by `mode_supports_presets`, so it never appears here;
-/// the explicit list keeps it that way without a runtime filter.
-const WIDGET_PRESET_MODES: [meditate_core::SessionMode; 2] = [
-    meditate_core::SessionMode::Timer,
-    meditate_core::SessionMode::BoxBreath,
-];
-
-/// Flatten every mode's starred presets into the widget
-/// projection. Reuses `preset_subtitle` (one labels roundtrip,
-/// shared across modes) so a widget row reads identically to its
-/// in-app chip. Empty when the DB is unopened or nothing is
-/// starred — the widget then shows its empty state.
-fn widget_presets_snapshot(ui: &MainWindow) -> Vec<widget::WidgetPreset> {
+/// The widget's rows, Timer, Guided, Box Breath: each mode's starred
+/// presets, for Guided the Starred Files rows as Setup shows them.
+/// Reuses `preset_subtitle` so a widget row reads like its Setup row. Empty when the DB is unopened or nothing is
+/// starred; the widget then shows its empty state.
+fn widget_rows(ui: &MainWindow) -> Vec<widget::WidgetRow> {
+    use meditate_core::SessionMode;
+    let files = starred_file_items(ui);
     let Some(db) = lock_db() else { return Vec::new(); };
     let label_names: std::collections::HashMap<String, String> =
         meditate_core::db::list_labels_from_db(&db)
@@ -856,37 +847,38 @@ fn widget_presets_snapshot(ui: &MainWindow) -> Vec<widget::WidgetPreset> {
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
             .collect();
-    let mut out = Vec::new();
-    for mode in WIDGET_PRESET_MODES {
-        if !meditate_core::preset_config::mode_supports_presets(mode) {
-            continue;
-        }
-        let rows = meditate_core::db::list_starred_presets_for_mode_from_db(
-            &db, mode,
-        )
-        .unwrap_or_default();
-        for p in rows {
-            out.push(widget::WidgetPreset {
-                uuid: p.uuid.to_string(),
+    widget::order_rows(|mode| match mode {
+        SessionMode::Guided => files
+            .iter()
+            .map(|f| widget::WidgetRow {
+                launch: widget::launch_value(&widget::Launch::Guided(
+                    meditate_core::local_folder::StarredGuidedId::from_key(&f.uuid),
+                )),
+                name: f.name.to_string(),
+                subtitle: f.subtitle.to_string(),
+            })
+            .collect(),
+        &mode => meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| widget::WidgetRow {
+                launch: p.uuid.to_string(),
                 subtitle: preset_subtitle(ui, &p.config_json, &label_names),
                 name: p.name,
-                mode: mode.as_db_str(),
-            });
-        }
-    }
-    out
+            })
+            .collect(),
+    })
 }
 
-/// Rebuild + push the widget projection. Call after every preset
-/// mutation that can change the starred set (create / override /
-/// star toggle / rename / delete and their snackbar Undos) and
-/// once at startup. No-op when the AndroidApp handle isn't set
-/// yet (never the case post-`android_main`) or no widget is
-/// installed (the JNI side short-circuits). Cheap enough to call
-/// unconditionally — two indexed `WHERE is_starred` queries.
+/// Rebuild + push the widget projection. Call after every change
+/// that can alter a starred preset or starred file (presets through
+/// their own calls, files through `refresh_guided_files`) and once at
+/// startup. Cheap enough to call unconditionally: a few indexed
+/// queries, and `widget::publish` writes and redraws only when the
+/// rows changed. No-op when no widget is installed.
 fn refresh_widget(ui: &MainWindow) {
     if let Some(app) = android_app() {
-        widget::publish(app, widget_presets_snapshot(ui));
+        widget::publish(app, widget_rows(ui));
     }
 }
 
@@ -977,6 +969,13 @@ fn try_widget_deep_link(
         );
         return true;
     }
+    let uuid = match widget::parse_launch(&uuid) {
+        widget::Launch::Preset(uuid) => uuid,
+        widget::Launch::Guided(id) => {
+            start_guided_from_widget(ui, &id);
+            return true;
+        }
+    };
     let Some(preset) = find_preset_by_uuid(&uuid) else {
         meditate_core::log(
             "widget",
@@ -1003,11 +1002,7 @@ fn try_widget_deep_link(
             // LOWEST overlay layer, so a stale Preferences page or
             // chooser left open would otherwise cover the running
             // session entirely (bug-audit #9).
-            ui.set_nav_page(0);
-            close_transient_overlays(ui);
-            let idx = tmode.to_chip_index();
-            ui.set_setup_mode(idx);
-            ui.invoke_mode_changed(idx);
+            show_setup_for_launch(ui, tmode);
             if apply_preset_json(
                 ui,
                 &preset.config_json,
@@ -1032,6 +1027,37 @@ fn try_widget_deep_link(
         ),
     }
     true
+}
+
+/// A widget start shows the Setup of `mode` on the Timer tab with no
+/// page or dialog over it: the Running view is the lowest overlay
+/// layer and renders only on that tab.
+fn show_setup_for_launch(ui: &MainWindow, mode: TimerMode) {
+    ui.set_nav_page(0);
+    close_transient_overlays(ui);
+    let idx = mode.to_chip_index();
+    ui.set_setup_mode(idx);
+    ui.invoke_mode_changed(idx);
+}
+
+/// A widget tap on a starred file: Guided opens with the file chosen
+/// through the Starred Files tap, and starts once its length is known.
+/// A file that is gone says so and starts nothing.
+fn start_guided_from_widget(ui: &MainWindow, id: &meditate_core::local_folder::StarredGuidedId) {
+    show_setup_for_launch(ui, TimerMode::Guided);
+    if let meditate_core::local_folder::StarredGuidedId::Library(uuid) = id {
+        if guided_file_by_uuid(uuid).is_none() {
+            show_notice(ui, ui.global::<Tr>().invoke_file_not_found(), None, 4);
+            return;
+        }
+    }
+    let key = id.key();
+    ui.invoke_guided_file_tap(key.as_str().into());
+    let ready = ui.get_guided_selected_key() == key.as_str() && ui.get_guided_duration_secs() > 0;
+    meditate_core::log("widget", &format!("deep-link guided {} ready={ready}", id.key()));
+    if ready {
+        ui.invoke_action_tap();
+    }
 }
 
 /// Adopt a pending Guided SAF pick (GM-2), if the picker
@@ -1165,13 +1191,23 @@ fn insert_guided_file(
 /// duration. The Slint side shows a dim empty-state row when the
 /// model is empty.
 fn refresh_guided_files(ui: &MainWindow) {
+    let items = starred_file_items(ui);
+    ui.set_guided_files(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+    // The widget lists the same rows.
+    refresh_widget(ui);
+}
+
+/// The Starred Files rows, as Setup and the widget show them.
+fn starred_file_items(ui: &MainWindow) -> Vec<GuidedFileItem> {
     use meditate_core::local_folder::StarredGuided;
     let starred = {
-        let Some(db) = lock_db() else { return; };
+        let Some(db) = lock_db() else { return Vec::new(); };
         meditate_core::local_folder::starred_guided_from_db(&db).unwrap_or_default()
     };
     let tr = ui.global::<Tr>();
-    let items: Vec<GuidedFileItem> = starred
+    starred
         .into_iter()
         .map(|entry| match entry {
             StarredGuided::Library(f) => guided_file_item(f),
@@ -1190,10 +1226,7 @@ fn refresh_guided_files(ui: &MainWindow) {
                 }
             }
         })
-        .collect();
-    ui.set_guided_files(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+        .collect()
 }
 
 /// Map a core `GuidedFile` row to the Slint list item (shared by
@@ -4164,6 +4197,13 @@ fn show_guided_sel(ui: &MainWindow, sel: Option<&GuidedSel>) {
     ui.set_guided_name(sel.map(|s| s.name.clone()).unwrap_or_default().into());
     // Same keys as the Starred Files rows; a transient Open File pick has none.
     let key = sel.and_then(|s| s.uuid.clone().or_else(|| s.local_id.map(|id| format!("local:{id}"))));
+    // The device remembers what is shown, for the next start; a pick
+    // with no key forgets. With no database there is nothing to
+    // remember into.
+    let chosen = key.as_deref().map(meditate_core::local_folder::StarredGuidedId::from_key);
+    if let Some(res) = lock_db().map(|db| meditate_core::guided::remember_guided(&db, chosen.as_ref())) {
+        write_ok(ui, "guided.remember", Some(res));
+    }
     ui.set_guided_selected_key(key.unwrap_or_default().into());
     ui.set_guided_duration_secs(sel.map_or(0, |s| s.duration_secs as i32));
     // Import is off for library files and for Local Folder files,
@@ -4280,6 +4320,14 @@ fn build_ui() -> MainWindow {
     // `GuidedFilePick`.
     let guided_sel: Rc<RefCell<Option<GuidedSel>>> =
         Rc::new(RefCell::new(None));
+    // What this device had open last (#22), read before anything shows
+    // a selection and so rewrites the memory.
+    let remembered = lock_db().map(|db| {
+        (
+            meditate_core::settings_keys::last_mode_from_db(&db),
+            meditate_core::guided::remembered_guided_from_db(&db),
+        )
+    });
 
     // GM-F2 import flow state. Mirrors GTK: the Import File
     // button operates on the *current* Open-File pick (it's
@@ -5332,6 +5380,11 @@ fn build_ui() -> MainWindow {
                 // An open Undo (a preset's, above all) belongs to the
                 // mode left.
                 finish_notice(&ui);
+                // After that, so a failed save stays on screen (#22).
+                // With no database there is nothing to remember into.
+                if let Some(res) = lock_db().map(|db| meditate_core::settings_keys::set_last_mode(&db, core_mode)) {
+                    write_ok(&ui, "mode.remember", Some(res));
+                }
                 // Reflect the current Guided pick (if any) into
                 // the Setup row + Start gate.
                 show_guided_sel(&ui, guided_sel.borrow().as_ref());
@@ -9875,6 +9928,23 @@ fn build_ui() -> MainWindow {
             // a session safe from a stray back gesture.
             // Idle setup page: nothing to do.
         });
+    }
+
+    // Open the mode and the Guided file this device had last, through
+    // the same mode switch and Starred Files tap the user would make.
+    // Before the recovery snackbar: a mode switch closes an open notice.
+    if let Some((mode, file)) = remembered {
+        if let Some(id) = file {
+            let idx = TimerMode::Guided.to_chip_index();
+            ui.set_setup_mode(idx);
+            ui.invoke_mode_changed(idx);
+            ui.invoke_guided_file_tap(id.key().into());
+        }
+        let idx = TimerMode::from(mode).to_chip_index();
+        if ui.get_setup_mode() != idx {
+            ui.set_setup_mode(idx);
+            ui.invoke_mode_changed(idx);
+        }
     }
 
     // Crash-recovery Undo snackbar (L-6). Drain the single-shot

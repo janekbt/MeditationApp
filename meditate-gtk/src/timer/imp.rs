@@ -52,6 +52,10 @@ pub enum TimerMode {
 /// `meditate_core::settings_keys` (which expect `SessionMode`).
 /// `Breathing` ↔ `BoxBreath` is the only naming difference; the
 /// variants are otherwise 1:1.
+/// The mode toggle's names (`timer_view.blp`) and their modes.
+const MODE_NAMES: [(&str, TimerMode); 3] =
+    [("timer", TimerMode::Timer), ("guided", TimerMode::Guided), ("breathing", TimerMode::Breathing)];
+
 impl From<TimerMode> for meditate_core::SessionMode {
     fn from(m: TimerMode) -> Self {
         match m {
@@ -287,6 +291,9 @@ pub struct TimerView {
     /// promotes it into the library) or pick a starred row from the
     /// list. Drives the hero countdown's target during a guided run.
     guided_pick: RefCell<Option<crate::guided::GuidedFilePick>>,
+    /// The last mode and file were read back: only from then on may a
+    /// shown selection or mode overwrite them.
+    choice_restored: Cell<bool>,
     /// UUID of the currently-selected library row, when the user has
     /// tapped a row in the starred list. `None` for transient picks
     /// AND for the empty state. The session-save path reads this so
@@ -1906,11 +1913,8 @@ impl TimerView {
     /// Stopwatch-vs-countdown lives on `stopwatch_toggle_on` within
     /// the Timer branch.
     pub(crate) fn current_mode(&self) -> TimerMode {
-        match self.mode_toggle_group.active_name().as_deref() {
-            Some("guided")    => TimerMode::Guided,
-            Some("breathing") => TimerMode::Breathing,
-            _                 => TimerMode::Timer,
-        }
+        let name = self.mode_toggle_group.active_name();
+        MODE_NAMES.iter().find(|(n, _)| Some(*n) == name.as_deref()).map_or(TimerMode::Timer, |(_, m)| *m)
     }
 
     /// Called when any of the three mode toggles gains active state.
@@ -1919,6 +1923,14 @@ impl TimerView {
         // An open Undo (a preset's, above all) belongs to the mode left.
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
             window.dismiss_toasts();
+        }
+        // The device opens in this mode next time (#22). After the
+        // dismiss, so a failed save stays on screen.
+        // A failed write says so, but has no Setup value to reload.
+        if let Some(app) = self.get_app().filter(|_| self.choice_restored.get()) {
+            if let Some(res) = app.with_db(|db| meditate_core::settings_keys::set_last_mode(db.core(), mode.into())) {
+                crate::db::write_ok(&*self.obj(), "mode.remember", Some(res), crate::db::Failed::Save);
+            }
         }
 
         // Input panels: only the active mode's inputs are visible.
@@ -3673,6 +3685,52 @@ impl TimerView {
         self.import_file_btn.set_sensitive(has_transient && !local);
         self.refresh_start_sensitive(self.current_mode());
         self.mark_selected_starred_row();
+        // The device remembers what is shown, for the next start; an
+        // Open File pick (no uuid, no local row) forgets.
+        if let Some(app) = self.get_app().filter(|_| self.choice_restored.get()) {
+            use meditate_core::local_folder::StarredGuidedId;
+            let chosen = self.guided_selected_uuid.borrow().clone().map(StarredGuidedId::Library).or_else(|| {
+                self.guided_pick.borrow().as_ref().and_then(|p| p.local_file_id).map(StarredGuidedId::Local)
+            });
+            if let Some(res) = app.with_db(|db| meditate_core::guided::remember_guided(db.core(), chosen.as_ref())) {
+                crate::db::write_ok(&*self.obj(), "guided.remember", Some(res), crate::db::Failed::Save);
+            }
+        }
+    }
+
+    /// Open the mode and the Guided file this device had last (#22).
+    /// Once, before the window shows and before the recovery toast
+    /// (a mode switch dismisses toasts).
+    pub fn restore_last_choice(&self) {
+        use meditate_core::local_folder::StarredGuidedId;
+        let Some(app) = self.get_app() else { return };
+        self.choice_restored.set(true);
+        let Some((mode, file)) = app.with_db(|db| {
+            (
+                meditate_core::settings_keys::last_mode_from_db(db.core()),
+                meditate_core::guided::remembered_guided_from_db(db.core()),
+            )
+        }) else {
+            return;
+        };
+        match file {
+            Some(StarredGuidedId::Library(uuid)) => {
+                if let Some(Ok(Some(f))) = app.with_db(|db| db.find_guided_file_by_uuid(&uuid)) {
+                    *self.guided_pick.borrow_mut() = Some(library_pick(&f));
+                    *self.guided_selected_uuid.borrow_mut() = Some(uuid);
+                }
+            }
+            Some(StarredGuidedId::Local(id)) => {
+                if let Some(Ok(Some(file))) = app.with_db(|db| meditate_core::db::find_local_file_from_db(db.core(), id)) {
+                    self.select_local_pick(crate::local_folder::pick_for(&app, &file));
+                }
+            }
+            None => {}
+        }
+        let name = MODE_NAMES.iter().find(|(_, m)| meditate_core::SessionMode::from(*m) == mode).map_or("timer", |(n, _)| *n);
+        self.mode_toggle_group.set_active_name(Some(name));
+        self.refresh_guided_selected_row();
+        self.refresh_hero_for_idle();
     }
 
     /// Start waits while a Local Folder file's length is being read.
@@ -4759,7 +4817,15 @@ mod tests {
         let failed = saved.find("crate::db::write_ok(").expect("the failure message");
         let reload = saved.find("idle_add_local_once").expect("reload on the next turn");
         assert!(failed < reload && saved[reload..].contains(".reload_setup()"));
-        assert_eq!(code.matches("crate::db::write_ok(").count(), 2, "every write goes through setting_saved, but the Undo of an auto-save");
+        assert_eq!(code.matches("crate::db::write_ok(").count(), 4, "every write goes through setting_saved, but the Undo of an auto-save and the two memory writes");
+        // The memory of the last mode and file has no Setup value to show
+        // again: a failure says so without the reload, which would refresh
+        // the selected row, write again and fail again without end.
+        for tag in ["\"mode.remember\"", "\"guided.remember\""] {
+            let at = code.find(tag).expect(tag);
+            assert!(code[..at].rfind("crate::db::write_ok(").is_some_and(|w| at - w < 40), "{tag}");
+        }
+
         let reload = body(&code, "fn reload_setup(&self)");
         for f in ["refresh_streak()", "refresh_setup_label_chooser_subtitle()"] {
             assert!(reload.contains(f), "{f}");

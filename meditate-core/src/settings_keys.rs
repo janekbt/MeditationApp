@@ -288,9 +288,58 @@ pub fn lead_in_ms(secs: f64) -> u32 {
     (ms + 5) / 10 * 10
 }
 
+/// The mode open last, per device (`sync_state`, never synced): the app
+/// opens in it at the next start. Timer until set.
+const LAST_MODE_KEY: &str = "last_mode";
+
+pub fn last_mode_from_db(db: &Database) -> SessionMode {
+    db.get_sync_state(LAST_MODE_KEY, "")
+        .ok()
+        .and_then(|s| SessionMode::from_db_str(&s))
+        .unwrap_or(SessionMode::Timer)
+}
+
+pub fn set_last_mode(db: &Database, mode: SessionMode) -> crate::db::Result<()> {
+    // Called on every mode switch; only a change writes.
+    if db.get_sync_state(LAST_MODE_KEY, "")? == mode.as_db_str() {
+        return Ok(());
+    }
+    db.set_sync_state(LAST_MODE_KEY, mode.as_db_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn setting_events(db: &Database) -> usize {
+        db.pending_events().unwrap().into_iter().filter(|(_, e)| e.kind == "setting_changed").count()
+    }
+
+    #[test]
+    fn the_last_mode_comes_back_after_a_restart() {
+        let db = Database::open_in_memory().unwrap();
+        set_last_mode(&db, SessionMode::BoxBreath).unwrap();
+        assert_eq!(last_mode_from_db(&db), SessionMode::BoxBreath);
+        set_last_mode(&db, SessionMode::Guided).unwrap();
+        assert_eq!(last_mode_from_db(&db), SessionMode::Guided);
+    }
+
+    #[test]
+    fn the_last_mode_stays_on_its_device() {
+        let db = Database::open_in_memory().unwrap();
+        let before = setting_events(&db);
+        set_last_mode(&db, SessionMode::Guided).unwrap();
+        assert_eq!(setting_events(&db), before, "nothing to sync");
+        assert_eq!(db.get_setting("last_mode", "none").unwrap(), "none");
+    }
+
+    #[test]
+    fn the_app_opens_in_timer_with_nothing_remembered() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(last_mode_from_db(&db), SessionMode::Timer);
+        db.set_sync_state("last_mode", "nonsense").unwrap();
+        assert_eq!(last_mode_from_db(&db), SessionMode::Timer);
+    }
 
     #[test]
     fn void_controls_are_off_until_set() {

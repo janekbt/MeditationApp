@@ -43,11 +43,11 @@ A preset SHALL save the mode's Auto-Finish switch and set it again when applied;
 - **THEN** that preset still shows as active
 - **TEST** `meditate-core/src/preset_config.rs::a_hidden_auto_finish_does_not_change_the_active_preset`
 
-### Requirement: Only the widget starts a preset from outside the app
-On the phone, a preset SHALL start from outside the app only through a tap on the home-screen widget, never through a command another app sends.
+### Requirement: Only the widget starts a session from outside the app
+On the phone, a preset or a guided file SHALL start from outside the app only through a tap on the home-screen widget, never through a command another app sends.
 
 #### Scenario: Another app sends the widget's start command
-- **WHEN** another app sends the widget's start command with a preset's id
+- **WHEN** another app sends the widget's start command with a preset's or a file's id
 - **THEN** no session starts, now or at the next launch
 - **TEST** `meditate-android/src/app.rs::only_the_widget_can_start_a_preset`
 

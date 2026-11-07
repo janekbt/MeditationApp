@@ -42,6 +42,28 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+impl From<meditate_core::SessionMode> for TimerMode {
+    fn from(m: meditate_core::SessionMode) -> Self {
+        match m {
+            meditate_core::SessionMode::Timer => TimerMode::Timer,
+            meditate_core::SessionMode::BoxBreath => TimerMode::Breathing,
+            meditate_core::SessionMode::Guided => TimerMode::Guided,
+        }
+    }
+}
+
+#[cfg(test)]
+mod timer_mode_tests {
+    use super::*;
+
+    #[test]
+    fn every_mode_maps_back_from_core() {
+        for m in [TimerMode::Timer, TimerMode::Guided, TimerMode::Breathing] {
+            assert_eq!(TimerMode::from(meditate_core::SessionMode::from(m)), m);
+        }
+    }
+}
+
 /// Typed seconds ("1,25" or "1.25") in hundredths, for the lead-in
 /// stepper; `None` when it isn't a number.
 pub fn parse_hundredths(text: &str) -> Option<i32> {

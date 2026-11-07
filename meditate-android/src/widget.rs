@@ -37,33 +37,60 @@ const WIDGET_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateWidget";
 #[cfg(target_os = "android")]
 const PROJECTION_FILENAME: &str = "widget_presets.json";
 
-/// One starred preset as the widget needs it: the display lines
-/// plus the uuid the tap fill-in-intent carries back for the
-/// deep-link apply (W-3). `mode` is informational — W-3 re-reads
-/// the authoritative row from the DB by uuid, so a stale widget
-/// (preset deleted between render and tap) fails closed there.
-pub struct WidgetPreset {
-    pub uuid: String,
+/// One widget row: a starred preset or a starred guided file, its
+/// display lines and the value its tap hands back (`launch_value`).
+/// The JSON key stays `uuid`: the widget's Kotlin side reads that key
+/// and puts it in the tap's `preset_uuid` extra unchanged, so rows the
+/// previous version drew still start their preset.
+pub struct WidgetRow {
+    pub launch: String,
     pub name: String,
     pub subtitle: String,
-    pub mode: &'static str,
+}
+
+/// What a widget tap asks for.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Launch {
+    Preset(String),
+    Guided(meditate_core::local_folder::StarredGuidedId),
+}
+
+const GUIDED_PREFIX: &str = "guided:";
+
+/// The tap value of a preset row (its uuid) or a file row.
+pub fn launch_value(launch: &Launch) -> String {
+    match launch {
+        Launch::Preset(uuid) => uuid.clone(),
+        Launch::Guided(id) => format!("{GUIDED_PREFIX}{}", id.key()),
+    }
+}
+
+/// Read a tap value back; a bare value is a preset uuid.
+pub fn parse_launch(value: &str) -> Launch {
+    match value.strip_prefix(GUIDED_PREFIX) {
+        Some(key) => Launch::Guided(meditate_core::local_folder::StarredGuidedId::from_key(key)),
+        None => Launch::Preset(value.to_string()),
+    }
+}
+
+/// The widget's rows: each mode's own rows, Timer, Guided, Box Breath.
+pub fn order_rows(rows: impl FnMut(&meditate_core::SessionMode) -> Vec<WidgetRow>) -> Vec<WidgetRow> {
+    use meditate_core::SessionMode;
+    [SessionMode::Timer, SessionMode::Guided, SessionMode::BoxBreath].iter().flat_map(rows).collect()
 }
 
 /// Serialize the projection. Pure (no JNI, no fs) so the shape
 /// and escaping are unit-testable without a device. Order is
-/// preserved exactly as passed — the caller concatenates per
-/// mode in a fixed order, so the widget list is stable across
-/// refreshes. `serde_json` handles quote/backslash/control-char
-/// escaping in arbitrary user-entered preset names.
-pub fn build_projection_json(presets: &[WidgetPreset]) -> String {
-    let arr: Vec<serde_json::Value> = presets
+/// preserved exactly as passed. `serde_json` handles quote/backslash/
+/// control-char escaping in arbitrary user-entered names.
+pub fn build_projection_json(rows: &[WidgetRow]) -> String {
+    let arr: Vec<serde_json::Value> = rows
         .iter()
         .map(|p| {
             serde_json::json!({
-                "uuid": p.uuid,
+                "uuid": p.launch,
                 "name": p.name,
                 "subtitle": p.subtitle,
-                "mode": p.mode,
             })
         })
         .collect();
@@ -78,7 +105,7 @@ pub fn build_projection_json(presets: &[WidgetPreset]) -> String {
 /// when there is no installed widget instance (the JNI helper
 /// short-circuits on an empty id list).
 #[cfg(target_os = "android")]
-pub fn publish(app: &AndroidApp, presets: Vec<WidgetPreset>) {
+pub fn publish(app: &AndroidApp, rows: Vec<WidgetRow>) {
     let Some(data_root) = app.internal_data_path() else {
         meditate_core::log("widget", "publish: no internal_data_path");
         return;
@@ -86,7 +113,12 @@ pub fn publish(app: &AndroidApp, presets: Vec<WidgetPreset>) {
     let dir = data_root.join("meditate");
     let final_path = dir.join(PROJECTION_FILENAME);
     let tmp_path = dir.join(format!("{PROJECTION_FILENAME}.tmp"));
-    let json = build_projection_json(&presets);
+    let json = build_projection_json(&rows);
+    // Unchanged rows: no write, no widget redraw (this runs on every
+    // switch into Guided and after every sync).
+    if std::fs::read_to_string(&final_path).is_ok_and(|old| old == json) {
+        return;
+    }
     if let Err(e) = std::fs::write(&tmp_path, json.as_bytes()) {
         meditate_core::log("widget", &format!("publish write FAILED: {e}"));
         return;
@@ -145,13 +177,14 @@ fn invoke_refresh(app: &AndroidApp) -> Result<(), jni::errors::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use meditate_core::local_folder::StarredGuidedId;
+    use meditate_core::SessionMode;
 
-    fn p(uuid: &str, name: &str, subtitle: &str) -> WidgetPreset {
-        WidgetPreset {
-            uuid: uuid.into(),
+    fn p(uuid: &str, name: &str, subtitle: &str) -> WidgetRow {
+        WidgetRow {
+            launch: uuid.into(),
             name: name.into(),
             subtitle: subtitle.into(),
-            mode: "timer",
         }
     }
 
@@ -187,14 +220,28 @@ mod tests {
     }
 
     #[test]
-    fn mode_tag_is_carried() {
-        let json = build_projection_json(&[WidgetPreset {
-            uuid: "u".into(),
-            name: "n".into(),
-            subtitle: "s".into(),
-            mode: "box_breath",
-        }]);
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["presets"][0]["mode"], "box_breath");
+    fn the_widget_lists_files_between_timer_and_box_breath() {
+        let rows = order_rows(|mode| match mode {
+            SessionMode::Timer => vec![p("t1", "T1", ""), p("t2", "T2", "")],
+            SessionMode::Guided => vec![p("g1", "G1", "")],
+            SessionMode::BoxBreath => vec![p("b1", "B1", ""), p("b2", "B2", "")],
+        });
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["T1", "T2", "G1", "B1", "B2"]);
+    }
+
+    #[test]
+    fn a_widget_tap_tells_a_file_from_a_preset() {
+        // A row drawn by the previous version carries the bare preset uuid.
+        assert_eq!(parse_launch("6f1c2d3e-aaaa"), Launch::Preset("6f1c2d3e-aaaa".into()));
+        let library = Launch::Guided(StarredGuidedId::Library("gf-1".into()));
+        let local = Launch::Guided(StarredGuidedId::Local(7));
+        assert_eq!(launch_value(&library), "guided:gf-1");
+        assert_eq!(launch_value(&local), "guided:local:7");
+        assert_eq!(parse_launch("guided:gf-1"), library);
+        assert_eq!(parse_launch("guided:local:7"), local);
+        assert_eq!(parse_launch(&launch_value(&Launch::Preset("u".into()))), Launch::Preset("u".into()));
+        // Garbage after the prefix asks for a file no library has: "File not found".
+        assert_eq!(parse_launch("guided:"), Launch::Guided(StarredGuidedId::Library(String::new())));
     }
 }
