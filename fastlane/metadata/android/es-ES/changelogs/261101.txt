@@ -1,0 +1,10 @@
+• Sesión y Campanas en sus propias páginas
+• Archivos guiados destacados en tu propio orden
+• Se abre con el modo y el archivo guiado que usaste por última vez
+• El widget inicia archivos guiados destacados
+• Tiempo restante y progreso en la pantalla de bloqueo
+• Importación desde Meditation Assistant
+• Objetivo diario desde un minuto
+• Toca el símbolo de sincronización para ver su estado
+• Experimental: boca abajo pausa, agitar guarda
+• ¡Gracias a @leonp5, @markushhh, @voidplayer y @drebs!

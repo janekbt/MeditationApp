@@ -1,0 +1,10 @@
+• Sessie en Bellen op eigen pagina's
+• Favoriete begeleide bestanden in je eigen volgorde
+• Opent met de laatst gebruikte modus en het begeleide bestand
+• De widget start favoriete begeleide bestanden
+• Resterende tijd en voortgang op het vergrendelscherm
+• Importeren uit Meditation Assistant
+• Dagdoel vanaf één minuut
+• Tik op het synchronisatiesymbool voor de status
+• Experimenteel: omdraaien pauzeert, schudden slaat op
+• Dank aan @leonp5, @markushhh, @voidplayer en @drebs!

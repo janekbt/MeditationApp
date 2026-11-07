@@ -1,0 +1,10 @@
+• Sitzung und Glocken auf eigenen Seiten
+• Markierte geführte Dateien in eigener Reihenfolge
+• Öffnet mit dem zuletzt genutzten Modus und der geführten Datei
+• Das Widget startet markierte geführte Dateien
+• Restzeit und Fortschritt auf dem Sperrbildschirm
+• Import aus Meditation Assistant
+• Tagesziel ab einer Minute
+• Sync-Symbol antippen zeigt den Status
+• Experimentell: umdrehen pausiert, schütteln speichert
+• Danke an @leonp5, @markushhh, @voidplayer und @drebs!

@@ -1,0 +1,10 @@
+• Sesja i Dzwonki na osobnych stronach
+• Ulubione pliki z przewodnikiem we własnej kolejności
+• Otwiera się z ostatnio używanym trybem i plikiem
+• Widżet uruchamia ulubione pliki z przewodnikiem
+• Pozostały czas i postęp na ekranie blokady
+• Import z Meditation Assistant
+• Dzienny cel od jednej minuty
+• Dotknij symbolu synchronizacji, by zobaczyć stan
+• Eksperymentalnie: ekranem w dół pauzuje, potrząśnięcie zapisuje
+• Dziękujemy @leonp5, @markushhh, @voidplayer i @drebs!

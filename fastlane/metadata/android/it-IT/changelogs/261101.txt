@@ -1,0 +1,10 @@
+• Sessione e Campane in pagine proprie
+• File guidati preferiti nel tuo ordine
+• Si apre con la modalità e il file guidato usati per ultimi
+• Il widget avvia i file guidati preferiti
+• Tempo rimanente e avanzamento sulla schermata di blocco
+• Importazione da Meditation Assistant
+• Obiettivo giornaliero da un minuto
+• Tocca il simbolo di sincronizzazione per lo stato
+• Sperimentale: a faccia in giù mette in pausa, scuotere salva
+• Grazie a @leonp5, @markushhh, @voidplayer e @drebs!

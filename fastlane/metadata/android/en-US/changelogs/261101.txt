@@ -1,0 +1,10 @@
+• Session and Bells on their own pages
+• Starred guided files in your own order
+• Opens with the mode and guided file you used last
+• Widget starts starred guided files
+• Time left and progress on the lock screen
+• Import from Meditation Assistant
+• Daily goal from one minute
+• Tap the sync symbol for its status
+• Experimental: face down pauses, shake saves
+• Thanks to @leonp5, @markushhh, @voidplayer and @drebs!

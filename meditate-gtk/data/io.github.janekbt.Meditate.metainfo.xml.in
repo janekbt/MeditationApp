@@ -24,15 +24,15 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-timer.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.1/meditate-gtk/data/screenshots/composite-timer.png</image>
       <caption>Timer mode with presets and daily streak</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-stats.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.1/meditate-gtk/data/screenshots/composite-stats.png</image>
       <caption>Daily goal, 13-week heatmap and insights</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.0/meditate-gtk/data/screenshots/composite-log.png</image>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/v26.11.1/meditate-gtk/data/screenshots/composite-log.png</image>
       <caption>Session log grouped by date, with labels and notes</caption>
     </screenshot>
   </screenshots>
@@ -88,6 +88,22 @@
   </content_rating>
 
   <releases>
+    <release version="26.11.1" date="2026-11-08">
+      <description translate="yes">
+        <p>A tidier main screen, guided files in your own order that stay chosen, the session's time on the lock screen, and import from Meditation Assistant. Thank you to @leonp5, @markushhh and @voidplayer, whose reports and ideas shaped this release, and to @drebs for the help with the Nextcloud address.</p>
+        <ul>
+          <li>Setup: the main screen only shows what you start from; Session and Bells open their own pages, and each of them can start the session</li>
+          <li>Guided: drag starred files into your own order; the app opens with the mode and the guided file you used last</li>
+          <li>The lock screen and media controls show the time left, a progress bar and a guided file's name; on Linux the session pauses from the media keys</li>
+          <li>Import sessions from Meditation Assistant's CSV export</li>
+          <li>Stats: a daily goal can be as short as one minute</li>
+          <li>Sync: the sync symbol shows the status and what to do next on a click or tap; the setup says which address and password Nextcloud needs</li>
+          <li>Android: the widget also starts your starred guided files</li>
+          <li>Android: experimental Void-Controls in Preferences: turn the phone face down to pause, shake it to save</li>
+          <li>Linux: Preferences on one page; no more pause before each bell with the Bluetooth lead-in on</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.11.0" date="2026-10-30">
       <description translate="yes">
         <p>A ring that shows the session and its bells, Save next to Pause, presets in your own order, and bells that stay in your headphones. Thank you to @marius-shark and @voidplayer, whose reports and ideas led to most of this release. On Android, bells now play as media instead of as an alarm, so they may sound louder or quieter than before: please check your bell volumes.</p>

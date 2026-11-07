@@ -1,0 +1,10 @@
+• Séance et Cloches sur leurs propres pages
+• Fichiers guidés favoris dans votre propre ordre
+• S'ouvre sur le dernier mode et fichier guidé
+• Le widget lance les fichiers guidés favoris
+• Temps restant et progression sur l'écran de verrouillage
+• Import depuis Meditation Assistant
+• Objectif quotidien dès une minute
+• Touchez le symbole de synchro pour son état
+• Expérimental : face cachée met en pause, secouer enregistre
+• Merci à @leonp5, @markushhh, @voidplayer et @drebs !

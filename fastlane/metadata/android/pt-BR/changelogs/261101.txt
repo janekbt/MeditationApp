@@ -1,0 +1,10 @@
+• Sessão e Sinos em páginas próprias
+• Arquivos guiados favoritos na sua própria ordem
+• Abre com o modo e o arquivo guiado usados por último
+• O widget inicia arquivos guiados favoritos
+• Tempo restante e progresso na tela de bloqueio
+• Importação do Meditation Assistant
+• Meta diária a partir de um minuto
+• Toque no símbolo de sincronização para ver o status
+• Experimental: virar para baixo pausa, sacudir salva
+• Obrigado a @leonp5, @markushhh, @voidplayer e @drebs!
