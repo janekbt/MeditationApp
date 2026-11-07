@@ -32,6 +32,10 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Icon
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -53,6 +57,7 @@ class MeditateSessionService : Service() {
         const val ACTION_RESUME_SESSION = "io.github.janekbt.Meditate.RESUME_SESSION"
         const val ACTION_SHOW_BUTTONS = "io.github.janekbt.Meditate.SHOW_BUTTONS"
         const val ACTION_TAP = "io.github.janekbt.Meditate.TAP"
+        const val ACTION_VOID_CONTROLS = "io.github.janekbt.Meditate.VOID_CONTROLS"
         const val EXTRA_PAYLOAD = "payload"
         const val EXTRA_CODE = "code"
 
@@ -63,6 +68,22 @@ class MeditateSessionService : Service() {
         const val MEDIA_ADD = 3
         const val MEDIA_DISCARD = 4
         const val MEDIA_HEADPHONES = 5
+        // Void-Controls gestures, as in src/app.rs (VOID_*).
+        const val VOID_FACE_DOWN = 6
+        const val VOID_FACE_UP = 7
+        const val VOID_SHAKE = 8
+
+        // Void-Controls detection, tuned on the FP5: a side counts once
+        // gravity stays this far along the screen's axis this long; a
+        // shake is this many readings this hard within the window, and
+        // turns are ignored for a while after it.
+        const val FACE_MS2 = 8f
+        const val FACE_HOLD_MS = 500L
+        const val SHAKE_MS2 = 25f
+        const val SHAKE_RELEASE_MS2 = 15f
+        const val SHAKE_PEAKS = 3
+        const val SHAKE_WINDOW_MS = 1000L
+        const val SHAKE_QUIET_MS = 2000L
 
         // A tap wakes the phone this long, so a paused session (no
         // session wake lock) still reaches the next Rust tick.
@@ -224,6 +245,17 @@ class MeditateSessionService : Service() {
             context.startService(intent)
         }
 
+        /// The Void-Controls switch from Rust (service.rs
+        /// set_void_controls), "true" or "false".
+        @JvmStatic
+        fun voidControls(context: Context, on: String) {
+            val intent = Intent(context, MeditateSessionService::class.java).apply {
+                action = ACTION_VOID_CONTROLS
+                putExtra(EXTRA_PAYLOAD, on == "true")
+            }
+            context.startService(intent)
+        }
+
         @JvmStatic
         fun resume(context: Context) {
             val intent = Intent(context, MeditateSessionService::class.java).apply {
@@ -255,6 +287,13 @@ class MeditateSessionService : Service() {
     private var art: Bitmap? = null
     // Held in a field: a collected lock is released early.
     private var tapWakeLock: PowerManager.WakeLock? = null
+
+    // Void-Controls: listening only while on during a session. A paused
+    // session keeps the CPU awake while on, so turning face up still
+    // reaches the listener.
+    private var voidOn = false
+    private var paused = false
+    private val detector = VoidDetector()
 
     // The FGS keeps the *process* alive, but not the CPU: in Doze /
     // deep suspend the 200 ms Slint tick stops being scheduled and
@@ -441,11 +480,22 @@ class MeditateSessionService : Service() {
         when (intent?.action) {
             ACTION_START_SESSION -> {
                 started = true
+                paused = false
                 startForeground(NOTIFICATION_ID, buildNotification())
                 acquireWakeLock()
             }
-            ACTION_PAUSE_SESSION -> releaseWakeLock()
-            ACTION_RESUME_SESSION -> acquireWakeLock()
+            ACTION_PAUSE_SESSION -> {
+                paused = true
+                updateWakeLock()
+            }
+            ACTION_RESUME_SESSION -> {
+                paused = false
+                updateWakeLock()
+            }
+            ACTION_VOID_CONTROLS -> when {
+                !started -> stopSelf()
+                else -> setVoidControls(intent.getBooleanExtra(EXTRA_PAYLOAD, false))
+            }
             // Either one reaching a stopped service would leave a fresh
             // instance with an active MediaSession behind.
             ACTION_SHOW_BUTTONS, ACTION_TAP -> when {
@@ -454,7 +504,9 @@ class MeditateSessionService : Service() {
                 else -> intent.getStringExtra(EXTRA_PAYLOAD)?.let { showButtons(it) }
             }
             ACTION_STOP_SESSION -> {
+                setVoidControls(false)
                 started = false
+                paused = false
                 buttons = emptyList()
                 releaseWakeLock()
                 // STOP_FOREGROUND_REMOVE = clear the notification
@@ -483,6 +535,7 @@ class MeditateSessionService : Service() {
     // bells live in process-wide players that outlast the task, so
     // silence them too.
     override fun onTaskRemoved(rootIntent: Intent?) {
+        setVoidControls(false)
         MeditateGuided.stopAudio(this)
         MeditateAudio.stop(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -491,6 +544,7 @@ class MeditateSessionService : Service() {
     }
 
     override fun onDestroy() {
+        setVoidControls(false)
         releaseWakeLock()
         // MediaSession holds a system-side binder; leaking it shows
         // up as a ghost media control until the next reboot. release()
@@ -499,6 +553,89 @@ class MeditateSessionService : Service() {
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
+    }
+
+    private fun setVoidControls(on: Boolean) {
+        val sensors = getSystemService(SensorManager::class.java)
+        sensors.unregisterListener(detector)
+        voidOn = on
+        if (voidOn) {
+            detector.reset()
+            sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                sensors.registerListener(detector, it, SensorManager.SENSOR_DELAY_GAME)
+            }
+        }
+        updateWakeLock()
+    }
+
+    // Awake while a session runs, and in a pause while Void-Controls
+    // listen for the turn back.
+    private fun updateWakeLock() {
+        if (started && (!paused || voidOn)) acquireWakeLock() else releaseWakeLock()
+    }
+
+    // Turns and shakes from the accelerometer, written like media taps
+    // for the Rust tick, which checks them against the session's buttons.
+    private inner class VoidDetector : SensorEventListener {
+        // 1 face up, -1 face down, 0 not known yet: the first side is
+        // the baseline, so starting face down pauses nothing.
+        private var side = 0
+        private var candidate = 0
+        private var candidateSince = 0L
+        private val peaks = ArrayDeque<Long>()
+        private var quietUntil = 0L
+        // A peak counts when the force rises past the threshold and is
+        // released only well below it, so one knock or a hard set-down
+        // (several samples, maybe wobbling) is one peak.
+        private var above = false
+
+        fun reset() {
+            side = 0
+            candidate = 0
+            peaks.clear()
+            quietUntil = 0L
+            above = false
+        }
+
+        override fun onSensorChanged(event: SensorEvent) {
+            val t = event.timestamp / 1_000_000
+            val (x, y, z) = event.values
+            val force = x * x + y * y + z * z
+            val hard = force > SHAKE_MS2 * SHAKE_MS2
+            val rising = hard && !above
+            if (hard) above = true
+            else if (force < SHAKE_RELEASE_MS2 * SHAKE_RELEASE_MS2) above = false
+            if (rising) {
+                peaks.addLast(t)
+                while (peaks.first() < t - SHAKE_WINDOW_MS) peaks.removeFirst()
+                if (peaks.size >= SHAKE_PEAKS) {
+                    // The side it ends on is the new baseline.
+                    reset()
+                    above = true
+                    quietUntil = t + SHAKE_QUIET_MS
+                    writeTap(VOID_SHAKE)
+                    return
+                }
+            }
+            if (t < quietUntil) return
+            val now = if (z > FACE_MS2) 1 else if (z < -FACE_MS2) -1 else 0
+            if (now == 0 || now == side) {
+                candidate = 0
+                return
+            }
+            if (now != candidate) {
+                candidate = now
+                candidateSince = t
+                return
+            }
+            if (t - candidateSince < FACE_HOLD_MS) return
+            val was = side
+            side = now
+            candidate = 0
+            if (was != 0) writeTap(if (now < 0) VOID_FACE_DOWN else VOID_FACE_UP)
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
     private fun acquireWakeLock() {

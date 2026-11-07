@@ -99,6 +99,39 @@ pub fn media_tap(state: &AppState, note_empty: bool, code: i32) -> Option<i32> {
     offered.contains(&code).then_some(code)
 }
 
+/// Void-Controls (#17): the phone turned face down, turned face up,
+/// shaken. Written by MeditateSessionService like a media tap.
+pub const VOID_FACE_DOWN: i32 = 6;
+pub const VOID_FACE_UP: i32 = 7;
+pub const VOID_SHAKE: i32 = 8;
+
+/// The running page's button a Void-Controls gesture stands for, or
+/// `None` when the session doesn't offer it now. A shake saves; in
+/// overtime of more than a minute it saves with the overtime (Add).
+pub fn void_tap(state: &AppState, note_empty: bool, now: Duration, code: i32) -> Option<i32> {
+    use meditate_core::session::{EndButton as B, MediaLine};
+    let over_a_minute = state.media_status(now).is_some_and(|m| matches!(m.line, MediaLine::Overtime(s) if s > 60));
+    let wanted: &[B] = match code {
+        VOID_FACE_DOWN => &[B::Pause],
+        VOID_FACE_UP => &[B::Resume],
+        VOID_SHAKE if over_a_minute => &[B::Add, B::Save],
+        VOID_SHAKE => &[B::Save],
+        _ => &[],
+    };
+    let offered = media_buttons(state, note_empty);
+    wanted.iter().map(|&b| end_button_code(b)).find(|c| offered.contains(c))
+}
+
+/// A tap from the service's file: the running page's button it stands
+/// for, and whether it is a gesture to confirm with a pulse.
+pub fn session_tap(state: &AppState, note_empty: bool, now: Duration, code: i32) -> Option<(i32, bool)> {
+    if (VOID_FACE_DOWN..=VOID_SHAKE).contains(&code) {
+        void_tap(state, note_empty, now, code).map(|c| (c, true))
+    } else {
+        media_tap(state, note_empty, code).map(|c| (c, false))
+    }
+}
+
 /// The phone's media line in whole minutes, so the line (which Android
 /// animates on every change) changes once a minute: time left rounded
 /// up like the countdown, time so far and overtime rounded down.
@@ -3806,9 +3839,11 @@ mod tests {
         assert_eq!(ui.matches("wake_follows_pause(app, &").count(), 2, "Pause button and focus loss");
         let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
         let at = kt.find("ACTION_PAUSE_SESSION -> ").unwrap();
-        assert!(kt[at..at + 80].contains("releaseWakeLock()"));
+        assert!(kt[at..at + 120].contains("updateWakeLock()"));
         let at = kt.find("ACTION_RESUME_SESSION -> ").unwrap();
-        assert!(kt[at..at + 80].contains("acquireWakeLock()"));
+        assert!(kt[at..at + 120].contains("updateWakeLock()"));
+        let rule = kotlin_fn(&kt, "private fun updateWakeLock()");
+        assert!(rule.contains("if (started && (!paused || voidOn)) acquireWakeLock() else releaseWakeLock()"), "a pause lets go with Void-Controls off");
     }
 
     #[test]
@@ -4657,8 +4692,8 @@ mod tests {
         let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = ui.find("service::take_tap(app)").expect("the tick takes taps");
         assert!(ui[..at].ends_with("state.borrow().is_active().then(|| "), "only a live session takes taps");
-        let body = &ui[at..at + 900];
-        assert!(body.contains("app::media_tap("));
+        let body = &ui[at..at + 1400];
+        assert!(body.contains("app::session_tap("));
         assert!(body.contains("ui.invoke_release_note()"), "the note lets go, like the page's buttons");
         assert!(body.contains("ui.invoke_discard_tap()"));
         assert!(body.contains("ui.invoke_end_button_tap("));
@@ -4693,6 +4728,137 @@ mod tests {
         let body = kotlin_fn(&kt, "override fun onMediaButtonEvent(");
         assert!(body.contains("KEYCODE_MEDIA_PLAY_PAUSE") && body.contains("KEYCODE_HEADSETHOOK"));
         assert!(body.contains("MEDIA_HEADPHONES"));
+    }
+
+    #[test]
+    fn each_void_gesture_stands_for_one_session_button() {
+        let t0 = Duration::from_secs(100);
+        let shape = timer_countdown(Duration::from_secs(60));
+        let gestures = |state: &AppState, now| [VOID_FACE_DOWN, VOID_FACE_UP, VOID_SHAKE].map(|g| void_tap(state, true, now, g));
+        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        assert_eq!(gestures(&running, t0 + Duration::from_secs(1)), [Some(0), None, Some(2)], "running: Pause, -, Save");
+        assert_eq!(void_tap(&running, true, t0, 2), None, "a media code is no gesture");
+        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        assert_eq!(gestures(&paused, t0 + Duration::from_secs(6)), [None, Some(1), Some(2)], "paused: -, Resume, Save");
+        let prep = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0).state;
+        assert_eq!(gestures(&prep, t0 + Duration::from_secs(1)), [Some(0), None, None], "preparing: Pause, -, -");
+        let prep_paused = prep.toggle(shape.clone(), t0 + Duration::from_secs(2)).state;
+        assert_eq!(gestures(&prep_paused, t0 + Duration::from_secs(3)), [None, Some(1), None], "paused in preparation: -, Resume, -");
+        let over_30 = t0 + Duration::from_secs(90);
+        let over = AppState::idle().toggle(shape, t0).tick(over_30).state;
+        assert_eq!(gestures(&over, over_30), [None, None, Some(2)], "overtime 30 s: Save");
+        assert_eq!(void_tap(&over, true, t0 + Duration::from_secs(120), VOID_SHAKE), Some(2), "exactly a minute over: still Save");
+        assert_eq!(void_tap(&over, true, t0 + Duration::from_secs(121), VOID_SHAKE), Some(3), "over a minute: Add");
+        assert_eq!(gestures(&over, t0 + Duration::from_secs(150)), [None, None, Some(3)], "overtime 90 s: Add");
+        assert_eq!(gestures(&AppState::idle(), t0), [None, None, None], "no session");
+    }
+
+    #[test]
+    fn a_void_gesture_goes_through_the_session_buttons() {
+        let t0 = Duration::from_secs(100);
+        let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
+        let now = t0 + Duration::from_secs(1);
+        assert_eq!(session_tap(&running, true, now, VOID_FACE_DOWN), Some((0, true)), "Pause, with a pulse");
+        assert_eq!(session_tap(&running, true, now, VOID_FACE_UP), None, "nothing, no pulse");
+        assert_eq!(session_tap(&running, true, now, VOID_SHAKE), Some((2, true)), "Save, with a pulse");
+        assert_eq!(session_tap(&running, true, now, 0), Some((0, false)), "the media control's Pause, no pulse");
+        assert_eq!(session_tap(&running, true, now, MEDIA_HEADPHONES), Some((0, false)));
+        assert_eq!(session_tap(&running, true, now, 9), None);
+        // A gesture comes in the media tap's file and takes the same
+        // path to the page's buttons; only an accepted one vibrates.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = ui.find("service::take_tap(app)").expect("the tick takes taps");
+        let body = &ui[at..at + 1400];
+        let gesture = body.find("app::session_tap(&state.borrow(), ui.get_note_text().is_empty(), now_since_epoch(), code)").expect("every tap goes through session_tap");
+        let invoke = body.find("ui.invoke_end_button_tap(code)").unwrap();
+        assert!(gesture < invoke, "the page's own button");
+        // After the button: a Save stops every signal still playing
+        // (StopActiveSignals), which cut a pulse sent before it.
+        let pulse = body.find("haptics::vibrate_waveform(app, &[(1.0, 60)])").expect("the pulse");
+        assert!(body[..pulse].trim_end().ends_with("if pulse {"), "only for a gesture the session takes");
+        assert!(invoke < pulse, "the pulse after the button, so a Save doesn't cancel it");
+    }
+
+    #[test]
+    fn a_void_controls_pause_keeps_the_processor_awake() {
+        // A paused session let the phone sleep, so turning it face up
+        // never reached the sensor listener.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let at = kt.find("ACTION_PAUSE_SESSION -> ").unwrap();
+        let pause = &kt[at..at + 120];
+        assert!(pause.contains("paused = true") && pause.contains("updateWakeLock()"));
+        let at = kt.find("ACTION_RESUME_SESSION -> ").unwrap();
+        assert!(kt[at..at + 120].contains("paused = false"));
+        let rule = kotlin_fn(&kt, "private fun updateWakeLock()");
+        assert!(rule.contains("if (started && (!paused || voidOn)) acquireWakeLock() else releaseWakeLock()"), "awake in a pause while on");
+        let set = kotlin_fn(&kt, "private fun setVoidControls(on: Boolean)");
+        assert!(set.contains("updateWakeLock()"), "a toggle during a pause");
+        // The screen-on hold still goes with the pause (wake_follows_pause).
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = ui.find("fn wake_follows_pause(").unwrap();
+        assert!(ui[at..at + ui[at..].find("\n}\n").unwrap()].contains("screen::set_keep_awake(app, false)"));
+    }
+
+    #[test]
+    fn void_controls_listen_only_during_a_session() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let set = kotlin_fn(&kt, "private fun setVoidControls(on: Boolean)");
+        assert!(set.contains("voidOn = on\n"));
+        assert!(set.contains("sensors.registerListener(detector, it, SensorManager.SENSOR_DELAY_GAME)"));
+        assert!(set.contains("sensors.unregisterListener(detector)"));
+        let at = kt.find("ACTION_VOID_CONTROLS -> when {").expect("the switch reaches the service");
+        assert!(kt[at..at + 200].contains("!started -> stopSelf()"), "no stray service without a session");
+        let stop = &kt[kt.find("ACTION_STOP_SESSION -> {").unwrap()..];
+        assert!(stop[..400].contains("setVoidControls(false)"), "a session's end stops listening");
+        assert!(kotlin_fn(&kt, "override fun onTaskRemoved(").contains("setVoidControls(false)"));
+        assert!(kotlin_fn(&kt, "override fun onDestroy(").contains("setVoidControls(false)"));
+        // One hard stretch is one shake peak: a knock that wobbles
+        // around the threshold, or a shake that goes on, saves nothing more.
+        let detector = &kt[kt.find("private inner class VoidDetector").unwrap()..];
+        let rising = detector.find("val rising = hard && !above").expect("peaks on the rising edge");
+        assert!(detector[rising..].contains("if (hard) above = true\n            else if (force < SHAKE_RELEASE_MS2 * SHAKE_RELEASE_MS2) above = false"), "released only well below");
+        assert!(detector.contains("if (rising) {\n                peaks.addLast(t)"));
+        assert!(detector.contains("reset()\n                    above = true"), "the stretch that finished a shake is no new peak");
+        // Rust tells the service at the start, on a toggle and after a
+        // failed save, and only while a session is live.
+        let svc = std::fs::read_to_string(root.join("src/service.rs")).unwrap();
+        let send = &svc[svc.find("pub fn set_void_controls(").unwrap()..];
+        let send = &send[..send.find("\n}\n").unwrap()];
+        assert!(send.contains("if !LIVE.load(Ordering::Relaxed)"));
+        assert!(send.contains("invoke_with_text(app, \"voidControls\", format_bool(on))") || send.contains("invoke_with_text(app, \"voidControls\", meditate_core::settings_keys::format_bool(on))"));
+        let start = &svc[svc.find("pub fn start(").unwrap()..];
+        assert!(start[..start.find("\n}").unwrap()].contains("LIVE.store(true, Ordering::Relaxed)"));
+        let stop = &svc[svc.find("pub fn stop(").unwrap()..];
+        assert!(stop[..stop.find("\n}").unwrap()].contains("LIVE.store(false, Ordering::Relaxed)"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(ui.contains("service::start(app);\n                void_controls_follow();"));
+        assert_eq!(ui.matches("void_controls_follow();").count(), 3, "the start, the toggle and reload_setup (a failed save)");
+    }
+
+    #[test]
+    fn the_experimental_group_holds_the_void_controls() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let exp = slint.find("text: @tr(\"Experimental\");").expect("the group");
+        let about = slint.find("text: @tr(\"About\");").unwrap();
+        let group = &slint[exp..about];
+        assert_eq!(group.matches("font-weight: 700;").count(), 1, "one heading: no group between it and About");
+        assert!(slint[..exp].contains("text: @tr(\"Appearance\");"), "after Appearance, right before About");
+        assert!(group.contains("@tr(\"Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off.\")"));
+        assert!(group.contains("title: \"Void-Controls\";"), "a name, never translated");
+        assert!(group.contains("checked <=> root.prefs-void-controls;"));
+        assert!(group.contains("toggled(value) => { root.void-controls-toggled(value); }"));
+        let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        // On open, and again after a failed save (reload_setup).
+        assert_eq!(ui.matches("load_lead_in(&ui);\n                ui.set_prefs_void_controls(void_controls());").count(), 1);
+        let reload = &ui[ui.find("fn reload_setup(").unwrap()..];
+        assert!(reload[..reload.find("\n}\n").unwrap()].contains("ui.set_prefs_void_controls(void_controls());"));
+        let toggle = &ui[ui.find("ui.on_void_controls_toggled(").unwrap()..];
+        assert!(toggle[..400].contains("meditate_core::settings_keys::VOID_CONTROLS_KEY"));
+        assert!(toggle[..400].contains("write_global_setting(&ui,"));
     }
 
     #[test]
@@ -5750,6 +5916,7 @@ mod jni_tests {
         ("service", "SERVICE_CLASS_DOTTED", "resume", "(Landroid/content/Context;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "notifyComplete", "(Landroid/content/Context;Ljava/lang/String;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "showButtons", "(Landroid/content/Context;Ljava/lang/String;)V"),
+        ("service", "SERVICE_CLASS_DOTTED", "voidControls", "(Landroid/content/Context;Ljava/lang/String;)V"),
         ("service", "SERVICE_CLASS_DOTTED", "clearComplete", "(Landroid/content/Context;)V"),
     ];
 

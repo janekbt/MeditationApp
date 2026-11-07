@@ -62,7 +62,7 @@ How to add or update a translation: [BUILDING.md](BUILDING.md#translations)
 - **Import and backup**: Insight Timer import, CSV export and import
 - **Sync between all your devices** through your own Nextcloud, offline-first, never losing a session
 - **Session controls on the lock screen** with the time left and a progress bar, on Android and on Linux (GNOME, Phosh)
-- **On Android**: a home-screen widget
+- **On Android**: a home-screen widget, and experimental Void-Controls: turn the phone face down to pause, shake it to save
 - **Follows your system colours** on Linux and Android
 - **Private**: everything stays on your device, no tracking, open source under GPLv3
 

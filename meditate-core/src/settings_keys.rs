@@ -272,6 +272,14 @@ pub fn bluetooth_wake_lead_in(db: &Database) -> Option<u32> {
     bluetooth_wake_lead_in_from_db(db).then(|| bluetooth_wake_lead_in_ms_from_db(db))
 }
 
+/// Void-Controls (Android, Experimental, #17): turning the phone over
+/// pauses and resumes, shaking it saves. Off until set.
+pub const VOID_CONTROLS_KEY: &str = "void_controls";
+
+pub fn void_controls_from_db(db: &Database) -> bool {
+    read_bool(db, VOID_CONTROLS_KEY, false)
+}
+
 /// The stored length for `secs` as typed or stepped: clamped to 0.10 to
 /// 5.00 s and rounded half up to 10 ms.
 pub fn lead_in_ms(secs: f64) -> u32 {
@@ -283,6 +291,14 @@ pub fn lead_in_ms(secs: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn void_controls_are_off_until_set() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!void_controls_from_db(&db));
+        db.set_setting("void_controls", "true").unwrap();
+        assert!(void_controls_from_db(&db));
+    }
 
     #[test]
     fn the_lead_in_is_off_and_a_tenth_of_a_second_until_set() {

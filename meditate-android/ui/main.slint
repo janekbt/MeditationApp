@@ -2585,6 +2585,9 @@ export component MainWindow inherits Window {
     callback lead-in-toggled(bool);
     callback lead-in-length-changed(int);
     callback lead-in-test();
+    // Void-Controls (#17): turn the phone over to pause, shake to save.
+    in-out property <bool> prefs-void-controls: false;
+    callback void-controls-toggled(bool);
     // Bell volumes (issue #1): every bell has its own Volume row
     // under its Sound row. Range and steps come from core
     // (meditate_core::bell_volume) via Rust; the values are seeded
@@ -8705,6 +8708,28 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+
+            Text {
+                text: @tr("Experimental");
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: @tr("Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off.");
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                SwitchRow {
+                    title: "Void-Controls";
+                    checked <=> root.prefs-void-controls;
+                    toggled(value) => { root.void-controls-toggled(value); }
                 }
             }
 

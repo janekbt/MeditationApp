@@ -1260,3 +1260,9 @@ msgstr[1] "Nachspielzeit +{n} Min"
 
 msgid "Preparation"
 msgstr "Vorbereitung"
+
+msgid "Experimental"
+msgstr "Experimentell"
+
+msgid "Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off."
+msgstr "Bildschirm nach unten drehen pausiert, nach oben drehen setzt fort. Schütteln beendet und speichert die Sitzung. Jede erkannte Geste vibriert kurz. Nur für Meditation im Sitzen oder Liegen: Bewegung, etwa bei Gehmeditation, löst es aus."

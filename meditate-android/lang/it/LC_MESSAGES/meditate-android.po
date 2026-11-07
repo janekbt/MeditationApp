@@ -1260,3 +1260,9 @@ msgstr[1] "Tempo extra +{n} min"
 
 msgid "Preparation"
 msgstr "Preparazione"
+
+msgid "Experimental"
+msgstr "Sperimentale"
+
+msgid "Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off."
+msgstr "Capovolgi il telefono con lo schermo in giù per mettere in pausa, in su per continuare. Scuoterlo termina e salva la sessione. Ogni gesto riconosciuto vibra brevemente. Solo per la meditazione da seduti o sdraiati: il movimento, come nella meditazione camminata, lo attiva."

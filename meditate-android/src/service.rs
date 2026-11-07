@@ -33,6 +33,11 @@
 
 use android_activity::AndroidApp;
 use jni::objects::JClass;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Between `start` and `stop`: only then may the service hear the
+/// Void-Controls switch, or it would start without a session.
+static LIVE: AtomicBool = AtomicBool::new(false);
 
 const SERVICE_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateSessionService";
 
@@ -46,6 +51,7 @@ pub fn start(app: &AndroidApp) {
     clear_complete(app);
     // A tap left from the last session must not reach this one.
     take_tap(app);
+    LIVE.store(true, Ordering::Relaxed);
     if let Err(e) = invoke(app, "start") {
         meditate_core::log("service", &format!("start FAILED: {e:?}"));
     }
@@ -55,6 +61,7 @@ pub fn start(app: &AndroidApp) {
 /// Active → Idle or Active → Finished. Same swallow-error policy
 /// as `start`.
 pub fn stop(app: &AndroidApp) {
+    LIVE.store(false, Ordering::Relaxed);
     if let Err(e) = invoke(app, "stop") {
         meditate_core::log("service", &format!("stop FAILED: {e:?}"));
     }
@@ -79,6 +86,17 @@ pub fn pause(app: &AndroidApp) {
 pub fn resume(app: &AndroidApp) {
     if let Err(e) = invoke(app, "resume") {
         meditate_core::log("service", &format!("resume FAILED: {e:?}"));
+    }
+}
+
+/// Turn the Void-Controls listener on or off in a live session's
+/// service; nothing without one. Same swallow-error policy.
+pub fn set_void_controls(app: &AndroidApp, on: bool) {
+    if !LIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Err(e) = invoke_with_text(app, "voidControls", meditate_core::settings_keys::format_bool(on)) {
+        meditate_core::log("service", &format!("voidControls FAILED: {e:?}"));
     }
 }
 

@@ -277,6 +277,7 @@ fn on_state_changed(
         if !was_active && is_active {
             if let Some(app) = android_app() {
                 service::start(app);
+                void_controls_follow();
                 MEDIA_SENT.take();
                 // Keep the screen awake for the running session
                 // iff this mode's per-mode `*_keep_screen_awake`
@@ -5071,13 +5072,17 @@ fn build_ui() -> MainWindow {
                     // A button in the media control, or the headphones'
                     // play/pause, goes through the running page's own buttons.
                     let tap = state.borrow().is_active().then(|| service::take_tap(app)).flatten();
-                    let tap = tap.and_then(|code| app::media_tap(&state.borrow(), ui.get_note_text().is_empty(), code));
-                    if let Some(code) = tap {
+                    let tap = tap.and_then(|code| app::session_tap(&state.borrow(), ui.get_note_text().is_empty(), now_since_epoch(), code));
+                    if let Some((code, pulse)) = tap {
                         ui.invoke_release_note();
                         if code == app::MEDIA_DISCARD {
                             ui.invoke_discard_tap();
                         } else {
                             ui.invoke_end_button_tap(code);
+                        }
+                        // After the button: a Save stops the signals still playing.
+                        if pulse {
+                            haptics::vibrate_waveform(app, &[(1.0, 60)]);
                         }
                     }
                     send_media_buttons(app, &ui, &state.borrow());
@@ -6582,6 +6587,19 @@ fn build_ui() -> MainWindow {
             } else {
                 play_volume_preview(&ui, "lead-in-test", meditate_core::seeds::BUNDLED_WOODBLOCK_UUID, meditate_core::bell_volume::BellVolume::default());
             }
+        });
+    }
+
+    // Preferences: Void-Controls (#17); the service listens while on.
+    {
+        let weak = ui.as_weak();
+        ui.on_void_controls_toggled(move |v| {
+            let Some(ui) = weak.upgrade() else { return; };
+            write_global_setting(&ui,
+                meditate_core::settings_keys::VOID_CONTROLS_KEY,
+                meditate_core::settings_keys::format_bool(v),
+            );
+            void_controls_follow();
         });
     }
 
@@ -8962,6 +8980,7 @@ fn build_ui() -> MainWindow {
                 ui.set_prefs_goal_mins(goal_mins as i32);
                 ui.set_prefs_bells_as_alarm(bells_as_alarm());
                 load_lead_in(&ui);
+                ui.set_prefs_void_controls(void_controls());
                 if let Some(app) = android_app() {
                     ui.set_about_version(
                         about::version_name(app).into(),
@@ -10094,6 +10113,8 @@ fn reload_setup(ui: &MainWindow) {
     ui.set_prefs_accent(theme::accent_ring(&read_global_setting("android_accent", ""), ui.get_accent_has_system()) as i32);
     ui.set_prefs_bells_as_alarm(bells_as_alarm());
     load_lead_in(ui);
+    ui.set_prefs_void_controls(void_controls());
+    void_controls_follow();
     // Slint runs the Switches' change handlers after this timer, in the
     // same turn; clear the guard only on the next one.
     // Without a loop to post to, clearing it now beats blocking every
@@ -10260,6 +10281,18 @@ fn load_lead_in(ui: &MainWindow) {
     let Some(db) = lock_db() else { return };
     ui.set_prefs_lead_in_on(meditate_core::settings_keys::bluetooth_wake_lead_in_from_db(&db));
     ui.set_prefs_lead_in_hundredths((meditate_core::settings_keys::bluetooth_wake_lead_in_ms_from_db(&db) / 10) as i32);
+}
+
+/// Void-Controls in Preferences; off without a database.
+fn void_controls() -> bool {
+    lock_db().is_some_and(|db| meditate_core::settings_keys::void_controls_from_db(&db))
+}
+
+/// The stored Void-Controls value to a live session's service.
+fn void_controls_follow() {
+    if let Some(app) = android_app() {
+        service::set_void_controls(app, void_controls());
+    }
 }
 
 /// "Play Bells as Alarm" in Preferences; off without a database.
