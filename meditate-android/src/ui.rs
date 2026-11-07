@@ -4856,14 +4856,7 @@ fn build_ui() -> MainWindow {
                         Err(e) => Err(format!("copy FAILED: {e}")),
                         Ok((path, kind)) => {
                             let p = std::path::PathBuf::from(&path);
-                            let parsed = if kind == "insight" {
-                                meditate_core::data_io::parse_insighttimer_csv(
-                                    &p,
-                                    meditate_core::data_io::insighttimer_started_at,
-                                )
-                            } else {
-                                meditate_core::data_io::parse_csv(&p)
-                            };
+                            let parsed = app::read_picked_csv(&p, &kind);
                             let _ = std::fs::remove_file(&p);
                             parsed.map_err(|e| format!("kind={kind} {e:?}"))
                         }
@@ -9322,6 +9315,11 @@ fn build_ui() -> MainWindow {
             let _ = weak.clone();
         });
     }
+    ui.on_data_meditation_assistant_tap(|| {
+        if let Some(app) = android_app() {
+            guided::open_picker_for_csv(app, "import-meditation-assistant");
+        }
+    });
     // Delete all sessions (DP danger zone). Tombstone events ride
     // sync, so peers converge on the wipe too — the dialog copy
     // says so. Refresh everything that renders sessions.

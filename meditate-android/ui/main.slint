@@ -796,6 +796,9 @@ component DurationRow inherits Rectangle {
     in property <bool> enabled: true;
     callback tapped;
 
+    // Two wrapped 16px lines fit in 56px: a label too long for a
+    // narrow phone (German "Aus Meditation Assistant importieren" at
+    // 360 px) wraps instead of being cut off.
     height: 56px;
     // Rows live inside a BoxedList container that owns the rounded
     // surface — they paint a transparent base and only darken on
@@ -826,6 +829,7 @@ component DurationRow inherits Rectangle {
             color: MaterialPalette.on-surface;
             vertical-alignment: center;
             horizontal-stretch: 1;
+            wrap: word-wrap;
         }
         Text {
             text: root.value-text;
@@ -2645,6 +2649,7 @@ export component MainWindow inherits Window {
     callback data-export-tap();
     callback data-import-tap();
     callback data-insight-tap();
+    callback data-meditation-assistant-tap();
     callback delete-all-confirm();
     in property <bool> diag-page: false;
     in property <string> diag-text: "";
@@ -8639,6 +8644,15 @@ export component MainWindow inherits Window {
                     label: @tr("Import from Insight Timer");
                     value-text: "";
                     tapped => { root.data-insight-tap(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                DurationRow {
+                    label: @tr("Import from Meditation Assistant");
+                    value-text: "";
+                    tapped => { root.data-meditation-assistant-tap(); }
                 }
             }
 

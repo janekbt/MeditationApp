@@ -837,8 +837,22 @@ pub fn volume_slot(
     })
 }
 
+/// Read a landed CSV pick with the reader its kind names.
+pub fn read_picked_csv(
+    path: &std::path::Path,
+    kind: &str,
+) -> Result<meditate_core::data_io::ParsedImport, meditate_core::data_io::DataIoError> {
+    use meditate_core::data_io as io;
+    match kind {
+        "insight" => io::parse_insighttimer_csv(path, io::insighttimer_started_at),
+        "meditation-assistant" => io::parse_meditation_assistant_csv(path),
+        _ => io::parse_csv(path),
+    }
+}
+
 /// A landed CSV import pick, as the picker activity drops it: the
-/// copied file's path and its kind ("meditate" | "insight") on two
+/// copied file's path and its kind ("meditate" | "insight" |
+/// "meditation-assistant") on two
 /// lines, or "err:<message>" on the first line when the copy failed.
 /// `None` for an empty or unreadable drop.
 pub fn parse_csv_pick(raw: &str) -> Option<Result<(String, String), String>> {
@@ -2306,6 +2320,37 @@ mod tests {
             let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
             assert!(po.contains("msgid \"Delete Pattern?\""), "{lang}");
         }
+    }
+
+    #[test]
+    fn each_picked_csv_kind_reads_with_its_own_format() {
+        let dir = std::env::temp_dir().join(format!("meditate-picked-kinds-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, text).unwrap();
+            p
+        };
+        let ma = write(
+            "ma.csv",
+            "\"ID\",\"Length\",\"Started\",\"Completed\",\"Message\"\n\"1\",\"00:05\",\"2026-10-30 18:36\",\"2026-10-30 18:41\",\"\"\n",
+        );
+        let it = write("it.csv", "Started At,Duration,Type,Activity\n04/21/2026 08:30:00,00:10:00,T,Meditation\n");
+        let backup = write("backup.csv", "start_time_unix,duration_secs,mode,label,note\n1712345678,600,timer,,\n");
+        let rows = |p: &std::path::Path, kind: &str| super::read_picked_csv(p, kind).unwrap().rows.len();
+        assert_eq!(rows(&ma, "meditation-assistant"), 1);
+        assert_eq!(rows(&ma, "meditate"), 0);
+        assert_eq!(rows(&it, "insight"), 1);
+        // Insight Timer's local time goes through core's DST-safe conversion.
+        let it_start = meditate_core::data_io::insighttimer_started_at("04/21/2026 08:30:00").unwrap();
+        assert_eq!(
+            super::read_picked_csv(&it, "insight").unwrap().rows[0].0.start_iso,
+            meditate_core::time::unix_to_local_iso(it_start),
+        );
+        assert_eq!(rows(&it, "meditation-assistant"), 0);
+        assert_eq!(rows(&backup, "meditate"), 1);
+        assert_eq!(rows(&backup, "insight"), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -4135,9 +4180,8 @@ mod tests {
         assert!(checked > 10, "walked the shell sources");
     }
 
-    /// Picked dates and Insight Timer rows go through core's
-    /// `local_naive_to_unix` (via `insighttimer_started_at` for the
-    /// import): chrono's `.single()` / `.earliest()` return None in a
+    /// Picked dates go through core's `local_naive_to_unix` (Insight
+    /// Timer rows too, via `read_picked_csv`): chrono's `.single()` / `.earliest()` return None in a
     /// DST gap, which turned an edited start into "now" and aborted
     /// imports.
     #[test]
@@ -4148,7 +4192,6 @@ mod tests {
         for own in ["with_ymd_and_hms(", "from_local_datetime("] {
             assert!(!code.contains(own), "shell converts local time itself: {own}");
         }
-        assert!(code.contains("meditate_core::data_io::insighttimer_started_at"));
         assert_eq!(code.matches("meditate_core::time::local_naive_to_unix").count(), 1, "edit/add save");
     }
 

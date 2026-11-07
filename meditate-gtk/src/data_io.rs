@@ -1,7 +1,7 @@
 //! GTK-shell wrappers around `meditate_core::data_io`: the
 //! `MeditateApplication` glue (DB access via `app.with_db*`), the
 //! shell's localized error type, and logging. Parsing and writing,
-//! Insight Timer's included, live in core.
+//! Insight Timer's and Meditation Assistant's included, live in core.
 //!
 //! Native CSV format documented in `meditate_core::data_io`.
 
@@ -106,6 +106,15 @@ pub fn parse_insighttimer(path: &Path) -> Result<ParsedImport, DataIoError> {
         "import.insighttimer",
         path,
         meditate_core::data_io::parse_insighttimer_csv(path, meditate_core::data_io::insighttimer_started_at),
+    )
+}
+
+/// Read a Meditation Assistant export without writing anything.
+pub fn parse_meditation_assistant(path: &Path) -> Result<ParsedImport, DataIoError> {
+    logged(
+        "import.meditation_assistant",
+        path,
+        meditate_core::data_io::parse_meditation_assistant_csv(path),
     )
 }
 

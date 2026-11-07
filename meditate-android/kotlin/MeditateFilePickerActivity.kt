@@ -57,11 +57,11 @@ class MeditateFilePickerActivity : Activity() {
                         Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
                 )
             }
-            // CSV imports (DP): Meditate backup or Insight Timer
-            // export. */* because CSV mime types are a mess across
+            // CSV imports (DP): Meditate backup, Insight Timer or
+            // Meditation Assistant export. */* because CSV mime types are a mess across
             // file managers (text/csv, text/comma-separated-values,
             // application/csv, text/plain all occur in the wild).
-            "import-meditate", "import-insight" ->
+            "import-meditate", "import-insight", "import-meditation-assistant" ->
                 Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     type = "*/*"
                     addCategory(Intent.CATEGORY_OPENABLE)
@@ -139,6 +139,7 @@ class MeditateFilePickerActivity : Activity() {
                     "export" -> copyOutForExport(uri)
                     "import-meditate" -> copyInCsv(uri, "meditate")
                     "import-insight" -> copyInCsv(uri, "insight")
+                    "import-meditation-assistant" -> copyInCsv(uri, "meditation-assistant")
                     else -> copyAndProbe(uri)
                 }
             } catch (e: Exception) {

@@ -116,8 +116,8 @@ fn take_pick_file(app: &AndroidApp, filename: &str) -> Option<PickResult> {
     meditate_core::sound::parse_pick(&crate::drop_file::take(app, filename)?)
 }
 
-/// CSV-import picker route (DP): target "import-meditate" or
-/// "import-insight"; the landed copy arrives via `take_csv_pick`.
+/// CSV-import picker route (DP): target "import-meditate",
+/// "import-insight" or "import-meditation-assistant"; the landed copy arrives via `take_csv_pick`.
 pub fn open_picker_for_csv(app: &AndroidApp, target: &str) {
     if let Err(e) = invoke_open(app, target, &[]) {
         meditate_core::log(
@@ -158,7 +158,7 @@ pub fn take_export_result(
 }
 
 /// Take a landed CSV import pick: `Ok((abs path, kind))` with kind
-/// "meditate" | "insight", or `Err(message)` when the copy into app
+/// "meditate" | "insight" | "meditation-assistant", or `Err(message)` when the copy into app
 /// storage failed (see `app::parse_csv_pick`). Single consumption.
 pub fn take_csv_pick(app: &AndroidApp) -> Option<Result<(String, String), String>> {
     crate::app::parse_csv_pick(&crate::drop_file::take(app, CSV_PICK_FILENAME)?)

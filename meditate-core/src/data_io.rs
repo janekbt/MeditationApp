@@ -398,6 +398,61 @@ where
     Ok(out)
 }
 
+// ── Meditation Assistant import ─────────────────────────────────────────
+
+/// Read a Meditation Assistant export without writing. Columns, read
+/// by position as Meditation Assistant's own import does:
+///   col 1: "Length", `HH:MM`; under a minute is written `00:00` and
+///          imports as one minute, so no session is lost.
+///   col 2: "Started", `yyyy-MM-dd HH:mm` in UTC (exports since its
+///          1.5.6, 2019).
+///   col 4: "Message", the note, as written.
+/// No labels, no modes: every session is a Timer session.
+pub fn parse_meditation_assistant_csv(path: &Path) -> Result<ParsedImport, DataIoError> {
+    let mut out = ParsedImport::default();
+    for (i, record) in reader(path)?.records().enumerate() {
+        let rec = record?;
+        let line = line_of(&rec, i);
+        let field = |n: usize| rec.get(n).map_or("", str::trim);
+        let Some(start_iso) = chrono::NaiveDateTime::parse_from_str(field(2), "%Y-%m-%d %H:%M")
+            .ok()
+            .and_then(|n| crate::time::unix_to_local_iso_checked(n.and_utc().timestamp()))
+        else {
+            out.unreadable.push((line, Unreadable::StartTime));
+            continue;
+        };
+        let Some(duration_secs) = meditation_assistant_secs(field(1)) else {
+            out.unreadable.push((line, Unreadable::Duration));
+            continue;
+        };
+        let note = rec.get(4).unwrap_or_default();
+        let session = Session {
+            start_iso,
+            duration_secs: duration_secs.max(60),
+            label_id: None,
+            notes: (!note.trim().is_empty()).then(|| note.to_string()),
+            mode: SessionMode::Timer,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+            guided_file_name: None,
+        };
+        out.rows.push((session, None));
+    }
+    Ok(out)
+}
+
+/// `HH:MM` → seconds; anything else (other digits, minutes past 59) is
+/// unreadable rather than guessed.
+fn meditation_assistant_secs(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    if !digits(h) || !digits(m) {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (m < 60).then_some(h.checked_mul(60)?.checked_add(m)?.checked_mul(60)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,5 +962,71 @@ mod tests {
         assert_eq!(export_csv(&db, &path).unwrap(), 1);
         assert!(std::fs::read_to_string(&path).unwrap().starts_with("start_time_unix,"));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left");
+    }
+
+    /// The export attached to issue #16, as Meditation Assistant writes it.
+    const MEDITATION_ASSISTANT_EXPORT: &str = "\"ID\",\"Length\",\"Started\",\"Completed\",\"Message\"\n\
+        \"3\",\"00:04\",\"2026-10-30 21:11\",\"2026-10-30 21:15\",\"\"\n\
+        \"2\",\"00:07\",\"2026-10-30 20:09\",\"2026-10-30 20:16\",\"\"\n\
+        \"1\",\"00:05\",\"2026-10-30 18:36\",\"2026-10-30 18:41\",\"That's a column for notes\"\n";
+
+    #[test]
+    fn a_meditation_assistant_export_reads_its_sessions() {
+        let f = write_csv(MEDITATION_ASSISTANT_EXPORT);
+        let p = parse_meditation_assistant_csv(f.path()).unwrap();
+        assert!(p.unreadable.is_empty());
+        assert!(p.labels.is_empty());
+        let got: Vec<_> = p
+            .rows
+            .iter()
+            .map(|(s, label)| (s.start_iso.clone(), s.duration_secs, s.notes.clone(), s.mode, *label))
+            .collect();
+        // Started is UTC: 2026-10-30 21:11, 20:09 and 18:36 UTC.
+        assert_eq!(
+            got,
+            vec![
+                (unix_to_local_iso(1793394660), 240, None, SessionMode::Timer, None),
+                (unix_to_local_iso(1793390940), 420, None, SessionMode::Timer, None),
+                (unix_to_local_iso(1793385360), 300, Some("That's a column for notes".to_string()), SessionMode::Timer, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_meditation_assistant_line_that_cant_be_read_is_reported() {
+        let f = write_csv(
+            "\"ID\",\"Length\",\"Started\",\"Completed\",\"Message\"\n\
+             \"3\",\"abc\",\"2026-10-30 21:11\",\"2026-10-30 21:15\",\"\"\n\
+             \"2\",\"00:07\",\"yesterday\",\"2026-10-30 20:16\",\"\"\n\
+             \"1\",\"01:05\",\"2026-10-30 18:36\",\"2026-10-30 19:41\",\"\"\n",
+        );
+        let p = parse_meditation_assistant_csv(f.path()).unwrap();
+        assert_eq!(p.unreadable, vec![(2, Unreadable::Duration), (3, Unreadable::StartTime)]);
+        for bad in ["00:60", "0:", ":05", "٠١:٠٥", "99999999:00", "01:05:00"] {
+            assert_eq!(meditation_assistant_secs(bad), None, "{bad:?}");
+        }
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.rows[0].0.duration_secs, 3900);
+    }
+
+    #[test]
+    fn a_meditation_assistant_session_under_a_minute_imports_as_one() {
+        let f = write_csv(
+            "\"ID\",\"Length\",\"Started\",\"Completed\",\"Message\"\n\
+             \"1\",\"00:00\",\"2026-10-30 18:36\",\"2026-10-30 18:36\",\"\"\n",
+        );
+        let p = parse_meditation_assistant_csv(f.path()).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.rows[0].0.duration_secs, 60);
+    }
+
+    #[test]
+    fn a_meditation_assistant_export_imported_twice_adds_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let f = write_csv(MEDITATION_ASSISTANT_EXPORT);
+        let p = parse_meditation_assistant_csv(f.path()).unwrap();
+        assert_eq!(import_parsed(&db, &p).unwrap(), 3);
+        assert_eq!(import_parsed(&db, &p).unwrap(), 0);
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 3);
     }
 }

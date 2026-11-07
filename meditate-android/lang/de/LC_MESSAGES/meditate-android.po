@@ -273,6 +273,9 @@ msgstr "Import fehlgeschlagen – siehe Diagnose"
 msgid "Import from Insight Timer"
 msgstr "Aus Insight Timer importieren"
 
+msgid "Import from Meditation Assistant"
+msgstr "Aus Meditation Assistant importieren"
+
 msgid "Import from Meditate CSV"
 msgstr "Aus Meditate-CSV importieren"
 

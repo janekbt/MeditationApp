@@ -200,35 +200,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .description(gettext("Export your session log to a CSV file, or restore from one."))
         .build();
 
-    let export_row = adw::ActionRow::builder()
-        .title(gettext("Export session log"))
-        .subtitle(gettext("Save every session to a CSV file"))
-        .activatable(true)
-        .build();
-    let export_btn = gtk::Button::builder()
-        .icon_name("document-save-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text(gettext("Export"))
-        .css_classes(["flat"])
-        .build();
-    export_row.add_suffix(&export_btn);
-    export_row.set_activatable_widget(Some(&export_btn));
-    backup_group.add(&export_row);
-
-    let import_row = adw::ActionRow::builder()
-        .title(gettext("Import from Meditate CSV"))
-        .subtitle(gettext("Restore sessions from a file exported above"))
-        .activatable(true)
-        .build();
-    let import_btn = gtk::Button::builder()
-        .icon_name("document-open-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text(gettext("Import"))
-        .css_classes(["flat"])
-        .build();
-    import_row.add_suffix(&import_btn);
-    import_row.set_activatable_widget(Some(&import_btn));
-    backup_group.add(&import_row);
+    let export_btn = file_row(&backup_group, &gettext("Export session log"), &gettext("Save every session to a CSV file"), "document-save-symbolic", &gettext("Export"));
+    let import_btn = file_row(&backup_group, &gettext("Import from Meditate CSV"), &gettext("Restore sessions from a file exported above"), "document-open-symbolic", &gettext("Import"));
 
     data_page.add(&backup_group);
 
@@ -237,20 +210,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .description(gettext("Import sessions from another meditation app."))
         .build();
 
-    let it_row = adw::ActionRow::builder()
-        .title(gettext("Import from Insight Timer"))
-        .subtitle(gettext("Upload an Insight Timer CSV export"))
-        .activatable(true)
-        .build();
-    let it_btn = gtk::Button::builder()
-        .icon_name("document-open-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text(gettext("Import Insight Timer CSV"))
-        .css_classes(["flat"])
-        .build();
-    it_row.add_suffix(&it_btn);
-    it_row.set_activatable_widget(Some(&it_btn));
-    migrate_group.add(&it_row);
+    let it_btn = file_row(&migrate_group, &gettext("Import from Insight Timer"), &gettext("Upload an Insight Timer CSV export"), "document-open-symbolic", &gettext("Import Insight Timer CSV"));
+    let ma_btn = file_row(&migrate_group, &gettext("Import from Meditation Assistant"), &gettext("Upload a Meditation Assistant CSV export"), "document-open-symbolic", &gettext("Import Meditation Assistant CSV"));
 
     data_page.add(&migrate_group);
 
@@ -571,7 +532,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Wire the data-page actions.
     wire_data_actions(
         &app, &dialog,
-        &export_btn, &import_btn, &it_btn, &delete_btn,
+        &export_btn, &import_btn, &it_btn, &ma_btn, &delete_btn,
     );
 
     // ── Labels page removed ───────────────────────────────────────────────────
@@ -609,12 +570,29 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
 // ── Data page actions ─────────────────────────────────────────────────────────
 
+/// A Data-page row whose flat icon button does the row's job; returns
+/// the button for wiring.
+fn file_row(group: &adw::PreferencesGroup, title: &str, subtitle: &str, icon: &str, tooltip: &str) -> gtk::Button {
+    let row = adw::ActionRow::builder().title(title).subtitle(subtitle).activatable(true).build();
+    let btn = gtk::Button::builder()
+        .icon_name(icon)
+        .valign(gtk::Align::Center)
+        .tooltip_text(tooltip)
+        .css_classes(["flat"])
+        .build();
+    row.add_suffix(&btn);
+    row.set_activatable_widget(Some(&btn));
+    group.add(&row);
+    btn
+}
+
 fn wire_data_actions(
     app: &MeditateApplication,
     dialog: &adw::PreferencesDialog,
     export_btn: &gtk::Button,
     import_btn: &gtk::Button,
     it_btn: &gtk::Button,
+    ma_btn: &gtk::Button,
     delete_btn: &gtk::Button,
 ) {
     use crate::data_io;
@@ -673,6 +651,14 @@ fn wire_data_actions(
         #[weak] dialog,
         move |_| {
             open_import_dialog(&app, &dialog, &gettext("Import from Insight Timer"), data_io::parse_insighttimer);
+        }
+    ));
+
+    ma_btn.connect_clicked(clone!(
+        #[weak] app,
+        #[weak] dialog,
+        move |_| {
+            open_import_dialog(&app, &dialog, &gettext("Import from Meditation Assistant"), data_io::parse_meditation_assistant);
         }
     ));
 

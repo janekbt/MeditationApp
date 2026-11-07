@@ -82,6 +82,9 @@ msgstr "Importa"
 msgid "Import from Insight Timer"
 msgstr "Importa da Insight Timer"
 
+msgid "Import from Meditation Assistant"
+msgstr "Importa da Meditation Assistant"
+
 msgid "Import from Meditate CSV"
 msgstr "Importa da CSV di Meditate"
 

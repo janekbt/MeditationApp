@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 10:09+0100\n"
+"POT-Creation-Date: 2026-11-07 20:00+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -118,7 +118,7 @@ msgstr ""
 #. still cover the common activations.
 #: src/bells.rs:341 src/bells.rs:906 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:690 src/preferences.rs:764 src/presets.rs:525
+#: src/preferences.rs:676 src/preferences.rs:750 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2725
@@ -261,20 +261,20 @@ msgstr ""
 msgid "Type"
 msgstr ""
 
-#: src/bells.rs:639 src/bells.rs:659 src/timer/imp.rs:1637
-#: src/timer/imp.rs:1711 src/timer/imp.rs:1796 data/ui/timer_view.blp:726
+#: src/bells.rs:639 src/bells.rs:659 src/timer/imp.rs:1639
+#: src/timer/imp.rs:1713 src/timer/imp.rs:1798 data/ui/timer_view.blp:726
 #: data/ui/timer_view.blp:774 data/ui/timer_view.blp:822
 #: data/ui/timer_view.blp:870
 msgid "Sound"
 msgstr ""
 
-#: src/bells.rs:643 src/timer/imp.rs:1641 src/timer/imp.rs:1713
-#: src/timer/imp.rs:1798
+#: src/bells.rs:643 src/timer/imp.rs:1643 src/timer/imp.rs:1715
+#: src/timer/imp.rs:1800
 msgid "Vibration"
 msgstr ""
 
-#: src/bells.rs:647 src/timer/imp.rs:1645 src/timer/imp.rs:1715
-#: src/timer/imp.rs:1800
+#: src/bells.rs:647 src/timer/imp.rs:1647 src/timer/imp.rs:1717
+#: src/timer/imp.rs:1802
 msgid "Both"
 msgstr ""
 
@@ -309,7 +309,7 @@ msgstr ""
 msgid "Database error"
 msgstr ""
 
-#: src/data_io.rs:33 src/preferences.rs:534
+#: src/data_io.rs:33 src/preferences.rs:495
 msgid "Database unavailable"
 msgstr ""
 
@@ -319,7 +319,7 @@ msgid "«{name}» is already taken"
 msgstr ""
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:530 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:491 src/sounds.rs:640
 msgid "Save failed"
 msgstr ""
 
@@ -412,7 +412,7 @@ msgstr ""
 msgid "A guided file with this name already exists."
 msgstr ""
 
-#: src/guided.rs:200 src/preferences.rs:226 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:204 src/sounds.rs:501
 msgid "Import"
 msgstr ""
 
@@ -766,7 +766,7 @@ msgstr ""
 msgid "_Cancel"
 msgstr ""
 
-#: src/log/imp.rs:1101 src/preferences.rs:437
+#: src/log/imp.rs:1101 src/preferences.rs:398
 msgid "_Save"
 msgstr ""
 
@@ -795,27 +795,27 @@ msgstr ""
 msgid "Couldn't save session: storage unavailable"
 msgstr ""
 
-#: src/mpris.rs:86
-#, rust-format
-msgid "{time} left"
-msgstr ""
-
-#: src/mpris.rs:88
-#, rust-format
-msgid "Preparation, {time} left"
-msgstr ""
-
-#: src/mpris.rs:89
+#: src/mpris.rs:104
 #, rust-format
 msgid "Paused, {time} left"
 msgstr ""
 
-#: src/mpris.rs:90
+#: src/mpris.rs:105
+#, rust-format
+msgid "{time} left"
+msgstr ""
+
+#: src/mpris.rs:106
 #, rust-format
 msgid "Paused, {time}"
 msgstr ""
 
-#: src/mpris.rs:91
+#: src/mpris.rs:108
+#, rust-format
+msgid "Preparation, {time} left"
+msgstr ""
+
+#: src/mpris.rs:109
 #, rust-format
 msgid "Overtime +{time}"
 msgstr ""
@@ -887,247 +887,259 @@ msgstr ""
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr ""
 
-#: src/preferences.rs:204
+#: src/preferences.rs:203
 msgid "Export session log"
 msgstr ""
 
-#: src/preferences.rs:205
+#: src/preferences.rs:203
 msgid "Save every session to a CSV file"
 msgstr ""
 
-#: src/preferences.rs:211
+#: src/preferences.rs:203
 msgid "Export"
 msgstr ""
 
-#: src/preferences.rs:219
+#: src/preferences.rs:204
 msgid "Import from Meditate CSV"
 msgstr ""
 
-#: src/preferences.rs:220
+#: src/preferences.rs:204
 msgid "Restore sessions from a file exported above"
 msgstr ""
 
-#: src/preferences.rs:236
+#: src/preferences.rs:209
 msgid "Migrate"
 msgstr ""
 
-#: src/preferences.rs:237
+#: src/preferences.rs:210
 msgid "Import sessions from another meditation app."
 msgstr ""
 
-#: src/preferences.rs:241 src/preferences.rs:675
+#: src/preferences.rs:213 src/preferences.rs:653
 msgid "Import from Insight Timer"
 msgstr ""
 
-#: src/preferences.rs:242
+#: src/preferences.rs:213
 msgid "Upload an Insight Timer CSV export"
 msgstr ""
 
-#: src/preferences.rs:248
+#: src/preferences.rs:213
 msgid "Import Insight Timer CSV"
 msgstr ""
 
-#: src/preferences.rs:266
+#: src/preferences.rs:214 src/preferences.rs:661
+msgid "Import from Meditation Assistant"
+msgstr ""
+
+#: src/preferences.rs:214
+msgid "Upload a Meditation Assistant CSV export"
+msgstr ""
+
+#: src/preferences.rs:214
+msgid "Import Meditation Assistant CSV"
+msgstr ""
+
+#: src/preferences.rs:227
 msgid "Nextcloud Sync"
 msgstr ""
 
-#: src/preferences.rs:269
+#: src/preferences.rs:230
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
 msgstr ""
 
-#: src/preferences.rs:270
+#: src/preferences.rs:231
 msgid ""
 "Use the WebDAV address from Files → Files settings, and an app password from "
 "Personal settings → Security."
 msgstr ""
 
-#: src/preferences.rs:275
+#: src/preferences.rs:236
 msgid "WebDAV URL"
 msgstr ""
 
-#: src/preferences.rs:279
+#: src/preferences.rs:240
 msgid "Username"
 msgstr ""
 
-#: src/preferences.rs:282
+#: src/preferences.rs:243
 msgid "App password"
 msgstr ""
 
-#: src/preferences.rs:311
+#: src/preferences.rs:272
 msgid "Test connection"
 msgstr ""
 
-#: src/preferences.rs:312
+#: src/preferences.rs:273
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr ""
 
-#: src/preferences.rs:316
+#: src/preferences.rs:277
 msgid "_Test"
 msgstr ""
 
-#: src/preferences.rs:361 src/preferences.rs:472
+#: src/preferences.rs:322 src/preferences.rs:433
 msgid "Enter URL and username"
 msgstr ""
 
-#: src/preferences.rs:365 src/preferences.rs:480
+#: src/preferences.rs:326 src/preferences.rs:441
 msgid "Enter a password"
 msgstr ""
 
-#: src/preferences.rs:369 src/preferences.rs:484
+#: src/preferences.rs:330 src/preferences.rs:445
 msgid "Keyring read failed"
 msgstr ""
 
-#: src/preferences.rs:375 src/preferences.rs:476
+#: src/preferences.rs:336 src/preferences.rs:437
 msgid "URL must start with https://"
 msgstr ""
 
-#: src/preferences.rs:409
+#: src/preferences.rs:370
 msgid "Connection OK"
 msgstr ""
 
-#: src/preferences.rs:410 src/window/imp.rs:878
+#: src/preferences.rs:371 src/window/imp.rs:878
 msgid "Authentication failed"
 msgstr ""
 
-#: src/preferences.rs:411
+#: src/preferences.rs:372
 msgid "Not a WebDAV folder"
 msgstr ""
 
-#: src/preferences.rs:412 src/window/imp.rs:877
+#: src/preferences.rs:373 src/window/imp.rs:877
 msgid "Network error"
 msgstr ""
 
-#: src/preferences.rs:413 src/window/imp.rs:879
+#: src/preferences.rs:374 src/window/imp.rs:879
 msgid "Server error"
 msgstr ""
 
-#: src/preferences.rs:418
+#: src/preferences.rs:379
 msgid "Test failed"
 msgstr ""
 
-#: src/preferences.rs:432
+#: src/preferences.rs:393
 msgid "Save sync settings"
 msgstr ""
 
-#: src/preferences.rs:433
+#: src/preferences.rs:394
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 
-#: src/preferences.rs:511
+#: src/preferences.rs:472
 msgid "Keyring write failed"
 msgstr ""
 
-#: src/preferences.rs:539
+#: src/preferences.rs:500
 msgid "Sync settings saved"
 msgstr ""
 
-#: src/preferences.rs:548
+#: src/preferences.rs:509
 msgid "Danger Zone"
 msgstr ""
 
-#: src/preferences.rs:549
+#: src/preferences.rs:510
 msgid "These actions cannot be undone."
 msgstr ""
 
-#: src/preferences.rs:553
+#: src/preferences.rs:514
 msgid "Delete all sessions"
 msgstr ""
 
-#: src/preferences.rs:554
+#: src/preferences.rs:515
 msgid "Permanently remove every logged session"
 msgstr ""
 
-#: src/preferences.rs:558
+#: src/preferences.rs:519
 msgid "_Delete All"
 msgstr ""
 
-#: src/preferences.rs:628
+#: src/preferences.rs:606
 msgid "Export Session Log"
 msgstr ""
 
-#: src/preferences.rs:632 src/preferences.rs:733
+#: src/preferences.rs:610 src/preferences.rs:719
 msgid "CSV files"
 msgstr ""
 
-#: src/preferences.rs:648
+#: src/preferences.rs:626
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:652
+#: src/preferences.rs:630
 #, rust-format
 msgid "Export failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:666
+#: src/preferences.rs:644
 msgid "Import Session Log"
 msgstr ""
 
-#: src/preferences.rs:685
+#: src/preferences.rs:671
 msgid "Delete Every Session?"
 msgstr ""
 
-#: src/preferences.rs:686
+#: src/preferences.rs:672
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr ""
 
-#: src/preferences.rs:691
+#: src/preferences.rs:677
 msgid "Delete All"
 msgstr ""
 
-#: src/preferences.rs:702
+#: src/preferences.rs:688
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:709
+#: src/preferences.rs:695
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:749 src/preferences.rs:811
+#: src/preferences.rs:735 src/preferences.rs:797
 #, rust-format
 msgid "Import failed: {error}"
 msgstr ""
 
-#: src/preferences.rs:759
+#: src/preferences.rs:745
 msgid "Some Lines Can't Be Read"
 msgstr ""
 
-#: src/preferences.rs:765
+#: src/preferences.rs:751
 msgid "Import the Rest"
 msgstr ""
 
-#: src/preferences.rs:778
+#: src/preferences.rs:764
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr ""
 
-#: src/preferences.rs:779
+#: src/preferences.rs:765
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr ""
 
-#: src/preferences.rs:786
+#: src/preferences.rs:772
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/preferences.rs:795
+#: src/preferences.rs:781
 msgid "Nothing in this file can be imported."
 msgstr ""
 
-#: src/preferences.rs:804
+#: src/preferences.rs:790
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1492,31 +1504,31 @@ msgid_plural "{duration} · {n} sessions"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/timer/imp.rs:1211
+#: src/timer/imp.rs:1213
 msgid "Meditation session running"
 msgstr ""
 
-#: src/timer/imp.rs:1214
+#: src/timer/imp.rs:1216
 msgid "Couldn't keep the computer awake for the bells"
 msgstr ""
 
-#: src/timer/imp.rs:1833
+#: src/timer/imp.rs:1835
 msgid "This device can't vibrate, so nothing plays"
 msgstr ""
 
-#: src/timer/imp.rs:1834
+#: src/timer/imp.rs:1836
 msgid "This device can't vibrate, so only the sound plays"
 msgstr ""
 
-#: src/timer/imp.rs:2050
+#: src/timer/imp.rs:2052
 msgid "Paused"
 msgstr ""
 
-#: src/timer/imp.rs:2077 data/ui/timer_view.blp:57
+#: src/timer/imp.rs:2079 data/ui/timer_view.blp:57
 msgid "Hours · Minutes"
 msgstr ""
 
-#: src/timer/imp.rs:2254
+#: src/timer/imp.rs:2256
 msgid "Couldn't start playback"
 msgstr ""
 

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 10:09+0100\n"
+"POT-Creation-Date: 2026-11-07 20:00+0100\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -121,7 +121,7 @@ msgstr "Deze bel klinkt niet meer tijdens sessies."
 #. still cover the common activations.
 #: src/bells.rs:341 src/bells.rs:906 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:690 src/preferences.rs:764 src/presets.rs:525
+#: src/preferences.rs:676 src/preferences.rs:750 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2725
@@ -264,20 +264,20 @@ msgstr "Na elke slag bij de tussenpoos opgeteld"
 msgid "Type"
 msgstr "Type"
 
-#: src/bells.rs:639 src/bells.rs:659 src/timer/imp.rs:1637
-#: src/timer/imp.rs:1711 src/timer/imp.rs:1796 data/ui/timer_view.blp:726
+#: src/bells.rs:639 src/bells.rs:659 src/timer/imp.rs:1639
+#: src/timer/imp.rs:1713 src/timer/imp.rs:1798 data/ui/timer_view.blp:726
 #: data/ui/timer_view.blp:774 data/ui/timer_view.blp:822
 #: data/ui/timer_view.blp:870
 msgid "Sound"
 msgstr "Geluid"
 
-#: src/bells.rs:643 src/timer/imp.rs:1641 src/timer/imp.rs:1713
-#: src/timer/imp.rs:1798
+#: src/bells.rs:643 src/timer/imp.rs:1643 src/timer/imp.rs:1715
+#: src/timer/imp.rs:1800
 msgid "Vibration"
 msgstr "Trillen"
 
-#: src/bells.rs:647 src/timer/imp.rs:1645 src/timer/imp.rs:1715
-#: src/timer/imp.rs:1800
+#: src/bells.rs:647 src/timer/imp.rs:1647 src/timer/imp.rs:1717
+#: src/timer/imp.rs:1802
 msgid "Both"
 msgstr "Beide"
 
@@ -312,7 +312,7 @@ msgstr "Leesfout"
 msgid "Database error"
 msgstr "Databasefout"
 
-#: src/data_io.rs:33 src/preferences.rs:534
+#: src/data_io.rs:33 src/preferences.rs:495
 msgid "Database unavailable"
 msgstr "Database niet beschikbaar"
 
@@ -322,7 +322,7 @@ msgid "«{name}» is already taken"
 msgstr "«{name}» is al in gebruik"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:530 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:491 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Opslaan mislukt"
 
@@ -411,7 +411,7 @@ msgstr "Tracknaam"
 msgid "A guided file with this name already exists."
 msgstr "Er bestaat al een begeleid bestand met deze naam."
 
-#: src/guided.rs:200 src/preferences.rs:226 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:204 src/sounds.rs:501
 msgid "Import"
 msgstr "Importeren"
 
@@ -768,7 +768,7 @@ msgstr "Starttijd"
 msgid "_Cancel"
 msgstr "_Annuleren"
 
-#: src/log/imp.rs:1101 src/preferences.rs:437
+#: src/log/imp.rs:1101 src/preferences.rs:398
 msgid "_Save"
 msgstr "Op_slaan"
 
@@ -797,27 +797,27 @@ msgstr "Kan sessie niet opslaan: opslagfout"
 msgid "Couldn't save session: storage unavailable"
 msgstr "Kan sessie niet opslaan: opslag niet beschikbaar"
 
-#: src/mpris.rs:86
-#, rust-format
-msgid "{time} left"
-msgstr "Nog {time}"
-
-#: src/mpris.rs:88
-#, rust-format
-msgid "Preparation, {time} left"
-msgstr "Voorbereiding, nog {time}"
-
-#: src/mpris.rs:89
+#: src/mpris.rs:104
 #, rust-format
 msgid "Paused, {time} left"
 msgstr "Gepauzeerd, nog {time}"
 
-#: src/mpris.rs:90
+#: src/mpris.rs:105
+#, rust-format
+msgid "{time} left"
+msgstr "Nog {time}"
+
+#: src/mpris.rs:106
 #, rust-format
 msgid "Paused, {time}"
 msgstr "Gepauzeerd, {time}"
 
-#: src/mpris.rs:91
+#: src/mpris.rs:108
+#, rust-format
+msgid "Preparation, {time} left"
+msgstr "Voorbereiding, nog {time}"
+
+#: src/mpris.rs:109
 #, rust-format
 msgid "Overtime +{time}"
 msgstr "Extra tijd +{time}"
@@ -897,51 +897,63 @@ msgstr "Back-up"
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Exporteer je sessielogboek naar een CSV-bestand, of herstel het."
 
-#: src/preferences.rs:204
+#: src/preferences.rs:203
 msgid "Export session log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:205
+#: src/preferences.rs:203
 msgid "Save every session to a CSV file"
 msgstr "Bewaar alle sessies in een CSV-bestand"
 
-#: src/preferences.rs:211
+#: src/preferences.rs:203
 msgid "Export"
 msgstr "Exporteren"
 
-#: src/preferences.rs:219
+#: src/preferences.rs:204
 msgid "Import from Meditate CSV"
 msgstr "Importeren uit Meditate-CSV"
 
-#: src/preferences.rs:220
+#: src/preferences.rs:204
 msgid "Restore sessions from a file exported above"
 msgstr "Herstel sessies uit een hierboven geëxporteerd bestand"
 
-#: src/preferences.rs:236
+#: src/preferences.rs:209
 msgid "Migrate"
 msgstr "Migreren"
 
-#: src/preferences.rs:237
+#: src/preferences.rs:210
 msgid "Import sessions from another meditation app."
 msgstr "Importeer sessies uit een andere meditatie-app."
 
-#: src/preferences.rs:241 src/preferences.rs:675
+#: src/preferences.rs:213 src/preferences.rs:653
 msgid "Import from Insight Timer"
 msgstr "Importeren uit Insight Timer"
 
-#: src/preferences.rs:242
+#: src/preferences.rs:213
 msgid "Upload an Insight Timer CSV export"
 msgstr "Upload een Insight Timer CSV-export"
 
-#: src/preferences.rs:248
+#: src/preferences.rs:213
 msgid "Import Insight Timer CSV"
 msgstr "Insight Timer-CSV importeren"
 
-#: src/preferences.rs:266
+#: src/preferences.rs:214 src/preferences.rs:661
+msgid "Import from Meditation Assistant"
+msgstr "Importeren uit Meditation Assistant"
+
+#: src/preferences.rs:214
+msgid "Upload a Meditation Assistant CSV export"
+msgstr "Upload een CSV-export uit Meditation Assistant"
+
+#: src/preferences.rs:214
+msgid "Import Meditation Assistant CSV"
+msgstr "Meditation Assistant-CSV importeren"
+
+#: src/preferences.rs:227
 msgid "Nextcloud Sync"
 msgstr "Nextcloud-synchronisatie"
 
-#: src/preferences.rs:269
+#: src/preferences.rs:230
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -949,7 +961,7 @@ msgstr ""
 "Synchroniseer sessies, labels en voorkeuren tussen je apparaten via je eigen "
 "Nextcloud-server."
 
-#: src/preferences.rs:270
+#: src/preferences.rs:231
 msgid ""
 "Use the WebDAV address from Files → Files settings, and an app password from "
 "Personal settings → Security."
@@ -957,137 +969,137 @@ msgstr ""
 "Gebruik het WebDAV-adres uit Bestanden → Instellingen voor bestanden en een "
 "app-wachtwoord uit Persoonlijke instellingen → Beveiliging."
 
-#: src/preferences.rs:275
+#: src/preferences.rs:236
 msgid "WebDAV URL"
 msgstr "WebDAV URL"
 
-#: src/preferences.rs:279
+#: src/preferences.rs:240
 msgid "Username"
 msgstr "Gebruikersnaam"
 
-#: src/preferences.rs:282
+#: src/preferences.rs:243
 msgid "App password"
 msgstr "App-wachtwoord"
 
-#: src/preferences.rs:311
+#: src/preferences.rs:272
 msgid "Test connection"
 msgstr "Verbinding testen"
 
-#: src/preferences.rs:312
+#: src/preferences.rs:273
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Controleer of de URL en inloggegevens je Nextcloud bereiken."
 
-#: src/preferences.rs:316
+#: src/preferences.rs:277
 msgid "_Test"
 msgstr "_Testen"
 
-#: src/preferences.rs:361 src/preferences.rs:472
+#: src/preferences.rs:322 src/preferences.rs:433
 msgid "Enter URL and username"
 msgstr "Voer URL en gebruikersnaam in"
 
-#: src/preferences.rs:365 src/preferences.rs:480
+#: src/preferences.rs:326 src/preferences.rs:441
 msgid "Enter a password"
 msgstr "Voer een wachtwoord in"
 
-#: src/preferences.rs:369 src/preferences.rs:484
+#: src/preferences.rs:330 src/preferences.rs:445
 msgid "Keyring read failed"
 msgstr "Lezen uit sleutelbos mislukt"
 
-#: src/preferences.rs:375 src/preferences.rs:476
+#: src/preferences.rs:336 src/preferences.rs:437
 msgid "URL must start with https://"
 msgstr "De URL moet beginnen met https://"
 
-#: src/preferences.rs:409
+#: src/preferences.rs:370
 msgid "Connection OK"
 msgstr "Verbinding in orde"
 
-#: src/preferences.rs:410 src/window/imp.rs:878
+#: src/preferences.rs:371 src/window/imp.rs:878
 msgid "Authentication failed"
 msgstr "Aanmelden mislukt"
 
-#: src/preferences.rs:411
+#: src/preferences.rs:372
 msgid "Not a WebDAV folder"
 msgstr "Geen WebDAV-map"
 
-#: src/preferences.rs:412 src/window/imp.rs:877
+#: src/preferences.rs:373 src/window/imp.rs:877
 msgid "Network error"
 msgstr "Netwerkfout"
 
-#: src/preferences.rs:413 src/window/imp.rs:879
+#: src/preferences.rs:374 src/window/imp.rs:879
 msgid "Server error"
 msgstr "Serverfout"
 
-#: src/preferences.rs:418
+#: src/preferences.rs:379
 msgid "Test failed"
 msgstr "Test mislukt"
 
-#: src/preferences.rs:432
+#: src/preferences.rs:393
 msgid "Save sync settings"
 msgstr "Synchronisatie-instellingen opslaan"
 
-#: src/preferences.rs:433
+#: src/preferences.rs:394
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "Slaat URL en gebruikersnaam lokaal op; het wachtwoord gaat naar je "
 "sleutelbos."
 
-#: src/preferences.rs:511
+#: src/preferences.rs:472
 msgid "Keyring write failed"
 msgstr "Schrijven naar sleutelbos mislukt"
 
-#: src/preferences.rs:539
+#: src/preferences.rs:500
 msgid "Sync settings saved"
 msgstr "Synchronisatie-instellingen opgeslagen"
 
-#: src/preferences.rs:548
+#: src/preferences.rs:509
 msgid "Danger Zone"
 msgstr "Gevarenzone"
 
-#: src/preferences.rs:549
+#: src/preferences.rs:510
 msgid "These actions cannot be undone."
 msgstr "Deze acties kunnen niet ongedaan worden gemaakt."
 
-#: src/preferences.rs:553
+#: src/preferences.rs:514
 msgid "Delete all sessions"
 msgstr "Alle sessies verwijderen"
 
-#: src/preferences.rs:554
+#: src/preferences.rs:515
 msgid "Permanently remove every logged session"
 msgstr "Verwijder elke opgeslagen sessie definitief"
 
-#: src/preferences.rs:558
+#: src/preferences.rs:519
 msgid "_Delete All"
 msgstr "_Alles verwijderen"
 
-#: src/preferences.rs:628
+#: src/preferences.rs:606
 msgid "Export Session Log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:632 src/preferences.rs:733
+#: src/preferences.rs:610 src/preferences.rs:719
 msgid "CSV files"
 msgstr "CSV-bestanden"
 
-#: src/preferences.rs:648
+#: src/preferences.rs:626
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "1 sessie geëxporteerd"
 msgstr[1] "{n} sessies geëxporteerd"
 
-#: src/preferences.rs:652
+#: src/preferences.rs:630
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Export mislukt: {error}"
 
-#: src/preferences.rs:666
+#: src/preferences.rs:644
 msgid "Import Session Log"
 msgstr "Sessielogboek importeren"
 
-#: src/preferences.rs:685
+#: src/preferences.rs:671
 msgid "Delete Every Session?"
 msgstr "Alle sessies verwijderen?"
 
-#: src/preferences.rs:686
+#: src/preferences.rs:672
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1095,57 +1107,57 @@ msgstr ""
 "Dit verwijdert elke sessie in je logboek definitief. Exporteer eerst een "
 "back-up als je iets wilt bewaren."
 
-#: src/preferences.rs:691
+#: src/preferences.rs:677
 msgid "Delete All"
 msgstr "Alles verwijderen"
 
-#: src/preferences.rs:702
+#: src/preferences.rs:688
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "1 sessie verwijderd"
 msgstr[1] "{n} sessies verwijderd"
 
-#: src/preferences.rs:709
+#: src/preferences.rs:695
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Verwijderen mislukt: {error}"
 
-#: src/preferences.rs:749 src/preferences.rs:811
+#: src/preferences.rs:735 src/preferences.rs:797
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Import mislukt: {error}"
 
-#: src/preferences.rs:759
+#: src/preferences.rs:745
 msgid "Some Lines Can't Be Read"
 msgstr "Sommige regels zijn niet leesbaar"
 
-#: src/preferences.rs:765
+#: src/preferences.rs:751
 msgid "Import the Rest"
 msgstr "De rest importeren"
 
-#: src/preferences.rs:778
+#: src/preferences.rs:764
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Regel {line}: de begintijd is niet leesbaar."
 
-#: src/preferences.rs:779
+#: src/preferences.rs:765
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Regel {line}: de duur is niet leesbaar."
 
-#: src/preferences.rs:786
+#: src/preferences.rs:772
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
 msgstr[0] "Nog {n} regel is ook niet leesbaar."
 msgstr[1] "Nog {n} regels zijn ook niet leesbaar."
 
-#: src/preferences.rs:795
+#: src/preferences.rs:781
 msgid "Nothing in this file can be imported."
 msgstr "Niets uit dit bestand kan worden geïmporteerd."
 
-#: src/preferences.rs:804
+#: src/preferences.rs:790
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1523,31 +1535,31 @@ msgid_plural "{duration} · {n} sessions"
 msgstr[0] "{duration} · 1 sessie"
 msgstr[1] "{duration} · {n} sessies"
 
-#: src/timer/imp.rs:1211
+#: src/timer/imp.rs:1213
 msgid "Meditation session running"
 msgstr "Meditatiesessie loopt"
 
-#: src/timer/imp.rs:1214
+#: src/timer/imp.rs:1216
 msgid "Couldn't keep the computer awake for the bells"
 msgstr "Kon de computer niet wakker houden voor de bellen"
 
-#: src/timer/imp.rs:1833
+#: src/timer/imp.rs:1835
 msgid "This device can't vibrate, so nothing plays"
 msgstr "Dit apparaat kan niet trillen, dus er klinkt niets"
 
-#: src/timer/imp.rs:1834
+#: src/timer/imp.rs:1836
 msgid "This device can't vibrate, so only the sound plays"
 msgstr "Dit apparaat kan niet trillen, dus alleen het geluid klinkt"
 
-#: src/timer/imp.rs:2050
+#: src/timer/imp.rs:2052
 msgid "Paused"
 msgstr "Gepauzeerd"
 
-#: src/timer/imp.rs:2077 data/ui/timer_view.blp:57
+#: src/timer/imp.rs:2079 data/ui/timer_view.blp:57
 msgid "Hours · Minutes"
 msgstr "Uren · Minuten"
 
-#: src/timer/imp.rs:2254
+#: src/timer/imp.rs:2256
 msgid "Couldn't start playback"
 msgstr "Kan afspelen niet starten"
 
