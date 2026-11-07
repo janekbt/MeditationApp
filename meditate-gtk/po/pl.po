@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 20:00+0100\n"
+"POT-Creation-Date: 2026-11-07 20:18+0100\n"
 "PO-Revision-Date: 2026-04-20 18:30+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Polish\n"
@@ -125,7 +125,7 @@ msgstr "Ten dzwonek nie będzie już dzwonił podczas sesji."
 #. still cover the common activations.
 #: src/bells.rs:341 src/bells.rs:906 src/guided.rs:231 src/guided.rs:962
 #: src/guided.rs:1079 src/labels.rs:248 src/labels.rs:321 src/labels.rs:404
-#: src/preferences.rs:676 src/preferences.rs:750 src/presets.rs:525
+#: src/preferences.rs:669 src/preferences.rs:743 src/presets.rs:525
 #: src/presets.rs:587 src/presets.rs:652 src/presets.rs:716
 #: src/recovery_dialog.rs:42 src/recovery_dialog.rs:103 src/sounds.rs:533
 #: src/sounds.rs:920 src/sounds.rs:988 src/timer/imp.rs:2725
@@ -322,7 +322,7 @@ msgstr "Błąd odczytu"
 msgid "Database error"
 msgstr "Błąd bazy danych"
 
-#: src/data_io.rs:33 src/preferences.rs:495
+#: src/data_io.rs:33 src/preferences.rs:482
 msgid "Database unavailable"
 msgstr "Baza danych niedostępna"
 
@@ -332,7 +332,7 @@ msgid "«{name}» is already taken"
 msgstr "Nazwa «{name}» jest już zajęta"
 
 #: src/db/mod.rs:137 src/guided.rs:351 src/guided.rs:1185 src/labels.rs:474
-#: src/local_folder.rs:78 src/preferences.rs:491 src/sounds.rs:640
+#: src/local_folder.rs:78 src/preferences.rs:478 src/sounds.rs:640
 msgid "Save failed"
 msgstr "Zapis nie powiódł się"
 
@@ -424,7 +424,7 @@ msgstr "Nazwa ścieżki"
 msgid "A guided file with this name already exists."
 msgstr "Plik z przewodnikiem o tej nazwie już istnieje."
 
-#: src/guided.rs:200 src/preferences.rs:204 src/sounds.rs:501
+#: src/guided.rs:200 src/preferences.rs:191 src/sounds.rs:501
 msgid "Import"
 msgstr "Importuj"
 
@@ -787,7 +787,7 @@ msgstr "Godzina rozpoczęcia"
 msgid "_Cancel"
 msgstr "_Anuluj"
 
-#: src/log/imp.rs:1101 src/preferences.rs:398
+#: src/log/imp.rs:1101 src/preferences.rs:385
 msgid "_Save"
 msgstr "_Zapisz"
 
@@ -841,31 +841,27 @@ msgstr "Przygotowanie, pozostało {time}"
 msgid "Overtime +{time}"
 msgstr "Dodatkowy czas +{time}"
 
-#: src/preferences.rs:25 data/ui/window.blp:207 data/ui/shortcuts.ui:24
+#: src/preferences.rs:26 data/ui/window.blp:207 data/ui/shortcuts.ui:24
 msgid "Preferences"
 msgstr "Preferencje"
 
-#: src/preferences.rs:36
-msgid "General"
-msgstr "Ogólne"
-
-#: src/preferences.rs:58
+#: src/preferences.rs:54
 msgid "Statistics"
 msgstr "Statystyki"
 
-#: src/preferences.rs:67 data/ui/stats_view.blp:51
+#: src/preferences.rs:63 data/ui/stats_view.blp:51
 msgid "Daily goal"
 msgstr "Cel dzienny"
 
-#: src/preferences.rs:68
+#: src/preferences.rs:64
 msgid "Minutes per day, shown as the ring on the Stats tab"
 msgstr "Minuty dziennie, widoczne jako pierścień w Statystykach"
 
-#: src/preferences.rs:102
+#: src/preferences.rs:98
 msgid "Bluetooth"
 msgstr "Bluetooth"
 
-#: src/preferences.rs:103
+#: src/preferences.rs:99
 msgid ""
 "Bluetooth devices fall asleep after 30 to 60 seconds of silence. Waking up, "
 "they swallow the start of a bell, short bells even entirely. The lead-in "
@@ -883,95 +879,91 @@ msgstr ""
 "Szum, potem dzwonek: zmniejsz długość.\n"
 "Tylko dzwonek: w sam raz."
 
-#: src/preferences.rs:116
+#: src/preferences.rs:112
 msgid "Wake-up Lead-in for Bluetooth"
 msgstr "Rozbudzanie przed dzwonkiem przez Bluetooth"
 
-#: src/preferences.rs:130
+#: src/preferences.rs:126
 msgid "Length (Seconds)"
 msgstr "Długość (sekundy)"
 
-#: src/preferences.rs:152 src/preferences.rs:174
+#: src/preferences.rs:148 src/preferences.rs:170
 msgid "Play"
 msgstr "Odtwórz"
 
-#: src/preferences.rs:167
+#: src/preferences.rs:163
 msgid "Stop"
 msgstr "Zatrzymaj"
 
-#: src/preferences.rs:181
+#: src/preferences.rs:177
 msgid "Test"
 msgstr "Test"
 
-#: src/preferences.rs:193
-msgid "Data"
-msgstr "Dane"
-
-#: src/preferences.rs:199
+#: src/preferences.rs:186
 msgid "Backup"
 msgstr "Kopia zapasowa"
 
-#: src/preferences.rs:200
+#: src/preferences.rs:187
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Eksportuj dziennik sesji do pliku CSV lub przywróć z niego."
 
-#: src/preferences.rs:203
+#: src/preferences.rs:190
 msgid "Export session log"
 msgstr "Eksportuj dziennik"
 
-#: src/preferences.rs:203
+#: src/preferences.rs:190
 msgid "Save every session to a CSV file"
 msgstr "Zapisz wszystkie sesje do pliku CSV"
 
-#: src/preferences.rs:203
+#: src/preferences.rs:190
 msgid "Export"
 msgstr "Eksportuj"
 
-#: src/preferences.rs:204
+#: src/preferences.rs:191
 msgid "Import from Meditate CSV"
 msgstr "Importuj z pliku CSV Meditate"
 
-#: src/preferences.rs:204
+#: src/preferences.rs:191
 msgid "Restore sessions from a file exported above"
 msgstr "Przywróć sesje z pliku wyeksportowanego powyżej"
 
-#: src/preferences.rs:209
+#: src/preferences.rs:196
 msgid "Migrate"
 msgstr "Migracja"
 
-#: src/preferences.rs:210
+#: src/preferences.rs:197
 msgid "Import sessions from another meditation app."
 msgstr "Importuj sesje z innej aplikacji do medytacji."
 
-#: src/preferences.rs:213 src/preferences.rs:653
+#: src/preferences.rs:200 src/preferences.rs:646
 msgid "Import from Insight Timer"
 msgstr "Importuj z Insight Timer"
 
-#: src/preferences.rs:213
+#: src/preferences.rs:200
 msgid "Upload an Insight Timer CSV export"
 msgstr "Prześlij plik CSV wyeksportowany z Insight Timer"
 
-#: src/preferences.rs:213
+#: src/preferences.rs:200
 msgid "Import Insight Timer CSV"
 msgstr "Importuj plik CSV Insight Timer"
 
-#: src/preferences.rs:214 src/preferences.rs:661
+#: src/preferences.rs:201 src/preferences.rs:654
 msgid "Import from Meditation Assistant"
 msgstr "Importuj z Meditation Assistant"
 
-#: src/preferences.rs:214
+#: src/preferences.rs:201
 msgid "Upload a Meditation Assistant CSV export"
 msgstr "Prześlij eksport CSV z Meditation Assistant"
 
-#: src/preferences.rs:214
+#: src/preferences.rs:201
 msgid "Import Meditation Assistant CSV"
 msgstr "Importuj CSV z Meditation Assistant"
 
-#: src/preferences.rs:227
+#: src/preferences.rs:214
 msgid "Nextcloud Sync"
 msgstr "Synchronizacja z Nextcloud"
 
-#: src/preferences.rs:230
+#: src/preferences.rs:217
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -979,7 +971,7 @@ msgstr ""
 "Synchronizuj sesje, etykiety i preferencje między urządzeniami przez własny "
 "serwer Nextcloud."
 
-#: src/preferences.rs:231
+#: src/preferences.rs:218
 msgid ""
 "Use the WebDAV address from Files → Files settings, and an app password from "
 "Personal settings → Security."
@@ -987,117 +979,117 @@ msgstr ""
 "Użyj adresu WebDAV z Pliki → Ustawienia Plików i hasła aplikacji z "
 "Ustawienia osobiste → Bezpieczeństwo."
 
-#: src/preferences.rs:236
+#: src/preferences.rs:223
 msgid "WebDAV URL"
 msgstr "URL WebDAV"
 
-#: src/preferences.rs:240
+#: src/preferences.rs:227
 msgid "Username"
 msgstr "Nazwa użytkownika"
 
-#: src/preferences.rs:243
+#: src/preferences.rs:230
 msgid "App password"
 msgstr "Hasło aplikacji"
 
-#: src/preferences.rs:272
+#: src/preferences.rs:259
 msgid "Test connection"
 msgstr "Przetestuj połączenie"
 
-#: src/preferences.rs:273
+#: src/preferences.rs:260
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr ""
 "Sprawdź, czy adres URL i dane logowania pozwalają połączyć się z Nextcloud."
 
-#: src/preferences.rs:277
+#: src/preferences.rs:264
 msgid "_Test"
 msgstr "_Testuj"
 
-#: src/preferences.rs:322 src/preferences.rs:433
+#: src/preferences.rs:309 src/preferences.rs:420
 msgid "Enter URL and username"
 msgstr "Podaj adres URL i nazwę użytkownika"
 
-#: src/preferences.rs:326 src/preferences.rs:441
+#: src/preferences.rs:313 src/preferences.rs:428
 msgid "Enter a password"
 msgstr "Podaj hasło"
 
-#: src/preferences.rs:330 src/preferences.rs:445
+#: src/preferences.rs:317 src/preferences.rs:432
 msgid "Keyring read failed"
 msgstr "Odczyt z pęku kluczy nie powiódł się"
 
-#: src/preferences.rs:336 src/preferences.rs:437
+#: src/preferences.rs:323 src/preferences.rs:424
 msgid "URL must start with https://"
 msgstr "Adres URL musi zaczynać się od https://"
 
-#: src/preferences.rs:370
+#: src/preferences.rs:357
 msgid "Connection OK"
 msgstr "Połączenie działa"
 
-#: src/preferences.rs:371 src/window/imp.rs:878
+#: src/preferences.rs:358 src/window/imp.rs:881
 msgid "Authentication failed"
 msgstr "Uwierzytelnianie nie powiodło się"
 
-#: src/preferences.rs:372
+#: src/preferences.rs:359
 msgid "Not a WebDAV folder"
 msgstr "To nie jest folder WebDAV"
 
-#: src/preferences.rs:373 src/window/imp.rs:877
+#: src/preferences.rs:360 src/window/imp.rs:880
 msgid "Network error"
 msgstr "Błąd sieci"
 
-#: src/preferences.rs:374 src/window/imp.rs:879
+#: src/preferences.rs:361 src/window/imp.rs:882
 msgid "Server error"
 msgstr "Błąd serwera"
 
-#: src/preferences.rs:379
+#: src/preferences.rs:366
 msgid "Test failed"
 msgstr "Test nie powiódł się"
 
-#: src/preferences.rs:393
+#: src/preferences.rs:380
 msgid "Save sync settings"
 msgstr "Zapisz ustawienia synchronizacji"
 
-#: src/preferences.rs:394
+#: src/preferences.rs:381
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "Zapisuje adres URL i nazwę użytkownika lokalnie; hasło trafia do pęku kluczy."
 
-#: src/preferences.rs:472
+#: src/preferences.rs:459
 msgid "Keyring write failed"
 msgstr "Zapis do pęku kluczy nie powiódł się"
 
-#: src/preferences.rs:500
+#: src/preferences.rs:487
 msgid "Sync settings saved"
 msgstr "Zapisano ustawienia synchronizacji"
 
-#: src/preferences.rs:509
+#: src/preferences.rs:496
 msgid "Danger Zone"
 msgstr "Strefa zagrożenia"
 
-#: src/preferences.rs:510
+#: src/preferences.rs:497
 msgid "These actions cannot be undone."
 msgstr "Tych działań nie można cofnąć."
 
-#: src/preferences.rs:514
+#: src/preferences.rs:501
 msgid "Delete all sessions"
 msgstr "Usuń wszystkie sesje"
 
-#: src/preferences.rs:515
+#: src/preferences.rs:502
 msgid "Permanently remove every logged session"
 msgstr "Trwale usuń każdą zapisaną sesję"
 
-#: src/preferences.rs:519
+#: src/preferences.rs:506
 msgid "_Delete All"
 msgstr "_Usuń wszystko"
 
-#: src/preferences.rs:606
+#: src/preferences.rs:599
 msgid "Export Session Log"
 msgstr "Eksportuj dziennik sesji"
 
-#: src/preferences.rs:610 src/preferences.rs:719
+#: src/preferences.rs:603 src/preferences.rs:712
 msgid "CSV files"
 msgstr "Pliki CSV"
 
-#: src/preferences.rs:626
+#: src/preferences.rs:619
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
@@ -1105,20 +1097,20 @@ msgstr[0] "Wyeksportowano 1 sesję"
 msgstr[1] "Wyeksportowano {n} sesje"
 msgstr[2] "Wyeksportowano {n} sesji"
 
-#: src/preferences.rs:630
+#: src/preferences.rs:623
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Eksport nie powiódł się: {error}"
 
-#: src/preferences.rs:644
+#: src/preferences.rs:637
 msgid "Import Session Log"
 msgstr "Importuj dziennik sesji"
 
-#: src/preferences.rs:671
+#: src/preferences.rs:664
 msgid "Delete Every Session?"
 msgstr "Usunąć wszystkie sesje?"
 
-#: src/preferences.rs:672
+#: src/preferences.rs:665
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -1126,11 +1118,11 @@ msgstr ""
 "Trwale usuwa wszystkie sesje z dziennika. Najpierw wyeksportuj kopię, jeśli "
 "chcesz zachować historię."
 
-#: src/preferences.rs:677
+#: src/preferences.rs:670
 msgid "Delete All"
 msgstr "Usuń wszystko"
 
-#: src/preferences.rs:688
+#: src/preferences.rs:681
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
@@ -1138,35 +1130,35 @@ msgstr[0] "Usunięto 1 sesję"
 msgstr[1] "Usunięto {n} sesje"
 msgstr[2] "Usunięto {n} sesji"
 
-#: src/preferences.rs:695
+#: src/preferences.rs:688
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Usuwanie nie powiodło się: {error}"
 
-#: src/preferences.rs:735 src/preferences.rs:797
+#: src/preferences.rs:728 src/preferences.rs:790
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Import nie powiódł się: {error}"
 
-#: src/preferences.rs:745
+#: src/preferences.rs:738
 msgid "Some Lines Can't Be Read"
 msgstr "Niektórych wierszy nie można odczytać"
 
-#: src/preferences.rs:751
+#: src/preferences.rs:744
 msgid "Import the Rest"
 msgstr "Importuj resztę"
 
-#: src/preferences.rs:764
+#: src/preferences.rs:757
 #, rust-format
 msgid "Line {line}: the start time can't be read."
 msgstr "Wiersz {line}: nie można odczytać czasu rozpoczęcia."
 
-#: src/preferences.rs:765
+#: src/preferences.rs:758
 #, rust-format
 msgid "Line {line}: the duration can't be read."
 msgstr "Wiersz {line}: nie można odczytać czasu trwania."
 
-#: src/preferences.rs:772
+#: src/preferences.rs:765
 #, rust-format
 msgid "{n} more line can't be read either."
 msgid_plural "{n} more lines can't be read either."
@@ -1174,11 +1166,11 @@ msgstr[0] "Nie można też odczytać {n} kolejnego wiersza."
 msgstr[1] "Nie można też odczytać {n} kolejnych wierszy."
 msgstr[2] "Nie można też odczytać {n} kolejnych wierszy."
 
-#: src/preferences.rs:781
+#: src/preferences.rs:774
 msgid "Nothing in this file can be imported."
 msgstr "Z tego pliku nie można nic zaimportować."
 
-#: src/preferences.rs:790
+#: src/preferences.rs:783
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
@@ -1877,72 +1869,72 @@ msgstr "Zatrzymanie"
 msgid "Breathe out"
 msgstr "Wydech"
 
-#: src/window/imp.rs:825
+#: src/window/imp.rs:828
 msgid "Syncing with Nextcloud…"
 msgstr "Synchronizowanie z Nextcloud…"
 
-#: src/window/imp.rs:829
+#: src/window/imp.rs:832
 msgid "Last sync failed"
 msgstr "Ostatnia synchronizacja nie powiodła się"
 
-#: src/window/imp.rs:834
+#: src/window/imp.rs:837
 msgid "Some files weren't uploaded"
 msgstr "Niektóre pliki nie zostały wysłane"
 
-#: src/window/imp.rs:838
+#: src/window/imp.rs:841
 msgid "No password saved"
 msgstr "Nie zapisano hasła"
 
-#: src/window/imp.rs:847
+#: src/window/imp.rs:850
 msgid "Sync configured (waiting for first run)"
 msgstr "Synchronizacja skonfigurowana (oczekiwanie na pierwsze uruchomienie)"
 
-#: src/window/imp.rs:881
+#: src/window/imp.rs:884
 #, rust-format
 msgid "Server error ({status})"
 msgstr "Błąd serwera ({status})"
 
-#: src/window/imp.rs:883
+#: src/window/imp.rs:886
 msgid "The server redirected the address"
 msgstr "Serwer przekierował adres"
 
-#: src/window/imp.rs:884
+#: src/window/imp.rs:887
 msgid "The server's reply can't be read"
 msgstr "Nie można odczytać odpowiedzi serwera"
 
-#: src/window/imp.rs:885
+#: src/window/imp.rs:888
 msgid "Local database error"
 msgstr "Błąd lokalnej bazy danych"
 
-#: src/window/imp.rs:886
+#: src/window/imp.rs:889
 msgid "The password couldn't be read"
 msgstr "Nie udało się odczytać hasła"
 
-#: src/window/imp.rs:913
+#: src/window/imp.rs:916
 #, rust-format
 msgid "{name}: too large to sync"
 msgstr "{name}: za duży do synchronizacji"
 
-#: src/window/imp.rs:914
+#: src/window/imp.rs:917
 #, rust-format
 msgid "{name}: too large for the server"
 msgstr "{name}: za duży dla serwera"
 
-#: src/window/imp.rs:915
+#: src/window/imp.rs:918
 #, rust-format
 msgid "{name}: the server is full"
 msgstr "{name}: serwer jest pełny"
 
-#: src/window/imp.rs:917
+#: src/window/imp.rs:920
 #, rust-format
 msgid "{name}: refused by the server ({status})"
 msgstr "{name}: odrzucony przez serwer ({status})"
 
-#: src/window/imp.rs:928
+#: src/window/imp.rs:931
 msgid "Synced just now"
 msgstr "Zsynchronizowano przed chwilą"
 
-#: src/window/imp.rs:930
+#: src/window/imp.rs:933
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
@@ -1950,7 +1942,7 @@ msgstr[0] "Zsynchronizowano minutę temu"
 msgstr[1] "Zsynchronizowano {n} minuty temu"
 msgstr[2] "Zsynchronizowano {n} minut temu"
 
-#: src/window/imp.rs:933
+#: src/window/imp.rs:936
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
@@ -1958,7 +1950,7 @@ msgstr[0] "Zsynchronizowano godzinę temu"
 msgstr[1] "Zsynchronizowano {n} godziny temu"
 msgstr[2] "Zsynchronizowano {n} godzin temu"
 
-#: src/window/imp.rs:936
+#: src/window/imp.rs:939
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
@@ -2953,6 +2945,12 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:264
 msgid "Initial release."
 msgstr "Pierwsze wydanie."
+
+#~ msgid "General"
+#~ msgstr "Ogólne"
+
+#~ msgid "Data"
+#~ msgstr "Dane"
 
 #~ msgid "Server URL"
 #~ msgstr "Adres URL serwera"

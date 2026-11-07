@@ -728,7 +728,9 @@ impl MeditateWindow {
                             app.trigger_sync();
                         }
                         StatusButton::Preferences | StatusButton::EnterPassword => {
-                            crate::preferences::show_preferences_on_page(&app, Some("data"));
+                            use crate::preferences::SyncField;
+                            let field = if matches!(button, StatusButton::EnterPassword) { SyncField::Password } else { SyncField::Url };
+                            crate::preferences::show_preferences_at(&app, Some(field));
                         }
                     }
                 }

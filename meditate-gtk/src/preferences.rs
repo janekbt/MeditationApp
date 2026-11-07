@@ -10,15 +10,16 @@ use meditate_core::goal::{
     DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN,
 };
 
+/// The Nextcloud Sync field the headerbar sync status lands on.
+pub enum SyncField { Url, Password }
+
 pub fn show_preferences(app: &MeditateApplication) {
-    show_preferences_on_page(app, None);
+    show_preferences_at(app, None);
 }
 
-/// Open the Preferences dialog with a specific page pre-selected.
-/// Page name is matched against the `name` property on each
-/// `AdwPreferencesPage` ("general", "data", "labels"). Used by the
-/// headerbar sync indicator so a click lands directly on Data.
-pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<&str>) {
+/// Open Preferences; with a field, scrolled to Nextcloud Sync with that
+/// field focused (the headerbar sync status).
+pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncField>) {
     let app = app.clone();
 
     let dialog = adw::PreferencesDialog::builder()
@@ -30,13 +31,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .content_height(900)
         .build();
 
-    // ── General page ──────────────────────────────────────────────────────────
-
-    let general_page = adw::PreferencesPage::builder()
-        .title(gettext("General"))
-        .name("general")
-        .icon_name("preferences-system-symbolic")
-        .build();
+    // One page: a single page hides the dialog's tab switcher.
+    let page = adw::PreferencesPage::new();
 
     // The legacy Sound group held a "Vibrate on session end" toggle
     // (vibrate_on_end setting). The full vibration system that
@@ -92,7 +88,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     );
     stats_group.add(&goal_row);
 
-    general_page.add(&stats_group);
+    page.add(&stats_group);
 
     // ── Bluetooth group ───────────────────────────────────────────────────────
     // The wake-up lead-in: a soft noise before each bell on a Bluetooth
@@ -184,16 +180,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     bluetooth_group.add(&lead_switch);
     bluetooth_group.add(&length_row);
     bluetooth_group.add(&test_row);
-    general_page.add(&bluetooth_group);
-    dialog.add(&general_page);
-
-    // ── Data page ─────────────────────────────────────────────────────────────
-
-    let data_page = adw::PreferencesPage::builder()
-        .title(gettext("Data"))
-        .name("data")
-        .icon_name("drive-harddisk-symbolic")
-        .build();
+    page.add(&bluetooth_group);
 
     let backup_group = adw::PreferencesGroup::builder()
         .title(gettext("Backup"))
@@ -203,7 +190,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     let export_btn = file_row(&backup_group, &gettext("Export session log"), &gettext("Save every session to a CSV file"), "document-save-symbolic", &gettext("Export"));
     let import_btn = file_row(&backup_group, &gettext("Import from Meditate CSV"), &gettext("Restore sessions from a file exported above"), "document-open-symbolic", &gettext("Import"));
 
-    data_page.add(&backup_group);
+    page.add(&backup_group);
 
     let migrate_group = adw::PreferencesGroup::builder()
         .title(gettext("Migrate"))
@@ -213,7 +200,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     let it_btn = file_row(&migrate_group, &gettext("Import from Insight Timer"), &gettext("Upload an Insight Timer CSV export"), "document-open-symbolic", &gettext("Import Insight Timer CSV"));
     let ma_btn = file_row(&migrate_group, &gettext("Import from Meditation Assistant"), &gettext("Upload a Meditation Assistant CSV export"), "document-open-symbolic", &gettext("Import Meditation Assistant CSV"));
 
-    data_page.add(&migrate_group);
+    page.add(&migrate_group);
 
     // ── Nextcloud sync group ──────────────────────────────────────────────
     //
@@ -503,7 +490,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         }
     ));
 
-    data_page.add(&sync_group);
+    page.add(&sync_group);
 
     let danger_group = adw::PreferencesGroup::builder()
         .title(gettext("Danger Zone"))
@@ -525,19 +512,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     delete_row.set_activatable_widget(Some(&delete_btn));
     danger_group.add(&delete_row);
 
-    data_page.add(&danger_group);
+    page.add(&danger_group);
 
-    dialog.add(&data_page);
+    dialog.add(&page);
 
-    // Wire the data-page actions.
+    // Wire the data actions.
     wire_data_actions(
         &app, &dialog,
         &export_btn, &import_btn, &it_btn, &ma_btn, &delete_btn,
     );
-
-    // ── Labels page removed ───────────────────────────────────────────────────
-    // Library management (create / rename / delete) lives inside the
-    // label chooser pushed from the Setup + Done view label rows now.
 
     dialog.connect_closed(clone!(
         #[weak] app,
@@ -557,20 +540,27 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         }
     ));
 
-    // If a caller asked us to open on a specific page, select it
-    // before present(). AdwPreferencesDialog ignores unknown names
-    // gracefully, so passing None or a typo is safe.
-    if let Some(page_name) = initial_page {
-        dialog.set_visible_page_name(page_name);
-    }
-
     let parent = app.active_window();
     dialog.present(parent.as_ref());
+
+    if let Some(field) = sync_field {
+        let row = match field { SyncField::Url => url_row, SyncField::Password => password_row.upcast() };
+        // Idle: the page must be laid out for its viewport to scroll the
+        // focused row into view. The dialog then keeps no cursor in the
+        // field (seen on the laptop; the maintainer prefers it), and
+        // nothing is selected, so a keystroke can't wipe a saved value.
+        glib::idle_add_local_once(move || {
+            row.set_position(-1);
+            if let Some(text) = row.delegate().and_then(|d| d.downcast::<gtk::Text>().ok()) {
+                text.grab_focus_without_selecting();
+            }
+        });
+    }
 }
 
-// ── Data page actions ─────────────────────────────────────────────────────────
+// ── Data actions ─────────────────────────────────────────────────────────
 
-/// A Data-page row whose flat icon button does the row's job; returns
+/// A data row whose flat icon button does the row's job; returns
 /// the button for wiring.
 fn file_row(group: &adw::PreferencesGroup, title: &str, subtitle: &str, icon: &str, tooltip: &str) -> gtk::Button {
     let row = adw::ActionRow::builder().title(title).subtitle(subtitle).activatable(true).build();
@@ -829,9 +819,9 @@ mod tests {
     fn the_bluetooth_group_holds_the_lead_in() {
         let src = source();
         let code = &src[..src.find("#[cfg(test)]").unwrap()];
-        let stats = code.find("general_page.add(&stats_group);").unwrap();
-        let bt = code.find("general_page.add(&bluetooth_group);").unwrap();
-        assert!(stats < bt && bt < code.find("dialog.add(&general_page);").unwrap(), "right after Statistics");
+        let stats = code.find(" page.add(&stats_group);").unwrap();
+        let bt = code.find(" page.add(&bluetooth_group);").unwrap();
+        assert!(stats < bt && bt < code.find(" page.add(&backup_group);").unwrap(), "right after Statistics");
         assert!(code.contains(".title(gettext(\"Bluetooth\"))"));
         assert!(code.contains(".description(gettext(\"Bluetooth devices fall asleep after 30 to 60 seconds of silence."));
         assert!(code.contains(".title(gettext(\"Wake-up Lead-in for Bluetooth\"))"));
