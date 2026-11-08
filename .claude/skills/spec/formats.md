@@ -152,7 +152,8 @@ Base: <commit hash from step 1>; suites on it: <green, or what failed>
 - [ ] 1 Understand
 - [ ] 2 Propose (approved: <date>)
 - [ ] 3 Build
-- [ ] 4 Review, then `/simplify` after the last review
+- [ ] 4 Review (our reviewer and `/code-review`), then `/simplify`
+      after the last review
 - [ ] 5 Specs, docs, list
 - [ ] 6 Verify and hand over
 - [ ] 7 Ship

@@ -170,6 +170,13 @@ instead, each with the brief plus one of its two focus lines (data and
 sync; completeness, both apps and rules). Two focuses find more than
 the same review twice.
 
+In parallel with that reviewer, run `/code-review` (Skill tool,
+`code-review`) on the change: start the reviewer agent first, then the
+skill while it runs. The reviewer checks the change against our specs
+and rules; `/code-review` looks for bugs in the diff itself. Both are
+the review, so a review step is done only when both are done, and the
+rules below apply to the findings of both.
+
 For each finding: check it against the code yourself. Fix what holds,
 one at a time, with a test where it is behaviour. A finding you reject
 gets one line in `tasks.md` (what, why) and is shown to the human. A
@@ -177,16 +184,20 @@ finding that would change behaviour, UI text or data beyond the approved
 proposal is a question for the human, not a fix.
 
 Fixes are code no reviewer saw. When the fixes after the review, or
-after the device test in step 6, change behaviour, data or sync, a
-fresh agent reviews only those: give it the list of fixes from
-`tasks.md`, the files and the brief, and fix what it finds the same
-way. Fixes to wording, comments or docs need no second look.
+after the device test in step 6, change behaviour, data or sync, both
+review again: a fresh agent reviews only those fixes (give it the list
+of fixes from `tasks.md`, the files and the brief), and `/code-review`
+runs again on the change in parallel. Fix what they find the same way.
+Fixes to wording, comments or docs need no second look.
 
 Then, when the last reviewer of the code is done, run `/simplify`
 (Skill tool, `simplify`) on the change. Every change runs it, a small
 one too, and it runs again after a later fix review (step 6). Apply
 its fixes the same way as review findings, note skipped ones in
-`tasks.md`, and run the whole suite again afterwards.
+`tasks.md`, and run the whole suite again afterwards. A refactor it
+suggests that you skip as too big for this change goes into
+OPEN-ISSUES.md under "Deferred refactors": what, where, and the gain
+it named, with the date and the change it came from.
 
 ### 5. Specs, docs and the list
 
@@ -253,7 +264,9 @@ not approval either: reply with the test steps and wait.
 | "The test passed first time, good." | Either it tests nothing or the behaviour existed. Find out which. |
 | "It built." | Stat the artifact. |
 | "They tested (or said ship), so now the optimised build." | Every build is the debug build. Only the maintainer asking for an optimised build builds one. |
+| "Our reviewer covers it, /code-review can be skipped." | Both run, every review round, fix reviews too. |
 | "The review was clean, /simplify can be skipped." | It runs after every last review. Unskippable. |
+| "That refactor is out of scope, so it's gone." | Out of scope goes into "Deferred refactors", not nowhere. |
 | "The reviewer found nothing, so it's right." | The review is one check of several; step 6 still applies. |
 | "They said go earlier." | Approval covers what you showed. New scope needs a new go. |
 | "An `#[allow(...)]` silences it." | Fix the cause. |
