@@ -508,7 +508,7 @@ msgid "Select session date"
 msgstr "Datum der Sitzung wählen"
 
 msgid "Select session time"
-msgstr "Uhrzeit der Sitzung wählen"
+msgstr "Startzeit wählen"
 
 msgid "Selected"
 msgstr "Ausgewählt"
