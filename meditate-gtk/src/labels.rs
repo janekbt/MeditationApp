@@ -13,7 +13,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
-use crate::application::{InvalidateScope, MeditateApplication};
+use crate::application::MeditateApplication;
+use meditate_core::db::Refresh;
 use crate::db::{write_ok, Failed, Label};
 use crate::i18n::{gettext, ngettext};
 use meditate_core::labels::DeleteImpactKey;
@@ -281,7 +282,7 @@ fn present_create_label_dialog(
         match outcome {
             Some(Ok(label)) => {
                 // The Log's label filter lists it.
-                app.invalidate(InvalidateScope::LOG);
+                app.mark_stale(Refresh::LOG);
                 on_created(label);
             }
             // A name clash that raced past the live validation, or a
@@ -352,8 +353,10 @@ fn present_rename_label_dialog(
         if !write_ok(&anchor_for_response, "label.rename", renamed, Failed::Save) {
             return;
         }
-        // Log chips, its filter and the Stats rows show the name.
-        app.invalidate(InvalidateScope::ALL);
+        // Log chips, its filter and the Stats rows show the name: they
+        // re-read when shown (the Log edit dialog re-reads on close); the
+        // chooser rebuilds below, Setup's row when the chooser closes.
+        app.mark_stale(Refresh::SESSIONS);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -413,7 +416,7 @@ fn present_delete_label_dialog(
         if !write_ok(&anchor_for_failure, "label.delete", deleted, Failed::Delete) {
             return;
         }
-        app.invalidate(InvalidateScope::ALL);
+        app.mark_stale(Refresh::SESSIONS);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -432,7 +435,6 @@ fn present_delete_label_dialog(
 /// or keep both. Closing the dialog decides nothing: it asks again
 /// after the next sync.
 pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::window::MeditateWindow) {
-    use glib::subclass::prelude::ObjectSubclassIsExt;
     if win.visible_dialog().is_some() {
         return;
     }
@@ -474,10 +476,8 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
                     win_for_response.add_toast(adw::Toast::new(&gettext("Save failed")));
                     return;
                 }
-                app.invalidate(InvalidateScope::ALL);
-                win_for_response.imp().timer_view.label_merged(conflict.suffixed_id, conflict.base_id);
-                win_for_response.imp().stats_view.refresh();
-                win_for_response.imp().log_view.refresh();
+                // Also the Setup label row, shown now or when it shows.
+                app.data_changed(Refresh::ALL);
             }
             "keep" => {
                 if let Some(Err(e)) = app.with_db(|db| db.core().dismiss_label_conflict(&conflict.suffixed_uuid)) {
@@ -510,22 +510,6 @@ mod tests {
         &src[start..start + src[start..].find("\n}\n").unwrap()]
     }
 
-    /// Renaming or deleting a label (or renaming a guided file) left
-    /// the old chips, filter entries and Stats rows until a sync.
-    #[test]
-    fn name_changes_refresh_log_and_stats() {
-        let src = read("src/labels.rs");
-        assert!(body(&src, "fn present_rename_label_dialog(").contains("app.invalidate(InvalidateScope::ALL)"));
-        assert!(body(&src, "fn present_delete_label_dialog(").contains("app.invalidate(InvalidateScope::ALL)"));
-        assert!(body(&src, "fn present_create_label_dialog(").contains("app.invalidate(InvalidateScope::LOG)"));
-        let guided = read("src/guided.rs");
-        let rename = body(&guided, "fn present_rename_dialog(");
-        assert_eq!(rename.matches(".invalidate(crate::application::InvalidateScope::ALL)").count(), 2, "the rename and its Undo");
-        // A chooser opened from the Log edit dialog: the Log shows again
-        // when the dialog closes, with no tab switch to refresh it.
-        assert!(read("src/log/imp.rs").contains("dialog.connect_closed("));
-    }
-
     /// A label deleted in the chooser kept its name on Setup and in
     /// the Log edit; the rows re-read it when they show again.
     #[test]
@@ -539,13 +523,13 @@ mod tests {
     /// "(conflict)" copy the laptop couldn't merge; the phone asks.
     #[test]
     fn a_sync_asks_about_a_duplicate_label_like_the_phone() {
-        assert!(read("src/application.rs").contains("crate::labels::ask_about_label_conflict(&app, &win);"));
+        assert!(read("src/application.rs").contains("crate::labels::ask_about_label_conflict(app, &win);"));
         let src = read("src/labels.rs");
         let ask = body(&src, "pub(crate) fn ask_about_label_conflict(");
         assert!(ask.contains("visible_dialog().is_some()"));
         assert!(ask.contains("db.core().merge_labels(conflict.suffixed_id, conflict.base_id)"));
         assert!(ask.contains("db.core().dismiss_label_conflict(&conflict.suffixed_uuid)"));
-        assert!(ask.contains("timer_view.label_merged(conflict.suffixed_id, conflict.base_id)"));
+        assert!(ask.contains("app.data_changed(Refresh::ALL)"), "the merged label leaves Setup, the Log and Stats");
         assert!(ask.contains(".close_response(\"later\")"));
     }
 

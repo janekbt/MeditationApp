@@ -24,9 +24,9 @@ impl TimerView {
         self.imp().refresh_streak();
     }
 
-    /// A label merge moved `from`'s sessions to `into`.
-    pub fn label_merged(&self, from: i64, into: i64) {
-        self.imp().label_merged(from, into);
+    /// Only the streak chip.
+    pub fn refresh_streak_label(&self) {
+        self.imp().refresh_streak_label();
     }
 
     /// Refresh the "Manage Bells" subtitle (count of enabled interval

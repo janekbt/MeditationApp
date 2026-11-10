@@ -385,10 +385,7 @@ mod imp {
             let Some(finalized) = self.pending_recovery_toast.lock().unwrap().take()
             else { return; };
             let app = self.obj();
-            let Some(win) = app
-                .active_window()
-                .and_then(|w| w.downcast::<MeditateWindow>().ok())
-            else {
+            let Some(win) = app.main_window() else {
                 // No window yet (shouldn't happen since we're called
                 // from activate after present, but defensive). Put the
                 // FinalizedSession back so the next activate gets it.
@@ -396,11 +393,7 @@ mod imp {
                 return;
             };
 
-            // Refresh the log view + stats so the recovered session
-            // shows up immediately. invalidate-on-stats was already
-            // done implicitly via the event log mutation, but the
-            // log feed needs an explicit prepend.
-            app.invalidate(crate::application::InvalidateScope::ALL);
+            // Log and Stats start stale; the map handler re-reads them.
 
             let minutes = finalized.duration_secs / 60;
             let title = crate::announcement::title(
@@ -415,16 +408,12 @@ mod imp {
 
             let app_for_undo = app.clone();
             let session_uuid = finalized.session_uuid.clone();
+            let win_for_undo = win.clone();
             toast.connect_button_clicked(move |_| {
-                app_for_undo.with_db_mut(|db| {
-                    if let Err(e) = db.delete_session_by_uuid(&session_uuid) {
-                        meditate_core::log(
-                            "session.recovery",
-                            &format!("Undo delete failed uuid={session_uuid}: {e}"),
-                        );
-                    }
-                });
-                app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
+                let deleted = app_for_undo.with_db_mut(|db| db.delete_session_by_uuid(&session_uuid));
+                if crate::db::write_ok(&win_for_undo, "session.recovery", deleted, crate::db::Failed::Delete) {
+                    app_for_undo.data_changed(meditate_core::db::Refresh::ALL);
+                }
             });
             win.add_toast(toast);
         }
@@ -446,6 +435,7 @@ use gtk::glib;
 use adw::prelude::*;
 use gtk::gio;
 use std::sync::Arc;
+use meditate_core::db::Refresh;
 
 glib::wrapper! {
     pub struct MeditateApplication(ObjectSubclass<imp::MeditateApplication>)
@@ -516,37 +506,47 @@ impl MeditateApplication {
         .flatten()
     }
 
-    /// Mark aggregated views stale after a data mutation. Callers pick
-    /// which views are affected so we avoid redundant full refreshes —
-    /// session-save updates the log incrementally and only dirties stats;
-    /// a bulk delete dirties everything.
-    pub fn invalidate(&self, scope: InvalidateScope) {
+    /// Data changed: mark the views `refresh` touches stale and re-read
+    /// the shown page; a hidden one re-reads when it shows.
+    pub fn data_changed(&self, refresh: Refresh) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.mark_stale(refresh);
+        if let Some(win) = self.main_window() {
+            win.imp().refresh_shown(refresh);
+        }
+    }
+
+    /// The main window, also while a help window has the focus
+    /// (`active_window()` is then that one).
+    pub fn main_window(&self) -> Option<crate::window::MeditateWindow> {
+        self.windows().into_iter().find_map(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+    }
+
+    /// Only mark Log or Stats to re-read when next refreshed, for a
+    /// caller that refreshes itself (or later, once).
+    pub fn mark_stale(&self, refresh: Refresh) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
         let imp = self.imp();
-        if scope.stats { imp.stats_dirty.set(true); }
-        if scope.log   { imp.log_dirty.set(true); }
+        if refresh.stats { imp.stats_dirty.set(true); }
+        if refresh.log   { imp.log_dirty.set(true); }
     }
 
-    /// Whether the stats view needs to re-run its aggregations; cleared
-    /// by `StatsView::refresh` after the work completes.
-    pub fn stats_dirty(&self) -> bool {
+    /// Whether Stats must re-read; clears the mark.
+    pub fn take_stats_dirty(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        self.imp().stats_dirty.get()
+        self.imp().stats_dirty.replace(false)
     }
 
-    pub fn clear_stats_dirty(&self) {
+    /// Whether the Log must re-read; clears the mark.
+    pub fn take_log_dirty(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        self.imp().stats_dirty.set(false);
+        self.imp().log_dirty.replace(false)
     }
 
+    /// Whether the Log will re-read when it shows.
     pub fn log_dirty(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
         self.imp().log_dirty.get()
-    }
-
-    pub fn clear_log_dirty(&self) {
-        use glib::subclass::prelude::ObjectSubclassIsExt;
-        self.imp().log_dirty.set(false);
     }
 
     /// True while a sync attempt is in flight on a worker thread. Used
@@ -591,9 +591,9 @@ impl MeditateApplication {
     /// rapid mutations (bulk delete, log import) into at most two
     /// sync rounds total.
     ///
-    /// On completion the worker schedules a callback on the GTK main
-    /// loop that invalidates UI state and re-fires if the dirty flag
-    /// is set. Errors are recorded to `sync_state` so the (future)
+    /// On completion the worker hands what the passes changed to the
+    /// GTK main loop, which re-reads those views (`data_changed`) and
+    /// asks about a label conflict. Errors are recorded to `sync_state` so the (future)
     /// status indicator can surface them; callers see fire-and-forget
     /// semantics here.
     pub fn trigger_sync(&self) {
@@ -632,53 +632,34 @@ impl MeditateApplication {
         std::thread::spawn(move || {
             // Core drives the loop: one more pass for every request
             // that lands while a pass runs, then the slot is freed.
+            // Back on the GTK main loop, where the app is looked up, so
+            // nothing !Send crosses threads.
+            let on_main = |f: Box<dyn FnOnce(&MeditateApplication) + Send>| {
+                glib::MainContext::default().invoke(move || {
+                    if let Some(app) = gio::Application::default()
+                        .and_then(|a| a.downcast::<MeditateApplication>().ok())
+                    {
+                        f(&app);
+                    }
+                });
+            };
             coord.drain(|| {
-                let result = crate::sync_runner::run_sync_attempt(&db_path);
+                let (changed, result) = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
                     meditate_core::log("sync.attempt", &format!("err={e}"));
                 }
-            });
-
-            // Hop back to the GTK main loop to refresh UI. The closure
-            // is Send (captures nothing); we look the application up
-            // via the gio default registry on the main thread, which
-            // avoids having to send a !Send GObject across.
-            glib::MainContext::default().invoke(|| {
-                if let Some(app) = gio::Application::default()
-                    .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                {
-                    app.invalidate(InvalidateScope::ALL);
-                    // Force a redraw of the visible views so the user
-                    // sees pulled changes immediately rather than on
-                    // their next tab switch.
-                    if let Some(win) = app.active_window()
-                        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-                    {
-                        use glib::subclass::prelude::ObjectSubclassIsExt;
-                        win.imp().timer_view.refresh_streak();
-                        win.imp().stats_view.refresh();
-                        win.imp().log_view.refresh();
-                        crate::labels::ask_about_label_conflict(&app, &win);
-                    }
+                // Per pass, not after the follow-up passes a busy user starts.
+                if changed.any() {
+                    on_main(Box::new(move |app| app.data_changed(changed)));
                 }
             });
+            on_main(Box::new(|app| {
+                if let Some(win) = app.main_window() {
+                    crate::labels::ask_about_label_conflict(app, &win);
+                }
+            }));
         });
     }
-}
-
-/// Selector for `MeditateApplication::invalidate`. Callers construct an
-/// instance via the helper constants — `InvalidateScope::ALL` after bulk
-/// mutations, `InvalidateScope::STATS` after an incremental log update.
-#[derive(Debug, Clone, Copy)]
-pub struct InvalidateScope {
-    pub stats: bool,
-    pub log:   bool,
-}
-
-impl InvalidateScope {
-    pub const ALL:   Self = Self { stats: true, log: true };
-    pub const STATS: Self = Self { stats: true, log: false };
-    pub const LOG:   Self = Self { stats: false, log: true };
 }
 
 #[cfg(test)]

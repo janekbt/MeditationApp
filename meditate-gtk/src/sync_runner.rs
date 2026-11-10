@@ -9,7 +9,8 @@ use meditate_core::sync::SyncStats;
 
 /// Run one sync attempt against the database at `db_path`; the
 /// outcome lands in `sync_state` for the status indicator.
-pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, RunError> {
+/// Beside the result: the screens the attempt changed.
+pub fn run_sync_attempt(db_path: &Path) -> (meditate_core::db::Refresh, Result<SyncStats, RunError>) {
     run_attempt(db_path, local_sounds_dir(), local_guided_dir(), |url, username| {
         crate::keychain::read_password(url, username).map_err(|e| e.to_string())
     })

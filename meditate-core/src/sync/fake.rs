@@ -147,6 +147,25 @@ impl WebDav for AlwaysErrs {
     fn move_to(&self, _: &str, _: &str) -> WebDavResult<()> { unreachable!() }
 }
 
+/// A server that takes listings and downloads but refuses every upload.
+#[cfg(test)]
+pub(crate) struct PutFails(pub(crate) FakeWebDav);
+#[cfg(test)]
+impl WebDav for PutFails {
+    fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+        self.0.list_collection(p)
+    }
+    fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
+    fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
+        Err(WebDavError::Unauthorized)
+    }
+    fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+    fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+        self.0.move_to(from, to)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

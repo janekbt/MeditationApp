@@ -2575,12 +2575,12 @@ mod tests {
         assert!(after[drain_end..].contains("SYNC_UI_DIRTY.store(true"), "flag the indicator after drain");
     }
 
-    /// When a sync brings in changes from another device, every
-    /// screen that shows synced data re-reads it, whichever page is
-    /// open. Core decides whether anything came in
-    /// (`SyncStats::brought_changes`); the shell re-reads.
+    /// When a sync brings in changes from another device, the screens
+    /// they touch re-read them, whichever page is open. Core decides
+    /// what changed (`Refresh`, also for a failed pass); the shell
+    /// re-reads.
     #[test]
-    fn screens_re_read_after_a_sync_brings_changes() {
+    fn screens_re_read_what_a_sync_changed() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
@@ -2589,15 +2589,11 @@ mod tests {
             &code[at..at + code[at..].find("\n}\n").unwrap()]
         };
 
-        // The worker flags a pass that brought changes.
+        // Every attempt's changes are kept, a failed one's too.
         let trigger = body_of("fn trigger_sync(");
         let drain = &trigger[trigger.find("SYNC_COORDINATOR.drain(").unwrap()..];
         let drain = &drain[..drain.find("\n        });").unwrap()];
-        assert!(drain.contains(".brought_changes()"), "core decides what counts as a change");
-        assert!(drain.contains("SYNC_PULLED_CHANGES.store(true"), "flag it per pass, so the screens update as soon as it lands");
-        // A failed pass may have applied its pull before the push
-        // failed, and a retry then pulls nothing new.
-        assert!(drain.contains("maybe_changed |= outcome.as_ref().map_or(true, |stats| stats.brought_changes());"));
+        assert!(drain.contains("mark_pulled(changed);"), "handed to the tick per attempt, so the screens update before a retry's wait");
         // No account, no worker (GTK's should_attempt gate).
         assert!(trigger.contains("if !sync_configured() {"));
         let configured = body_of("fn sync_configured(");
@@ -2606,15 +2602,16 @@ mod tests {
 
         // One re-read list covering every synced surface.
         let refresh = body_of("fn refresh_after_pull(");
-        // The preset list and the widget come through refresh_after_label_change.
         for call in [
-            "refresh_bell_rows(",
+            "load_setup_for_mode(",
+            "refresh_after_pattern_change(",
             "populate_interval_bells(",
+            "refresh_label_users(",
+            "refresh_filter_label_items(",
+            "refresh_preset_list(",
             "refresh_guided_files(",
             "refresh_guided_manage(",
-            "refresh_after_label_change(",
-            "load_setup_for_mode(",
-            "refresh_filter_label_items(",
+            "refresh_widget(",
             "reset_log_feed(",
             "refresh_stats(",
         ] {
@@ -2622,18 +2619,18 @@ mod tests {
         }
         assert!(!refresh.contains("trigger_sync("), "re-reading must not start another sync");
 
-        // The tick loop consumes the flag and re-reads.
-        let flag = code.find("SYNC_PULLED_CHANGES\n").or_else(|| code.find("SYNC_PULLED_CHANGES.swap(false"))
-            .expect("the tick loop reads the flag");
-        let next = &code[flag..flag + 400];
-        assert!(next.contains("swap(false"), "the flag is consumed once");
-        assert!(next.contains("refresh_after_pull("), "and the screens re-read");
+        // The tick takes what the passes changed, once.
+        let tick = &code[code.find("let pulled = SYNC_PULLED").expect("the tick takes the changes")..];
+        let tick = &tick[..tick.find("// Test-connection outcome").expect("the next tick step")];
+        assert!(tick.contains("std::mem::replace(&mut *slot, meditate_core::db::Refresh::NONE)"));
+        let call = &tick[tick.find("refresh_after_pull(").expect("re-reads")..];
+        assert!(call[..call.find(')').unwrap()].contains("pulled,"), "what the passes changed");
 
-        // Wipe-local uses the same list: it re-reads now (empty) and
-        // again when its sync brings the data back.
+        // Wipe-local re-reads everything now (empty) and again when its
+        // sync brings the data back.
         let wipe = &code[code.find("ui.on_recovery_wipe_confirm_tap(").unwrap()..];
         let wipe = &wipe[..wipe.find("\n        });").unwrap()];
-        assert!(wipe.contains("refresh_after_pull("), "wipe-local re-reads through the shared list");
+        assert!(wipe.contains("mark_pulled(meditate_core::db::Refresh::ALL);"), "wipe-local re-reads every screen through the tick");
     }
 
     /// Every local change that needs syncing starts a sync: core
@@ -3826,7 +3823,7 @@ mod tests {
         // left the Log filtering on nothing.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("fn refresh_after_label_change(").unwrap();
+        let at = lib.find("fn refresh_label_users(").unwrap();
         let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(helper.contains("ui.set_edit_label_enabled(false);"));
         assert!(helper.contains("LabelTarget::Edit => picked(ui.get_edit_label_id()),"));
@@ -3844,7 +3841,7 @@ mod tests {
         assert!(filter.contains("ui.set_filter_label_id(0);"));
         let at = lib.find("fn refresh_after_pull(").unwrap();
         let pull = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
-        assert!(pull.contains("refresh_after_label_change(ui, mode);"));
+        assert!(pull.contains("if refresh.setup || refresh.labels {\n        refresh_label_users(ui, mode);"), "a pulled setting can switch the ticked label");
     }
 
     #[test]
@@ -5596,7 +5593,7 @@ mod tests {
         let tick = &code[code.find("timer.start(slint::TimerMode::Repeated, TICK,").expect("tick loop")..];
         let pull = &tick[tick.find("refresh_after_pull(").unwrap()..];
         let pull = &pull[..pull.find("// Test-connection outcome").unwrap()];
-        assert!(pull.contains("if state.borrow().is_idle()") && pull.contains("follow_guided_sel(&ui, &guided_sel)"));
+        assert!(pull.contains("guided_follow_due.set(true)") && pull.contains("if guided_follow_due.get() && state.borrow().is_idle()") && pull.contains("follow_guided_sel(&ui, &guided_sel)"), "a pull during a session is followed once idle");
         assert!(pull.contains("repopulate_bell_chooser("));
         let at = code.find("fn refresh_after_pull(").unwrap();
         let after = &code[at..at + code[at..].find("\n}\n").unwrap()];

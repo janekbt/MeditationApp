@@ -114,11 +114,17 @@ fn started_export() -> bool {
     }
 }
 
-/// Set by the sync worker when a pass brought in changes from
-/// another device; the tick loop consumes it and re-reads every
-/// screen (`refresh_after_pull`).
-static SYNC_PULLED_CHANGES: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// The screens sync passes changed with data from another device;
+/// the tick loop takes it and re-reads those (`refresh_after_pull`).
+static SYNC_PULLED: std::sync::Mutex<meditate_core::db::Refresh> =
+    std::sync::Mutex::new(meditate_core::db::Refresh::NONE);
+
+/// Add to what the tick re-reads next (a sync pass, Wipe Local).
+fn mark_pulled(changed: meditate_core::db::Refresh) {
+    if let Ok(mut slot) = SYNC_PULLED.lock() {
+        *slot |= changed;
+    }
+}
 /// Set by `trigger_sync` (start) and the worker (end) so the tick
 /// loop refreshes the indicator exactly on the edges instead of
 /// re-reading sync_state every frame.
@@ -166,9 +172,9 @@ fn trigger_sync(reason: &str) {
     std::thread::spawn(|| {
         SYNC_COORDINATOR.drain(|| {
             use meditate_core::sync::runner::RunError;
-            let attempt = || -> Result<meditate_core::sync::SyncStats, RunError> {
-                let app = android_app().ok_or(RunError::Unconfigured)?;
-                let root = app.internal_data_path().ok_or(RunError::Unconfigured)?;
+            let attempt = || -> (meditate_core::db::Refresh, Result<meditate_core::sync::SyncStats, RunError>) {
+                let Some(app) = android_app() else { return (meditate_core::db::Refresh::NONE, Err(RunError::Unconfigured)) };
+                let Some(root) = app.internal_data_path() else { return (meditate_core::db::Refresh::NONE, Err(RunError::Unconfigured)) };
                 let dir = root.join("meditate");
                 sync_runner::run_sync_attempt(
                     app,
@@ -187,14 +193,11 @@ fn trigger_sync(reason: &str) {
             // recorded state reaches the indicator. Auth / quota /
             // data-lost errors are NOT retried; repeating those
             // can't help and data-lost needs the user.
-            // A pass applies what it pulled before it pushes, so a pass
-            // that failed (say, on the push) may still have changed the
-            // local data. Re-read the screens after any failed attempt
-            // too, as GTK does after every sync.
-            let mut maybe_changed = false;
-            let mut attempt = || {
-                let outcome = attempt();
-                maybe_changed |= outcome.as_ref().map_or(true, |stats| stats.brought_changes());
+            // Core says what each attempt changed, a failed one too;
+            // handed to the tick at once, not after the retries.
+            let attempt = || {
+                let (changed, outcome) = attempt();
+                mark_pulled(changed);
                 outcome
             };
             let mut outcome = attempt();
@@ -226,9 +229,6 @@ fn trigger_sync(reason: &str) {
                     "sync.attempt",
                     &format!("failed: {e}"),
                 );
-            }
-            if maybe_changed {
-                SYNC_PULLED_CHANGES.store(true, Ordering::SeqCst);
             }
         });
         // After drain has freed the slot, so the indicator leaves
@@ -2475,6 +2475,14 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
 fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode) {
     refresh_setup_label_name(ui, mode);
     refresh_setup_summaries(ui, mode);
+    refresh_label_users(ui, mode);
+    // Preset subtitles in the preset list and the widget name labels.
+    refresh_preset_list(ui, mode);
+    refresh_widget(ui);
+}
+
+/// The label rows outside Setup: the Edit-Session row and the chooser.
+fn refresh_label_users(ui: &MainWindow, mode: meditate_core::SessionMode) {
     let edit_id = ui.get_edit_label_id();
     if edit_id > 0 {
         match lookup_label_name(i64::from(edit_id)) {
@@ -2493,9 +2501,6 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
         LabelTarget::Setup => None,
     };
     refresh_chooser_items(ui, current_id);
-    // Preset subtitles in the preset list and the widget name labels.
-    refresh_preset_list(ui, mode);
-    refresh_widget(ui);
 }
 
 /// The stored pattern and length a change starts from; a failed read
@@ -2790,29 +2795,51 @@ fn refresh_setup_summaries(ui: &MainWindow, mode: meditate_core::SessionMode) {
     ui.set_bells_summary(if bells.is_empty() { tr.invoke_no_bells().to_string() } else { bells.join(" · ") }.into());
 }
 
-/// Re-read every screen that shows synced data. Runs after a sync
-/// brought in changes from another device (and after Wipe Local
-/// empties the store), whichever page is open. The Android
-/// counterpart of GTK's post-sync `invalidate(ALL)` + view refresh
-/// (`application.rs` trigger_sync).
+/// Re-read the screens `refresh` names, each once, whichever page is
+/// open. Runs after a sync brought changes from another device (and,
+/// with `Refresh::ALL`, after Wipe Local empties the store). GTK's
+/// counterpart is `data_changed`.
 fn refresh_after_pull(
     ui: &MainWindow,
+    refresh: meditate_core::db::Refresh,
     mode: meditate_core::SessionMode,
     timer_session_secs: &Cell<u32>,
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
-    load_setup_for_mode(ui, mode, timer_session_secs);
-    refresh_bell_rows(ui);
-    // An open pattern chooser drops a pattern deleted elsewhere.
-    refresh_after_pattern_change(ui);
-    populate_interval_bells(ui);
-    refresh_guided_files(ui);
-    refresh_guided_manage(ui);
-    refresh_after_label_change(ui, mode);
-    refresh_filter_label_items(ui);
-    reset_log_feed(ui, loaded, pending);
-    refresh_stats(ui);
+    if refresh.setup {
+        // Also the label name and the summaries.
+        load_setup_for_mode(ui, mode, timer_session_secs);
+        // An open pattern chooser drops a pattern deleted elsewhere;
+        // also the bell rows.
+        refresh_after_pattern_change(ui);
+        populate_interval_bells(ui);
+        refresh_preset_list(ui, mode);
+        // An open preset chooser drops a preset deleted elsewhere.
+        if ui.get_preset_chooser_page() {
+            populate_preset_chooser(ui, mode);
+        }
+    }
+    // A pulled setting can switch the Setup label the open chooser ticks.
+    if refresh.setup || refresh.labels {
+        refresh_label_users(ui, mode);
+    }
+    if refresh.labels {
+        refresh_filter_label_items(ui);
+    }
+    if refresh.guided {
+        // Also the widget.
+        refresh_guided_files(ui);
+        refresh_guided_manage(ui);
+    } else if refresh.setup {
+        refresh_widget(ui);
+    }
+    if refresh.log {
+        reset_log_feed(ui, loaded, pending);
+    }
+    if refresh.stats {
+        refresh_stats(ui);
+    }
 }
 
 /// Resolve the Slint `filter-label-id` property (0 = "All
@@ -4649,6 +4676,8 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions_tick = loaded_log_sessions.clone();
         let pending_deletes_tick = pending_deletes.clone();
         let label_conflict_tick = label_conflict_slot.clone();
+        // A guided file pulled during a session, followed once idle.
+        let guided_follow_due = Cell::new(false);
         let mut local_watch = local_change_watch();
         let mut day_watch = meditate_core::time::DayWatch::new(meditate_core::time::today_local());
         timer.start(slint::TimerMode::Repeated, TICK, move || {
@@ -4748,28 +4777,40 @@ fn build_ui() -> MainWindow {
                     .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
                     refresh_sync_indicator(&ui);
-                    // A pull may have materialised a same-name
-                    // label conflict — prompt while it's fresh.
+                    // A pull may have materialised a same-name label
+                    // conflict, or one waited for an open dialog: prompt
+                    // on each edge (an end edge can coincide with the
+                    // next sync's start).
                     check_label_conflicts(&ui, &label_conflict_tick);
                 }
-                // A sync pass brought changes from another
-                // device: re-read every screen, whichever page
-                // is open.
-                if SYNC_PULLED_CHANGES
-                    .swap(false, std::sync::atomic::Ordering::SeqCst)
-                {
+                // Sync passes brought changes from another device:
+                // re-read the screens they touch, whichever page is open.
+                let pulled = SYNC_PULLED
+                    .lock()
+                    .map(|mut slot| std::mem::replace(&mut *slot, meditate_core::db::Refresh::NONE))
+                    .unwrap_or_default();
+                if pulled.any() {
                     refresh_after_pull(
                         &ui,
+                        pulled,
                         current_mode.get().into(),
                         &timer_session_secs,
                         &loaded_log_sessions_tick,
                         &pending_deletes_tick,
                     );
                     // An open bell chooser drops a sound deleted elsewhere.
-                    repopulate_bell_chooser(&ui, bell_chooser_category_tick.get(), &bell_chooser_current_tick.borrow());
-                    if state.borrow().is_idle() {
-                        follow_guided_sel(&ui, &guided_sel);
+                    if pulled.setup && ui.get_bell_chooser_page() {
+                        repopulate_bell_chooser(&ui, bell_chooser_category_tick.get(), &bell_chooser_current_tick.borrow());
                     }
+                    if pulled.guided {
+                        guided_follow_due.set(true);
+                    }
+                }
+                // Follow a renamed or deleted guided file only on Setup
+                // (Save reads the selection on Done), so after a session.
+                if guided_follow_due.get() && state.borrow().is_idle() {
+                    guided_follow_due.set(false);
+                    follow_guided_sel(&ui, &guided_sel);
                 }
                 // Test-connection outcome (SY-3): the worker
                 // thread parked (toast, detail) — log the detail,
@@ -9157,22 +9198,13 @@ fn build_ui() -> MainWindow {
 
     // Recovery: Wipe Local (SY-5, second-confirmation already
     // passed on the Slint side). Core primitive erases every
-    // user-content row; then every visible surface re-reads and a
-    // fresh sync replays the remote into the empty store. Android
-    // has no GTK-style invalidate framework — the Setup surfaces
-    // are refreshed here directly; Log + Stats re-derive on their
-    // next nav visit.
+    // user-content row; then every screen re-reads and a fresh sync
+    // replays the remote into the empty store.
     {
         let weak = ui.as_weak();
-        let current_mode = current_mode.clone();
-        let timer_session_secs = timer_session_secs.clone();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
         ui.on_recovery_wipe_confirm_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let core_mode: meditate_core::SessionMode =
-                    current_mode.get().into();
                 let prep = {
                     let Some(db) = lock_db() else { return; };
                     meditate_core::sync::settings::prepare_wipe_local_recovery(&db)
@@ -9183,16 +9215,10 @@ fn build_ui() -> MainWindow {
                             "recovery.wipe_local",
                             "purged, triggering sync",
                         );
-                        // Re-read everything the wipe touched; the
-                        // sync below re-reads again once it brings
-                        // the data back.
-                        refresh_after_pull(
-                            &ui,
-                            core_mode,
-                            &timer_session_secs,
-                            &loaded_log_sessions,
-                            &pending_deletes,
-                        );
+                        // Every screen re-reads on the next tick, which
+                        // also follows the guided selection; the sync
+                        // below re-reads again once it brings the data back.
+                        mark_pulled(meditate_core::db::Refresh::ALL);
                         trigger_sync("recovery wipe-local");
                     }
                     Err(e) => meditate_core::log(
@@ -9208,7 +9234,7 @@ fn build_ui() -> MainWindow {
 
     // Daily-goal commit (ST): persist via core, re-derive the
     // Stats surfaces (ring + insights + heatmap threshold) right
-    // away — mirrors GTK's write + InvalidateScope::STATS.
+    // away — mirrors GTK's write + mark_stale(Refresh::STATS).
     // Bell volume rows (issue #1): one per bell, under its Sound row.
     // Dragging changes the ringing preview at once; releasing saves
     // the level (core, synced) and plays the bell at it. The interval

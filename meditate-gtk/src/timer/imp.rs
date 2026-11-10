@@ -1,3 +1,4 @@
+use meditate_core::db::Refresh;
 use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -386,9 +387,15 @@ impl ObjectImpl for TimerView {
         });
         self.breathing_session_secs.set(meditate_core::session::BREATHING_DEFAULT_SECS);
         self.setup_buttons();
-        // Back from a chooser (a NavigationView pop maps this page
-        // again): the bells' sound or pattern may be renamed or gone.
-        self.obj().connect_map(|view| view.imp().refresh_bell_row_names());
+        // Back from a chooser: the bells' sound or pattern may be renamed
+        // or gone. The rows sit on the Bells page (#20), which a pop
+        // shows again without mapping this view.
+        let view = self.obj().downgrade();
+        self.bells_page.connect_shown(move |_| {
+            if let Some(view) = view.upgrade() {
+                view.imp().refresh_bell_row_names();
+            }
+        });
         // A changed setting can make another preset active: re-mark the
         // starred list after every local change. The watch starts once
         // the app (and its database) is there.
@@ -2615,7 +2622,7 @@ impl TimerView {
         // main thread is directly felt as a stall at session end. When
         // the write lands we're back on the main thread (spawn_local) so
         // we can push the new session into the log feed incrementally
-        // and mark stats stale for lazy refresh on tab re-entry.
+        // and re-read the streak (`data_changed`).
         if let Some(app) = self.get_app() {
             self.saving.set(true);
             let obj = self.obj().clone();
@@ -2635,8 +2642,7 @@ impl TimerView {
                             ),
                         );
                         if let Some(win) = app
-                            .active_window()
-                            .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                            .main_window()
                         {
                             win.add_toast(adw::Toast::new(&gettext(
                                 "Couldn't save session: storage error",
@@ -2653,8 +2659,7 @@ impl TimerView {
                             ),
                         );
                         if let Some(win) = app
-                            .active_window()
-                            .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                            .main_window()
                         {
                             win.add_toast(adw::Toast::new(&gettext(
                                 "Couldn't save session: storage unavailable",
@@ -2667,14 +2672,15 @@ impl TimerView {
                 // Only now: on a failed write the page stays up, because the
                 // next Start would overwrite the snapshot, the only copy.
                 obj.imp().reset_mode(mode, false);
-                app.invalidate(crate::application::InvalidateScope::STATS);
                 let uuid = session.uuid.clone();
-                if let Some(win) = app.active_window()
-                    .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-                {
-                    let imp = win.imp();
-                    imp.log_view.prepend_session(session);
-                    imp.timer_view.refresh_streak();
+                // The card first: a shown Log marked stale re-reads in
+                // data_changed and would then show it twice.
+                let win = app.main_window();
+                if let Some(win) = &win {
+                    win.imp().log_view.prepend_session(session);
+                }
+                app.data_changed(Refresh::STATS);
+                if let Some(win) = win {
                     if auto && win.is_active() {
                         let toast = adw::Toast::builder()
                             .title(gettext("Session saved"))
@@ -2687,9 +2693,7 @@ impl TimerView {
                             // The play it counted goes with it (#324).
                             let deleted = app_for_undo.with_db_mut(|db| db.undo_session_save(&uuid, local_file_id));
                             crate::db::write_ok(&win_for_undo, "session.auto_finish.undo", deleted, crate::db::Failed::Delete);
-                            app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
-                            win_for_undo.imp().timer_view.refresh_streak();
-                            win_for_undo.imp().log_view.refresh();
+                            app_for_undo.data_changed(Refresh::ALL);
                         });
                         win.add_toast(toast);
                     }
@@ -3180,7 +3184,38 @@ impl TimerView {
         // ending (on_stop, end_overtime_session) drop it explicitly.
     }
 
+    /// Only the streak chip, for a change that can't touch Setup.
+    pub fn refresh_streak_label(&self) {
+        if let Some(Ok(streak)) = self.get_app().and_then(|app| app.with_db(|db| db.get_streak())) {
+            self.set_streak_text(streak);
+        }
+    }
+
+    fn set_streak_text(&self, streak: u32) {
+        // .streak-chip applies text-transform: uppercase, so we keep the
+        // source text sentence-case here. Core picks the variant; the
+        // gtk shell maps each to a gettext-translated phrase.
+        let text = match meditate_core::format::streak_key(streak) {
+            StreakKey::Zero => gettext("Start your streak today"),
+            StreakKey::One => ngettext("1 day streak", "{n} day streak", 1).replace("{n}", "1"),
+            StreakKey::Many(n) =>
+                ngettext("1 day streak", "{n} day streak", n)
+                    .replace("{n}", &n.to_string()),
+        };
+        self.streak_label.set_label(&text);
+    }
+
+    /// Re-read Setup and the streak. Under a running or paused session
+    /// only the streak: Setup would put its target over the session's
+    /// time; `reset_mode` re-reads Setup when the session ends.
     pub fn refresh_streak(&self) {
+        if self.ui_state() != UiState::Idle {
+            self.refresh_streak_label();
+            // Neither touches the session's time.
+            self.refresh_setup_label_chooser_subtitle();
+            self.refresh_setup_summaries();
+            return;
+        }
         let Some(app) = self.get_app() else {
             // No app yet (shouldn't happen in practice) — use defaults.
             self.rebuild_starred_presets_list();
@@ -3305,18 +3340,7 @@ impl TimerView {
         self.refresh_keep_screen_awake_state();
         self.refresh_auto_finish_state();
 
-        // Update streak label. .streak-chip applies text-transform:
-        // uppercase, so we keep the source text sentence-case here.
-        // Core picks the variant; the gtk shell maps each to a
-        // gettext-translated phrase at the i18n boundary.
-        let text = match meditate_core::format::streak_key(streak) {
-            StreakKey::Zero => gettext("Start your streak today"),
-            StreakKey::One => ngettext("1 day streak", "{n} day streak", 1).replace("{n}", "1"),
-            StreakKey::Many(n) =>
-                ngettext("1 day streak", "{n} day streak", n)
-                    .replace("{n}", &n.to_string()),
-        };
-        self.streak_label.set_label(&text);
+        self.set_streak_text(streak);
 
         // Rebuild visible starred-preset list for the current mode.
         self.rebuild_starred_presets_list();
@@ -4111,13 +4135,6 @@ impl TimerView {
         self.labels_loading.set(false);
     }
 
-    /// A merge moved `from`'s sessions to `into`; the Setup row
-    /// shows the labels as they are (core moved a mode default on
-    /// `from` too).
-    pub(crate) fn label_merged(&self, _from: i64, _into: i64) {
-        self.refresh_setup_label_chooser_subtitle();
-    }
-
     fn get_app(&self) -> Option<crate::application::MeditateApplication> {
         self.obj()
             .root()
@@ -4808,6 +4825,20 @@ mod tests {
         }
     }
 
+    /// A new day or a pull under a paused session put the Setup target
+    /// over the session's time.
+    #[test]
+    fn setup_re_reads_only_while_no_session_runs() {
+        let code = production();
+        let streak = body(&code, "    pub fn refresh_streak(&self)");
+        let guard = streak.find("if self.ui_state() != UiState::Idle {").expect("only the chip while a session runs");
+        let load = streak.find("self.load_timer_settings()").unwrap();
+        let session = &streak[guard..load];
+        assert!(guard < load && session.contains("return;"));
+        // The label row and summaries don't touch the time: they follow.
+        assert!(session.contains("self.refresh_setup_label_chooser_subtitle();") && session.contains("self.refresh_setup_summaries();"));
+    }
+
     #[test]
     fn an_auto_finished_session_is_saved_with_undo() {
         // #6: with Auto-Finish the countdown saves itself (note
@@ -4825,12 +4856,14 @@ mod tests {
         assert!(save.contains("gettext(\"Session saved\")"));
         assert!(save.contains("undo_session_save(&uuid, local_file_id)"));
         assert!(save.contains("crate::db::Failed::Delete"));
+        // The card goes in before a shown, stale Log re-reads, or it shows twice.
+        let card = save.find("log_view.prepend_session(session)").expect("adds the card");
+        assert!(card < save.find("app.data_changed(Refresh::STATS)").expect("then re-reads"));
         // Away from the window no toast is left waiting.
         assert!(save[ok..].contains("if auto && win.is_active() {"), "only after the write landed");
-        // Undo also puts the streak chip under it back.
+        // Undo also puts the streak chip under it back, and an open Log follows at once.
         let undo = &save[save.find("undo_session_save(&uuid, local_file_id)").unwrap()..];
-        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("refresh_streak()"));
-        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("log_view.refresh()"), "an open Log follows at once");
+        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("data_changed(Refresh::ALL)"));
         // The switch: per mode, written like every other setting.
         let row = body(&code, "fn refresh_auto_finish_state(&self)");
         assert!(row.contains("auto_finish_from_db("));
@@ -4878,8 +4911,8 @@ mod tests {
         // was renamed or deleted, Setup shows the new name or "Missing".
         let code = production();
         let constructed = body(&code, "fn constructed(&self)");
-        let map = constructed.find("connect_map(").expect("Setup re-reads when shown again");
-        assert!(constructed[map..].contains("refresh_bell_row_names()"));
+        let shown = &constructed[constructed.find("self.bells_page.connect_shown(").expect("the Bells page re-reads when shown again")..];
+        assert!(shown[..shown.find("});").unwrap()].contains("refresh_bell_row_names()"));
         let names = body(&code, "fn refresh_bell_row_names(&self)");
         for f in [
             "refresh_starting_bell_sound_subtitle()", "refresh_end_bell_sound_subtitle()",

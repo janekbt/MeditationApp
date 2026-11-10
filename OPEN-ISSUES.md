@@ -17,10 +17,10 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 |:---:|---|---|---|
 | [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
-| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #341, #491, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
+| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
-| [ ] | Q. Sync efficiency | #92, #98, #100, #137 | wasted network, disk and rebuilds |
+| [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
 | [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309, #408 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
@@ -28,7 +28,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
 | [ ] | T. Text that doesn't fit | #159, #311, #326, #349, #392, #434, #452, #462, #463, #474, #436 | information the user can't see |
 | [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #477, #147 | controls some users can't reach |
-| [ ] | MM. Linux small ones | #346, #348, #391, #492, #350, #393 | stale screens, leaks, warnings |
+| [ ] | MM. Linux small ones | #348, #391, #492, #350, #393 | stale screens, leaks, warnings |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
 | [ ] | Y2. Slint text fields (upstream) | #196, #198, #210 | a long press that selects nothing, a key that does nothing |
@@ -152,14 +152,6 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 - Where: GTK `window/imp.rs:727` (`app.with_db(|db| clear_refused_uploads(..))` as a statement), Android `ui.rs:9734` (`let _ =`).
 - Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: #327 and a core `retry_now()` (#338).
 
-### #341 A failed Undo of a recovered session only reaches the log, and a successful one leaves it on screen
-- Where: `application.rs:416-428`: logs the error, then only `invalidate(ALL)`.
-- Scenario: the delete fails: no message, the session stays. It succeeds with sync off: Log, Stats and the streak show it until the next tab switch.
-- Fix: `write_ok(.., Failed::Delete)` and a refresh of the visible page (#331).
-
-### #491 Undo on Linux's "Recovered session" toast refreshes nothing
-- `application.rs:418-425` deletes and logs a failure (#382), but no Timer streak, Log or Stats refresh follows; Android's `U::Recovery` (`ui.rs` 8591) redraws them and says "Delete failed". The recovered session stays on screen until the next page switch.
-
 ### #347 Closing the window right after a delete hides a failed delete
 - Where: `close_request` (`window/imp.rs:140-144`) commits pending deletes; a failure toast goes to the window being destroyed.
 - Scenario: delete a session and press Ctrl+W within the 5 s undo window; the delete fails, the user never sees it, and the session is back at the next start.
@@ -183,7 +175,7 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 - Scenario: the toast fades, the switch shows On while the database says Off, and the next session silently doesn't ring that bell. Fix: revert under a guard, or rebuild the row.
 
 ### #382 Recovery and label-conflict failures only reach the log
-- Android side: #426, #427. Same class: #489, #491.
+- Android side: #426, #427. Same class: #489.
 - Where: `recovery_dialog.rs:66-83` (Push My Data) and `117-140` (Wipe Local) log a failed prepare or a missing DB; `labels.rs:483` logs a failed Keep Both, then marks the conflict decided.
 - Scenario: remote data lost, the user taps Push My Data while the write fails: no toast, no sync, the warning stays and the user thinks recovery ran. Keep Both failing: the same conflict dialog comes back with no word why.
 - Fix: `write_ok` (log and toast) in one `run_recovery` (#379); don't mark the conflict decided on failure.
@@ -258,30 +250,10 @@ One screen, one device test. REFACTORING #469 and #465 touch the same code.
 - Problem: a device pushes back everything it pulled. A new phone joining a remote with 4,000 events uploads them all again; after Wipe Local a device pushes the whole remote log back. The batch count doubles, so compaction runs twice as often. No case needs this forwarding: compaction serialises all events, and Push local and #89 flag the rows.
 - Fix: set `synced = 1` on the replay path only (`append_event_returning_newness` is shared with `emit_event`). Reword the comment in `tests/sync_roundtrip.rs:857`.
 
-### #98 GTK rebuilds every view after every sync
-- Where: `meditate-gtk/src/application.rs:617-648`.
-- Problem: every write starts a sync, and every sync re-runs all Stats queries and resets the Log to page 1, even when nothing came in. Deleting a session deep in the Log jumps the list back a second after the delete commits.
-- Fix: in `drain`, `changed |= r.as_ref().map_or(true, |s| s.brought_changes())`, and refresh only when true (as Android does, `ui.rs:203`). Do this after #118, #121 and #122: today this rebuild hides those bugs for sync users.
-- Found again in the 2026-11-10 sweep as #342 (merged here):
-  - Same class on Android: #412.
-  - Where: every write triggers a sync, and every finished sync rebuilds the Log (`application.rs:650-659`), keeping only the first 15 rows.
-  - Scenario: scroll to page 3 (Load more twice), delete a card; when the undo window ends and the sync finishes, the scroll and the loaded pages are gone, which `commit_delete_in_place` exists to avoid.
-  - Fix: #331.
-- Related: REFACTORING #331, #485 (a sync says what changed).
-
 ### #100 Every sync attempt runs the full database open with an integrity check
 - Where: `meditate-core/src/db/mod.rs:253-317` (quick_check at 296-305); gtk `sync_runner.rs:109`; android `sync_runner.rs:102`.
 - Problem: each attempt runs the schema setup, a `user_version` write (which takes the write lock before the sync busy timeout is set) and `PRAGMA quick_check`, which reads every page. A failing quick_check counts as "ok" and is never logged.
 - Fix: run quick_check once from the startup opens (gtk `application.rs:136`, android `ui.rs:9673`) and log its error. Update the `open()` docs (mod.rs:160, 186).
-
-### #137 Android: a sync that fails before reaching the server reloads every screen
-- Where: `meditate-android/src/ui.rs:197-203, 2475-2493`; `sync_runner.rs:107-116`; test `app.rs:1562`.
-- Problem: every error counts as "maybe changed". With the password missing (#70), each save triggers a sync that fails at once, and the next tick reloads the Log to its first 15 rows and re-runs Stats.
-- Fix: `Err(e) => !matches!(e, Unconfigured | PasswordMissing | OpenDb(_))`.
-- Found again in the 2026-11-10 sweep as #412 (merged here):
-  - Where: every failed attempt counts as "maybe changed" (197), so `refresh_after_pull` runs, including `reset_log_feed`.
-  - Scenario: offline, scroll the Log to page 3 and delete a session: the sync fails three times and the Log jumps back to the first 15 rows; Setup and the bell lists reload too. Same class as #342 (GTK).
-  - Fix: core reports whether the failed pass applied anything (a pull error before any apply did not); and #342's keep-the-scroll fix.
 
 ## W. Sync that stops on one bad item
 
@@ -576,10 +548,6 @@ Z (#147, small touch targets) is part of this package.
 ## MM. Linux small ones
 
 
-
-### #346 The streak on the Timer page keeps yesterday's value overnight
-- Where: `reload_for_new_day` (`window/imp.rs:779-789`) has no Timer arm, and the Timer is the default page.
-- Fix: #331.
 
 ### #348 A paused Box Breath session redraws at full frame rate
 - Where: `window/imp.rs:496-501`: the tick callback continues for `Paused`, so the canvas and three labels are redrawn every frame though nothing moves; battery on the Librem 5. The bell ring already stops when nothing changes.

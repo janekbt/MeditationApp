@@ -36,7 +36,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | Done | Package | Items | Do with bug batch |
 |:---:|---|---|---|
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
-| [ ] | P2. Refresh after writes and syncs | #331, #378, #397, #418, #484, #485, #316, #283, #353, #468, #327 | Q, EE |
+| [ ] | P2. Refresh after writes and syncs | step 1 done: refresh-what-changed (#331, #378, #485, #397 refresh half); open: step 2 #484, #316, #283, #327, #507; step 3 #418, #468, #353, rest of #397, #505, #506 | Q, EE |
 | [ ] | P3. Failure reporting and toasts | #320, #357, #373, #328 | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
@@ -320,8 +320,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #283 The active-preset check reads everything on every change
 - Related: #316 (the GTK half: the list is rebuilt on every local write).
 - Where: `preset_config.rs:481-537` (`active_presets`): reads the current timing, a full `snapshot` (about 22 setting reads, the interval bells and four phase reads), lists the starred presets and parses each `config_json`. Both callers list the starred presets again right after (gtk `timer/imp.rs:3389/3415`, android `ui.rs:705/706`), and Android parses each JSON once more for the subtitle (733). It runs after every local synced write via the 500 ms change watch (gtk 402, android 4815), so on every slider or switch change. `shown(current.clone())` (530) clones the whole config for the phases.
-- Also: the current `PresetTiming` is built here, in gtk (`timer/imp.rs:3837-3859`) and in android (`ui.rs:1876-1893`); `apply` returns `cfg.timing.clone()`, which both callers already hold (gtk 3907, android 1827).
-- Fix: `active_presets(db, mode, &starred)` taking the list the caller has, or returning per-row flags with the parsed config; a core `current_timing(db, mode)` for all three; `apply` returns `Result<()>`. Related: #272 (the same kind of app-side building).
+- Also: the current `PresetTiming` is built here, in gtk (`timer/imp.rs:3837-3859`) and in android (`ui.rs:1876-1893`). (`apply` returns `Result<()>` since K3.)
+- Fix: `active_presets(db, mode, &starred)` taking the list the caller has, or returning per-row flags with the parsed config; a core `current_timing(db, mode)` for all three. Related: #272 (the same kind of app-side building).
 
 #### #284 Name lookups read the whole library
 - Where: `bells.rs:541-561`. `resolve_sound_name` reads every bell sound (8 strings per row) to find one name; `resolve_pattern_name` fetches a full pattern and parses its `intensities_json` to read `.name`. Called once per row on the GTK Manage Bells list (`bells.rs:239, 660, 737, 836`), 4 times per Box Breath refresh on Android (`ui.rs:3897`) and twice on setup refresh (3730-3731).
@@ -465,7 +465,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Fix: one `load_setup()`; a mode switch is "save the last mode, `load_setup()`". Related: #61, #299.
 
 #### #316 The preset list is rebuilt after every local write
-- Related: #331 (one refresh policy for the whole window).
 - Where: `timer/imp.rs:396-410`: a 500 ms timeout for the app's lifetime; on any local change it rebuilds the whole starred-preset list (three queries, every row recreated with its drag controllers, focus saved and restored), on top of the explicit rebuilds after chooser picks (580, 601), moves (3427), mode switches (1968) and `refresh_streak` (3348).
 - Problem: every toggle or slider save costs a full rebuild, often two within 500 ms; the app wakes twice a second while idle (Librem 5 battery).
 - Fix: on a change, recompute only the active marks on the existing rows; keep full rebuilds for list changes, which already call it; poll only while the page is mapped. Related: #283 (the core half).
@@ -476,7 +475,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `end_in_flight` returns a duration no caller reads (2421, callers 2518-2525); the `find_map` in `core_session_end` (3129-3145) is dead.
 - `view_stack` in `timer_view.blp:6-11` has one page; `set_visible_child_name("setup")` (2015, 2069) does nothing. `countdown_inputs` (165-175) is an empty box kept "for future knobs", still toggled (2017, 2036, 2070).
 - Template children never read: `guided_selected_group`, `cues_signal_mode_row`, `starting_bell_signal_mode_row`, `end_bell_signal_mode_row`, `guided_inputs`. `stopwatch_mode_row.set_visible(true)` (1948, 2021): nothing hides it.
-- Unused parameters: `label_merged(_from, _into)` (4202), `apply_preferred_label_for_mode(_mode)` (4707, in #61), the `_obj` of the three tick functions (2971, 3023, 3099); `reset_mode`'s match with two empty arms (2788-2798).
+- Unused parameters: `apply_preferred_label_for_mode(_mode)` (4707, in #61), the `_obj` of the three tick functions (2971, 3023, 3099); `reset_mode`'s match with two empty arms (2788-2798).
 - Related: #61 (the older GTK dead-code list).
 
 #### #319 Redundant state and copied switch handlers
@@ -515,8 +514,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #327 Let the compiler find dropped write results
 - Related: #484 (`with_db_mut` goes away).
 - Where: `db/mod.rs:1074-1145` (`dropped_writes` / `no_write_result_is_dropped`: a brace-matching text scan over ten named files) and `application.rs:490-585` (`with_db*` return `Option<R>`, which loses `Result`'s `#[must_use]`).
-- Problem: the scan misses files and patterns: `window/imp.rs:727` drops a write through `with_db` (#340), and `application.rs:419-426` only logs a failed delete (#341).
-- Fix: `#[must_use]` on `with_db`, `with_db_mut`, `with_db_blocking(_mut)`; delete the scanner (about 70 lines). Fixes #340 and #341 on the way.
+- Problem: the scan misses files and patterns: `window/imp.rs:727` drops a write through `with_db` (#340).
+- Fix: `#[must_use]` on `with_db`, `with_db_mut`, `with_db_blocking(_mut)`; delete the scanner (about 70 lines). Fixes #340 on the way.
 
 #### #328 The shell's `DbError` and the pass-through `Database`
 - Where: `db/mod.rs:31-133` (a `DbError` that copies core's variants), `359-371` (`map_core_err`), `120-133` (`clash_text` downcasts both types and maps core to shell again), about 60 one-line wrappers (445-944) next to 88 direct `db.core()` calls; guided.rs:1191 already matches core's type.
@@ -532,14 +531,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #330 The Log filter
 - Where: GTK `window/imp.rs:992-1049` reaches into `log_view.imp()` fields (`filter_label_ids`, `building_filter`, `filter_label_id`); `log/imp.rs:143-147` and `355-360` both clear a deleted filter label (the second then calls `refresh()`); labels and places are reloaded four ways (139-149, 289-298, 348-356, 1168-1171; the label map built twice, 224, 300); `has_filter` written three times (164, 834, `log/mod.rs:43`); two guards (`is_active()` and `building_filter`) for one problem; every Log tab switch runs `refresh_filter_labels` (`window/imp.rs:980`) though the popover rebuilds on show (`log/imp.rs:1012-1020`). Android (`ui.rs:2859-2872, 3241-3271, 9008-9021`) re-queries `all_labels_ordered()` on pick, the stale-mapping bug GTK fixed with `filter_label_ids`.
 - Fix: a core `LogFilter { notes_only, label_id }` with `has_active()`, `dropdown(&labels)`, `pick(index, &ids)`, `reconcile(&labels)`; LogView gets one `set_filter_from_index`; one `reload_labels(&app)`; drop the tab-switch call. Related: slice 18.
-
-#### #331 One "data changed" refresh policy
-- Related: #484 (GTK syncs after every write), #485 (a sync says what changed).
-- Related: #397 (Android's double refreshes after a pull).
-- Related: #378 (the hand `invalidate` calls in labels, guided and recovery).
-- Where: `application.rs:632-664`: every finished sync invalidates ALL and refreshes timer, Stats and Log, hidden or not, whether or not anything was pulled (`drain` throws away the result; Android ORs `brought_changes()`, `ui.rs:197`); three `visible-child` handlers (`window/imp.rs:155, 969, 1142`); `reload_for_new_day` (778-790) refreshes only Log or Stats; the map handler pre-warms everything (91-134). A filter change sets the app-wide `log_dirty` to force a re-query (`log/mod.rs:37-49, 60-72`); `stats_dirty`/`log_dirty` have pub fields plus four accessors used only as check-then-clear (`application.rs:22-26, 532-550`); `LogView::refresh`'s "no app yet" branch is dead (`log/mod.rs:16-24`).
-- Problem: since every write triggers a sync, every edit ends in a full timer, Stats and Log rebuild (#342); the new day misses the timer page (#346).
-- Fix: OR `brought_changes()` over the passes (an error counts as changed); one window method `on_data_changed(scope)` that invalidates and refreshes only the visible page, one visible-child handler; `take_*_dirty()`; the filter keeps its own dirty bit. Fixes #342 and #346.
 
 #### #332 One read for a Stats reload
 - Related: #398 (Android reads streak and count twice, the whole history for the heatmap).
@@ -594,6 +585,22 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: reference cycles, so these pages and dialogs are never freed; memory grows with every visit (Librem 5). Seen in the code, not measured.
 - Fix: `Rc::downgrade` for the rebuilder, `#[weak]` in `clone!` for widgets (as `preferences.rs:275` does). Check with a heap or refcount test before and after. labels.rs and vibrations.rs use the same Rebuilder pattern (slice 11).
 
+#### #505 The Log filter's own stale mark (rest of #331)
+- Found 2026-11-10 (refresh-what-changed, review round 5): #331 is done but for two parts.
+- Where: a filter change marks the app-wide `log_dirty` (`log/mod.rs` `invalidate_for_filter`), so a filter change and a data change can't be told apart; `stats_dirty`/`log_dirty` are `pub` fields of the application's imp (`application.rs:25-26`) though only `mark_stale` and `take_*_dirty` use them.
+- Fix: the LogView keeps a filter flag of its own; the two cells private behind `mark_stale`/`take_*_dirty`.
+- Also (/simplify, 2026-11-10): `refresh_shown` (`window/imp.rs`) follows the `Refresh` argument for the Timer page but the dirty flags for Log and Stats, which is why the session save must add its card before `data_changed` (a source test pins the order). Fix: a Setup mark beside the two, and `refresh_shown` re-reads only what is marked; ties into #312's one `load_setup()`.
+
+#### #506 Replay knows when a reclaim renamed a row
+- Found 2026-11-10 (/simplify of refresh-what-changed).
+- Where: `reclaim_suffixed_names` (`db/events.rs`) recomputes a suffixed row, then reads its name again (`SELECT name ... WHERE uuid`, a fresh `format!` and prepare per row) to learn whether it changed.
+- Fix: `recompute_for` (or `claim_name`) returns whether it renamed the row. Gain: one query less per suffixed row per replay batch, one notion of "changed".
+
+#### #507 One way to find the app and its main window (GTK)
+- Found 2026-11-10 (/simplify of refresh-what-changed).
+- Where: `gio::Application::default().and_then(|a| a.downcast::<MeditateApplication>().ok())` written five times (`application.rs` sync completion, `sound.rs:387` private `app()`, `volume_row.rs:146`, `timer/imp.rs:1822`, `local_folder.rs:48`); `MeditateApplication::main_window()` exists, but `sound.rs:273-276` and `local_folder.rs:49-51, 77` still use `active_window().downcast::<MeditateWindow>()`, so "Couldn't play bell sound", "Folder refreshed" and "Save failed" are lost while a help window has the focus.
+- Fix: `MeditateApplication::get()` for the lookup; `main_window()` at those three sites.
+
 #### #353 The bell list rebuilds too often
 - Where: `write_back_bell` (`bells.rs:535-554`) rebuilds the hidden list on every spin step, kind or signal change and settled volume, though the list rebuilds on `connect_shown` (87-91) when the edit page pops; the rebuilder already calls `on_changed` (78) and the callers call it again (357, 553, 924), so the count subtitle is read twice per write; opening the page builds the list twice (`rb()` at 81, then `connect_shown`); `build_create_row` (202) the same. Each row's subtitle loads the whole bell-sound library (239, `bells.rs:440-445`; see #284).
 - Fix: rebuild only on `connect_shown`; one `on_changed`; load the library once per rebuild and use core's pure `sound_name`.
@@ -635,7 +642,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - The lead-in is read through core but written raw (118-121, 137-140; Android `ui.rs:6644-6658`): core writers like `goal::write_daily_goal_mins`. `f64::from(lead_ms) / 1000.0` (127) next to `ms()` (102).
 - Spin rows write on every tick (lead-in 132-144, daily goal 77-88): #363.
 - CSV export, parse and import run on the main thread (614, 722, 777); `with_db_blocking`/`spawn_blocking` exist (Test uses them, 344).
-- The closed handler (525-541) repeats `refresh_main_window` (797-805); after an import, `refresh_streak` runs twice. Three import buttons wired by the same `clone!` with a seven-parameter `wire_data_actions` (629-653); the CSV filter built twice (599-602, 708-711). Stale tombstones (37-51).
+- After an import or Delete All on the Timer page, `refresh_streak` runs twice: `data_changed(ALL)`, then the closed handler's `refresh_shown(setup)`. Three import buttons wired by the same `clone!` with a seven-parameter `wire_data_actions` (629-653); the CSV filter built twice (599-602, 708-711). Stale tombstones (37-51).
 
 #### #360 Smaller ones
 - `presets.rs`: `chooser_mode` tested four times (233-267, one `match`); Save mode clones everything twice per tap and deep-copies the `PresetConfig` per row (267-339); `toast_slot` threaded through to be dropped (434-436, also in #61).
@@ -702,10 +709,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - The early-return handles keep `cancel_on_drop: true` (176, 180), so dropping one on the laptop still calls D-Bus, against the doc; `cancel_on_drop: false`.
 - `probe_haptic`'s doc sits on `mod tests` (14-31); a history note (108-113); `chunks.iter()` + `clone()` copies each chunk (190-191).
 
-#### #378 Refreshing views after a write
-- Where: each chooser action calls `app.invalidate(..)` by hand (`labels.rs:284, 356, 416, 477-480`; `guided.rs:1021, 1050`), checked by tests that count the text in the source (`labels.rs:515-558`); the label merge invalidates ALL and then refreshes Stats and Log itself; `recovery_dialog.rs:125-127` says `with_db_mut` already invalidates, which it doesn't (`application.rs:565-572`), and 129 triggers a sync `with_db_mut` already triggered.
-- Fix: through #331's one refresh policy (or invalidate inside `with_db_mut`); delete the hand calls, the wrong comment, the second trigger and the source tests. Related: #331.
-
 #### #379 Smaller ones
 - `config.rs:6-7`: dead `PKGDATADIR` under `#[allow(dead_code)]` (#393), with plumbing in `build.rs:49-50` and `src/meson.build:14`: delete all three.
 - `glib::user_data_dir().join("meditate")` six times (`main.rs:50`, `keychain.rs:355`, `sync_runner.rs:22, 29`, `application.rs:284`, `sounds.rs:704`): one `data_dir()`; `sounds.rs:704` should call `local_sounds_dir()`.
@@ -718,7 +721,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `shortcuts.ui:25-43` repeats the accelerators of `application.rs:434-439`; `GtkShortcutsShortcut` with `action-name` shows the bound one.
 - `vibration_editor.rs`: `edit_uuid` is never changed after construction (no `RefCell`); `name` mirrors `name_row.text()` on every change; the name, shape and banner clamps built three times; `draw_chart` allocates and formats every label on each drag motion (659-660, 725-747); the module doc says "snap to 5%", the step is 10 %.
 - `guided.rs`: `push_undo_toast` is a one-call wrapper (1214-1223); `DuplicateGuidedFile(name)` taken apart and rebuilt for `write_ok` (1176-1191); `insert_err` mutated inside a closure (327-347); dead `_nav_view_for_create` and an unused `nav_view` parameter (715, 720); the playbin wrapped in a new Pipeline (1338-1345); stale docs (24-27, `_watch`, the `ellipsize` doc on a `pub use` 1278-1281).
-- `labels.rs:409-411`: `invalidate(ALL)` plus explicit refreshes.
 - `vibrations.rs`: stale module doc ("lands in the next phasing step", 9-13); `show_undo_edit_toast` and `show_undo_delete_toast` differ in two lines (456-523, see #373); `rebuilder` cloned twice (363, 369); rename reads the row for Undo and core reads it again (575-579).
 - `local_folder.rs:73-82` `save` drops the error without logging it; `write_ok` logs and toasts.
 
@@ -753,11 +755,11 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #397 Refreshes after a pull or a local change
 - Related: #468 (chooser lists rebuilt per tap).
 - Related: #418 (the per-change refresh helpers).
-- Where: `refresh_after_pull` (2837-2855) runs `refresh_bell_rows` directly and again inside `refresh_after_pattern_change` (4158), `refresh_setup_summaries` twice (2806, 2523), resolves the label name twice (2791, 2522), `refresh_widget` twice (1199, 2544); `repopulate_bell_chooser` (4845) queries with the chooser closed.
+- Done 2026-11-10 (refresh-what-changed): a pull re-reads only the screens it changed, each helper once; the bell chooser only when open. Left:
 - `refresh_bell_rows` (3710-3800) takes about 12 separate `lock_db()` calls and rebuilds the interval-editor ranges from core constants as two new `VecModel`s each time (3775-3786).
 - `populate_interval_bells` lists the whole bell library once per bell (4026-4037; #408 for the missing name). `bell_sound_path` (3612-3630) lists it for every bell that rings (#375's keyed lookup).
 - Lists that refresh often get a new `VecModel` each time (784-793, 1193-1199, 1251-1263, 2139-2216), though `put_rows` (518) updates in place.
-- Fix: one refresh per area per event (#331's policy for Android); one lock for the bell rows; ranges set once in `build_ui`; `resolve_sound_name` with the library read once; `put_rows`. Related: #331, #375.
+- Fix: one lock for the bell rows; ranges set once in `build_ui`; `resolve_sound_name` with the library read once; `put_rows`. Related: #375.
 
 #### #398 Stats and Log reads
 - Related: #456 (chart and heatmap work), #457 (the Log feed).
@@ -833,6 +835,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #418 One refresh per change
 - Where: "after a bell sound changed" (`repopulate_bell_chooser`, `refresh_bell_rows`, `populate_interval_bells`, the editor's sound name) is written in rename, delete and the tick (6889-6892, 6932-6935, 4845); the vibration editor's Save tail (7594-7660) is `refresh_after_pattern_change` (4149) written out; `populate_preset_chooser` + `refresh_preset_list` + `refresh_widget` five or more times (6223, 6251, 6345, 6380, near 8590), each reading all labels and presets again (three label scans, two preset queries per action); `refresh_guided_manage` + `refresh_guided_files` (+ `follow_guided_sel`) about six times (5793, 5822, 5940, 6279, 8608); the label rename and delete patch the edit label by hand after `refresh_after_label_change` already did (8286-8294, 8335-8343; #85).
 - Fix: `refresh_after_bell_sound_change`, `presets_changed(ui, mode)` with one read, `guided_files_changed(ui, sel)`; call the pattern helper. Part of #397.
+- Also (/simplify, 2026-11-10): after a pull the open bell chooser is refilled in the tick (`ui.rs`, next to the guided follow), the open preset chooser inside `refresh_after_pull`: move the bell chooser into `refresh_after_pull` (its category and current uuid as UI properties or arguments), so one list says what a pull re-reads.
 
 #### #419 Startup
 - Related: #483 (one startup sequence in core), #490.
@@ -1061,11 +1064,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #484 Linux starts a sync after every write
 - Where: `with_db_mut` and `with_db_blocking_mut` (gtk `application.rs:565-585`, about 86 callers) call `trigger_sync()` after the closure, even when nothing changed (`set_setting_in` skips an equal value and emits no event); each trigger reads the account on the main thread first (607). Android syncs only when core's `LocalChangeWatch` sees an event land (`ui.rs:245-248, 4815-4819`), and GTK already runs that watch, only for the preset list (`timer/imp.rs:395-408`).
-- Fix: one app-level watch in GTK that triggers the sync and the preset rebuild; `with_db_mut` becomes `with_db`, which empties #327's list; Sync Now, startup and resume stay explicit triggers. Related: #316, #331, #327.
-
-#### #485 A sync says what it changed
-- Where: `SyncStats` (core `sync/orchestrator.rs:134-148`) has only counts, so GTK refreshes every screen after any sync (`application.rs:635-661`) and Android re-reads setup, bells, patterns, interval bells, guided files, labels, Log and Stats on any pull (`refresh_after_pull`, `ui.rs:2837-2855`); `list_label_conflicts` runs after every sync in both.
-- Fix: replay knows each event's kind; return a per-area changed set, and both apps refresh only those areas. The concrete form of #331 and #397. Related: #418.
+- Fix: one app-level watch in GTK that triggers the sync and the preset rebuild; `with_db_mut` becomes `with_db`, which empties #327's list; Sync Now, startup and resume stay explicit triggers; it then calls `data_changed` for what the write changed. Related: #316, #327.
+- Also (/simplify of refresh-what-changed, 2026-11-10): about 20 GTK write sites pick their `Refresh` by hand (`labels.rs`, `guided.rs`, `log/imp.rs`, `preferences.rs`, `timer/imp.rs`). The watch that replaces `with_db_mut` should take what the write recorded (`Refresh::of` per event kind, as the sync does) and mark the views itself; call sites then only decide whether to re-read now. Gain: no write path can forget its scope (guided delete had none until that change).
 
 #### #486 Name checks inside the write
 - Where: before every create or rename both apps trim, `validate`, and check again on confirm (gtk `labels.rs:279-281, 338-340`, android `ui.rs:6126-6133` and #415's sites), while core's `insert_label`, `update_label`, `insert_preset` and `rename_*` take untrimmed or empty names; each app fetches `default_starred_on_save()` and passes it to `insert_preset` (gtk `presets.rs:187-189`, android `ui.rs:6138-6140`).

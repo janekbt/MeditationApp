@@ -28,12 +28,14 @@ pub const DAILY_GOAL_MAX: i64 = 1440;
 /// Default for a fresh user — 20 min/day, the same ballpark the
 /// old weekly default (150/7 ≈ 21) resolved to.
 pub const DAILY_GOAL_DEFAULT: i64 = 20;
+/// The setting that holds it; the only one Stats shows.
+pub const DAILY_GOAL_KEY: &str = "daily_goal_mins";
 
 /// Read the user's persisted daily goal in minutes, falling back to
 /// `DAILY_GOAL_DEFAULT` when the row is missing, unparseable, or
 /// non-positive (a zero goal would collapse the ring math).
 pub fn daily_goal_mins_from_db(db: &Database) -> i64 {
-    db.get_setting("daily_goal_mins", &DAILY_GOAL_DEFAULT.to_string())
+    db.get_setting(DAILY_GOAL_KEY, &DAILY_GOAL_DEFAULT.to_string())
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|v| *v > 0)
@@ -43,7 +45,7 @@ pub fn daily_goal_mins_from_db(db: &Database) -> i64 {
 /// Persist a new daily goal. The shell calls this from its
 /// preferences goal input.
 pub fn write_daily_goal_mins(db: &Database, mins: i64) -> crate::db::Result<()> {
-    db.set_setting("daily_goal_mins", &mins.to_string())
+    db.set_setting(DAILY_GOAL_KEY, &mins.to_string())
 }
 
 /// Where the user currently stands against the daily goal. The

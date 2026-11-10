@@ -1,3 +1,4 @@
+use meditate_core::db::Refresh;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
@@ -71,7 +72,6 @@ impl ObjectImpl for MeditateWindow {
         self.parent_constructed();
         self.wire_timer_signals();
         self.wire_log_signals();
-        self.wire_stats_signals();
         self.wire_sync_status();
         self.setup_help_overlay();
         self.setup_window_actions();
@@ -151,18 +151,6 @@ impl AdwApplicationWindowImpl for MeditateWindow {}
 impl MeditateWindow {
     fn wire_timer_signals(&self) {
         let obj = self.obj();
-
-        self.view_stack.connect_notify_local(
-            Some("visible-child"),
-            clone!(
-                #[weak] obj,
-                move |stack, _| {
-                    if stack.visible_child_name().as_deref() == Some("timer") {
-                        obj.imp().timer_view.refresh_streak();
-                    }
-                }
-            ),
-        );
 
         self.timer_view.connect_timer_started(clone!(
             #[weak] obj,
@@ -776,14 +764,29 @@ impl MeditateWindow {
         });
     }
 
-    /// Log headers and Stats' "today" were built for the old day.
+    /// The streak, Log headers and Stats' "today" were built for the old day.
     fn reload_for_new_day(&self) {
-        let Some(app) = self.obj().application()
+        if let Some(app) = self.obj().application()
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-        else { return; };
-        app.invalidate(crate::application::InvalidateScope::ALL);
+        {
+            app.data_changed(Refresh::ALL);
+        }
+    }
+
+    /// Re-read what `refresh` touches on the shown page; the others
+    /// re-read when they show (the page-switch handler).
+    pub(crate) fn refresh_shown(&self, refresh: Refresh) {
         match self.view_stack.visible_child_name().as_deref() {
-            Some("log") => self.log_view.refresh(),
+            Some("timer") if refresh.setup => self.timer_view.refresh_streak(),
+            Some("timer") if refresh.stats => self.timer_view.refresh_streak_label(),
+            Some("log") => {
+                // First: a filter on a deleted label clears itself here,
+                // so the Log below re-reads once.
+                if refresh.labels {
+                    self.log_view.refresh_filter_labels(&self.filter_label_row);
+                }
+                self.log_view.refresh();
+            }
             Some("stats") => self.stats_view.refresh(),
             _ => {}
         }
@@ -965,20 +968,20 @@ impl MeditateWindow {
     fn wire_log_signals(&self) {
         let obj = self.obj();
 
-        // Show/hide log header buttons based on active view
+        // The one page-switch handler: the Log's header buttons, and the
+        // page that shows re-reads what went stale while hidden.
         self.view_stack.connect_notify_local(
             Some("visible-child"),
             clone!(
                 #[weak] obj,
                 move |stack, _| {
-                    let is_log = stack.visible_child_name().as_deref() == Some("log");
+                    let name = stack.visible_child_name();
                     let imp = obj.imp();
+                    let is_log = name.as_deref() == Some("log");
                     imp.log_add_btn.set_visible(is_log);
                     imp.log_filter_btn.set_visible(is_log);
-                    if is_log {
-                        imp.log_view.refresh();
-                        imp.log_view.refresh_filter_labels(&imp.filter_label_row);
-                    }
+                    // Only re-reads; Log and Stats only if marked stale.
+                    imp.refresh_shown(Refresh::ALL);
                 }
             ),
         );
@@ -1134,25 +1137,6 @@ impl MeditateWindow {
     }
 }
 
-// ── Stats ─────────────────────────────────────────────────────────────────────
-
-impl MeditateWindow {
-    fn wire_stats_signals(&self) {
-        let obj = self.obj();
-        self.view_stack.connect_notify_local(
-            Some("visible-child"),
-            clone!(
-                #[weak] obj,
-                move |stack, _| {
-                    if stack.visible_child_name().as_deref() == Some("stats") {
-                        obj.imp().stats_view.refresh();
-                    }
-                }
-            ),
-        );
-    }
-}
-
 #[cfg(test)]
 mod sync_status_tests {
     //! `format_synced_ago` is the only piece of E.5 worth a unit test —
@@ -1224,9 +1208,7 @@ mod day_tests {
         assert!(poll[ask..].contains("reload_for_new_day()"));
         let reload = &src[src.find("fn reload_for_new_day(&self)").expect("reload")..];
         let reload = &reload[..reload.find("\n    }\n").unwrap()];
-        assert!(reload.contains("InvalidateScope::ALL"), "both pages go stale");
-        assert!(reload.contains("Some(\"log\") => self.log_view.refresh()"));
-        assert!(reload.contains("Some(\"stats\") => self.stats_view.refresh()"));
+        assert!(reload.contains("data_changed(Refresh::ALL)"), "every page, the Timer's streak too");
     }
 
     /// The ring jumped every quarter second; it follows the frame clock now.

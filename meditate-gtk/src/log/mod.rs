@@ -1,5 +1,6 @@
 mod imp;
 
+use meditate_core::db::Refresh;
 use gtk::glib;
 use gtk::glib::subclass::prelude::ObjectSubclassIsExt;
 
@@ -14,11 +15,7 @@ impl LogView {
     /// set. Tab switches trigger this on every visibility change; the flag
     /// prevents re-issuing the `list_sessions` query each time.
     pub fn refresh(&self) {
-        if let Some(app) = self.imp().get_app() {
-            if !app.log_dirty() { return; }
-            self.imp().refresh();
-            app.clear_log_dirty();
-        } else {
+        if self.imp().get_app().is_some_and(|app| app.take_log_dirty()) {
             self.imp().refresh();
         }
     }
@@ -41,7 +38,7 @@ impl LogView {
             if app.log_dirty() { return; }
             // Whether the session matches a filter is the query's call.
             if self.imp().filter_notes_only.get() || self.imp().filter_label_id.get().is_some() {
-                app.invalidate(crate::application::InvalidateScope::LOG);
+                app.mark_stale(Refresh::LOG);
                 return;
             }
         }
@@ -67,7 +64,7 @@ impl LogView {
     /// would no-op because the dirty flag stays false.
     fn invalidate_for_filter(&self) {
         if let Some(app) = self.imp().get_app() {
-            app.invalidate(crate::application::InvalidateScope::LOG);
+            app.mark_stale(Refresh::LOG);
         }
     }
 
@@ -128,10 +125,17 @@ mod tests {
         let b = body(&src, "pub fn prepend_session(");
         let filter = b.find("filter_label_id.get().is_some()").expect("checks the label filter");
         assert!(b[..filter].contains("filter_notes_only.get()"), "and the notes filter");
-        let invalidate = b.find("InvalidateScope::LOG").expect("marks the Log stale");
+        let invalidate = b.find("Refresh::LOG").expect("marks the Log stale");
         let add = b.find("self.imp().prepend_session(").unwrap();
         assert!(filter < invalidate && invalidate < add);
         assert!(b[invalidate..add].contains("return;"), "no card is added");
+    }
+
+    /// A label created from the edit dialog's chooser only marks the
+    /// Log; the dialog's close re-reads the Log it covered.
+    #[test]
+    fn the_edit_dialog_re_reads_the_log_when_it_closes() {
+        assert!(production("log/imp.rs").contains("dialog.connect_closed(move |_| obj.refresh());"));
     }
 
     /// The dropdown came back at "All labels" while still filtering,
@@ -230,6 +234,6 @@ mod tests {
         let gone = b.find("self.commit_delete_in_place(").expect("the card is removed");
         assert!(ok < gone, "the card goes only after a successful delete");
         assert!(b.contains("Failed::Delete"));
-        assert!(b.contains("InvalidateScope::LOG"), "a failure reloads the Log");
+        assert!(b.contains("log: failed"), "a failure reloads the Log");
     }
 }

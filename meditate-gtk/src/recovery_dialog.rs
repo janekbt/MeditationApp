@@ -113,20 +113,17 @@ fn confirm_wipe_local(app: &MeditateApplication) {
     dialog.present(parent.as_ref());
 }
 
-/// Execute the "Wipe Local" action: erase every authored row,
-/// invalidate cached UI state across views, kick a fresh sync.
+/// Execute the "Wipe Local" action: erase every authored row (the
+/// write starts the sync that pulls everything back), then re-read
+/// every view.
 /// `prepare_wipe_local_recovery` is unit-tested separately.
 fn run_wipe_local_recovery(app: &MeditateApplication) {
     let prep = app.with_db_mut(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
-            meditate_core::log("recovery.wipe_local", "purged, triggering sync");
-            // Force every cached view to re-read from the (empty) DB.
-            // with_db_mut already bumps the invalidate-all flag, but
-            // a manual ALL invalidate ensures even non-mutating views
-            // notice the change.
-            app.invalidate(crate::application::InvalidateScope::ALL);
-            app.trigger_sync();
+            // with_db_mut already started the sync that pulls everything back.
+            meditate_core::log("recovery.wipe_local", "purged, syncing");
+            app.data_changed(meditate_core::db::Refresh::ALL);
         }
         Some(Err(e)) => {
             meditate_core::log(

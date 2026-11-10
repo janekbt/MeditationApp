@@ -1,3 +1,4 @@
+use meditate_core::db::Refresh;
 use adw::prelude::*;
 use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::{gio, glib};
@@ -82,7 +83,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                 let val = row.value() as i64;
                 let written = app.with_db_mut(|db| write_daily_goal_mins(db.core(), val));
                 crate::db::write_ok(row, "goal.write", written, crate::db::Failed::Save);
-                app.invalidate(crate::application::InvalidateScope::STATS);
+                app.mark_stale(Refresh::STATS);
             }
         ),
     );
@@ -526,16 +527,10 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
         #[weak] app,
         move |_| {
             crate::sound::stop_current();
-            if let Some(win) = app
-                .active_window()
-                .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-            {
-                // refresh_streak rebuilds presets, streak text, label
-                // combo, and sound row — covers any pref change including
-                // label add/delete/rename and preset edits.
-                win.imp().timer_view.refresh_streak();
-                // Stats view picks up daily goal changes.
-                win.imp().stats_view.refresh();
+            if let Some(win) = app.main_window() {
+                // Any pref can touch Setup; a shown Stats re-reads only if
+                // the goal row marked it.
+                win.imp().refresh_shown(Refresh::SETUP);
             }
         }
     ));
@@ -679,8 +674,7 @@ fn wire_data_actions(
                                     "Deleted {n} sessions",
                                     n as u32,
                                 ).replace("{n}", &n.to_string()));
-                                app.invalidate(crate::application::InvalidateScope::ALL);
-                                refresh_main_window(&app);
+                                app.data_changed(Refresh::ALL);
                             }
                             Err(e) => data_toast(&dialog, &gettext("Delete failed: {error}")
                                 .replace("{error}", &e.to_string())),
@@ -781,8 +775,7 @@ fn write_import(app: &MeditateApplication, dialog: &adw::PreferencesDialog, pars
                 "Imported {n} sessions",
                 n as u32,
             ).replace("{n}", &n.to_string()));
-            app.invalidate(crate::application::InvalidateScope::ALL);
-            refresh_main_window(app);
+            app.data_changed(Refresh::ALL);
         }
         Err(e) => data_toast(dialog, &gettext("Import failed: {error}")
             .replace("{error}", &e.to_string())),
@@ -794,15 +787,6 @@ fn data_toast(dialog: &adw::PreferencesDialog, title: &str) {
     dialog.add_toast(toast);
 }
 
-fn refresh_main_window(app: &MeditateApplication) {
-    if let Some(win) = app.active_window()
-        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-    {
-        win.imp().timer_view.refresh_streak();
-        win.imp().stats_view.refresh();
-        win.imp().log_view.refresh();
-    }
-}
 
 
 

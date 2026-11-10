@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::indicator::SyncFailureKey;
 use super::{settings, HttpWebDav, Sync, SyncError, SyncStats, WebDav, WebDavError, REMOTE_BASE_PATH};
-use crate::db::{Database, DbError};
+use crate::db::{Database, DbError, Refresh};
 
 #[derive(Debug)]
 pub enum RunError {
@@ -46,15 +46,18 @@ impl From<DbError> for RunError {
 }
 
 /// Run one sync attempt against the database at `db_path`.
-/// `read_password(url, username)` is the app's keyring read.
+/// `read_password(url, username)` is the app's keyring read. Beside
+/// the result: the screens the attempt changed, also when it failed.
 pub fn run_attempt(
     db_path: &Path,
     sounds_dir: PathBuf,
     guided_dir: PathBuf,
     read_password: impl FnOnce(&str, &str) -> Result<Option<String>, String>,
-) -> Result<SyncStats, RunError> {
-    let db = Database::open(db_path).map_err(RunError::OpenDb)?;
-    run_with(&db, sounds_dir, guided_dir, read_password, HttpWebDav::new)
+) -> (Refresh, Result<SyncStats, RunError>) {
+    match Database::open(db_path) {
+        Ok(db) => run_with(&db, sounds_dir, guided_dir, read_password, HttpWebDav::new),
+        Err(e) => (Refresh::NONE, Err(RunError::OpenDb(e))),
+    }
 }
 
 /// The attempt over any transport: tests pass a fake server.
@@ -64,10 +67,11 @@ fn run_with<W: WebDav>(
     guided_dir: PathBuf,
     read_password: impl FnOnce(&str, &str) -> Result<Option<String>, String>,
     connect: impl FnOnce(&str, &str, &str) -> W,
-) -> Result<SyncStats, RunError> {
-    let result = attempt(db, sounds_dir, guided_dir, read_password, connect);
-    record_outcome(db, &result)?;
-    result
+) -> (Refresh, Result<SyncStats, RunError>) {
+    let mut refresh = Refresh::NONE;
+    let result = attempt(db, sounds_dir, guided_dir, read_password, connect, &mut refresh);
+    let result = record_outcome(db, &result).and(result);
+    (refresh, result)
 }
 
 fn attempt<W: WebDav>(
@@ -76,6 +80,7 @@ fn attempt<W: WebDav>(
     guided_dir: PathBuf,
     read_password: impl FnOnce(&str, &str) -> Result<Option<String>, String>,
     connect: impl FnOnce(&str, &str, &str) -> W,
+    refresh: &mut Refresh,
 ) -> Result<SyncStats, RunError> {
     // Off the UI thread: wait out an app write rather than fail.
     db.set_busy_timeout(crate::db::SYNC_BUSY_TIMEOUT)?;
@@ -97,9 +102,10 @@ fn attempt<W: WebDav>(
             &format!("progress {pushed}/{total} in {secs:.1}s ({:.1}/s)", pushed as f64 / secs),
         );
     };
-    let stats = Sync::new(db, &webdav, REMOTE_BASE_PATH, sounds_dir, guided_dir)
-        .sync_with_progress(progress)
-        .map_err(RunError::Sync)?;
+    let sync = Sync::new(db, &webdav, REMOTE_BASE_PATH, sounds_dir, guided_dir);
+    let stats = sync.sync_with_progress(progress);
+    *refresh = sync.refresh();
+    let stats = stats.map_err(RunError::Sync)?;
     let total = stats.pulled + stats.pushed;
     if total > 0 {
         let secs = started.elapsed().as_secs_f64().max(0.001);
@@ -172,7 +178,39 @@ mod tests {
 
     fn run(db: &Database, password: Result<Option<String>, String>, server: &FakeWebDav) -> Result<SyncStats, RunError> {
         let dir = tempfile::tempdir().unwrap();
-        run_with(db, dir.path().join("sounds"), dir.path().join("guided"), |_, _| password, |_, _, _| server.clone())
+        run_with(db, dir.path().join("sounds"), dir.path().join("guided"), |_, _| password, |_, _, _| server.clone()).1
+    }
+
+    fn refresh_of(db: &Database, password: Result<Option<String>, String>, server: impl WebDav) -> Refresh {
+        let dir = tempfile::tempdir().unwrap();
+        run_with(db, dir.path().join("s"), dir.path().join("g"), |_, _| password, |_, _, _| server).0
+    }
+
+    #[test]
+    fn an_attempt_that_fails_before_the_server_refreshes_nothing() {
+        let server = FakeWebDav::new();
+        let phone = configured_db();
+        phone.insert_label("walking").unwrap();
+        run(&phone, Ok(Some("pw".into())), &server).unwrap();
+
+        let laptop = configured_db();
+        assert_eq!(refresh_of(&laptop, Ok(None), server.clone()), Refresh::NONE, "no password");
+        assert_eq!(refresh_of(&laptop, Err("locked".into()), server.clone()), Refresh::NONE, "keyring");
+        assert_eq!(refresh_of(&laptop, Ok(Some("pw".into())), AlwaysErrs(WebDavError::Network("offline".into()))), Refresh::NONE, "offline");
+        let tablet = configured_db();
+        let wiped = FakeWebDav::new();
+        run(&tablet, Ok(Some("pw".into())), &wiped).unwrap();
+        for name in wiped.list_collection("/Meditate/events/").unwrap() {
+            wiped.delete(&format!("/Meditate/events/{name}")).unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (refresh, result) = run_with(&tablet, dir.path().join("s"), dir.path().join("g"), |_, _| Ok(Some("pw".into())), |_, _, _| wiped);
+        assert!(matches!(result, Err(RunError::Sync(SyncError::RemoteDataLost))));
+        assert_eq!(refresh, Refresh::NONE, "remote data lost");
+        assert!(
+            refresh_of(&laptop, Ok(Some("pw".into())), crate::sync::fake::PutFails(server)).labels,
+            "reaching the server brings the phone's label, kept though the upload then fails",
+        );
     }
 
     /// A sync that never started for want of a password only reached
@@ -221,7 +259,7 @@ mod tests {
 
     fn run_broken(db: &Database, error: WebDavError) -> Result<SyncStats, RunError> {
         let dir = tempfile::tempdir().unwrap();
-        run_with(db, dir.path().join("s"), dir.path().join("g"), |_, _| Ok(Some("pw".into())), |_, _, _| AlwaysErrs(error))
+        run_with(db, dir.path().join("s"), dir.path().join("g"), |_, _| Ok(Some("pw".into())), |_, _, _| AlwaysErrs(error)).1
     }
 
     #[test]

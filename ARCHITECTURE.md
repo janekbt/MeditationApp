@@ -139,6 +139,14 @@ not multi-user.
   `LocalChangeWatch` from any thread to learn that something needs
   pushing. `sync::coordinator` keeps at most one pass in flight and
   collapses a burst of triggers into one follow-up.
+- **What the screens re-read.** A pass records which screens its
+  pulled events and downloaded files change (`db::Refresh`: Log,
+  Stats, Setup, guided list, label lists; `Refresh::of` maps each
+  kind), also when it fails after applying them; a pass that fails
+  before applying anything records nothing. `run_attempt` returns it
+  beside its result. GTK's `data_changed` marks Log or Stats stale
+  and re-reads only the shown page; Android's `refresh_after_pull`
+  re-reads the named screens once each.
 
 ## Migrations
 

@@ -138,15 +138,6 @@ pub struct SyncStats {
     pub files_pulled: usize,
 }
 
-impl SyncStats {
-    /// Whether this sync changed anything the screens show, so the
-    /// shell must re-read them. Pushing alone doesn't: those edits
-    /// were made here and are already on screen.
-    pub fn brought_changes(&self) -> bool {
-        self.pulled > 0 || self.files_pulled > 0
-    }
-}
-
 pub struct Sync<'a, W: WebDav> {
     db: &'a Database,
     webdav: &'a W,
@@ -166,6 +157,8 @@ pub struct Sync<'a, W: WebDav> {
     /// downloaded bytes to the same path. All guided files are
     /// custom (no bundled equivalent).
     guided_dir: std::path::PathBuf,
+    /// What the last pass brought, kept when it fails later.
+    refresh: std::cell::Cell<crate::db::Refresh>,
 }
 
 impl<'a, W: WebDav> Sync<'a, W> {
@@ -182,7 +175,17 @@ impl<'a, W: WebDav> Sync<'a, W> {
             base_path: base_path.trim_matches('/').to_string(),
             sounds_dir,
             guided_dir,
+            refresh: std::cell::Cell::default(),
         }
+    }
+
+    /// The screens the last `pull` (or `sync`) changed, also after it failed.
+    pub fn refresh(&self) -> crate::db::Refresh {
+        self.refresh.get()
+    }
+
+    fn mark(&self, changed: crate::db::Refresh) {
+        self.refresh.set(self.refresh.get() | changed);
     }
 
     fn events_dir(&self) -> String {
@@ -238,6 +241,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// `known_event_uuids` short-circuit each filename and each
     /// event_uuid.
     pub fn pull(&self) -> SyncResult<PullStats> {
+        self.refresh.set(crate::db::Refresh::NONE);
         // Per the plan: pull is non-destructive — only adds events.
         // First sync against an empty remote dir is just an empty list.
         let events_dir = self.events_dir();
@@ -327,7 +331,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
 
         let count = new_events.len();
         if !new_events.is_empty() {
-            self.db.replay_events(&new_events)?;
+            self.mark(self.db.replay_events(&new_events)?);
             self.remove_files_of_pulled_deletes(&new_events)?;
         }
         // Record ingested batch_uuids only AFTER a successful replay,
@@ -759,6 +763,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             }
             write_whole_file(&local, &bytes)?;
+            self.mark(crate::db::Refresh::SETUP);
             self.db.record_known_remote(Known::Sounds, bell.uuid.as_str())?;
             pulled += 1;
         }
@@ -911,6 +916,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             }
             write_whole_file(&local, &bytes)?;
+            self.mark(crate::db::Refresh::GUIDED_FILE);
             self.db.record_known_remote(Known::GuidedFiles, file.uuid.as_str())?;
             pulled += 1;
         }
@@ -1083,8 +1089,8 @@ fn write_whole_file(local: &std::path::Path, bytes: &[u8]) -> SyncResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{BellSoundCategory, Session, SessionMode};
-    use crate::sync::fake::FakeWebDav;
+    use crate::db::{BellSoundCategory, Refresh, Session, SessionMode};
+    use crate::sync::fake::{FakeWebDav, PutFails};
     use crate::sync::webdav::WebDavResult;
     use crate::test_macros::assert_matches;
 
@@ -1808,21 +1814,6 @@ mod tests {
         // 401 Unauthorized is unrecoverable from this side — the user
         // needs to fix credentials. Push must surface it as a SyncError
         // so the runner records it on `last_sync_error`.
-        struct PutFails(FakeWebDav);
-        impl WebDav for PutFails {
-            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
-                self.0.list_collection(p)
-            }
-            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
-            fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
-                Err(WebDavError::Unauthorized)
-            }
-            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
-            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
-            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
-                self.0.move_to(from, to)
-            }
-        }
         let (db, _) = setup();
         for i in 0..5 { insert_session(&db, &format!("e-{i}"), 100); }
         let bad = PutFails(FakeWebDav::new());
@@ -2331,58 +2322,66 @@ mod tests {
 
     // ── "Did this sync change what the screens show?" ───────────────
 
-    #[test]
-    fn a_sync_with_nothing_new_brought_no_changes() {
-        let stats = SyncStats { pulled: 0, pushed: 0, files_pulled: 0 };
-        assert!(!stats.brought_changes());
-    }
-
-    #[test]
-    fn pushing_alone_brings_no_changes() {
-        let stats = SyncStats { pulled: 0, pushed: 7, files_pulled: 0 };
-        assert!(!stats.brought_changes(), "our own edits are already on screen");
-    }
-
-    #[test]
-    fn pulled_events_bring_changes() {
-        let stats = SyncStats { pulled: 1, pushed: 0, files_pulled: 0 };
-        assert!(stats.brought_changes());
-    }
-
-    #[test]
-    fn a_pulled_file_alone_brings_changes() {
-        let stats = SyncStats { pulled: 0, pushed: 0, files_pulled: 1 };
-        assert!(stats.brought_changes());
-    }
-
-    #[test]
-    fn sync_reports_a_peer_session_as_a_change() {
-        let (db_src, fs) = setup();
+    /// The screens a pass of `peer` over `fs` changed.
+    fn peer_pass(peer: &Database, fs: &FakeWebDav) -> Refresh {
         let tmp = tempfile::tempdir().unwrap();
-        insert_session(&db_src, "2026-10-01T07:00:00", 600);
-        Sync::new(&db_src, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
-            .sync().unwrap();
-
-        let db_peer = Database::open_in_memory().unwrap();
-        let tmp_peer = tempfile::tempdir().unwrap();
-        let sync = Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf());
-        assert!(sync.sync().unwrap().brought_changes(), "first pull brings the session");
-        assert!(!sync.sync().unwrap().brought_changes(), "a second sync has nothing new");
+        let sync = Sync::new(peer, fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf());
+        sync.sync().unwrap();
+        sync.refresh()
     }
 
     #[test]
-    fn sync_of_our_own_edit_reports_no_change() {
+    fn a_pulled_session_refreshes_the_log_and_stats() {
+        let (db_src, fs) = setup();
+        insert_session(&db_src, "2026-10-01T07:00:00", 600);
+        peer_pass(&db_src, &fs);
+
+        let peer = Database::open_in_memory().unwrap();
+        assert_eq!(peer_pass(&peer, &fs), Refresh { log: true, stats: true, ..Refresh::NONE });
+        assert_eq!(peer_pass(&peer, &fs), Refresh::NONE, "a second sync has nothing new");
+    }
+
+    #[test]
+    fn a_pulled_setting_refreshes_setup_and_stats() {
+        let (db_src, fs) = setup();
+        crate::goal::write_daily_goal_mins(&db_src, 45).unwrap();
+        peer_pass(&db_src, &fs);
+
+        let peer = Database::open_in_memory().unwrap();
+        assert_eq!(peer_pass(&peer, &fs), Refresh { setup: true, stats: true, ..Refresh::NONE }, "Stats shows the goal");
+
+        db_src.set_setting("starting_bell_active", "true").unwrap();
+        peer_pass(&db_src, &fs);
+        assert_eq!(peer_pass(&peer, &fs), Refresh { setup: true, ..Refresh::NONE }, "Stats shows no other setting");
+    }
+
+    #[test]
+    fn a_sync_that_only_uploads_refreshes_nothing() {
         let (db, fs) = setup();
         let tmp = tempfile::tempdir().unwrap();
         insert_session(&db, "2026-10-01T07:00:00", 600);
-        let stats = Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
-            .sync().unwrap();
-        assert_eq!(stats.pushed, 1);
-        assert!(!stats.brought_changes());
+        let sync = Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf());
+        assert_eq!(sync.sync().unwrap().pushed, 1);
+        assert_eq!(sync.refresh(), Refresh::NONE, "our own edits are already on screen");
     }
 
     #[test]
-    fn a_sound_file_arriving_after_its_row_counts_as_a_change() {
+    fn a_failed_upload_still_reports_what_the_download_applied() {
+        let (db_src, fs) = setup();
+        insert_session(&db_src, "2026-10-01T07:00:00", 600);
+        peer_pass(&db_src, &fs);
+
+        let peer = Database::open_in_memory().unwrap();
+        insert_session(&peer, "2026-10-02T07:00:00", 300);
+        let tmp = tempfile::tempdir().unwrap();
+        let bad = PutFails(fs.clone());
+        let sync = Sync::new(&peer, &bad, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf());
+        assert!(sync.sync().is_err());
+        assert_eq!(sync.refresh(), Refresh { log: true, stats: true, ..Refresh::NONE });
+    }
+
+    #[test]
+    fn a_downloaded_audio_file_refreshes_the_guided_list_and_setup() {
         // The row came in an earlier sync while its file wasn't on the
         // server yet; the file landing later must still refresh the
         // screens, though no new event comes with it.
@@ -2404,7 +2403,16 @@ mod tests {
         fs.put(&format!("Meditate/sounds/{uuid}.wav"), b"AUDIO").unwrap();
         let second = sync.sync().unwrap();
         assert_eq!((second.pulled, second.files_pulled), (0, 1));
-        assert!(second.brought_changes());
+        assert_eq!(sync.refresh(), Refresh { setup: true, ..Refresh::NONE }, "a bell sound is not on the guided list");
+
+        let guided = uuid::Uuid::new_v4().to_string();
+        db_src.insert_guided_file_with_uuid(&guided, "Late talk", "/src/late.ogg", 60, false).unwrap();
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
+            .push().unwrap();
+        sync.sync().unwrap();
+        fs.put(&format!("Meditate/guided/{guided}.ogg"), b"AUDIO").unwrap();
+        assert_eq!(sync.sync().unwrap().files_pulled, 1);
+        assert_eq!(sync.refresh(), Refresh { guided: true, setup: true, ..Refresh::NONE });
     }
 
     #[test]

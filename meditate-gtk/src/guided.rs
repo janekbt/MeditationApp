@@ -26,6 +26,7 @@
 //! Phases 5 + 6 build the timer Setup-view UI + playback engine on
 //! top of these primitives.
 
+use meditate_core::db::Refresh;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1022,7 +1023,7 @@ fn present_rename_dialog(
             return;
         }
         // Log cards name the file.
-        app_for_response.invalidate(crate::application::InvalidateScope::ALL);
+        app_for_response.mark_stale(Refresh::LOG);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -1047,7 +1048,7 @@ fn present_rename_dialog(
                     db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
                 });
                 write_ok(&overlay_for_failure, "guided.rename.undo", renamed, Failed::Save);
-                app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
+                app_for_undo.mark_stale(Refresh::LOG);
                 if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
                     rb();
                 }
@@ -1117,6 +1118,8 @@ fn present_delete_dialog(
         if !write_ok(&toast_overlay_for_response, "guided.delete", deleted, Failed::Delete) {
             return;
         }
+        // Log cards name the file.
+        app.mark_stale(Refresh::LOG);
         // The on-disk file is NOT removed here — that's deferred to
         // the toast's natural dismissal so Undo can restore the row
         // without needing to re-transcode. If the toast times out
@@ -1181,6 +1184,7 @@ fn offer_guided_undo(
             });
             match restored {
                 Some(Ok(_)) => {
+                    app.mark_stale(Refresh::LOG);
                     if let Some(rb) = rebuilder.borrow().as_ref() {
                         rb();
                     }

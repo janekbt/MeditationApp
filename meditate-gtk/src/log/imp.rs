@@ -1,3 +1,4 @@
+use meditate_core::db::Refresh;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use adw::prelude::*;
@@ -765,7 +766,7 @@ impl LogView {
     }
 
     /// Drain `pending_deletes`, delete each row from the DB, and tear down
-    /// the corresponding cards. One STATS invalidate at the end rather
+    /// the corresponding cards. One `data_changed` at the end rather
     /// than per-row. Called from the toast's dismissed handler when the
     /// timer naturally expires.
     pub(super) fn commit_all_pending(&self) {
@@ -783,12 +784,8 @@ impl LogView {
                     failed = true;
                 }
             }
-            app.invalidate(crate::application::InvalidateScope::STATS);
-            if failed {
-                // The hidden card's row is still there: reload to show it.
-                app.invalidate(crate::application::InvalidateScope::LOG);
-                self.obj().refresh();
-            }
+            // A failed delete's hidden card is still a row: reload to show it.
+            app.data_changed(Refresh { stats: true, log: failed, ..Refresh::NONE });
         }
     }
 
@@ -1278,11 +1275,12 @@ impl LogView {
                             return;
                         }
                     }
-                    app.invalidate(crate::application::InvalidateScope::STATS);
+                    // The dialog's close re-reads the Log; Stats and the
+                    // streak when shown.
+                    app.mark_stale(Refresh::SESSIONS);
                 }
 
                 dialog.close();
-                imp.refresh();
             }
         ));
 

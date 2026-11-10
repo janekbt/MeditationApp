@@ -1467,8 +1467,9 @@ mod tests {
         db.conn.execute("UPDATE labels SET name = 'Walking' WHERE uuid = ?1", [LARGE]).unwrap();
         db.conn.execute("UPDATE labels SET name = 'Walking (conflict-11111111)' WHERE uuid = ?1", [SMALL]).unwrap();
 
-        db.replay_events(&[synth_event("setting_changed", "anything", 901, "peer",
+        let refresh = db.replay_events(&[synth_event("setting_changed", "anything", 901, "peer",
             serde_json::json!({ "key": "anything", "value": "1" }))]).unwrap();
+        assert!(refresh.labels, "the label lists show the healed names");
         assert_eq!(named(&db, "Walking"), [
             (SMALL.to_string(), "Walking".to_string()),
             (LARGE.to_string(), "Walking (conflict-99999999)".to_string()),

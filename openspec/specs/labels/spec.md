@@ -86,7 +86,7 @@ Creating, renaming or deleting a label SHALL update the Log, its filters and Sta
 #### Scenario: Rename on the desktop without sync set up
 - **WHEN** the user renames "Yoga" to "Zen" on the desktop with no sync configured
 - **THEN** the Log chips, the Log filter and Stats show "Zen" the next time they are shown
-- **TEST** `meditate-gtk/src/labels.rs::name_changes_refresh_log_and_stats`
+- **MANUAL** on the laptop with sync off: rename a label in the chooser, open the Log and Stats (GTK views can't run in host tests; the text test that stood here only counted calls in the source)
 
 ### Requirement: A label delete that fails says so
 A failed label delete on the laptop SHALL show "Delete failed" and leave the label in place.

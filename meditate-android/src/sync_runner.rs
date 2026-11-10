@@ -17,7 +17,7 @@ pub fn run_sync_attempt(
     db_path: &Path,
     sounds_dir: PathBuf,
     guided_dir: PathBuf,
-) -> Result<SyncStats, RunError> {
+) -> (meditate_core::db::Refresh, Result<SyncStats, RunError>) {
     meditate_core::sync::runner::run_attempt(db_path, sounds_dir, guided_dir, |url, username| {
         Ok(crate::keychain::read_password(app, url, username))
     })

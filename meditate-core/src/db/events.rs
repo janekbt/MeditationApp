@@ -157,6 +157,74 @@ pub(crate) enum EntityKind {
     Setting,
 }
 
+/// The screens a sync changed, so the apps re-read only those.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Refresh {
+    pub log: bool,
+    /// Stats and the streak.
+    pub stats: bool,
+    /// The Setup page and the lists it opens (bells, sounds, presets, patterns).
+    pub setup: bool,
+    pub guided: bool,
+    /// Label lists outside Setup (the Log filter, the label rows).
+    pub labels: bool,
+}
+
+impl Refresh {
+    /// Wipe Local, a new day.
+    pub const ALL: Self = Self { log: true, stats: true, setup: true, guided: true, labels: true };
+    pub const NONE: Self = Self { log: false, stats: false, setup: false, guided: false, labels: false };
+    pub const LOG: Self = Self { log: true, ..Self::NONE };
+    pub const STATS: Self = Self { stats: true, ..Self::NONE };
+    /// Sessions: the Log, and Stats with the streak.
+    pub const SESSIONS: Self = Self { log: true, stats: true, ..Self::NONE };
+    /// Setup only (also a downloaded bell sound).
+    pub const SETUP: Self = Self { setup: true, ..Self::NONE };
+    /// A downloaded guided file.
+    pub const GUIDED_FILE: Self = Self { setup: true, guided: true, ..Self::NONE };
+
+    pub fn any(self) -> bool {
+        self != Self::NONE
+    }
+
+    /// `target` is the row's id, for a setting its key.
+    pub(crate) fn of(entity: EntityKind, target: &str) -> Self {
+        let none = Self::NONE;
+        match entity {
+            EntityKind::Session => Self::SESSIONS,
+            EntityKind::Label => Self { log: true, stats: true, setup: true, labels: true, ..none },
+            // Stats shows one setting, the daily goal.
+            EntityKind::Setting => Self { setup: true, stats: target == crate::goal::DAILY_GOAL_KEY, ..none },
+            // Log cards name the file.
+            EntityKind::GuidedFile => Self { guided: true, setup: true, log: true, ..none },
+            EntityKind::IntervalBell
+            | EntityKind::BellSound
+            | EntityKind::Preset
+            | EntityKind::BoxBreathPhase
+            | EntityKind::VibrationPattern => Self::SETUP,
+        }
+    }
+}
+
+impl std::ops::BitOr for Refresh {
+    type Output = Self;
+    fn bitor(self, o: Self) -> Self {
+        Self {
+            log: self.log | o.log,
+            stats: self.stats | o.stats,
+            setup: self.setup | o.setup,
+            guided: self.guided | o.guided,
+            labels: self.labels | o.labels,
+        }
+    }
+}
+
+impl std::ops::BitOrAssign for Refresh {
+    fn bitor_assign(&mut self, o: Self) {
+        *self = *self | o;
+    }
+}
+
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /
 /// updated / deleted, labels renamed, settings changed. Every field
@@ -540,7 +608,7 @@ impl Database {
     /// out" entry point use it.
     #[cfg(test)]
     pub(crate) fn apply_event(&self, event: &Event) -> Result<()> {
-        self.replay_events(std::slice::from_ref(event))
+        self.replay_events(std::slice::from_ref(event)).map(drop)
     }
 
     /// Record + validate the event without firing its recompute_*.
@@ -695,8 +763,9 @@ impl Database {
     /// pair once. A session edited five times in one batch recomputes
     /// once; on the wipe-and-pull recovery path (~30k events across
     /// ~10k targets) this drops the 2–3× duplicate-recompute factor.
-    pub fn replay_events(&self, events: &[Event]) -> Result<()> {
-        if events.is_empty() { return Ok(()); }
+    /// Returns the screens the batch changed.
+    pub fn replay_events(&self, events: &[Event]) -> Result<Refresh> {
+        if events.is_empty() { return Ok(Refresh::default()); }
         let tx = self.tx()?;
         let mut sorted: Vec<&Event> = events.iter().collect();
         sorted.sort_by(|a, b| {
@@ -712,10 +781,13 @@ impl Database {
             }
         }
         self.recompute_touched(&touched)?;
-        self.reclaim_suffixed_names()?;
+        let mut refresh = self.reclaim_suffixed_names()?;
         self.mark_events_applied()?;
         tx.commit()?;
-        Ok(())
+        for (entity, target) in &touched {
+            refresh |= Refresh::of(*entity, target);
+        }
+        Ok(refresh)
     }
 
     /// Recompute each touched target once. Two passes:
@@ -785,7 +857,9 @@ impl Database {
     /// Rows that took the "(conflict-…)" suffix try for their own name
     /// again: its holder may have been renamed or deleted since, or
     /// (pairs suffixed before `claim_name`) have the larger uuid.
-    fn reclaim_suffixed_names(&self) -> Result<()> {
+    /// Returns the screens of every kind whose name it changed.
+    fn reclaim_suffixed_names(&self) -> Result<Refresh> {
+        let mut refresh = Refresh::default();
         for (entity, table) in [
             (EntityKind::Label, "labels"),
             (EntityKind::Preset, "presets"),
@@ -806,10 +880,17 @@ impl Database {
                 });
                 if !held_by_smaller {
                     self.recompute_for(entity, uuid)?;
+                    // Most recomputes keep the name; only a new one is a change.
+                    let now: Option<String> = self.conn
+                        .query_row(&format!("SELECT name FROM {table} WHERE uuid = ?1"), [uuid], |row| row.get(0))
+                        .optional()?;
+                    if now.as_deref() != Some(name.as_str()) {
+                        refresh |= Refresh::of(entity, uuid);
+                    }
                 }
             }
         }
-        Ok(())
+        Ok(refresh)
     }
 }
 
@@ -1484,6 +1565,22 @@ mod tests {
         let rows = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.uuid, SESSION_X);
+    }
+
+    /// A pair suffixed before names were claimed by uuid is recomputed
+    /// on every replay but keeps its name: that is no label change.
+    #[test]
+    fn a_reclaim_that_changes_no_name_reports_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let small = "11111111-1111-4111-8111-111111111111";
+        let large = "99999999-9999-4999-8999-999999999999";
+        db.insert_label_with_uuid(large, "Walk").unwrap();
+        let suffixed = crate::db::error::conflict_suffixed_name("Walk", small);
+        db.insert_label_with_uuid(small, &suffixed).unwrap();
+        let refresh = db.replay_events(&[synth_session_insert(SESSION_X, 1, DEVICE_A,
+            "S-X", 100, None, None, SessionMode::Timer)]).unwrap();
+        assert_eq!(crate::db::list_labels_from_db(&db).unwrap().iter().filter(|l| l.name == suffixed).count(), 1, "still suffixed");
+        assert_eq!(refresh, Refresh { log: true, stats: true, ..Refresh::NONE });
     }
 
     #[test]
