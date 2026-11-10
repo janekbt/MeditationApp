@@ -17,17 +17,17 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 | [x] | 5 | core `session/` |
 | [x] | 6 | core bells, preset config, vibration, breath, sound, bell volume |
 | [x] | 7 | core format, time, date math, insights, data io, settings keys, local folder, diag, the rest of `src/` |
-| [ ] | 8 | gtk `timer/`, `timer_view.blp` |
-| [ ] | 9 | gtk window, log, stats, application, gtk `db/`, their `.blp` |
-| [ ] | 10 | gtk preferences, presets, bells, sounds |
-| [ ] | 11 | gtk vibrations, vibration editor, guided, labels, keychain, local folder, the rest |
-| [ ] | 12 | android `ui.rs`, first half |
-| [ ] | 13 | android `ui.rs`, second half |
-| [ ] | 14 | android `app.rs` |
-| [ ] | 15 | android Kotlin and the other `src/` files |
-| [ ] | 16 | android `main.slint`, first half |
-| [ ] | 17 | android `main.slint`, second half |
-| [ ] | 18 | across apps: logic in both shells that belongs in core |
+| [x] | 8 | gtk `timer/`, `timer_view.blp` |
+| [x] | 9 | gtk window, log, stats, application, gtk `db/`, their `.blp` |
+| [x] | 10 | gtk preferences, presets, bells, sounds |
+| [x] | 11 | gtk vibrations, vibration editor, guided, labels, keychain, local folder, the rest |
+| [x] | 12 | android `ui.rs`, first half |
+| [x] | 13 | android `ui.rs`, second half |
+| [x] | 14 | android `app.rs` |
+| [x] | 15 | android Kotlin and the other `src/` files |
+| [x] | 16 | android `main.slint`, first half |
+| [x] | 17 | android `main.slint`, second half |
+| [x] | 18 | across apps: logic in both shells that belongs in core |
 
 ## Findings
 
@@ -54,6 +54,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: a `SESSION_COLUMNS` const with `fn session_from_row`, and `fn event_from_row`. `list_sessions_filtered` can become `query_sessions_from_db` with a label filter apart from its ORDER BY.
 
 #### #217 Delete paths
+- Related: #335 (GTK commits pending deletes one transaction each: add a batch delete here).
 - Where: `sessions.rs:594-632, 638-654`; label lookup in `recompute_session` `889-896`.
 - Problem: `delete_session` and `delete_session_by_uuid` repeat select, delete, payload and emit; `delete_all_sessions` builds the delete payload a third time. The uuid-by-rowid and label-id-by-uuid lookups are hand-written although `Database::existing_rowid_by_uuid` (`db/mod.rs:374`) exists.
 - Fix: `delete_session` looks up the uuid and calls `delete_session_by_uuid`; one `emit_session_delete(tx, uuid)`; `DELETE ... RETURNING` or `if n == 0` instead of the existence SELECT; `existing_rowid_by_uuid` for both lookups.
@@ -170,6 +171,8 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: per table, build the payload once from the row (`*_payload(&row)`), `emit_event`, then call the existing `recompute_*` in the same transaction; the write SQL in insert, rename, star and update goes away and local rows are built the way peers build them. Insert and rename keep a name check first (`is_*_name_taken_from_db`), since recompute suffixes a clash instead of returning `Duplicate*`. The general form of #214 and #225; the smaller step is one payload builder per table.
 
 #### #235 One row reader per table
+- Related: #401 (label lookups by id in both apps).
+- Related: #375 (a keyed bell-sound lookup for every bell played).
 - Where: `bell_sounds.rs:212-233, 244-266`, `vibration_patterns.rs:45-70, 76-99` (and a third partial decode in `rename_vibration_pattern` 233-253), `guided_files.rs:36-55, 109-124`, `box_breath_phases.rs:19-47, 55-75`; `interval_bells.rs:226-232, 258-263` load the whole list to find one row, because there is no second decoder.
 - Related: the same pattern as #216 (sessions, events) and #225 (presets); do all row readers together.
 - Fix: `COLUMNS` plus `from_row` as `local_guided_files.rs:34-49` does; `list_bell_sounds` becomes `list_bell_sounds_for_category(None)`; keyed queries for the single-bell lookups. The bell-sound and box-breath pairs are in #85 too.
@@ -205,6 +208,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
 #### #252 Rate-limit retry in one place
+- Related: #403 (Android's own network retry).
 - Where: `orchestrator.rs:949-1000` (`put_with_rate_limit_retry`), `1015-1035` (`put_atomic_with_rate_limit_retry`), all of `backoff.rs` (266 lines).
 - Problem: only PUT retries a 429; PROPFIND, GET, MOVE, DELETE and MKCOL don't (see #267). `BackoffState` is built fresh per PUT and dropped, so its window, reset and counters reduce to one formula; three of its eleven tests cover paths that can't happen.
 - Fix: retry inside `HttpWebDav::send` for every verb (sleep `retry_after`, else `min(1 << n, 30)` s, at most 8 tries); delete `put_with_rate_limit_retry` and most of `backoff.rs`. Fixes #267.
@@ -215,6 +219,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: `pull_file(local, remote, cap)` mirroring `push_file`, or a small per-kind descriptor (dirs, paths, cap, known-set) so each loop exists once; `get(&remote, MAX_CUSTOM_*_BYTES)` and drop the second check. Do together with #265.
 
 #### #254 The sync failure state
+- Related: #333 (the GTK indicator polls it every 2 s).
 - Where: `settings.rs:22-30, 114-189` (one key, `KEY_LAST_SYNC_ERROR_KIND`, holds `""`, two bare strings, or JSON; five writers of the same key pair; three readers of the same key), `indicator.rs:94-153` (`derive` builds a state that `state_from_db` then patches: reason, NeedsPassword, NotUploaded; `derive` is used only by tests), `indicator.rs:133-134` repeats `sync::should_attempt` (`mod.rs:38-41`), `runner.rs:120-131`.
 - Problem: GTK polls `state_from_db` every 2 s (`window/imp.rs:761`): 5 to 8 SELECTs per tick, the kind key up to three times, and with a refused upload a full read of `bell_sounds` and `guided_files`.
 - Fix: one stored reason enum with `RemoteDataLost` and `PasswordMissing` variants, written by one `set_error`, read once (still accepting the two old bare strings, so no migration); one `state_from_db` that reads the needed keys in one `WHERE key IN (...)`; call `should_attempt`.
@@ -257,6 +262,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: stream: ureq takes a `File` as body; pull can `io::copy` the capped reader into the `.part` file. Needs reader-based `put`/`get` on the `WebDav` trait.
 
 #### #260 The connection test has its own error mapping
+- Related: #403 (Android parks the result as a number).
 - Where: `credentials.rs:27-90` (`TestConnectionResult`, its English `Display` and `detail()`), next to `runner::failure_key` (`runner.rs:135-156`).
 - Problem: two mappings that already disagree (a redirect is "Server error" in the test, `Redirected` in the status; 404 is `NotWebDavRoot` vs `Server(Some(404))`). The English text is unused in production (both apps translate each variant) and goes against the typed-key rule. `SaveSyncPlan` (134) repeats `Credentials`' fields.
 - Fix: `test_connection` returns `Result<(), SyncFailureKey>` with the mapping on `WebDavError` (maybe a NotWebDavRoot key); delete the `Display`.
@@ -294,6 +300,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: one `Effect::Fire { channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: BellCue }`, the log tag derived from channel and phase, built by one `fn fire(channel, &BellCue, override) -> Option<Effect>`; `FireRoute` and `fire_route` go. About -80 lines; touches about 15 test asserts in core and two in android.
 
 #### #270 One way to end a session
+- Related: #430 (Android's `completion_notice_secs`, GTK keyed by hand).
 - Where:
   - Core: five paths set `phase = Stopped` and `final_duration_secs = Some(..)` by hand (`mod.rs:451, 483, 500, 535, 694`); `stop` and `add_overtime_and_finish` are the same body. The end is signalled as `EndSession`, `EndBoxBreath` or `AutoFinish`, all with the same `duration_secs`, and stored again in `final_duration_secs`. Box Breath's end (`691-705`) repeats `reach_end`'s Auto-Finish and end-bell rule (`528-544`). `finish_overtime` (`476-482`) re-derives `shape.target_secs()` by hand.
   - Android: `ended_duration_secs` and `completion_notice_secs` scan the effects (`app.rs:189-215`); the "was active, now finished: save and notify" block is in the tick handler and again in the guided-track-end handler (`ui.rs:5137-5165`, `5064-5080`); `finish_overtime`/`add_overtime` re-check `ui_state() == Overtime` (`app.rs:708-735`) although core already ignores them outside Overtime.
@@ -307,11 +314,13 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: effects carry only what an app must do (bells, stop signals, stop guided audio, the end, #270); after each call the apps redraw from the pull API. Delete `TickOutcome`, `tick_summary`, the four variants and the effect-scanning loops in both apps; one `secs_left(target, elapsed)` next to `ceil_secs`. Supersedes the `EndPrep` part of #85.
 
 #### #272 The session shape is built in each app
+- Related: #312 (the other decisions the GTK timer page makes).
 - Where: gtk `timer/imp.rs:2191-2292`, android `ui.rs:4463-4510` (its comment: "Mirrors GTK's SessionShape::Guided build"); core `settings.rs:28-72` has `mode()`, `stopwatch_on()` and `target_secs()` but no constructor.
 - Problem: both apps repeat the decision tree, including `pattern.cycle_aligned_target_secs(..)` for a Box Breath countdown and "Guided: the stopwatch flag means count-up display". They already differ: GTK returns early on a 0 target, Android reads Guided's stopwatch flag from the db and the other modes' from the UI. Against "decisions go in core".
 - Fix: `SessionShape::new(mode, stopwatch_on, target_secs, pattern)` next to `from_db`, used by both apps. Related: slice 18.
 
 #### #273 Pause in one place
+- Related: #429, #437 (Android's `toggle` decides pause itself).
 - Where: `mod.rs:218-220` (`SessionPhase::Paused`, never set; arms at 563, 856, 981, 1019), `253` (`is_paused`), `timer.rs:18` (`Stopwatch::Paused`); `pause`/`resume` swap in a dummy clock (`mod.rs:400-403, 416-418`) because `paused_at`/`resumed_at` take `self`.
 - Problem: three representations of one fact, two of which can disagree with the phase (#277).
 - Fix: delete `SessionPhase::Paused`; derive `Copy` on `Stopwatch` (only `Duration`s) and write `self.phase_clock = self.phase_clock.paused_at(now)`; derive `is_paused` from the clock. Supersedes the `SessionPhase::Paused` part of #58. Related: #85 (`Stopwatch` serde), #270.
@@ -340,6 +349,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
 #### #281 One reader and writer per bell slot
+- Related: #414 (Android's chooser maps the slot by hand four ways; one address per bell).
 - Where:
   - Starting and end bell settings are read in `bells.rs:702-752` (`read_volume`, `starting_bell_cue_from_db`, `end_bell_cue_from_db`, near copies of each other), `preset_config.rs:551-578` (`snapshot`) and `665-684` (`apply`), and `bell_volume.rs:201-246` (`read`, `write`, `sound_uuid`, each with its own three-way match on the slot).
   - The volume is parsed three times (`bells.rs:702`, `preset_config.rs:551`, `bell_volume.rs:202`) and written by hand in `apply` (674, 683) and android `ui.rs:3755`, although `bell_volume::read/write` exist (only GTK uses them).
@@ -354,6 +364,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: serde-typed `SignalMode`, `IntervalBellKind`, `BoxBreathPhaseId` with `rename_all`; the JSON strings stay the same, so no migration. Do after the one-transaction apply (OPEN-ISSUES #193), so a bad entry fails the whole apply.
 
 #### #283 The active-preset check reads everything on every change
+- Related: #316 (the GTK half: the list is rebuilt on every local write).
 - Where: `preset_config.rs:481-537` (`active_presets`): reads the current timing, a full `snapshot` (about 22 setting reads, the interval bells and four phase reads), lists the starred presets and parses each `config_json`. Both callers list the starred presets again right after (gtk `timer/imp.rs:3389/3415`, android `ui.rs:705/706`), and Android parses each JSON once more for the subtitle (733). It runs after every local synced write via the 500 ms change watch (gtk 402, android 4815), so on every slider or switch change. `shown(current.clone())` (530) clones the whole config for the phases.
 - Also: the current `PresetTiming` is built here, in gtk (`timer/imp.rs:3837-3859`) and in android (`ui.rs:1876-1893`); `apply` returns `cfg.timing.clone()`, which both callers already hold (gtk 3907, android 1827).
 - Fix: `active_presets(db, mode, &starred)` taking the list the caller has, or returning per-row flags with the parsed config; a core `current_timing(db, mode)` for all three; `apply` returns `Result<()>`. Related: #272 (the same kind of app-side building).
@@ -377,10 +388,12 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: `BreathPattern::adjusted(phase, delta) -> Option<Self>` in core over `clamp_from_raw`; one phase enum; `unreachable!()` and a correct doc. Supersedes the `phase_to_id` bullet of #275.
 
 #### #287 Vibration editor math in core and again in GTK
+- Related: #369 (duration limits, the throwaway pattern row, one save helper).
 - Where: `vibration.rs:339-415` (`EDITOR_HIT_RADIUS_PX`, `nearest_point`, `snap_intensity`) is used only by Android; gtk `vibration_editor.rs:38, 350-363, 391` keeps its own radius, hit test and snap. Two snaps to the 10 % grid: `quantise_amplitude` (78, with a `+1e-6` bias) and `snap_intensity` (390, without), which can differ at a half step; the lerp exists twice (`sample_line_at` 196, `resample_envelope` 271-279, which also repeats `point_x_fraction` 343). `chunk_start_offset_ms` (184) recomputes the stride `split_into_chunks` (159) uses; its only caller (gtk `vibration.rs:221`) calls both.
 - Fix: GTK uses the core helpers; one snap; one `lerp_at`; `split_into_chunks` returns `(offset_ms, chunk)` pairs.
 
 #### #288 sound.rs
+- Related: #355 (bell-sound import, delete and name checks into core: do the name rule there).
 - `is_passthrough_ext` (140) is called only by tests; `target_extension_and_mime` (174) repeats the wav/ogg rule with a redundant `"ogg"` arm. Kotlin re-decides it from the folder name (`MeditateGuidedImport.kt:111-118`); Rust could hand Kotlin the decision.
 - `safe_copy_no_follow` (240-273) is `std::io::copy` by hand, and unlike it stops on `Interrupted` (then deletes the half copy).
 - `name_collides` (185) is `name_collides_excluding(.., "")` (197) written out; android `ui.rs:1659` mirrors it again. Bell sounds compare with Unicode `to_lowercase`, the other four kinds with SQL `NOCASE` (ASCII only), so "Ä" and "ä" collide only for bells; one rule.
@@ -394,7 +407,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
   - `Channels`/`channel_allowed` (599-635) are pub but only feed `effective_signal_mode`; `ringing_jitter` (426-436) builds the same literal twice; `let mut index = *gaps - 1;` (284) is a dead store; `rings_before` (210) can be an iterator (see #274).
 - `preset_config.rs`:
   - `same_settings` (224-226) clones the whole bell per comparison; `edit_interval_bell` (784) clones `old` and `bell`.
-  - `apply` inserts a re-added bell and then updates it for the volume (744-758): two writes, two sync events; give `insert_interval_bell` a volume.
+  - `apply` inserts a re-added bell and then updates it for the volume (744-758): two writes, two sync events; give `insert_interval_bell` a volume. Superseded by #354 (which also returns the uuid, for both apps).
   - `ModeSetupVisibility` (377-408) has eight fields from three booleans; `StarVisualState` (347-368) mirrors a bool (one user, gtk `presets.rs:414`); `default_starred_on_save()` (329) returns `true`.
 - `bell_volume.rs`: the second clamp in `from_percent` (70-78) can't change anything; `gain_over` (118) has one caller with a constant.
 
@@ -422,6 +435,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: keep only the real decisions (`StreakKey { Zero, Days(n) }`, `IntervalsCountKey { None, Enabled(n) }`, a plain count for sessions and bells).
 
 #### #297 One read of the day totals for the Stats page
+- Related: #332 (the GTK half).
 - Where: `insights.rs:51-80` (`input_from_db`, eight queries, plus a ninth for the running average that `totals` already holds), `goal.rs:89-96` (`today_from_db`, another day-totals read), the apps' mini stats re-read best streak and session count (gtk `stats/imp.rs:507-509`, android `ui.rs:2048-2050`), and the heatmap reads the whole history (gtk 196, android 2172).
 - Fix: read the day totals once from the oldest window needed and derive streaks, the goal, the 30/60-day sums, the 7-day average, the heatmap and the chart from that list. Related: #220 (the query half: do together), #58 (the heatmap's `daily_totals`).
 
@@ -430,6 +444,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: one `write_atomically(path, suffix, write)` in core for all three. Supersedes the `write_whole_file` bullet of #261. Related: #87, #302.
 
 #### #299 Settings readers that bypass `read_*`
+- Related: #399 (Android's bell rows read keys by hand).
 - Where: `labels.rs:24-27` (`label_active_from_db` is `read_bool(db, key, mode == Guided)` by hand); `goal.rs:35-40` (also never clamps to `DAILY_GOAL_MAX`); `format.rs:633-646` (`prep_plan_from_db`/`parse_prep_secs`, repeated by gtk `timer/imp.rs:3249-3254` and android `ui.rs:3765-3769`); `settings_keys.rs:19-131`, ten per-mode key functions with the same three-arm match, and seven distinctness tests (391-570) where one test over all keys would also catch cross-family collisions; `set_last_mode` (302-307) and `guided::remember_guided` (47-54) share "write `sync_state` only if changed".
 - Fix: the existing readers everywhere; a `prep_secs_from_db`; one key table per suffix; `Database::set_sync_state` skips equal values itself. Related: #281 (key constants for the bell family).
 
@@ -438,6 +453,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: one row loop with a per-row closure and a `Session::timer(start_iso, secs, notes)` constructor (fixes #305 on the way); a private `_with` seam; `DataIoError::Db(DbError)` and a typed key instead of English (fixes #310); `sort_by_cached_key`; a lowercase-name map.
 
 #### #301 One decision, a different output per app
+- Related: #482 (insights, streak dash, sync tone).
 - `mini_stat_or_dash` (GTK) and `mini_stat_value` (Android) (`format.rs:430-444`): Android groups digits, GTK doesn't. `format_time_of_day` (GTK, 24 h only) and `time_of_day_key` (Android, follows the 12/24 h setting) (674-692).
 - `NameValidity` (`naming.rs:132-170`) is only ever reduced with `is_savable()` (14 call sites, all trimming first); no collision hint is shown though the doc says so.
 - `InsightKey::glyph` (`insights.rs:135-152`) says it keeps the icons portable, but Android has its own `insight_icon_id` (`ui.rs:2370`).
@@ -448,6 +464,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Fix: `read_to_string`, find the start of the last 2000 lines, one `write_all` (fixes #307); `format!` the line and one `write_all`. Related: #298, #87.
 
 #### #303 Smaller ones
+- Related: #487 (lead-in noise built per bell on Android), #481 (sort order).
 - Chart period as a day count: the 90 and 365 thresholds twice (`date_math.rs:279/294` vs 324-332, "keep in lockstep"), `x_label_kind` matches 7 and 28 (149): take `ChartPeriod` and match on its unit. `aggregate_for_chart_period` and `ChartYAxisTicks` have no outside caller; the "smoke" loop at 364-372 asserts nothing.
 - Lead-in: ms to seconds to ms (`settings_keys.rs:266-268, 285-289`), `100` hard-coded twice instead of `lead_in::MIN_MS`; Android rebuilds up to 480k noise samples and takes the db lock on every bell (`ui.rs:10376-10379`): cache by length as GTK caches its WAV.
 - Time helpers: `Local.timestamp_opt(..).single()` six times (`format.rs:652-720`, `date_math.rs:102`, `time.rs:99-101`): one `time::local_dt`; the 0..=9999 year check and ISO parse three times (`time.rs:104, 139-151`, `data_io.rs:267`); the same `fixed_offset` closure twice (`time.rs:128, 181`); Log grouping converts each row twice (Android `app.rs:1055, 1070`); `"%Y-%m-%d"` has no shared constant.
@@ -465,6 +482,659 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - `time.rs:289-296` sleeps a real second to test `SystemTime`; delete it.
 - `seeds.rs:221-273`: four copy-pasted uuid-distinctness tests, the bell one already misses `BUNDLED_WOODBLOCK_UUID`; 281-299 compare constants with themselves; so does `format.rs:1400-1410`.
 - `timer.rs:283-293` and 310-337 test the same thing twice.
+
+### Slice 8: gtk `timer/`, `timer_view.blp` (swept 2026-11-10 at 3c845d9)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-gtk/` unless named. Ordered by gain.
+
+#### #312 Decisions the timer page makes that belong in core
+- Related: #395 (the Android side: three statics, the label rule four times).
+- Where and problem:
+  - The session shape (`timer/imp.rs:2190-2289`): #272.
+  - The saved session and the crash-recovery snapshot are built separately from the same facts: `on_save` (2609) and `write_in_progress_snapshot` (2835), each with the "guided uuid only in Guided" rule and a hand-written `TimerMode` to `SessionMode` match; Android has both again (`ui.rs:3072`, `app.rs:320`). The 60 s heartbeat re-reads the Setup label each time.
+  - What the Save button does (`end_button_clicked` 2521-2527: Overtime finishes, Done does nothing, else stop), again in Android `AppState::save_end`.
+  - Which ending gets a completion notice (`notify_complete` 2547, called from 2534, 3015, 3073), again in Android `completion_notice_secs`.
+- Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision with the end (#270). Related: #270, #272, slice 18.
+
+#### #313 One reaction to a tick
+- Related: #394 (Android writes the transition tail seven times).
+- Where: `tick_prep` (2971), `tick_breathing` (3004), `tick_running` (3023), `tick_overtime` (3099) and the Guided end-of-stream closure in `on_start` (~2244) each call `tick` or `tick_summary`, dispatch, and check their own subset of `AutoFinish`, `EndBoxBreath`, `EnterOvertime`, `EndPrep`, `UpdateOvertimeLabel`; the tick call itself is written three times (2979-2984, 3108, and `box_breath_session_tick` 3181, which has nothing Box Breath about it).
+- Problem: a new effect has to be wired five times; the source-grep test `save_joins_pause_when_preparation_ends` exists because of it.
+- Fix: one `session_tick()` and one `react(effects)` for every lifecycle effect; end-of-stream calls the same `react`. Do after #271 and #270 (fewer effects to react to).
+
+#### #314 One bell block instead of six
+- Where: `timer_view.blp:516-890`: six copies of signal toggle host, sound, volume and pattern revealers (starting bell, end bell, four phases; about 42 template children, 28 of them for the phases, 157-186); the matching wiring in `timer/imp.rs:762-949` (start and end bell choosers) and `1390-1506` (phases, with redundant `let phase_for_sound = phase;` copies); three Sound/Vibration/Both toggle builders (1632, 1708, 1806, plus `bells.rs:632-650`) and two apply variants (1684, 1787; the first re-implements `settings_keys::read_signal_mode`); the "loading writes nothing" `get_app` closure four times (1050, 1092, 1127, 1516); the phase widgets listed by hand four times (1255, 1340-1375, 1542-1573, 1616).
+- Problem: every chooser-flow change (volume was the last) is made six or seven times; `every_setup_bell_has_a_volume_row` counts copies to catch drift. The blp comment that `Adw.Toggle` "isn't ergonomic from Blueprint" (613-616) is stale: `mode_toggle_group` (72-88) is declared there.
+- Fix: one composite `BellRows` widget built per `BellSlot` with one wiring path, the toggle group declared in Blueprint, a `writable_app()` helper. Do together with #197 (the same rows must leave their revealers) and #281 (one reader per slot in core).
+
+#### #315 One setup reload
+- Where: `refresh_streak` (3209) reloads the whole Setup page under a streak name; `on_mode_switched` (1921) repeats most of it by hand; `reload_setup` (4715) calls it and then `refresh_setup_label_chooser_subtitle`, which it already ran. Inside: `refresh_volume_rows` twice (1529, 3361), the interval-bell count twice (3255-3264/3316-3319 and `refresh_stopwatch_dependent_ui` 2132), `refresh_auto_finish_state` twice (2135 and 3332; `on_mode_switched` 1956 runs it once with a stale stopwatch flag), the starting-bell sound read and thrown away (3245, 3302; in #61), the prep and bell keys read by hand where core has readers (3244-3279), the stopwatch reload block four times (1986, 3284, 3921, 3936). A tab switch also maps the view, so `refresh_bell_row_names` (391) resolves eight names that `refresh_streak` resolves again. `on_save` reloads twice (`reset_mode`, then 2704).
+- Fix: one `load_setup()`; a mode switch is "save the last mode, `load_setup()`". Related: #61, #299.
+
+#### #316 The preset list is rebuilt after every local write
+- Related: #331 (one refresh policy for the whole window).
+- Where: `timer/imp.rs:396-410`: a 500 ms timeout for the app's lifetime; on any local change it rebuilds the whole starred-preset list (three queries, every row recreated with its drag controllers, focus saved and restored), on top of the explicit rebuilds after chooser picks (580, 601), moves (3427), mode switches (1968) and `refresh_streak` (3348).
+- Problem: every toggle or slider save costs a full rebuild, often two within 500 ms; the app wakes twice a second while idle (Librem 5 battery).
+- Fix: on a change, recompute only the active marks on the existing rows; keep full rebuilds for list changes, which already call it; poll only while the page is mapped. Related: #283 (the core half).
+
+#### #317 Applying a preset snapshots the setup twice
+- Where: `on_preset_row_activated` builds `snapshot` (3976) for Undo, then `apply_config` builds the same `before` (3894) for its rollback; each is about 25 setting reads plus the bells and phases. The rollback itself (3893-3902, Android `ui.rs:1797`) is OPEN-ISSUES #193.
+- Fix: with #193 the rollback goes; until then pass the one snapshot to both.
+
+#### #318 Dead parts of the timer page
+- The `timer-paused` signal, its emit and `connect_timer_paused` (`mod.rs:108`, `imp.rs:371, 2415`): nobody listens (`window/imp.rs:171` says so).
+- `show_paused_ui` (2067-2077) and the `UiState::Paused` arm of `on_mode_switched` (2003): the running page covers Setup while paused, so `show_idle_ui` (2017-2024) re-enables widgets nothing visible disabled. Check on a device that Setup is never visible while paused.
+- `end_in_flight` returns a duration no caller reads (2421, callers 2518-2525); the `find_map` in `core_session_end` (3129-3145) is dead.
+- `view_stack` in `timer_view.blp:6-11` has one page; `set_visible_child_name("setup")` (2015, 2069) does nothing. `countdown_inputs` (165-175) is an empty box kept "for future knobs", still toggled (2017, 2036, 2070).
+- Template children never read: `guided_selected_group`, `cues_signal_mode_row`, `starting_bell_signal_mode_row`, `end_bell_signal_mode_row`, `guided_inputs`. `stopwatch_mode_row.set_visible(true)` (1948, 2021): nothing hides it.
+- Unused parameters: `label_merged(_from, _into)` (4202), `apply_preferred_label_for_mode(_mode)` (4707, in #61), the `_obj` of the three tick functions (2971, 3023, 3099); `reset_mode`'s match with two empty arms (2788-2798).
+- Related: #61 (the older GTK dead-code list).
+
+#### #319 Redundant state and copied switch handlers
+- `stopwatch_toggle_on` (255) mirrors `stopwatch_mode_row.is_active()`, set together in five places with a set-guard-set-set-unguard ritual.
+- `tick_mode` (208) duplicates `Session::mode()`; `on_pause` (2401) reads it, `on_resume` (2355) reads `current_mode()`.
+- `TimerMode` (36-67) renames core's `SessionMode` one to one (Android `app.rs:25-52` too); two hand-written matches (2609, 2843) copy its `From` impl.
+- The stopwatch, keep-awake and auto-finish switch handlers (443-495) and the starting-bell, prep and interval-bell expander handlers (880-988), plus the cues master (1323-1336): seven copies of about 15 lines; `read_bool(stopwatch_key_for_mode(..))` five times across both apps, with no core `stopwatch_from_db`.
+- 53 `*_loading` guards (fields 246, 258, 264) suppress writes core already skips when unchanged (`db/settings.rs:20-30`); one missed guard caused the Cues bug. Caveat: the first save of a default value still records an event.
+- Fix: read the switch; the session's mode; `SessionMode` directly; a `bind_per_mode_switch(row, key_fn)`; a core `stopwatch_from_db`; drop guards whose only job is the write, after checking the first-save case.
+
+#### #320 One toast helper
+- Related: #373.
+- Related: #357 (the same in preferences, presets and sounds, plus an undo button).
+- Where: `timer/imp.rs:4031-4035` (`toast`), 2664-2671, 2682-2689, 3634-3636, 3802-3804 use `adw::Toast::new` and `add_toast` directly; `db::show_toast` (`db/mod.rs:144`) wraps the title, replaces the last toast and finds the overlay of a pushed page. The two `on_save` error arms (2656-2691) differ only in kind, detail and text.
+- Fix: `show_toast` everywhere; one error arm. Fixes #326.
+
+#### #321 Smaller ones
+- The Import File callback (654-663) builds what `library_pick(&row)` (4453) returns.
+- `lookup_sound_name_for_setting`/`lookup_pattern_name_for_setting` (4426-4447) repeat `bells.rs:440-453` and turn a read error into "" instead of the default uuid. Related: #284.
+- `BreathPattern { 4, 4, 4, 4 }` by hand (384-386): in #286.
+- The fallback `PresetConfig` (3869-3879) spells out every field; `..Default::default()`.
+- `get_app()` (4206) is the same as in Log (`log/imp.rs:1298`) and Stats (`stats/imp.rs:569`); `sound.rs:387` has `app()`.
+- Overtime rebuilds both end buttons every second (3120 via `refresh_end_buttons` 2484); only the Add label changes.
+- `follow_selected_guided_file` (3752-3763) looks the file up twice; `refresh_media` (2449-2457) clones the guided name each tick; `refresh_guided_selected_row` (3690) reads the remembered file on every refresh (the write is skipped when unchanged).
+- `show_custom_time_dialog` (4078-4150): both arms compute h:m the same way, `mode_for_response` copies `mode`, the Guided arm is `unreachable!()` in one place and `{}` in the other.
+- Docs on the wrong item or cut off: 51-55, 156, 1240-1253, 2824-2830, 2890-2901, 3147, 3203-3206, 3889-3892, 4254-4257, 4500, `mod.rs:89`; `timer_view.blp:380-383, 420-429`. Mid-file `use`s (4257, 4513-4521).
+
+#### #322 Tests
+- Five source-slicing helpers across `mod.rs:237-286, 431` and `imp.rs:4798-4807` (`method` and `body` are the same); "split imp.rs at `#[cfg(test)]`" inline about six times; some `mod.rs` tests check only `window/imp.rs` or `application.rs` (353-382).
+- Most tests grep source text (exact signatures, counts of `.duration_value_label`), so #312 to #319 would break them without a behaviour change. Where a decision moves to core, replace the grep with a core unit test.
+
+### Slice 9: gtk window, log, stats, application, gtk `db/`, their `.blp` (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-gtk/` unless named. Ordered by gain.
+
+#### #327 Let the compiler find dropped write results
+- Related: #484 (`with_db_mut` goes away).
+- Where: `db/mod.rs:1074-1145` (`dropped_writes` / `no_write_result_is_dropped`: a brace-matching text scan over ten named files) and `application.rs:490-585` (`with_db*` return `Option<R>`, which loses `Result`'s `#[must_use]`).
+- Problem: the scan misses files and patterns: `window/imp.rs:727` drops a write through `with_db` (#340), and `application.rs:419-426` only logs a failed delete (#341).
+- Fix: `#[must_use]` on `with_db`, `with_db_mut`, `with_db_blocking(_mut)`; delete the scanner (about 70 lines). Fixes #340 and #341 on the way.
+
+#### #328 The shell's `DbError` and the pass-through `Database`
+- Where: `db/mod.rs:31-133` (a `DbError` that copies core's variants), `359-371` (`map_core_err`), `120-133` (`clash_text` downcasts both types and maps core to shell again), about 60 one-line wrappers (445-944) next to 88 direct `db.core()` calls; guided.rs:1191 already matches core's type.
+- Also: `list_presets`, `active_months`, `active_days_in_month` have no caller (seven more wrappers look unused by grep; confirm with clippy); `let _ = BellSoundCategory::General;` (439); `test_db_in_memory` (952-961) seeds one by one instead of `seed_all_non_audio()`; docs still describe `rusqlite::Result` and the retired "delete the old DB" rule (12-16, 403-406, 661-663, 707-710); the seed-list doc sits on `bundled_bell_resource` (174-178).
+- Fix: core's error with a free `duplicate_toast_text(&core::DbError)`; callers use core; keep only the GTK-specific bits (bundled-bell seed table, the `Session` unix and ISO shim).
+
+#### #329 Log day sections from one grouping
+- Related: #433 (Android's `group_log_sessions`).
+- Where: `log/imp.rs:238-275` (append), `282-344` (prepend), `798-840` (delete) each keep their own count, total and caption; `build_section_frame` returns a tuple and two `DateSection` literals are built (251-257, 327-333); `loaded_count` (43) always equals `sessions.len()`; `application.rs:747` asserts `log_card_total_secs(` appears exactly five times.
+- Problem: three copies of the count and total rule (#35 and the "counted twice" fix came from it); Android computes the same as a pure, tested `group_log_sessions` (`app.rs:1040`), including the hidden-pending-delete rule GTK re-implements with `set_visible` twice.
+- Fix: `group_log_sessions` (without Slint types) into core; GTK derives a section's caption from it, or at least a `DateSection::add/remove`. Delete `loaded_count`. Related: slice 18.
+
+#### #330 The Log filter
+- Where: GTK `window/imp.rs:992-1049` reaches into `log_view.imp()` fields (`filter_label_ids`, `building_filter`, `filter_label_id`); `log/imp.rs:143-147` and `355-360` both clear a deleted filter label (the second then calls `refresh()`); labels and places are reloaded four ways (139-149, 289-298, 348-356, 1168-1171; the label map built twice, 224, 300); `has_filter` written three times (164, 834, `log/mod.rs:43`); two guards (`is_active()` and `building_filter`) for one problem; every Log tab switch runs `refresh_filter_labels` (`window/imp.rs:980`) though the popover rebuilds on show (`log/imp.rs:1012-1020`). Android (`ui.rs:2859-2872, 3241-3271, 9008-9021`) re-queries `all_labels_ordered()` on pick, the stale-mapping bug GTK fixed with `filter_label_ids`.
+- Fix: a core `LogFilter { notes_only, label_id }` with `has_active()`, `dropdown(&labels)`, `pick(index, &ids)`, `reconcile(&labels)`; LogView gets one `set_filter_from_index`; one `reload_labels(&app)`; drop the tab-switch call. Related: slice 18.
+
+#### #331 One "data changed" refresh policy
+- Related: #484 (GTK syncs after every write), #485 (a sync says what changed).
+- Related: #397 (Android's double refreshes after a pull).
+- Related: #378 (the hand `invalidate` calls in labels, guided and recovery).
+- Where: `application.rs:632-664`: every finished sync invalidates ALL and refreshes timer, Stats and Log, hidden or not, whether or not anything was pulled (`drain` throws away the result; Android ORs `brought_changes()`, `ui.rs:197`); three `visible-child` handlers (`window/imp.rs:155, 969, 1142`); `reload_for_new_day` (778-790) refreshes only Log or Stats; the map handler pre-warms everything (91-134). A filter change sets the app-wide `log_dirty` to force a re-query (`log/mod.rs:37-49, 60-72`); `stats_dirty`/`log_dirty` have pub fields plus four accessors used only as check-then-clear (`application.rs:22-26, 532-550`); `LogView::refresh`'s "no app yet" branch is dead (`log/mod.rs:16-24`).
+- Problem: since every write triggers a sync, every edit ends in a full timer, Stats and Log rebuild (#342); the new day misses the timer page (#346).
+- Fix: OR `brought_changes()` over the passes (an error counts as changed); one window method `on_data_changed(scope)` that invalidates and refreshes only the visible page, one visible-child handler; `take_*_dirty()`; the filter keeps its own dirty bit. Fixes #342 and #346.
+
+#### #332 One read for a Stats reload
+- Related: #398 (Android reads streak and count twice, the whole history for the heatmap).
+- Where: `stats/imp.rs:140-151, 153-558`: six `get_app()` + `with_db` calls; day totals read four times (goal, heatmap over the whole history, insights, chart), `daily_goal_mins` twice, best streak and session count twice.
+- Fix: one `with_db` per reload over the core list from #297. Related: #297 (core half), #220, #58.
+
+#### #333 The sync indicator polls every 2 s
+- Where: `window/imp.rs:760-777, 795-862`: 4-6 `sync_state` reads per tick (with a refused upload, all bell sounds and guided files too), and every widget property re-applied, CSS classes removed and re-added. The new-day check rides on this poll, pinned by a source grep (1218-1230).
+- Fix: keep the last `SyncIndicatorState` (it is `PartialEq`) and return early; refresh from the sync worker's main-loop hop and when a sync starts; a separate day watch. Related: #254 (one read in core).
+
+#### #334 Editing a session rebuilds the Log
+- Where: `log/imp.rs:1262-1285`: Save calls `refresh()` (labels, places, guided names, page 1, every card), losing "Load more" pages and the scroll, though `cards_by_id` (54-56) exists for in-place edits; its failure path builds its own plain toasts (1272, 1277) instead of `db::write_ok`; the dialog title is built twice (1145, 1152) and 912 re-parses `init_dt`.
+- Fix: replace the one card (edit) or `prepend_session` (add); `write_ok(.., Failed::Save)` (fixes #349). Related: #320.
+
+#### #335 Pending Log deletes: one transaction per row
+- Where: `log/imp.rs:776-786`: N deletes are N transactions and N `trigger_sync` calls on the main thread.
+- Fix: one core batch delete in one transaction, one sync. Related: #217 (the delete paths in core).
+
+#### #336 Startup work
+- Where: `application.rs:137-231`: database open, recovery finalise, orphan sweep and the haptic D-Bus probe (up to 500 ms) run one after another before the first window; `window/imp.rs:91-134` pre-warms Stats and Log on every map, not only the first; the ShortcutsWindow is parsed at build (1060-1074).
+- Fix: probe haptics on a thread joined before the UI reads it; pre-warm once (or not: both views load lazily); the orphan sweep can wait for the first frame as long as it runs before the first sync. Related: #228 (core's startup work).
+
+#### #337 Finding the app, the window and the accent colour
+- `get_app()` is the same in Log (`log/imp.rs:1298`), Stats (`stats/imp.rs:569`) and Timer (`timer/imp.rs:4206`); `application().and_then(downcast)` five more times in `window/imp.rs` (123, 700, 722, 781, 797) and twice in `application.rs`; `build_card` looks the window up three times (`log/imp.rs:554-596`) though `get_window` (1305) exists. One `MeditateApplication::of(widget)`. Related: #321.
+- `accent_rgb` (`window/imp.rs:946`, unused `_widget`) and two inline copies (`stats/imp.rs:603-608, 680-685`) plus `vibration_editor.rs:622`: one parameterless helper; drop `let _ = area;` (679).
+- The note editor (caption, TextView, ScrolledWindow, LabelledBy) is built twice (`window/imp.rs:549-575`, `log/imp.rs:1009-1050`).
+
+#### #338 Smaller ones
+- `window/imp.rs:673-682`: the running page prunes the stack with a hard-coded tag list (`"setup-session" | "setup-bells" | "interval-bells"`); mark the pages where they are built.
+- Box Breath: each frame computes `phase_at` twice and sets three labels with `gettext` even when unchanged (411-463, 497-534); the pattern is kept twice (`pattern_cell`, `pattern_for_tick`, 407-409, 493); the stopwatch target is computed twice (355, 526).
+- The bell ring's 250 ms timer keeps running unmapped and after Stop (290-329). Related: #274.
+- Stats: `x_label_text` rebuilds the month list for every bar (707-712, see #294); `series`/`values`, `max_snap`, `chart_h` (442-474); `cells_built` (47) is `contrib_cells.is_empty()`; the heatmap formats five class names per cell per reload (214-251); `while first_child` loops where `remove_all()` exists (269-271, 531-533); the progress clamped twice (100, 699); the best-streak dash by hand (515-521, Android `ui.rs:2050-2056`, see #301).
+- "Sync Now" (`window/imp.rs:726-729`, Android `ui.rs:9734`) clears refused uploads then syncs in both apps: one core `retry_now()` returning `Result`.
+- The Stats icon is set in code (80-82) and in `window.blp:144`; `switcher_bar` is an unread template child; `imp::add_toast` vs `toast_overlay` directly (1052, `mod.rs:27`); `ObjectSubclassIsExt` imported inside 17 methods; `gdk::Display::default()` twice (`application.rs:209, 217`).
+- Pass-throughs to core: `log/imp.rs:650, 677`, `stats/imp.rs:582`, `db/mod.rs:377`. `SessionCountKey`'s two arms (`log/imp.rs:683-688`): see #296.
+- Docs on the wrong item: `log/mod.rs:26-32`, `window/imp.rs:905-911`; stale: `window/imp.rs:1158` ("E.5"), `window.blp:50-56`.
+
+#### #339 Tests
+- `window/imp.rs:1156-1207` re-test core's `synced_ago_key` through English substrings, with an `ago` helper that re-implements `unix_now()`.
+- Source-reading helpers again (`window/imp.rs:1211`, `log/mod.rs:84-96`; about ten inline `read_to_string` in `application.rs`); most `application.rs` tests (698-883) pin other files. Related: #322.
+
+### Slice 10: gtk preferences, presets, bells, sounds (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-gtk/src/` unless named. Ordered by gain.
+
+#### #352 Closures that keep closed pages alive
+- Related: #368 (the Rebuilder part, done once with a weak self-reference), #391 (the same leak in Local Folder).
+- Where:
+  - Each `Rebuilder` closure captures a strong `Rc` of the `Rebuilder` that owns it (`bells.rs:62-79`, `sounds.rs:92-105`, `presets.rs:107-121`), and nothing sets it back to `None`: every open of Interval Bells, a sound chooser or the preset chooser keeps its group, rows, `on_changed` closures, preview state and, in Save mode, a `PresetConfig` per row.
+  - The bell edit page's Delete handler captures its own page and `prefs_page` strongly (`bells.rs:893-933`); the Volume row's `save` closure captures the row that owns the scale (`bells.rs:744-755`, `volume_row.rs:203-229`), keeping a GStreamer `MediaFile` per previewed edit page; rows captured in their own handlers (`bells.rs:293, 816, 827, 847, 858`, `sounds.rs:350`); each preset row's `move_to` holds the `rows` Vec (`presets.rs:245-253`).
+  - Create, rename and import dialogs: the validate closure on the entry holds the dialog that owns the entry (`presets.rs:526, 584`, `sounds.rs:578, 928`).
+- Problem: reference cycles, so these pages and dialogs are never freed; memory grows with every visit (Librem 5). Seen in the code, not measured.
+- Fix: `Rc::downgrade` for the rebuilder, `#[weak]` in `clone!` for widgets (as `preferences.rs:275` does). Check with a heap or refcount test before and after. labels.rs and vibrations.rs use the same Rebuilder pattern (slice 11).
+
+#### #353 The bell list rebuilds too often
+- Where: `write_back_bell` (`bells.rs:535-554`) rebuilds the hidden list on every spin step, kind or signal change and settled volume, though the list rebuilds on `connect_shown` (87-91) when the edit page pops; the rebuilder already calls `on_changed` (78) and the callers call it again (357, 553, 924), so the count subtitle is read twice per write; opening the page builds the list twice (`rb()` at 81, then `connect_shown`); `build_create_row` (202) the same. Each row's subtitle loads the whole bell-sound library (239, `bells.rs:440-445`; see #284).
+- Fix: rebuild only on `connect_shown`; one `on_changed`; load the library once per rebuild and use core's pure `sound_name`.
+
+#### #354 Interval-bell rules in core
+- Related: #422 (the Android bug the three writes cause), #421 (one editor fill).
+- Where: `bells.rs:126-133, 249-253` builds the stopwatch display mode by hand where core has `display_mode_from_db` (Android uses it, `ui.rs:3694, 3950, 4025`); GTK hard-codes Timer, Android passes the setup page's mode, so the two decide differently (latent while Box Breath hides interval bells). `insert_interval_bell` returns a rowid, so GTK queries the uuid back (183-213) and Android queries and then updates for the volume (`ui.rs:8117-8130`); the new-bell defaults are assembled in each app. The kind-to-index mapping is written both ways inline (590-594, 769-773) and again in Android (`app.rs:267-284`) with a different fallback.
+- Fix: a core `interval_bell_display_mode(db)`; `insert_interval_bell(.., volume) -> uuid`; `IntervalBell::new_default()`; one ordered kind list in core. Supersedes the `insert_interval_bell` volume bullet of #289.
+
+#### #355 Bell-sound import, delete and name checks in core
+- Related: #440 (the bundled bell list kept in both apps).
+- Related: #402 (Android's import flow).
+- Related: #372 (the same for guided files: one core helper for both).
+- Where: "insert the row, delete the orphaned file if the insert fails" (`sounds.rs:624-648`; Android `insert_bell_sound_import`, `ui.rs:1619-1653`, with the mime hard-coded as `audio/ogg`); "delete the row, then the files" (`sounds.rs:997-1000`, Android `ui.rs:6930`); the import folder rebuilt by hand (`sounds.rs:704-706`) next to `sync_runner::local_sounds_dir()`; name checks load the whole library on every keystroke (`sounds.rs:547-551, 936-942`), and the import dialog skips `validate` (539-560), while presets use one `is_preset_name_taken` query.
+- Fix: core `import_bell_sound`, `delete_bell_sound_with_files`, `is_bell_sound_name_taken(name, except)`; `local_sounds_dir()` everywhere; `validate` in every dialog. Related: #288 (the name rule).
+
+#### #356 One preview button, one transcode
+- Related: #416 (Android's preview toggles).
+- Related: #375 (the guided preview slot and `PreviewState`).
+- Where: `sounds.rs:260-334` (`add_play_button`, `PreviewState` 30-37) is a near copy of `guided.rs:871-930`, and `vibrations.rs:286-331` is a third; the "revert to Play" pair twice (296-299, 322-326). The transcode copy (`sounds.rs:742-846` vs `guided.rs:461-556`) is already #61; the busy spinner (597-606) copies `guided.rs:302`.
+- Fix: one preview-button helper with a play closure and a tooltip. Related: #61.
+
+#### #357 Toasts and dialogs
+- Related: #373 (guided, Local Folder and sound toasts; the undo toast three ways).
+- `sounds.rs:451-463, 671-682` post to the main window's overlay, hidden behind the chooser (#362); `preferences.rs:792-795` (`data_toast`, used inline at 371-372) uses a plain title; presets keep their own one-at-a-time `ToastSlot` and two undo-toast variants (`presets.rs:30-35, 726-797`) next to `db::show_toast`'s own, and `guided.rs:1214-1287` has a superset of `build_undo_toast`.
+- `if let Some(root) = anchor.root() { if let Ok(window) = root.downcast::<gtk::Window>() { dialog.present(..) } }` about 17 times (presets 553, 620, 689, 719; sounds 663, 968, 1006; bells 360, 928; more in other files): `dialog.present(Some(anchor))` does it and never silently skips.
+- The "Delete Bell?" dialog and its delete flow twice (`bells.rs:328-365`, 899-933).
+- Fix: `show_toast` with an optional undo button; `present(Some(anchor))`; one `confirm_and_delete(.., after)`. Related: #320, #337.
+
+#### #358 One name dialog
+- Related: #486 (the name rule inside the write).
+- Related: #415 (Android's six name dialogs).
+- Related: #374 (the vibration editor and guided import also skip `validate`).
+- Where: create and rename dialogs build the same entry, AlertDialog and validate closure: `presets.rs:502-559, 561-626`, `sounds.rs:902-974`, plus `labels.rs:303`, `guided.rs:942`, `vibrations.rs:527`. Callbacks wrapped as `Rc<Box<dyn Fn>>` (`presets.rs:505/544, 699/713`, `sounds.rs:390/401/470`). "Import failed:" + msg (`sounds.rs:676`) is a third msgid next to "Import failed: {error}" and "Import failed".
+- Fix: one `name_dialog(anchor, heading, initial, response, is_taken, on_ok)` (the leak in #352 is fixed once there); reuse "Import failed: {error}".
+
+#### #359 Preferences
+- The `SyncSettingsError` toast mapping twice (`preferences.rs:305-326, 416-435`; Android twice more, `ui.rs:9119-9140, 9638-9660`); the keychain read wrapped in a 10-line match for an MSRV note that no longer applies (291-303 vs 411-415).
+- The lead-in is read through core but written raw (118-121, 137-140; Android `ui.rs:6644-6658`): core writers like `goal::write_daily_goal_mins`. `f64::from(lead_ms) / 1000.0` (127) next to `ms()` (102).
+- Spin rows write on every tick (lead-in 132-144, daily goal 77-88): #363.
+- CSV export, parse and import run on the main thread (614, 722, 777); `with_db_blocking`/`spawn_blocking` exist (Test uses them, 344).
+- The closed handler (525-541) repeats `refresh_main_window` (797-805); after an import, `refresh_streak` runs twice. Three import buttons wired by the same `clone!` with a seven-parameter `wire_data_actions` (629-653); the CSV filter built twice (599-602, 708-711). Stale tombstones (37-51).
+
+#### #360 Smaller ones
+- `presets.rs`: `chooser_mode` tested four times (233-267, one `match`); Save mode clones everything twice per tap and deep-copies the `PresetConfig` per row (267-339); `toast_slot` threaded through to be dropped (434-436, also in #61).
+- `bells.rs`: `let _ = populating;` and its wrong comment (935-940, also in #61), and the signal handler's check can't fire (878-880); the doc of `push_edit_page` split around `write_back_bell` (529-559); `type Rebuilder = crate::Rebuilder` carrying `rebuild_list`'s doc (95-99); "once B.3.3.B lands" (22); `lookup_bell` lists all bells to find one (945-951); two copies of the chevron suffix (663-667, 681-685) and of the sound/pattern row handlers with double clones (809-864).
+- `if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }` 35 times: one `crate::rebuild(&r)`.
+- `sounds.rs`: `SelectionContext` is pub but local, the module doc describes a mode that doesn't exist (9-10, 203-211); orphan comment (377-381); `std::cell::RefCell` by full path (80-84).
+- `preset_subtitle.rs:56-67`: the `One` arm (see #296); "Stopwatch" twice (33, 46).
+- `volume_row.rs:146-150` re-implements `sound::app()`.
+
+#### #361 Tests
+- `volume_row.rs:305-383`, `preferences.rs:818-838`, `bells.rs:1005-1026` assert exact source substrings and their order, so #353 to #359 each need test rewrites without a behaviour change. The volume settle, hold and release decision (231-280) could be a pure state machine with real unit tests. Related: #322, #339.
+
+### Slice 11: gtk vibrations, vibration editor, guided, labels, keychain, local folder, the rest (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Files: `vibrations.rs`, `vibration_editor.rs`, `vibration.rs`, `guided.rs`, `labels.rs`, `keychain.rs`, `local_folder.rs`, `announcement.rs`, `config.rs`, `data_io.rs`, `format.rs`, `i18n.rs`, `main.rs`, `mpris.rs`, `recovery_dialog.rs`, `sound.rs`, `sync_runner.rs`, `time.rs`, `data/ui/shortcuts.ui`. Paths are under `meditate-gtk/src/` unless named. Ordered by gain.
+
+#### #368 One Rebuilder that frees itself
+- Where: `if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }` about 38 times in 7 files; the `Rebuilder` alias (`main.rs:44`) documents the self-capture as the pattern, and every chooser holds a strong `Rc` to itself (`vibrations.rs:81-97`, `labels.rs:76-87`, `guided.rs:614-630`), with about ten `*_for_rb` clones each. `local_folder.rs:365-380` already uses `Rc::downgrade`.
+- Also: the guided rebuilder calls `on_changed` itself (`guided.rs:629`) and every caller calls it again (674, 720, 829, 1022, 1051, 1123, 1179), so the Setup view's starred list rebuilds twice per action; after creating a label the chooser is popped and then rebuilt (`labels.rs:131-137`).
+- Fix: a `Rebuilder` newtype holding a weak self-reference with `rebuild()`; drop the second `on_changed` and the rebuild after `pop()`. This is the general form of the Rebuilder part of #352: do it once here. Related: #352, #386.
+
+#### #369 Vibration editor rules and the throwaway pattern row (both apps)
+- Related: #420 (Android's editor).
+- Where: pick, snap and point spacing are #287. On top: the 0.5-10 s limits (`vibration_editor.rs:33-34`) are written again in Android (`main.slint`, 5..100 tenths); Save rounds the duration (`.round()`, 499), Preview truncates (`as u32`, 581), Android multiplies tenths; both editors build a `VibrationPattern` with blank id, uuid, name and times only to call `build_master_envelope` (`vibration_editor.rs:531-570`, `vibration.rs:170-182`, android `ui.rs:7263-7283`), and both write the same insert-or-update branch (`vibration_editor.rs:492-511`, android `ui.rs:7610-7630`). The aliases `EDITOR_* as …` and `resample_envelope as resample` exist for readability of pre-migration code (26-31, 56).
+- Fix: `EDITOR_DURATION_MIN_MS`/`MAX_MS` and one `duration_ms(seconds)` in core; `build_master_envelope(duration_ms, &[f32], ChartKind)` and `PatternPlayback::play` taking the same; a core `save_vibration_pattern(db, edit_uuid, ..) -> uuid`. Related: #287.
+
+#### #370 Saving a vibration pattern says whether it changed
+- Where: `vibrations.rs:374-395` reads the row back after every editor Save and compares it field by field (`patterns_equivalent`, core `vibration.rs:212`, five tests) to decide whether to show Undo, because `update_vibration_pattern` returns `()` and always writes; `rename_vibration_pattern` already returns `Result<bool>`. Android shows Undo without the check.
+- Fix: the unchanged guard in `update_vibration_pattern` returning `Result<bool>`; delete the read-back and `patterns_equivalent`. Comes free with #234's guard, which also fixes #184 and #248.
+
+#### #371 Local Folder: rebuild only when the list changes
+- Related: #481 (the job in core, its slice 18 note).
+- Related: #439, #443 (Android's lengths buffer).
+- Where: every scan step and every length read calls `notify()` (`local_folder.rs:103, 115, 140, 171, 287`), and every live page's listener runs a full `fill_page`: four DB reads (folder, `files_of`, list view, sort) and every row rebuilt, so reading N lengths costs N full rebuilds of N rows. The focus and scroll repair (453-461, 493-509, `named` 612-618) exists to undo that rebuild. The queue dedup is `q.iter().any` per file (128-133). The toggle and sort handlers carry a weak self-rebuild (365-381) where `notify()` re-fills every page anyway.
+- Fix: rebuild on scan, sort and view toggle only; update a length on its row (`file-{id}`) in place, or coalesce into one idle; a `HashSet` for the queue; toggle and sort call `notify()`. Then the refocus code goes. For slice 18: the job state (scanning, queue, failed, unreachable, the "folder changed during the walk" rule) is kept again in android `ui.rs:1270-1290`; only `RefreshProgress` is in core. Related: #391.
+
+#### #372 Guided import, delete and transcode
+- Related: #402 (Android's import flow).
+- Where: "insert, remove the orphan if the insert fails, read the row back" (`guided.rs:312-345`) and "delete the row, remove the file when the Undo toast ends" (1094-1210) are written again in Android (`ui.rs:1166-1185, 5840, 10179`), with different error formatting; #355 moves the same into core for bell sounds only. `transcode_to_ogg_preserve_channels` (461-556) and `do_import_io` (400) copy `sounds.rs:742, 691` (#61). The `AudioFileError` to toast text is written three times (`guided.rs:155-163, 351-361`, `sounds.rs:649-653`; Android has one `audio_file_error_text`, `ui.rs:1123`), and cancel travels as `AudioFileError::Other("cancelled")` (450). The display name is built by hand (141-145) where `sounds.rs:472` uses `display_name_from_path`; `format!("{new_uuid}.ogg")` (413) copies `guided_file_path`, which 1166 uses.
+- Fix: widen #355 to one core library-file helper for both kinds (`import_* -> Row`, and a delete that names the file to drop when Undo expires); one `transcode_to_ogg(src, dest, normalise, cancel)`; one `audio_error_text`; an `AudioFileError::Cancelled` variant. Related: #355, #61, #356.
+
+#### #373 Toasts, undo toasts and the Announcement type
+- Where: `guided.rs:1283-1294` (`window_from`, `add_toast_to_window`, about 10 calls; `window_from` again in `presets.rs:794`), `local_folder.rs:47-54, 77-79` and `sound.rs:270-290` post plain toasts past `db::show_toast`, which wraps the text; the undo toast is built three ways (`guided.rs:1214-1280`, `presets.rs:737-790`, `vibrations.rs:457-525`, the last two near copies of each other). `Announcement` (`announcement.rs`) is built and rendered only in GTK, Android doesn't use it, and guided builds the same toasts by hand ("File renamed" 1036, "Deleted"+name 1131); `PatternUpdated`/`PatternDeleted` and guided concatenate `"{} {}"`, so translators can't reorder (the others use `{name}`).
+- Fix: `show_toast` with an optional undo button for all of them (#357's fix, widened); delete `Announcement` and write `gettext("… {name}")` at each call site, or make it the only path. Related: #320, #357, #392.
+
+#### #374 Name checks through core's `validate`
+- Where: the vibration editor's Save gate (`vibration_editor.rs:453-470`), the guided import dialog (`guided.rs:213-245`) and rename (980-1013) check empty and taken by hand (`!trimmed.is_empty() && collision`, where `collision` already implies non-empty); labels, sounds and the vibrations rename use `meditate_core::validate`.
+- Fix: fold into #358's one name dialog with `validate`; #358 named `guided.rs:942` but not these two. Related: #358, #288.
+
+#### #375 sound.rs
+- Related: #85 (`preload_end_bell` was listed there first; do it once).
+- Related: #397 (Android's `bell_sound_path` and the interval bell list).
+- `preload_end_bell` (294-305) builds a `MediaFile` that is never played: `play_end_bell()` is gone and `play_end_bell_uuid` makes its own; four callers pay two DB reads and a player build each (window/imp.rs:126, timer/imp.rs:745, 792, 1284); stale comments at 286-293, 311-315, 326 and timer/imp.rs:742. Delete it.
+- `lookup_bell_sound_by_uuid` (205-216) lists and decodes the whole bell library for every bell played, and Android does the same (`ui.rs:4032-4035`): a core `find_bell_sound_by_uuid`, as vibration patterns and guided files have. Related: #235.
+- `play_preview_for_guided_file` (165-181) copies `play_preview`'s slot swap and has drifted (#390): one `play_in_preview_slot(media)`. Related: #356.
+- `PreviewState` is defined three times (`guided.rs:55`, `vibrations.rs:178`, `sounds.rs:31`) over the same core `PreviewToggle`; the "set Play icon and tooltip" pair appears about 8 times: part of #356's one preview button.
+- The end-bell uuid read by hand (`get_setting(end_bell_sound_key_for_mode ..)`, 295-299) is `bell_volume::sound_uuid(.., BellSlot::End(mode))`.
+
+#### #376 keychain.rs
+- `store`, `read` and `delete` repeat "open the chosen backend, mark it, on `WeakKey` log and retry on the file backend" (105-156): one `async fn with_backend(may_fall_back, op)`, and a `BackendChoice` enum for the three `u8` constants; the store-only fallback rule is then a signature instead of a source-grep test (413-425).
+- Every call opens a new backend (a D-Bus connection and Secret Service session, or a re-read of the master key and the keyring file), and `read_password` runs on every sync attempt (`sync_runner.rs:14`): cache the opened backend. `preferences.rs:294, 412` call this blocking API on the main thread.
+- `KeychainError` is a one-variant enum; stale docs (271 `with_keyring`, 404 `bin/keychain_smoke`); the test at 593-608 has the same body as 532-542.
+- Related: #387 (the fallback itself).
+
+#### #377 vibration.rs
+- The feedbackd `Vibrate` call (bus name, path, interface, flags) is written three times (94-105, 203-214, 253-264), and `build_vibrate_args` builds `a(du)` by hand where `(APP_ID, segments.to_vec()).to_variant()` does it: one `vibrate(conn, &[(f64, u32)])`.
+- `probe_haptic` is a `call_sync` with a 500 ms timeout on the startup path (`application.rs:226`), though `has_haptic()` is first read when the editor opens: `call_future` in `spawn_local`.
+- The early-return handles keep `cancel_on_drop: true` (176, 180), so dropping one on the laptop still calls D-Bus, against the doc; `cancel_on_drop: false`.
+- `probe_haptic`'s doc sits on `mod tests` (14-31); a history note (108-113); `chunks.iter()` + `clone()` copies each chunk (190-191).
+
+#### #378 Refreshing views after a write
+- Where: each chooser action calls `app.invalidate(..)` by hand (`labels.rs:284, 356, 416, 477-480`; `guided.rs:1021, 1050`), checked by tests that count the text in the source (`labels.rs:515-558`); the label merge invalidates ALL and then refreshes Stats and Log itself; `recovery_dialog.rs:125-127` says `with_db_mut` already invalidates, which it doesn't (`application.rs:565-572`), and 129 triggers a sync `with_db_mut` already triggered.
+- Fix: through #331's one refresh policy (or invalidate inside `with_db_mut`); delete the hand calls, the wrong comment, the second trigger and the source tests. Related: #331.
+
+#### #379 Smaller ones
+- `config.rs:6-7`: dead `PKGDATADIR` under `#[allow(dead_code)]` (#393), with plumbing in `build.rs:49-50` and `src/meson.build:14`: delete all three.
+- `glib::user_data_dir().join("meditate")` six times (`main.rs:50`, `keychain.rs:355`, `sync_runner.rs:22, 29`, `application.rs:284`, `sounds.rs:704`): one `data_dir()`; `sounds.rs:704` should call `local_sounds_dir()`.
+- `data_io.rs:17-63` copies core's `DataIoError` variant by variant to add `NoDatabase`; `From<rusqlite::Error>` and others have no user: `enum { Core(core::DataIoError), NoDatabase }`. The export file name differs from Android's (`meditate-backup-…` vs `meditate-sessions-{today}.csv`, `ui.rs:108`); core could own it. Misplaced doc on a test (159-164).
+- `recovery_dialog.rs`: the push and wipe runners differ only in the prepare call and tag (66-83, 117-140): one `run_recovery(app, tag, prepare)`, which also fixes #382.
+- `mpris.rs`: `gettextrs::gettext` where every other module uses `crate::i18n::gettext` (6); `.replace("{time}", &t(s))` five times (101-111); `update` builds each changed property twice to compare (238-243): compare the `Shown` fields.
+- `i18n.rs`: `potfiles()` and `languages()` share a body (155-163, 310-318), `get(fields, key)` twice. For slice 18: Android checks named msgids one test at a time (android `app.rs:1806-3583`); one checker over both catalog folders would cover it.
+- `main.rs:59-75`: the two `setup_gettext` failure branches format and log the same way.
+- `time.rs:22-28`: a hand-written `YYYY-MM-DD` parser where chrono is a dependency.
+- `shortcuts.ui:25-43` repeats the accelerators of `application.rs:434-439`; `GtkShortcutsShortcut` with `action-name` shows the bound one.
+- `vibration_editor.rs`: `edit_uuid` is never changed after construction (no `RefCell`); `name` mirrors `name_row.text()` on every change; the name, shape and banner clamps built three times; `draw_chart` allocates and formats every label on each drag motion (659-660, 725-747); the module doc says "snap to 5%", the step is 10 %.
+- `guided.rs`: `push_undo_toast` is a one-call wrapper (1214-1223); `DuplicateGuidedFile(name)` taken apart and rebuilt for `write_ok` (1176-1191); `insert_err` mutated inside a closure (327-347); dead `_nav_view_for_create` and an unused `nav_view` parameter (715, 720); the playbin wrapped in a new Pipeline (1338-1345); stale docs (24-27, `_watch`, the `ellipsize` doc on a `pub use` 1278-1281).
+- `labels.rs:409-411`: `invalidate(ALL)` plus explicit refreshes.
+- `vibrations.rs`: stale module doc ("lands in the next phasing step", 9-13); `show_undo_edit_toast` and `show_undo_delete_toast` differ in two lines (456-523, see #373); `rebuilder` cloned twice (363, 369); rename reads the row for Undo and core reads it again (575-579).
+- `local_folder.rs:73-82` `save` drops the error without logging it; `write_ok` logs and toasts.
+
+#### #380 Tests
+- Related: #432 (Android's source-text tests).
+- Copies of core's tests: `vibration_editor.rs:742-841` (`max_points_for_duration_s`, `resample_envelope`, core `vibration.rs:723-760`); `sync_runner.rs:81-229` (`test_connection_with` with a hand-copied `AlwaysErrs` and a 13-line `clone_err` that breaks on every new `WebDavError`; core has `sync::fake::AlwaysErrs` and `credentials.rs:217-260`). Move what core lacks (single sample, resample to 0, the `detail()` cases) there and delete the rest; `TestConnectionResult`'s English `Display` is shown nowhere (`preferences.rs:355-361` translates the variants).
+- Source-grep tests: `keychain.rs:413-425`, `data_io.rs:157-190` (checks `preferences.rs`), `sync_runner.rs:49-79` (checks other files, counts `gettext`), `labels.rs:503-558`, `sound.rs:543-580` (about 34 `contains`), `guided.rs:1652-1679`. They pin code shape and break on the refactors above; replace each with a test of a function, in core where the logic moves there.
+- Seven copies of the "read a source file" helpers and three directory walkers (`i18n.rs:47-62`, two in `sound.rs:656-684, 728-747`), the i18n tests re-walk the tree six times: one `#[cfg(test)] mod test_src` with a cached walk, while such tests remain.
+- Related: #322, #339, #361.
+
+### Slice 12: android `ui.rs` lines 1-5627 (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/ui.rs` unless named. Already covered and only linked: the session shape (#272), the saved session and snapshot built separately (#312). Ordered by gain.
+
+#### #394 One path for every session transition
+- Related: #429 (the `AppState` API the seven swaps come from).
+- Where: "swap the state out, run the transition, write back, dispatch effects, react to active to inactive (`end_session`, `on_auto_finish`, `on_state_changed`), refresh" is written seven times (4546, 4648, 5064, 5095, 5140, 5324 and around): Stop, natural end, guided end of track, focus loss and the tick; the end-of-track path already calls `on_state_changed(true, false)` directly instead of the was/is pair. Pause and resume add `wake_follows_pause` and `guided_follows_pause` in two blocks under the same condition (4612-4628, 5106-5107).
+- Also: `AppState::toggle(shape, now)` (`app.rs:610`) takes a shape only for its Idle branch, which its comment calls a test convenience; so focus loss passes a made-up `TimerStopwatch` (5100-5103) and the action tap reads every Setup property to build a shape on each pause (4463).
+- Fix: one `apply(ui, &state, |s| s.tick(now))` that owns the edges; `AppState::pause_or_resume(now)`, with `start_session` the only start. Related: #313, #270.
+
+#### #395 The running session in one place
+- Where: three statics `SESSION_GUIDED_FILE`, `_NAME`, `_LOCAL_FILE` (3023-3065), always set together (4575-4584), in Mutexes on the UI thread; Save recomputes the guided uuid from the live selection with its own Guided gate (5285-5294) instead of the value fixed at start by `app::snapshot_guided_file` (#407); "the label if the mode's switch is on" four times (2507-2511, 2538, 3077-3081, 5274-5278), each locking twice, and GTK has it as `setup_selected_label_id` (`timer/imp.rs:4167`).
+- Fix: build one core `SessionInProgress` at Start and keep it in one cell; heartbeat, hold and `finalize_session` read it (that is #312's fix); a core `active_label_id_for_mode(db, mode)` for both apps. Related: #312.
+
+#### #396 The tick loop
+- Related: #439 (the general form: an in-memory event queue, files only where they must survive).
+- Where: about ten drop files are polled every 200 ms in every state, idle and in the background too (`drop_file::take` builds the path and fails an `open` each): widget launch, guided pick, sound pick, folder pick, local scan, lengths, export result, CSV pick, end of track, focus loss, session tap. The import result is already polled only while an import runs (4939).
+- The import-finalize branch sits 8+ levels deep in the tick closure (4939-5043), reads the kind twice, and builds a `GuidedSel` that copies `guided_file_by_uuid` (1721-1737).
+- `send_media_buttons` (320-337) rebuilds the whole notification payload (palette, guided name under a lock, header, a `Tr` call per button) five times a second and clones it to compare, for text that changes once a minute.
+- Fix: poll each drop file only while its action is pending (a flag set by the picker, export, scan; end of track and focus loss only while guided audio plays; the widget launch on Resume); extract `poll_import_result`; compare without the clone and build the payload only when the minute, buttons or pause state changed. Related: #409.
+
+#### #397 Refreshes after a pull or a local change
+- Related: #468 (chooser lists rebuilt per tap).
+- Related: #418 (the per-change refresh helpers).
+- Where: `refresh_after_pull` (2837-2855) runs `refresh_bell_rows` directly and again inside `refresh_after_pattern_change` (4158), `refresh_setup_summaries` twice (2806, 2523), resolves the label name twice (2791, 2522), `refresh_widget` twice (1199, 2544); `repopulate_bell_chooser` (4845) queries with the chooser closed.
+- `refresh_bell_rows` (3710-3800) takes about 12 separate `lock_db()` calls and rebuilds the interval-editor ranges from core constants as two new `VecModel`s each time (3775-3786).
+- `populate_interval_bells` lists the whole bell library once per bell (4026-4037; #408 for the missing name). `bell_sound_path` (3612-3630) lists it for every bell that rings (#375's keyed lookup).
+- Lists that refresh often get a new `VecModel` each time (784-793, 1193-1199, 1251-1263, 2139-2216), though `put_rows` (518) updates in place.
+- Fix: one refresh per area per event (#331's policy for Android); one lock for the bell rows; ranges set once in `build_ui`; `resolve_sound_name` with the library read once; `put_rows`. Related: #331, #375.
+
+#### #398 Stats and Log reads
+- Related: #456 (chart and heatmap work), #457 (the Log feed).
+- `refresh_stats` reads the best streak and the session count (2048-2050), then `insights::input_from_db` reads both again (2113); the 91-cell heatmap loads the daily totals of the whole history (2171-2175) where `get_daily_totals_since_from_db` exists for this (GTK does the same, `stats/imp.rs:196`); after the block the DB is dropped and `refresh_chart` locks it again (2170, 2224).
+- `render_log_feed` (2959-2976) takes three locks and rebuilds three lookup maps (label names, colour places, guided names) on every render, including each delete, each Undo and the midnight re-render.
+- Fix: use `input.best_streak`/`session_count`; the `_since` read; cache the maps until a label or guided change. Related: #332, #297.
+
+#### #399 Settings read and written by hand
+- Related: #414 (one address per bell), #85 (the same helpers listed earlier: `read_signal_mode_for_mode`, `read_global_setting`).
+- Where: `refresh_bell_rows` reads `"starting_bell_active"`, `"starting_bell_sound"`, `"starting_bell_pattern"`, `"preparation_time_secs"` and others with literal keys and defaults (3710-3800) that core's `preset_config.rs:548-611` and `bells.rs:710, 729` already read into typed structs (they return `None` when the bell is off, which is why they aren't reused); `read_global_setting(k, "false") == "true"` four times (3712, 3765, 3790, 3890) next to `settings_keys::read_bool`; `read_global_setting` is `settings_keys::read_str` (3573-3577); `read_signal_mode_for_mode` is `bells::signal_mode_override_from_db` (632-640); `read_stopwatch_for_mode` is `display_mode_from_db(..).is_stopwatch()` (603-607); `write_stopwatch/keep_awake/auto_finish/signal_mode_for_mode` repeat the `RELOADING` guard (609-630, 3432-3440) that `write_global_setting` (3580) has.
+- Fix: a core "bell config regardless of active" reader under the cue readers; the core readers; one-line writers over `write_global_setting`. Related: #299.
+
+#### #400 Box Breath phases
+- Related: #455 (the phase limits from core).
+- Where: each phase is five separate Slint properties (`bbc-in-*`, `bbc-holdin-*` ..), so Rust sets 20 properties in four copied branches (3886-3935) and Slint names the phase by a text tag (`bb_phase(tag)`, 3804) that fails silently on a typo; the default row (bowl, pulse, Sound, off) is written twice (3817-3829, 3857-3872); `write_bb_phase` takes four `Option`s and every caller sets one (6721, 6729, 6821, 7040), merging by hand, as GTK does too (`timer/imp.rs:1411-1455`); the stepper's index to phase mapping and clamp (5338-5361) is GTK's `adjust_phase` (`timer/imp.rs:4646`).
+- Fix: a `[BbCueRow]` model of four rows by index, filled through `put_rows`; core `update_box_breath_phase(db, phase, patch)` with the defaults and #234's unchanged guard; core `BreathPattern::adjusted(index, delta)`. Related: #248.
+
+#### #401 Labels and preset rows
+- Related: #85 (the validator and `bell_name_taken` duplicates).
+- Where: ten wrappers around `list_labels_from_db` (700, 807, 845, 2603, 2615, 2670, 3230, 3280, 3294, 3420), each swallowing errors its own way; `lookup_label_uuid`, `lookup_label_name`, `first_label` scan the list for one id, and `create_label_in_db` lists again to read back the uuid (#410), as GTK does (`db/mod.rs:452-463`); the uuid-to-name map built three times (699, 806, 844); `list_starred_presets_for_mode` and `list_presets_for_mode` differ only in the query and `selected` (689-717, 798-823), and `widget_rows` is a third copy (840-871); `validate_label_name` is `validate_rename_label_name(n, 0)` (2632, 3214).
+- Fix: core `find_label_by_id` and `insert_label -> Label` for both apps; one `preset_items(..)`; one validator. Related: #235.
+
+#### #402 The import flow
+- Related: #480 (one Guided selection in core).
+- Where: one import is spread over five cells (4369-4385: source, finalize, kind, category, create-import) with the kind and the bell category as bare `u8`s (`kind == 1`, `category == 1` about ten times: 1629, 1669, 1686, 4094, 4975, 4989, 5033, 5575); the `u8` to `BellSoundCategory` mapping three times; each caller sets the kind cell and passes the same literal to `present_guided_import_dialog` (1108-1116, 4774-4782, 5450-5457).
+- "Insert, or remove the orphaned file" twice (`insert_guided_file` 1167-1186, `insert_bell_sound_import` 1623-1654).
+- The storage layout by hand: `internal_data_path().join("meditate")` (99, 171-172, 5568-5576) next to `meditate_dir()` (3634), and `<uuid>.ogg` (5573-5576) next to `audio_files::guided_file_path`; the `local:{id}` key built and parsed by hand (1221, 4199, 5474, 5499) where `StarredGuidedId::key`/`from_key` exist (used at 855); the default name strips the extension with `rsplit_once('.')` (1697-1702) where core has `display_name_from_path`.
+- Fix: `enum ImportKind { Guided, Bell(BellSoundCategory) }` in the finalize slot; the dialog sets it; the core import helper of #355/#372; the core path and key helpers. Related: #355, #372.
+
+#### #403 Sync worker results
+- The connection test result is turned into a `u8` 0-4 (producer near 9676) and decoded by a second `match` in the tick loop (4860-4869); `TestConnectionResult` is `Send`: park it and match once (typed-key rule). `OnceLock<Mutex<..>>` (74, 82) can be `static Mutex::new(None)` as the others are.
+- The retry with backoff on network errors (164-224: 5 s, then 10 s) exists only in Android; GTK and core don't retry. A sync policy: into core's runner. Related: #252, #260.
+
+#### #404 Pages as one enum
+- Related: #464 (closed pages drawn through; `visible` per page is the small step).
+- Related: #417 (Back calling each page's close first).
+- Where: main.slint has about 15 separate `*-page` booleans, and the list that closes them for a widget start (929-946) must name each new one or it covers the session (bug-audit #9).
+- Fix: a page enum or back stack, as `Modal` already is.
+
+#### #405 Smaller ones
+- Related: #482 (the preset subtitle as typed parts), #480 (the `local:` key).
+- Related: #58 (the dead `let _` lines, listed earlier), #85 (`validate_label_name`, `bell_name_taken`).
+- Dead: `let _ = current_mode.get();` (5241), `let _ = weak.clone();` (5421, 5460, 5518, 5595, 5624, and past 5627), with `weak` captured only for it (5410, 5511).
+- Misplaced docs: `try_widget_deep_link`'s on `close_modal` (885-905), "Snapshot of an in-flight session" alone (582-586), `present_guided_import_dialog`'s on `insert_bell_sound_import` (1613-1617), `delete_label_impact_text`'s on `check_label_conflicts` (3301-3306). Stale: "is_syncing is hard-false" (1929-1938), "i18n isn't wired" (2008-2013), "persistence lands when settings wiring arrives" (4296-4298), "Timer keeps its value in-memory only" (4305-4307), "Guided still gated .. phase 5" (4459-4461), the i18n comment above the clock code (4234-4240).
+- `SessionMode` to `TimerMode` by hand (986-992) where `From` exists (`app.rs:45`), and the `presets_supported` guard after it can't fire; `configured_duration` compares `== 1` (490); `current_mode` (78 uses) mirrors `ui.setup-mode`, and the action tap reads both (4463, 4524): check whether the cell can go.
+- `ticked_pattern_uuid` copied inline (4151-4156); `push_session_length_to_ui` copied (4441-4445); `refresh_setup_label_name` copied (2791-2796); the `hm(secs)` closure three times (2152, 2340, 2401); `ClockFormat::parse` twice (4247, 4257); `Local::now().date_naive()` (3558-3565) for `today_local()`; `bell_name_taken` is `bell_sound_name_taken(n, "")` (1660, 4104).
+- `type Slot<T>` (1607) exists but about 14 places spell out `Rc<RefCell<Option<..>>>`; `Rc<RefCell<Vec<(i64, Session)>>>` 11 times; redundant braces (4308-4312 and others); `now_since_epoch` (500-514) is a misnamed wrapper of `boot_time_now`; `presets_supported` (681) a pass-through.
+- For slice 18: `preset_subtitle` (725-778) repeats GTK's label lookup and pattern text; the chart's month parse from ISO strings (2285-2288) is GTK's `stats/imp.rs:709`.
+
+### Slice 13: android `ui.rs` lines 5628-10584 (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/ui.rs` unless named. Already covered and only linked: the interval-bell insert, find, update (#354, bug #422), the connection test as a `u8` (#403), page booleans (#404), the Box Breath cue properties (#400), the bell category `u8` (#402), the `SyncSettingsError` mapping twice (#359), and the dead `let _ = weak.clone();` lines (#58). Ordered by gain.
+
+#### #414 One bell, one address
+- Related: #431 (typed slots instead of strings and codes).
+- Where: `ChooserTarget` is `BellSlot` plus the interval editor, but every path maps it by hand: `on_bell_chooser_pick` (6797-6845) and `on_pattern_chooser_pick` (7009-7048) each have a four-arm match writing literal keys (`"starting_bell_sound"`, `end_bell_sound_key_for_mode(..)`) or `write_bb_phase` with three `None`s; eight openers (6590-6632, 6740-6768, 6983, 7000, the `bbc_phase_handlers` macro arms, 8020-8053) each re-read the current uuid with their own key and default and set target, category, current, populate and page; `chooser_bell_volume` (10445) is a third map, `app::volume_slot` (`app.rs:351`) a fourth. Core has `bell_volume::{read, write, sound_uuid}(db, BellSlot)` for the volume only.
+- Also derivable: `bell_chooser_category` and `bell_chooser_current` (4389-4390) follow from the target and the ticked row, as `ticked_pattern_uuid` does for patterns.
+- Fix: `ChooserTarget::{Bell(BellSlot), IntervalEditor}`; core `pattern_uuid`, `write_sound`, `write_pattern` by `BellSlot` next to `sound_uuid`; one `open_bell_chooser(ui, target)`, one `open_pattern_chooser(ui, target)`, one pick arm per chooser. Related: #399, #400, #281.
+
+#### #415 One name dialog (Android)
+- Related: #465 (one dialog frame).
+- Where: create preset, rename preset, rename guided file, rename bell sound, create label and rename label (5907-5966, 6097-6160, 6300-6365, 6849-6911, 8206-8300) each have their own Slint properties, `Modal` variant, pending-id cell and tap, changed and confirm handlers around `naming::validate(name.trim(), |n| taken(n, except)).is_savable()` (11 times); the re-check on confirm is written four times, labels have their own wrappers (2632, 3214); the vibration editor's Save gate is hand-rolled (`ve_recompute_save` 7245: trim, empty, taken, a DB error counted as "not taken") and Save doesn't re-check (#423). Bell rename checks the whole library per keystroke (4104), where the others use an indexed `is_*_name_taken_from_db`.
+- Fix: one Slint name dialog and a Rust `NameTarget` enum carrying the id; one `taken(target, name)`, one changed and one confirm handler, `validate` everywhere; core `is_bell_sound_name_taken`. The Android side of #358. Related: #358, #374, #355.
+
+#### #416 Previews
+- Where: the pattern and bell preview toggles (7701-7772, 7773-7833) run the same `PreviewToggle` steps by hand (request, stop and start, a failure notice, a generation-guarded revert); `if dur_ms > 0` (7746) can't be false there; the guided preview stop is written three times (5762-5770, 5833-5839, `stop_all_previews` 10359), the bell delete stops the bell preview inline (6916-6923) while the pattern delete calls `stop_all_previews`; `VOLUME_PREVIEW_GEN` is a second hand counter next to `VE_PREVIEW_GEN`; the editor preview and the chooser preview each do `haptics::cancel`, `build_master_envelope`, `vibrate_waveform` and a revert timer (7665-7695, 7703-7745).
+- Fix: one `toggle_preview(..)` over `PreviewToggle`; `stop_bell_preview`, `stop_guided_preview`; one `vibrate_preview(app, &pattern) -> u32`. Related: #356, #375.
+
+#### #417 Back calls each page's own close
+- Where: `on_back_pressed` (9840-9938) calls `invoke_*` for diag, preferences, guided manage, local and the interval editor, but copies the bodies of edit cancel, labels back, preset, bell and pattern chooser back, interval bells back and vibration editor cancel. They already differ: Back stops all previews in the editor, Cancel only the editor's.
+- Fix: `invoke_*` for every page (check each callback does what Back does today); the step before #404's page enum.
+
+#### #418 One refresh per change
+- Where: "after a bell sound changed" (`repopulate_bell_chooser`, `refresh_bell_rows`, `populate_interval_bells`, the editor's sound name) is written in rename, delete and the tick (6889-6892, 6932-6935, 4845); the vibration editor's Save tail (7594-7660) is `refresh_after_pattern_change` (4149) written out; `populate_preset_chooser` + `refresh_preset_list` + `refresh_widget` five or more times (6223, 6251, 6345, 6380, near 8590), each reading all labels and presets again (three label scans, two preset queries per action); `refresh_guided_manage` + `refresh_guided_files` (+ `follow_guided_sel`) about six times (5793, 5822, 5940, 6279, 8608); the label rename and delete patch the edit label by hand after `refresh_after_label_change` already did (8286-8294, 8335-8343; #85).
+- Fix: `refresh_after_bell_sound_change`, `presets_changed(ui, mode)` with one read, `guided_files_changed(ui, sel)`; call the pattern helper. Part of #397.
+
+#### #419 Startup
+- Related: #483 (one startup sequence in core), #490.
+- Related: #435 (the import files the cleanup deletes).
+- Where: `open_database` (10479-10584) runs in full on every activity recreate (`android_main` re-runs, 9998-10004): a second connection, diag trim, seeding, bundled-sound extraction, `finalize_session_in_progress`, orphan and stale-import cleanup; then `DATABASE.set` fails silently and the new connection is dropped (#420). The Setup surface is loaded for Timer (8498-8506) and then again through `invoke_mode_changed` once or twice for a remembered mode (9936-9948), with a folder scan and two `last_mode` writes when a guided file is remembered; the Log feed and the whole Stats page are built at startup (8501, 8503) and rebuilt on first visit (9800-9811).
+- `DATABASE` is `OnceLock<Arc<Mutex<..>>>` whose `Arc` is never cloned (10086, with a 20-line comment defending it); `RECOVERED_SESSION` is a static between two functions run one after the other on the same thread (74, 10544-10551, 9958): return it.
+- Fix: open and clean up once per process; seed once for the final mode; at startup compute only the streak line; plain `OnceLock<Mutex<..>>`; pass the recovered session as a value.
+
+#### #420 Vibration editor
+- Related: #471 (the plot inset in Slint, the dead height handler).
+- Related: #454 (the editor hears its own writes).
+- `ve_rebuild_curve` (7123-7241) rebuilds the x-axis labels on every drag move (7531, 7561): a `Tr::secs` per point, `select_xlabel_indices`, a new `VecModel`, so Slint re-creates every label; they depend only on count, duration and width. Path strings via `push_str(&format!(..))`.
+- Save rebuilds what `ve_transient_pattern` builds (7206-7229, 7615-7621); `ChartKind` to and from the chip index three times (7081, 7263/7274, 7594/7604); the plot inset math three times (7123, 7451-7488, 7499, 7543); the plot size in an `Rc<Cell>` while the stats chart keeps it in Slint properties.
+- Fix: build the labels in the size, duration and points handlers only; Save uses `ve_transient_pattern`; one index pair; `ve_inner(w, h)`. Related: #369.
+
+#### #421 Smaller ones
+- Related: #453 (one switch-row header, the one place for the Switch echo fix).
+- Switch echo: Material `Switch` reports Rust-made changes (`switch.slint:130`), so the writers carry a `RELOADING` guard with a next-turn reset (10185-10229, about 10 checks) and an end-bell guard (6577). Emitting `toggled` only on user input in the app's own Switch wrapper would remove both (check chips and `CuesRow` too).
+- `log` state: `loaded_log_sessions` and `pending_deletes` are clones of the `LOG_LOADED`/`LOG_PENDING_DELETES` thread-locals passed into about 12 handlers and three helpers (4347-4348, 8278-8777, 9257, 9297, 9440), where `write_import` and `commit_undo` read the thread-locals; the session lookup by id twice (8546-8552, 8699-8704); chrono to Slint `Date`/`Time` by hand twice (8659-8680, 8714-8736) and "clear the edit label" three times (2531, 8340, 8677): one `open_edit_session(ui, Option<Session>)`.
+- Interval editor create and edit fill the same nine fields (7942-7980, 7983-8010): one `show_interval_editor(ui, &bell)` with #354's `IntervalBell::new_default()`; opening the editor lists all bells to find one (7986-7992).
+- Preferences: `on_preferences_tap` locks the DB about six times (9028-9063) and repeats `reload_setup`'s loads; the keychain read and the error text twice (9115-9145, 9627-9662, #359); the `'save` block converts `SharedString` to `String` and back about ten times.
+- `if value { "true" } else { "false" }` five times (6570, 6587, 6708, 7843, 7889) next to `format_bool`; the bell setting keys have no core constants (also in `format.rs:635`, `bell_volume.rs:236`, `session/settings.rs:207`).
+- `on_local_star_tap` lists every file of the folder to read one flag, then lists again (5729-5757): pass `row.starred` or use `find_local_file_from_db`. The sort chip index mapping (5698-5704) is the inverse of `refresh_local_page`'s array (1470): one `const LIST_SORTS`.
+- The accent ring at startup (9496) re-implements `theme::accent_ring`, which `reload_setup` (10215) uses.
+- Three CSV import handlers differ only in a tag (9358-9380): one callback with the tag.
+- `on_edit_save_tap` (8885-8895) logs ad hoc and nothing on `None`, while Done-screen saves use `session_save_failure_log_message`.
+- About 60 handlers wrap their body in a block that scopes nothing; mis-indented blocks (9283-9320, 7651-7653).
+- Stale comments: 7058 "Save / Preview land in V-4", 6448 "phase-8", 6481 "phase 5", 6186 "rows inert here", 8694 "L-4a", 8963 "L-5a", 9089 "SY-4", 6146-6149/6233 a `let res = { .. }` scope that's gone, 10539 and 10567 "Phase 3", 10445 `chooser_bell_volume`'s numeric targets, 77 the `(toast_copy, diag_detail)` doc; the "Daily-goal commit" comment 50 lines above its handler (9262-9268).
+
+### Slice 14: android `app.rs` (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/app.rs` unless named. About 1350 of its 6195 lines are production code; the rest are tests. Ordered by gain.
+
+#### #429 The state machine API
+- Where: `Transition::{toggle, tick, stop, finish_overtime, enter_overtime, add_overtime, dismiss}` and `prepend` (478-544) exist so tests can chain ("The shell never chains", 495); the consuming `self -> Transition` API makes ui.rs swap the state out with `std::mem::replace(&mut *s, AppState::idle())` seven times (4546, 4648, 5066, 5097, 5140, 5324, 8470). `toggle(shape, now)` (606-640) has an Idle start branch only tests use, so production passes a shape it ignores (ui.rs 5101 makes one up); its Active branch decides pause or resume itself instead of core's `Session::toggle_action`, which treats Overtime as no-op (#430). `remaining()` (765-771) has no production caller, with four tests. `media_tap`/`void_tap` are `pub` with one internal caller (114, 133); `is_running_page` is `!is_idle()`, `finish_overtime` is `pub` for `save_end` only (710-777).
+- Fix: transitions as `&mut self -> Vec<Effect>` (drops `Transition`, `Deref`, `prepend`, the forwarders and every `mem::replace`), or at least `#[derive(Default)]` and `mem::take`; `pause_or_resume(now)` through `toggle_action`; tests start through `start_session`; delete `remaining`. Related: #394.
+
+#### #430 Effects read the same way in both apps
+- Where: `ended_duration_secs` (189-198) reads the saved length from `EndSession | EndBoxBreath | AutoFinish`, GTK's `core_session_end` (`timer/imp.rs:3139-3142`) from `EndSession` only; `completion_notice_secs` (199-216) decides the "Meditation complete" notice while GTK keys `notify_complete` by hand on three effects (2538, 3017, 3076); `snapshot_guided_file` (320-325) is the gate GTK writes inline twice (2618, 2849); the Idle `hero_label` (819-837) re-derives core's `idle_hero_label_from_modes`, whose doc names Android as its caller; the headphone button (116-120) rebuilds Pause/Resume where core's `toggle_action` decides it (GTK's MPRIS uses it).
+- Fix: `Effect::ended_duration_secs(&[Effect])` and one natural-end marker in core; the guided gate in core; call `idle_hero_label_from_modes` and `toggle_action`. Related: #270, #312.
+
+#### #431 Typed values instead of index and string codes
+- Related: #456 (insight icon id), #459 (`setup-mode` codes).
+- Where: four two-way index maps written as match pairs (75-95 end buttons, 267-284 bell kind, 332-346 signal mode chips, 360-384 `TimerMode` chips), each order twice with its own round-trip test; GTK uses one const table (`MODE_NAMES`, `timer/imp.rs:56`); the bell-kind order is also inline in GTK (`bells.rs:590-594, 768-772`) with another fallback (#354). End buttons travel as bare `i32` codes inside Rust and Slint decodes `kind == 0`/`kind == 4` (main.slint 176, 687). Volume rows are named by strings ("start", "holdin" ..) kept in step with main.slint by a source-grep test (845-860, test at 2421), unknown strings falling to the interval-editor case. `TimerMode` is `SessionMode` with one variant renamed (17-53), converted back and forth 22 times in ui.rs.
+- Fix: `const ORDER: [T; N]` for each; keep `EndButton` typed to the Kotlin boundary, a Slint `export enum` for buttons and volume slots (main.slint already has `Modal`, `LabelTarget`); use `SessionMode`. Related: #414.
+
+#### #432 Tests
+- Related: #438 (the JNI table and its source parser), #441 (`alarm_volume.rs` source tests).
+- Where: about 250 of 255 tests check the text of ui.rs, main.slint, Kotlin, `.po` and `res/` (about 600 `.contains`, call counts like `code.matches("end_session(").count() == 4` at 2282). They break on renames and miss regressions spelled differently. They reopen files inline (`Path::new(env!("CARGO_MANIFEST_DIR"))` 112 times, `read_to_string` 181 times) next to the helpers `slint_code`, `ui_code`, `res`, `source`/`code` (5052, 5461, 5821, 5988); `ui_code` and about 25 tests split ui.rs on `#[cfg(test)]\nmod tests`, which ui.rs doesn't have; the nine languages are listed about 8 times; byte-offset slices (`&slint[at - 300..at]`, 1720, 1891, 1895, 2058, 2063, 2071, 3077, 3080, 4760, 4837) panic when the offset lands in a multibyte character (`─`, `→`, `·` are in these files); a test's doc sits on the wrong test (2538, belongs to 4117).
+- Fix: lift each guarded decision (end steps, failure reporting, snapshot order) into a function in app.rs or core and test its behaviour; move the remaining real structure rules (JNI table 5934, no long dash, translations) into their own `source_rules.rs` with one `source(rel)` helper and one language list; slice on char boundaries. Related: #322, #339, #361, #380.
+
+#### #433 Smaller ones
+- `truncate_note_for_card` (1113-1122) is core's `format::ellipsize` written out, and appends "…" (#434); Slint 1.18 has `max-lines` with `overflow: elide`, matching GTK's `lines: 2; ellipsize: end`.
+- `group_log_sessions` (1040-1104) converts each row to local time three times and formats a `String` day key nobody reads outside the loop, the section total in both branches; `day_header` (229-238) converts "now" per section; `local_date` uses `.earliest()` where core uses `.single()`. Day grouping is also GTK's (`log/imp.rs:244-332`): #329.
+- `tree_folder_name` (929-950) is a third percent-decoder (core `sync/webdav.rs:440`) guessing a name Kotlin could write from `DocumentFile.fromTreeUri(..).name`.
+- `remove_stale_import_files` (955-964) hard-codes the three prefixes of `guided.rs:37-44` and Kotlin; a subfolder per run wiped at startup would need none (#435).
+- `month_day_count` (247-257) where chrono has `num_days_in_month()`; `arc_param` is a closure called once (1157-1168); `group_digits` overflows on `i64::MIN` (432, `unsigned_abs`).
+- `void_tap` computes `media_status` for every code (136-149); `media_tap`/`void_tap` allocate a Vec for a `contains`.
+- Stale docs: the module header (9-11: auto-finalise, no Add time), `Guided` "placeholder until phase 5" (29-31), `Active` holding Overtime transiently (456-461), `is_active` "Running OR Paused" (570-574), `stop` and a Done screen (642-649), "four-state" `AppState`, "Restart" in `toggle` (601).
+
+### Slice 15: android Kotlin, the other `src/` files and `res/` (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-android/` unless named. No finding touches the protected build files except where marked. Ordered by gain.
+
+#### #438 One JNI call path
+- Where: about 30 `invoke_*` bodies repeat `load_class`, `new_string` per argument, `call_static_method` with a hand-typed signature, then "log FAILED, return a fallback" (`about.rs:125-195` four string getters differing in the method name and whether a Context is passed; `insets.rs:38`; `keychain.rs:97`; `audio.rs:137` and `164` twins; the `(Context)V` helpers in `audio.rs:247`, `haptics.rs:143`, `guided.rs:368`, `widget.rs:163`); the `CALLS` table and a ~190-line source parser in `app.rs:5939-6195` check that table against the code. `service.rs::call` loads the class by hand (#58) and sends a bool as `"true"`/`"false"` (`service.rs:98`, `MeditateSessionService.kt:251`) because it only knows two shapes. String returns use `""` for "none" (`keychain.rs`, `insets.rs`, `about.rs`) though `guided.rs:475-477` maps null in three lines; Kotlin `MeditateAbout` and Rust both fall back to the same values; insets come as `"top,bottom"` and the time format as `"12|AM|PM"`. Every call loads the class again (`getClassLoader`, `loadClass`); the class-loader caveat is re-explained in eight module docs. `format_date` is one JNI call per date with a new `SimpleDateFormat` each (`about.rs:59-84`, `MeditateAbout.kt:68-78`), dozens per Stats or Log refresh. `system_colors.rs:21-41` makes 94 `getIdentifier` and 94 `getColor` calls at startup.
+- Fix: one `const Method { class, name, sig }` per Kotlin method in `jni_call.rs`, one `call(app, &M, args)` and `call_string -> Option<String>` that loads (and caches) the class and logs once; each bridge one line; the table test loops over the consts and the source parser goes. That answers the earlier "merging the five `(Context)V` helpers needs a test rewrite" objection (S, open decisions). One Kotlin call returning the system colours as an `IntArray`; cache the date formatter per skeleton.
+
+#### #439 Process-local signals without files
+- Where: drop files exist because NativeActivity has no callbacks and a widget tap or a picker result must survive process death; six signals that mean nothing after one use them too: end of track, focus loss, session tap, import progress, import cancel and Local Folder lengths (`guided.rs:58-62, 254-314`, `service.rs`, `MeditateGuided.kt:161-198`, `MeditateSessionService.kt:371-382`, `MeditateLocalFolder.kt`, `MeditateGuidedImport.kt:57-73`). They cost file I/O on every tick (#396), leave stale files that need patches (#413), and the lengths buffer is never cleared, rewritten whole after each file (O(n²) bytes and O(n²) autocommitted `UPDATE`s on the UI thread, #442). `audio::preview_playing` already polls Kotlin memory over JNI.
+- Kotlin builds `File(File(filesDir, "meditate"), name)` about 13 times (`MeditateLocalFolder.kt:29` has a private helper); Rust rebuilds the folder in `guided.rs:294, 307` and `widget.rs:113` next to `drop_file::take`; `markEos` and `markFocusLoss` write with plain `writeText`; `take_pending_launch` and `take_folder_pick` both "take, trim, None if empty".
+- Fix: one Kotlin `MeditateEvents` queue (plus a progress map and a cancel set) drained by one JNI `take()` per tick; files only for the widget launch and picker, export and CSV results; `MeditateDropFile.file(context, name)`/`write(context, name, text)` and Rust `drop_file::{path, put}`. The general form of #396's polling item. Related: #396, #413, #371.
+
+#### #440 Bundled bells in core
+- Where: the eleven bundled bells (uuid, name, file, mime) are listed in `src/sounds.rs:40-118` and again in `meditate-gtk/src/db/mod.rs:189-256`; the uuids repeat core's `seeds.rs:25-29`; mime is `audio/ogg` for all; both apps look audio up by uuid and never read the stored path; the names differ ("Kansho" here on purpose for the phone's font, "Kanshō" in GTK, #444); `bundled_file(&dir, b.uuid)` searches the table for the row in hand (146); the OGGs are both compiled in with `include_bytes!` and extracted (1.2 MB twice; shipping them as Gradle assets **needs maintainer approval**); only the size decides whether an extracted file is current.
+- Fix: `seeds::BUNDLED_BELL_SOUNDS: &[(uuid, name, file_stem)]` in core and a seed without paths; each app joins its folder or resource prefix; one name decision (#444).
+
+#### #441 Decisions in Kotlin
+- Bell volume: raise, taken over, restore and per-output keys (`MeditateAudio.kt:474-551`) are the most data-sensitive logic here, covered only by about 230 lines of source-text tests in `alarm_volume.rs:152-382`; `LEAD_RATE`/`LATE_MS` copy core's `lead_in` constants under a grep test (366). Move the decision to a pure `alarm_volume` function tested by value; Kotlin only sets the stream and writes prefs. The first raise commits `SharedPreferences` two or three times per bell on the UI thread (410-443); the route is looked up again in `applyLocked` though `startLocked` has it.
+- Import passthrough: `MeditateGuidedImport.kt:109-121` decides `ogg` or `wav` passthrough itself (inferring "guided" from the destination folder name) where core has `is_guided_passthrough_ext`, which GTK calls. Decide in Rust and pass a flag.
+- Void-Controls gesture detection (`MeditateSessionService.kt:76-86, 579-639`): a state machine with seven tuning constants and no test. A pure Rust `Detector::feed(t_ms, x, y, z)`, fed through a native method in `lib.rs` (not the protected `main.rs`); Kotlin unit tests instead would need Gradle changes (**maintainer approval**).
+- Picker routing: Rust sends `"import-insight"`, Kotlin maps it to `"insight"` and writes it back (`MeditateFilePickerActivity.kt:138-156, 208-221`); the CSV targets are listed twice (64, 140-142). Name the drop file after the target.
+- Notification texts: buttons and line come translated from Rust, but the fallback title and line, the channel names and "Meditation complete" come from `res/values*/strings.xml` (9 languages), so one surface has two catalogues. Send them in the payload; `strings.xml` keeps `app_name` and `widget_empty`.
+
+#### #442 Smaller ones
+- Local Folder: every file's address is found again segment by segment with a child-list query each (`MeditateLocalFolder.kt:131-152`), though the walk had the document id: store it next to `rel_path`.
+- `MeditateAudio.kt`: `preview`, `starting`, `end` and `intervals` handled field by field in six functions (54-57, 140-178, 340-347, 428-452); `isIdleLocked()` is `levels.isEmpty()`. One slot map.
+- `MeditateSessionService.kt`: six companion functions each build the intent (130-265), the launch intent three times (also `MeditateWidgetProvider.kt:86`, `MeditateWidgetLaunchReceiver.kt:26`), `buildContentIntent()` a one-line alias (718), `SHOW_BUTTONS` and `TAP` joined then split (501); a 1024×1024 bitmap kept and rescaled each minute for the media session (412-420, 463-466): draw it at the shown size.
+- Long-lived listeners and the import thread hold the Activity context (`MeditateGuided.kt:45-90, 127-140`, `MeditateGuidedImport.kt:47-90`): capture `applicationContext`, as `MeditateAudio` does.
+- `MeditateGuidedImport.kt`: `bytesPerFrame > 0` always true (273), `SDK_INT < Q` repeats `!canConvert` (123), `Resampler.channels` aliases `outChannels` (393); the passthrough path copies each chunk into a new buffer and resampling allocates per chunk (395-445).
+- `MeditateFilePickerActivity.kt`: the copy-in block twice (160, 213), `"err:" + ..` four times (also `MeditateGuidedImport.kt:87`), `probe(f)` a one-call wrapper, `probeWith` used by `MeditateLocalFolder` but living here.
+- `MeditateKeychain.kt:104` `clearPassword` is dead (and `keychain.rs:63` explains why).
+- `theme.rs`: the 48 roles listed three times (131, 226-280, 509-525), one macro could generate `tonal_spot`; `swatch` builds full light and dark schemes for one colour (45-47); the test re-implements `to_hsl` (289-298).
+- `audio.rs:81-95`/`alarm_volume.rs:56-66`: three getter and setter pairs by method name; startup reads all three curves (about 40 binder calls) before the first frame though they are first needed at the first bell; `levels` clones all three curves per bell.
+- `guided.rs:145-158` parses `"ok"`/`"err:"` by hand next to `sound::parse_import_result`; the string-array loop twice (193-205, 436-440).
+- `lib.rs:31-32` makes `theme` `pub` to dodge host dead-code warnings, where `widget` and `alarm_volume` use `#[cfg(any(target_os = "android", test))]`.
+- `sync_runner.rs`: one function, one caller (`ui.rs:173`).
+- `res/layout/widget_root.xml:36`: `@+id/widget_lotus` unused.
+- Stale or misplaced docs: `MeditateSessionService.kt:7-11, 268-274, 327-332, 673-674` "Phase 1 has no audio yet"; `service.rs:8-11` says notification permission isn't handled; `MeditateFilePickerActivity.kt:53` and `MeditateLocalFolder.kt:4` point at a `src/local_folder.rs` that doesn't exist; `take_eos`'s doc sits on `take_focus_loss` (`guided.rs:254-265`).
+- Tests: `alarm_volume.rs` repeats the `source(rel)` and function-body slicing about 16 times (part of #432's `source_rules.rs`).
+
+### Slice 16: android `main.slint`, lines 1-5135 (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Covers the globals, structs, shared components, the enums and `MainWindow` up to the Edit-Session overlay (Setup, Log, Stats). Paths are `meditate-android/ui/main.slint` unless named. Ordered by gain.
+
+#### #453 One reveal and one switch-row header
+- Related: #466 (one bell signal body), #471 (a fourth Switch header copy).
+- Where: the reveal scaffold (`reveal` property, 250 ms animation, clip box, column pinned at y=0, 1px divider) is written five times: ExpanderRow (1214-1316), ExpanderGroup (1327-1439), RevealChooser (1454-1494), RevealStepper (1901-1959, which also re-declares StepperRow's nine properties), RevealVolume (2073-2149, a hand-summed `full-height: 105px`, 2090, see #463). ExpanderRow's body is RevealChooser again, and ExpanderRow is ExpanderGroup with one ChooserRow.
+- The title, subtitle and 52x32 Switch header is written three times (SwitchRow 908-967, ExpanderRow 1243-1286, ExpanderGroup 1357-1402) and has drifted: SwitchRow dims the row with `MaterialPalette.disable-opacity`, ExpanderGroup only the title with a literal 0.38 (1378), ExpanderRow has no disabled state. ExpanderGroup's "16 + 16 = 32" indent comment (1431-1433) is wrong next to ChooserRow's own 32px (48px; not checked on a screenshot).
+- CompactToggle (976-1024) is ModeToggle (1036-1085) except the segment width; one caller (CuesRow, 1121).
+- Fix: one `Reveal { in property <bool> shown; @children }` measured by `preferred-height` (ExpanderGroup's body already is that form); SwitchRow as the header ExpanderGroup embeds; ExpanderRow becomes `ExpanderGroup { ChooserRow }`; one toggle with an `equal-width` flag. About -250 lines, and the one header is where the Switch echo fix of #421 goes.
+
+#### #454 The vibration editor hears its own writes
+- Where: `changed ve-duration-tenths` / `changed ve-points` (3266-3276) bridge the steppers to Rust, saying StepperRow has "no change callback"; it has `edited()` (1746), used at 1954 and 8671. So each Rust `set_ve_duration_tenths`/`set_ve_points` (`ui.rs` 7302-7308, 7385, 7454) echoes back: the curve is rebuilt twice on open, `on_ve_points_changed` needs its `row_count() != n` guard (7470) only for the echo, and Save fires both callbacks again by hand (7355-7356).
+- StepperRow's -/+ call `clear-focus()` then `commit-text()` (1828-1829, 1867-1868), and the deferred `changed has-focus` commits again (1858); `commit-text` and `changed value` both call `sync-text`.
+- Fix: `edited => ..` on the two steppers, drop the two `changed` handlers, the guard and Save's calls; Rust resamples itself where it clamps. One commit per tap. Related: #420.
+
+#### #455 Box Breath limits from core
+- Related: #471 (Prep, lead-in and Points limits, same fix).
+- Where: PhaseTile's `enabled: root.seconds < 20` (2297) is core's `PHASE_MAX_SECS`, the callers' `min-seconds: 1/0/1/0` (4235-4261) are `BreathPattern::phase_min_secs`; Rust already clamps with both (`ui.rs` 5342-5355). The comment "Slint can't import const values from Rust" ignores the seeded `goal-min-mins`, `ie-time-range` and the volume ranges.
+- Fix: seed `bb-phase-max` and the minima from core like those. Related: #400 (the per-phase properties as one model, which also turns the four PhaseTile and four PhaseCue blocks into one `for`).
+
+#### #456 Stats chart and heatmap work
+- Where: the Bars/Line toggle (4893-4900, `ui.rs` 9781) calls `refresh_chart`, a DB read of up to 365 days and a new bar model, though Slint switches renderers off `stat-chart-kind` itself and the handler says the data is the same. Every size report (4949-4963, `ui.rs` 9752) runs `refresh_chart` too, including a second one at startup (the hidden Stats page is built, `visible` at 4600) and one per rotation; `changed height` is dead (fixed 120px, 4943); `stat-plot-w`/`stat-plot-h` (3579-3580) are window properties only Rust reads, where the vibration editor keeps the same size in an `Rc<Cell>`.
+- `stat-contrib-cols` (always 91 cells, `ui.rs` 2215) and `stat-chart-bars` (2359) get new `VecModel`s on every `refresh_stats` (13 callers), so Slint rebuilds every cell and bar.
+- The heatmap level-to-colour chain is written twice (cells 4722-4727, legend 4749-4754); `InsightRow.icon-id` is an int decoded by a nine-way ladder (4808-4817).
+- Fix: delete `chart-kind-changed` and its handler; on a size change rebuild only the path strings from the cached series, size in a Rust `Cell`; `put_rows` (`ui.rs` 518); one `pure function level-color(int)`; the icon as a Slint `export enum` (#431). Related: #398, #397.
+
+#### #457 The Log feed rebuilds every card
+- Where: the feed (4363-4590) is a `for section` / `for item` in a plain Flickable, so every loaded card (15 per Load more) is a live item tree, kept while another tab shows (`visible`, 4300). Every render (`push_log_sections_to_ui`, `ui.rs` 2984-3017: Load more, each delete, Undo, save, navigation, the midnight tick) wraps everything in new `VecModel`s, so Slint drops and rebuilds every card.
+- The two empty states (4317-4338, 4340-4361) differ only in two strings.
+- Fix: one flat row model (header or card) in Material's `ListView`, which the compiler virtualizes, updated in place (`put_rows`); one empty state with ternary texts. Related: #398 (the three maps per render), #418, #397.
+
+#### #458 The session ring redraws every frame
+- Where: `BellRingView` (596-601) animates `shown-filled` over 200 ms, and Rust sets `ring-filled` every 200 ms tick (`ui.rs` 482, 538), so the animation never ends while a session runs: continuous frame redraws, each re-tessellating the arc `Path`, for a glide of under a pixel per second on a 20-minute session (worse with Keep Screen Awake).
+- Fix: bind `filled` directly and let the ticks repaint; keep the glide for preparation only if it shows. Estimate from frame counts, not measured on the phone.
+
+#### #459 Whether Start is allowed is decided in Slint
+- Where: `start-enabled` (3149-3153) decides in the layout that Timer and Box Breath need Stopwatch or a non-zero duration and Guided a file with a known length; GTK leaves Start on and returns silently on a zero countdown (`timer/imp.rs:2199`), greying it only while reading (3737). The mode is compared as `setup-mode == 0/1/2` 15 times.
+- Fix: core `can_start(mode, stopwatch, target_secs, guided_ready)` for both apps; Rust sets `start-enabled`; the mode as an enum (#431). Related: #430.
+
+#### #460 Reorderable rows and letting go of focus
+- Related: #467 (the RowDrop copy in the preset chooser).
+- Reorder: the preset rows (3910-3947), the starred guided rows (4072-4102) and two lists after 5135 each repeat RowDrop, DragHandle, `changed dragging` and the 0.4 opacity rule; the guided list moves its rows through `preset-drag-data`/`preset-drag-uuid` (4083, 4098). Fix: a `ReorderRow` and one generic `drag-data`/`drag-key` pair.
+- Focus: closing pages let go of a focused field five ways (3683-3762: two `release-*-inputs` helpers, `edit-note.release()`, `running-note.release()`, `root-focus.focus()` for Preferences), and a new page with a field needs its own, or the cut/copy/paste popup floats over the next page. Fix: `root-focus.focus()` on every page close, which works for any field, and drop the `release()` functions of NoteField, StepperRow and RevealStepper. This weakens R15(c)'s "no bug" reason (Considered and rejected).
+
+#### #461 Smaller ones
+- Related: #465 (ConfirmDialog as the frame of all dialogs), #467 (list rows), #471 (more stale comments and dividers).
+- `MenuItem` is imported from `material-1.0/ui/items/menu_item.slint` (20-23) with a comment saying it isn't exported; `material.slint:59` exports it.
+- `Tr.start-session()` (174) is never called (its comment cites a nonexistent `AppState::primary_action`) while "Start Session" is written at 2401 and 3876; defaults copy Tr wording instead of calling it: 2542 (`import-guided-title`), 3127 (`none-enabled`), 3206 (`ve-new-pattern`), 3359 (`edit-session-title`).
+- Material's `HorizontalDivider` is the 1px outline-variant Rectangle written about 40 times (static ones at 1481, 1941, 2104, 3905, 4068, 4277, 4787, 5098); the library's own, not the rejected new `Divider` component. The 14px/700 section heading (3893, 3999, 4058, 4207 and about 10 after 5135) and the 11px eyebrow (4653, 4692, 4775, 4883, 5086) have no component.
+- Window callbacks only Rust invokes, as an internal event bus: `stop-tap`, `save-end-tap`, `add-tap`, `save-tap` (2934-2947). Window properties Slint never reads: `delete-label-id` (2807), `rename-label-id` (2797), `filter-label-id` (3618), `ie-sound-uuid`, `ie-pattern-uuid` (3184, 3191), `guided-duration-secs` (2523, whose comment says it drives the hero).
+- `stat-plot-size(..)` three times (4949-4963); ConfirmDialog builds its two buttons twice (1645-1680); PageHeader's two `if` IconButtons differ only in icon and tooltip (1530-1541); PreviewPill's only use passes `playing: true` (1686), so its Play label and two-label sizing are dead.
+- The 15 `X-offset` plus `animate 300ms` pairs (3426, 3634-3737) are R15(c), rejected; VerticalSpinBox (762-839) repeating StepperRow is R15(d), rejected, but it lacks StepperRow's `release()`, so the Duration and Prep dialogs miss the popup fix (safe today only because both are `if`-built).
+- Stale comments: no-op stubs and phase placeholders that are built (1213, 2962, 3463, 3486-3491, 3347, 3471, 3503, 4594, 3858, 3870, 3991, 2740, 2753, 3118); `ve-point-drag` (3223, no such callback); "1000x100 viewbox" (3225, 3567) against 3260 and 3575; the note "fixed-height + clip wrapper" (4402-4411) that doesn't exist (#434); doc comments split from their item (375-378 and 401-423, InsightRow's glyph paragraph twice, 1497-1498 above ScrimArea, 42-47 above KeyboardArea instead of Tr); "select-only", "read-only", "i18n shell-deferred" (316, 393, 409).
+
+### Slice 17: android `main.slint`, lines 5136-9540 (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high); every item re-checked against the code. Covers `MainWindow` from the Edit-Session overlay to the end: pickers, app and navigation bars, the running page, every slide-over page, the dialogs and the snackbar. Paths are `meditate-android/ui/main.slint` unless named. Ordered by gain.
+
+#### #464 Closed pages are drawn through on every frame
+- Where: 13 page roots have neither `visible` nor `clip` (Session 5644, Bells 5759, Interval Bells 6078, Labels 6642, Interval editor 6830, Bell chooser 6985, Pattern chooser 7146, Vibration editor 7306, Preset chooser 7633, Guided Manage 8035, Local Folder 8218, Preferences 8494, Diagnostics 8897); Edit-Session (5147) and Running (6257) are gated by tab only. A closed page sits at `x = parent.width`, and the renderer still walks every item of an off-screen non-clip item's subtree (`third_party/i-slint-core/item_rendering.rs:216-240`); only `visible` (lowered to a Clip) prunes it. So every frame of a session, a slide or a spinner walks all pages, including every chooser row and the whole Local Folder list, which is kept after the page closes (`on_local_back`, `ui.rs` 5643-5657).
+- Fix: `visible: root.<x>-offset > 0px;` on each page (visible while sliding, pruned when closed). One line per page, no frame rework, so not R15(c). Not measured on the phone. Related: #404, #458.
+
+#### #465 One dialog frame
+- Where: eight dialogs write ConfirmDialog's frame (1588-1680: scrim, ScrimArea, card at `KeyboardArea.card-y`, radius 28, swallow TouchArea, 24px padding, 22px title) by hand: filter sheet 5568, Duration 6530, Prep 7965, guided import 9007, Goal 9219, Recovery 9294, Sync status 9366, Label conflict 9469. They drift: widths 280, 320 and 340; six titles don't wrap (#474); Recovery and Sync status stack their buttons by hand though ConfirmDialog has `stacked` (1596); guided import re-implements `accept()` (9051). Material's `Dialog` is a PopupWindow, which collapses on Android (5307-5313), so a house frame is right.
+- The Duration dialog knows both its callers: Set branches on `edit-session-page` to write `edit-duration-*` or `setup-*` (6609-6621), `max-value` has an edit-only case (6577), and the two callers seed it differently (Slint at 5213, Rust through `duration-tap`).
+- Fix: `DialogFrame { title; width; @children }` split out of ConfirmDialog, used by all eight (about -250 lines; the filter sheet stays `visible`-gated for its DropDownMenu); Duration, Prep and Goal are ConfirmDialog with a "Set" button; one `duration-set(h, m)` routed by Rust, like `LabelTarget`. Related: #415 (one name dialog), #461 (ConfirmDialog's buttons twice), #470.
+
+#### #466 One bell signal body
+- Where: the four rows Type, Sound, Volume, Pattern are PhaseCue (2158-2210) and are written again for the Starting Bell (5812-5851), the End Bell (5899-5934) and the interval editor (6935-6973), each with the same nine volume bindings. The sound row says "Sound" in PhaseCue and "Bell Sound" in the others.
+- Fix: `SignalBody` from PhaseCue (with `child-shade`); PhaseCue and End Bell are `ExpanderGroup { SignalBody }`, Starting Bell adds the Preparation row, the editor uses it directly. About -100 lines. Related: #453, #400.
+
+#### #467 One list row
+- Create rows: six by hand (6112, 6692, 7019, 7179, 7667, 8068), text on-surface in two and primary in four, the pattern one without "+"; all draw "+" as text, and 6715-6718 says there is no add SVG, but `assets/add.svg` is used in the AppBar (5441). Five say "Create ..." with a "…" that AGENTS.md bans for Android (6129, 6709, 7033, 7681, 8082); "Testing…" and "Converting… {}%" are the accepted progress form.
+- Library rows: bell sounds (7048-7133) and patterns (7203-7293) are the same row line for line (name, fixed check slot, Play/Edit/Delete); labels (6735-6815) and Guided Manage (8097) repeat it, and the labels chooser still uses the `if item.selected` check form the pattern chooser's comment (7241-7247) says ended up behind the buttons. The divider rule differs per list.
+- Stars: presets (7766-7787) and Guided Manage (8131-8153) build a 40x40 TouchArea and Image; Local Folder (8473) and Setup (4145) use `IconButton` with a tooltip (#476).
+- The preset chooser rebuilds RowDrop (7713-7731) with `can-drop` on `save-mode` instead of `drag-index >= 0`; RowDrop works there as is.
+- Fix: `CreateRow { text; tapped }` with add.svg and without "…"; `LibraryRow` (title, subtitle, selected slot, preview, edit and delete flags, tooltips set once); the IconButton star everywhere; `RowDrop`. About -300 lines. Related: #460, #476.
+
+#### #468 One tap rebuilds a whole list
+- Where: Local rows (8416, `ui.rs` 1509), Guided Manage (8097, `ui.rs` 1260), the preset chooser (7696, `ui.rs` 831) and Interval Bells (6144, `ui.rs` 4052) get a new `VecModel` per refresh. A Local star reads every local file to learn the current state, then reads them all again and rebuilds every row (`ui.rs` 5708-5720); each batch of lengths in `poll_local_folder` (1597-1601) does the same; the preset star runs `preset_subtitle` for every preset again (6223-6241); an interval-bell Switch rebuilds every row and destroys the Switch just tapped (7898-7903).
+- Fix: `put_rows` (`ui.rs` 518); pass the row's state from Slint (`local-star-tap(key, !row.starred)`). Related: #397, #418, #443.
+
+#### #469 Edit Session decisions in the layout
+- Where: the Save gate `edit-original-secs > 0 || hours > 0 || minutes > 0` (5193) re-derives core's `format::log_edit_duration_secs(..).is_some()`, which GTK uses (`log/imp.rs:1115-1121`) and Save runs anyway (`ui.rs` 8804); they disagree for an edited session set to 0:00, unreachable only because the Duration dialog refuses 0 (6609). The date row builds `yyyy-mm-dd` by hand (5231-5233), the only untranslated date in the app, while the time row beside it goes through Rust (`render-time`, `ui.rs` 4260) and GTK shows `short_date` (`log/imp.rs:1315`).
+- Fix: Rust sets `edit-save-enabled` from the core call; `pure callback render-date(Date)` over `short_date`/`locale_date` (`ui.rs` 2712, 2722).
+
+#### #470 Prep Time and Daily Goal as inline steppers, like GTK
+- Where: GTK has an `Adw.SpinRow` for both (`timer_view.blp:575-584`, `preferences.rs:62`); Android opens a modal: Prep steps by 1 where GTK steps by 5 (7963 admits it), Goal is a free TextField parsed and validated in Slint (`goal-valid`/`set-goal`, 2468-2480; `is-float()` takes "20.5" and rounds it). Rust clamps Prep through a string round trip (`parse_prep_secs(&ui.get_prep_time_secs().to_string())`, `ui.rs` 7868).
+- Fix: Prep as `ExpanderGroup { StepperRow }`, Goal as a StepperRow, as Lead-in already is (8659-8672); drops `Modal.prep`, `Modal.goal`, both dialogs (about 125 lines), four properties and `on_prep_time_tap`'s seeding (`ui.rs` 7850-7858); `n.clamp(PREP_SECS_MIN, PREP_SECS_MAX)`. A UI change: needs the maintainer's yes. Related: #465.
+
+#### #471 Smaller ones
+- Limits typed in Slint that core has: Prep 5..300 (8002-8003, `format::PREP_SECS_MIN/MAX`), lead-in 10..500 hundredths (8668-8669, `lead_in::MIN_MS/MAX_MS`), Points `min-value: 3` (7411, `vibration::EDITOR_POINTS_MIN`, while its max is seeded). Same as #455.
+- The vibration plot: `changed height` is dead (fixed height, 7491-7498); the 14px/28px inset is written seven times (7507, 7560-7562, 7603-7604) and must match `VE_PLOT_PAD` (`ui.rs` 7095; the comment at 7558 says lib.rs). Seed it from Rust. The Slint half of #420.
+- The window watcher (9531-9538) is a 0x0 Rectangle with `watch-w`/`watch-h`; both fire on a rotation, so the insets are read over JNI twice. `changed width`/`changed height` on the root (which already has `changed height`, 2459), or one handler.
+- The Box Breath halo and dot each animate `x` and `y` from the same `bb-dot-x/y` (6450-6475): one 22x22 container with one `animate x, y`.
+- Three StartBars with the same seven bindings (5744, 6059, 6235).
+- AppBar: an inner Rectangle repaints the outer's colour (5380-5384); two `if root.nav-page == 2` blocks (5438, 5445); the sync state an int decoded by three `if`s (5407-5435, #431). NavigationBar items set `selected-icon` equal to `icon` (5526, 5531, 5536), which the library already falls back to.
+- `value-text: ""` repeats DurationRow's default seven times (8715-8882); `root.height < 560px` six times on the running page (6290-6366); "Converting… {}%" twice (9089, 9109).
+- Recovery's Wipe sets `modal = none` and at once `recovery-wipe-confirm` (9346-9347). `interval-bell-delete` is the only delete confirm that closes in Slint and passes a Slint-held uuid (6223, 9190-9192).
+- The interval-bell row's 52x32 Switch box (6198-6213) is a fourth copy of #453's header.
+- BoxedList's doc says it draws dividers (2305-2321); callers write 32 here, the conditional ones repeating their row's condition (5694, 5801, 5871, 5890, 7418).
+- Stale comments: "an `if` child inside BoxedList doesn't re-render, so `if` can't be used" (5260-5269, 6881-6884), while 5688, 5694, 5793, 5812, 5880 and 7418-7422 do exactly that; phase notes for shipped work (5138-5140, 5345-5349 and 5493-5495 "Running / Done / Labels", 6073-6074, 6825-6826, 6982-6983, 7303-7305, 7630, 7735); "1000x100 viewbox" (7463) against 7512; the 28-line snackbar comment (5463-5490) 3500 lines from its element (8959).
+
+### Slice 18: across apps, logic in both shells that belongs in core (swept 2026-11-10 at 9c72061)
+
+/simplify (four angles) and /code-review (high, asked for places where the apps decide the same thing differently); every item re-checked against the code. `gtk` is `meditate-gtk/src/`, `android` is `meditate-android/src/`. Only items earlier slices didn't have, or a deeper form of one. Ordered by gain.
+
+#### #480 One Guided selection in core
+- Where: the pick type is kept twice with the same fields and the same `reading_length()` (`local_id.is_some() && duration_secs == 0`, which holds Start): gtk `guided.rs:65-90` `GuidedFilePick`, android `ui.rs:4166-4191` `GuidedSel`. Applying `follow_selection` (gtk `timer/imp.rs:3747-3777`, android `ui.rs:1749-1773`, both with one `Follow::Refresh | Follow::Reselect(_)` arm, so the payload is never read), the remember key (gtk 3690-3696, android 4199-4206), the restore (gtk 3704-3733; android 4325-4328 and 9936-9947, which turns the id into a key and parses it back) and the Local Folder pick (gtk `local_folder.rs:182-195`, android `ui.rs:1400-1432`) are each written twice. GTK builds `local:{id}` by hand too (`timer/imp.rs:3522`, where the loop already holds `entry.id().key()` at 3515, and 3548). The "found" rule is in core twice and android once (`ui.rs:1405`); GTK's restore doesn't check it.
+- Fix: core `GuidedPick` (`from_library`, `from_local` holding the found rule, `reading_length`, `key`) and `GuidedChoice` (`follow`, `select` which remembers, `restore`); merge `Refresh` and `Reselect`. Each app keeps only its rows. Related: #402, #405, #312, #395.
+
+#### #481 The Local Folder job in core
+- Where: the job state (scanning, queue, reading, failed, unreachable), "another folder was chosen during the walk, scan again" and the unread filter `!f.missing && f.duration_secs.is_none()` are in gtk `local_folder.rs:14-34, 98-180` and android `ui.rs:1272-1296, 1354-1366, 1515-1608`; both re-read the whole table right after `apply_local_scan`, which had every row in its transaction. They already differ: after a failed write GTK reads the lengths anyway (`unwrap_or(true)`, 117), Android doesn't (1546). The "a failed write says Save failed" helper is written twice (gtk 73-82, android 1310-1328).
+- The row texts are copied: length (gtk 198-203, android 1334-1339), counts (212-221, 1341-1349), plays (205-210, 1480-1483), the file subtitle (286-295, 1474-1488), the starred local row (gtk `timer/imp.rs:3596-3603`, android `ui.rs:1214-1223`); the sort order `[Name, Length, MostPlayed, LeastPlayed]` three times (gtk 549, android 1470 and the index match 5699-5704).
+- Fix: `apply_local_scan` returns what still needs a length; a core `LocalFolderJob` next to `RefreshProgress`; typed row parts and `ListSort::ORDER`. Each app keeps the walk and the probe. Related: #371, #439, #443, #303, #431.
+
+#### #482 Composed texts as typed parts
+- Where: core hands typed keys, and each app rebuilds the same composition around them. Preset subtitle: gtk `preset_subtitle.rs:22-69` and android `ui.rs:725-778` line for line (order, the `in-hold-out-hold` text, the label lookup, the bell count, the " · " join). Interval bell title: gtk `bells.rs:383-421` and android `ui.rs:3989-4020`, the jitter and step suffix glued as `" ±"`, `", +"`, so translators can't reorder it. Import question: gtk `preferences.rs:751-774`, android `ui.rs:10149-10168`. Stats insights: the streak choice (record, best was, keep going) and up or down from `pct >= 0` in gtk `stats/imp.rs:298-337` and android `ui.rs:2398-2440`, a third time for the icon (2370-2385); the "keep going" arm relies on `is_record` meaning one day. The streak tile's dash by hand (gtk `stats/imp.rs:517-522`, android `ui.rs:2052-2057`) next to `mini_stat_or_dash`. The sync tone: `OkNoTs` is neutral in GTK (`window/imp.rs:812-848`) and a primary check on Android (`ui.rs:1950-1964`); both compute `now - ts` before `synced_ago_key`.
+- Fix: core returns ordered parts (the pattern `session_summary` already uses), `StreakNote` and `Trend` in `InsightKey`, a streak `MiniStatValue`, `SyncIndicatorState::tone()`; each app maps leaves to text, one translatable template per sentence. About 150 lines written twice. Related: #405 (its slice 18 note), #296, #301.
+
+#### #483 Startup in core
+- Where: open, seed non-audio rows, seed the bundled bells, `finalize_session_in_progress` with its Undo toast, `remove_orphan_files` and the log lines are written in gtk `application.rs:137-197` with `db/mod.rs:405-420` and android `ui.rs:10479-10584`. They drift: a failed seed fails the whole open on Linux and is only logged on Android (#490); the seed order differs.
+- Fix: core `open_for_app(path, sounds_dir, guided_dir, bundled) -> Result<Opened { db, recovered }, DbOpenFailureKey>`; the orphan sweep then has one place to move after the first frame. Related: #419, #336, #440, #228, #85.
+
+#### #484 Linux starts a sync after every write
+- Where: `with_db_mut` and `with_db_blocking_mut` (gtk `application.rs:565-585`, about 86 callers) call `trigger_sync()` after the closure, even when nothing changed (`set_setting_in` skips an equal value and emits no event); each trigger reads the account on the main thread first (607). Android syncs only when core's `LocalChangeWatch` sees an event land (`ui.rs:245-248, 4815-4819`), and GTK already runs that watch, only for the preset list (`timer/imp.rs:395-408`).
+- Fix: one app-level watch in GTK that triggers the sync and the preset rebuild; `with_db_mut` becomes `with_db`, which empties #327's list; Sync Now, startup and resume stay explicit triggers. Related: #316, #331, #327.
+
+#### #485 A sync says what it changed
+- Where: `SyncStats` (core `sync/orchestrator.rs:134-148`) has only counts, so GTK refreshes every screen after any sync (`application.rs:635-661`) and Android re-reads setup, bells, patterns, interval bells, guided files, labels, Log and Stats on any pull (`refresh_after_pull`, `ui.rs:2837-2855`); `list_label_conflicts` runs after every sync in both.
+- Fix: replay knows each event's kind; return a per-area changed set, and both apps refresh only those areas. The concrete form of #331 and #397. Related: #418.
+
+#### #486 Name checks inside the write
+- Where: before every create or rename both apps trim, `validate`, and check again on confirm (gtk `labels.rs:279-281, 338-340`, android `ui.rs:6126-6133` and #415's sites), while core's `insert_label`, `update_label`, `insert_preset` and `rename_*` take untrimmed or empty names; each app fetches `default_starred_on_save()` and passes it to `insert_preset` (gtk `presets.rs:187-189`, android `ui.rs:6138-6140`).
+- Fix: core create and rename trim and return a typed `NameError` (empty, taken); `create_user_preset(name, mode, json)` applies the starred default. One name dialog (#358, #415) then holds no rule. Related: #374.
+
+#### #487 Smaller ones
+- Android builds the lead-in noise for every bell (`lead_in()`, `ui.rs:10376-10379`: DB lock, up to about 480k samples, a 1 MB JNI copy, `audio.rs:147, 175`), but Kotlin uses it only on Bluetooth (`MeditateAudio.kt:265`); GTK checks the route first and caches one WAV per length (`sound.rs:395-420`). Pass it only on a Bluetooth route, or the length and let Kotlin cache. Related: #303.
+- The export file name: gtk `meditate-backup-%Y-%m-%d_%H%M%S.csv` (`data_io.rs:66-70`), android `meditate-sessions-{today}.csv` (`ui.rs:108`). One core `export_file_name(now)`.
+- The CSV format choice: android `app.rs:863-873` matches strings, gtk `data_io.rs:96-118` has one wrapper per button. A core `CsvFormat` with `parse`. Related: #300, #441.
+- `locale_week_start_dow` (core `date_math.rs:42-62`) is glibc `nl_langinfo` code used only by GTK (`stats/imp.rs:582-584`); it belongs in gtk `format.rs`.
+- Media: the bar anchor rule twice (gtk `mpris.rs:95`, android `app.rs:175-182`), `MediaStatus::anchor(now)`; Android's `media_tap` (`app.rs:114-123`) finds Pause or Resume in the offered buttons where GTK uses core's `toggle_action` (`mpris.rs:97, 126-128`). Related: #339.
+- `set_breathing` (core `settings_keys.rs:234-244`) writes the length unclamped and clamps on read; GTK clamps before (`timer/imp.rs:4634`), Android doesn't (`ui.rs:1847-1855`). Clamp inside.
+- Android writes a preset snapshot to JSON to parse it back (`apply_preset_json`, `ui.rs:1809-1810`): `snapshot_setup -> PresetConfig`, `.to_json()` only where stored. Related: #283, #317.
+- The default import name: GTK guided `guided.rs:142-146` copies `display_name_from_path` with an untranslated "Untitled"; Android strips the extension itself (`ui.rs:1697-1702`, #405); core's own fallback is the English "Custom sound" (`sound.rs:215-221`). Return an `Option` or a key.
 
 ## Bugs found
 
@@ -485,7 +1155,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Checked and not kept: two connections minting two device ids (`device.rs:14-31`): the startup seeds mint the row before any sync connection exists.
 
 ### From slice 3
-- **#248 Writes that change nothing still send a full-row event, which can undo another device's edit.** No unchanged guard in `set_box_breath_phase` (`box_breath_phases.rs:82`; its doc says so on purpose), `update_interval_bell` (`interval_bells.rs:165`), `set_interval_bell_enabled`, `set_guided_file_starred` (`guided_files.rs:266`), and `update_vibration_pattern` (that one is #184). `rename_bell_sound` and `rename_guided_file` skip unchanged writes for exactly this reason. Device B changes a Box Breath phase, device A writes the same old values before syncing: A's event wins and B's change is gone. Applying a Box Breath preset writes all four phases (`preset_config.rs:700-714`). Reported, not traced: the GTK timer page rewrites a phase when it is shown again. Same class as #244 (presets) and #184 (vibration patterns): fix all together through the guard in #234.
+- **#248 Writes that change nothing still send a full-row event, which can undo another device's edit.** No unchanged guard in `set_box_breath_phase` (`box_breath_phases.rs:82`; its doc says so on purpose), `update_interval_bell` (`interval_bells.rs:165`), `set_interval_bell_enabled`, `set_guided_file_starred` (`guided_files.rs:266`), and `update_vibration_pattern` (that one is #184). `rename_bell_sound` and `rename_guided_file` skip unchanged writes for exactly this reason. Device B changes a Box Breath phase, device A writes the same old values before syncing: A's event wins and B's change is gone. Applying a Box Breath preset writes all four phases (`preset_config.rs:700-714`). Reported, not traced: the GTK timer page rewrites a phase when it is shown again. Same class as #244 (presets) and #184 (vibration patterns): fix all together through the guard in #234. For vibration patterns, #370 removes the GTK workaround once the guard exists. Box Breath on Android: #400.
 - **#249 Plausible: a session saved twice after a time zone change.** `session_in_progress.rs:178` deletes the recovery snapshot only if its `start_iso` matches the saved session's string exactly. Both are formatted from the same unix time in the local zone at different moments; change the zone between the last snapshot and Save (travel), and the snapshot stays, so the next launch saves the session again. Fix: compare on a session token or the unix start. Not reproduced.
 - **#250 Plausible: a stale length kept for a replaced local file.** `local_guided_files.rs:141` (`set_local_file_duration`) writes a length without checking the file is still the one it was read from; a rescan in between resets it to NULL and the late write stores the old length for good. Fix: `AND size = ?3 AND mtime = ?4`. Not reproduced.
 - **#251 Plausible: a corrupt vibration pattern plays nothing, silently.** (Same class as #291.) `vibration_patterns.rs:60` turns unparseable `intensities_json` into an empty envelope (`unwrap_or_default`), while renaming the same row fails with `Decode`. Only a damaged row or a newer peer's format gets there; the user hears no cue and sees no message.
@@ -552,7 +1222,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
   - Where: `bells.rs:771-778` (`interval_bells_count`) filters only the stopwatch case; `build_active_bells` also drops a fixed bell at or past the target, a "before end" offset at or past it, and a repeating bell longer than the session.
   - Scenario: a 10 min countdown with one bell "at 30 min": the row says "1 interval bell", nothing rings.
   - Fix: count what `build_active_bells` would build for the current target.
-- Already listed: applying a preset is not one transaction: OPEN-ISSUES #193 (and #177, a duplicate of it: merge them). Both apps re-apply the old setup on failure (gtk `timer/imp.rs:3895-3902`, android `ui.rs:1809`), which can fail the same way and leaves inserted bells behind.
+- Already listed: applying a preset is not one transaction: OPEN-ISSUES #193 (#177 merged into it). Both apps re-apply the old setup on failure (gtk `timer/imp.rs:3895-3902`, android `ui.rs:1809`), which can fail the same way and leaves inserted bells behind.
 - Plausible, not checked to the end:
   - `bell_volume::write` returns `Ok` and saves nothing when a Box Breath phase row is missing (`bell_volume.rs:222`). Rows are seeded; only a damaged database gets there.
   - A vibration pattern longer than about 463 s overflows `(2 * i + 1) * duration_ms` in u32 (`vibration.rs:145`); core has no duration bound, and only a damaged or hostile peer could send one. Same class as #172 and #242.
@@ -586,22 +1256,251 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 - Plausible, not checked to the end: the daily goal is never capped at 1440 on write or read (`goal.rs:35-40`).
 - Checked and not kept: "GTK's `d[5..7]` can panic on a short date": core always writes ten characters. Goes away with #294 anyway.
 
+### From slice 8
+- **#323 A failed crash-recovery snapshot only reaches the log.**
+  - Where: `timer/imp.rs:2863-2870` (`write_in_progress_snapshot`) and `2880-2887` (`clear_in_progress_snapshot`).
+  - Scenario: the disk is full or the database locked; the session runs with no crash protection and nothing says so, so a crash loses it. A failed clear leaves a phantom session for the next start (the comment admits it). Android the same (`ui.rs:3101`).
+  - Fix: tell the user once per session that recovery is off, and show a failed clear like any failed save.
+- **#324 Undoing an Auto-Finish save leaves the Local Folder file's play counted.**
+  - Where: Undo (`timer/imp.rs:2714`) calls `delete_session`, which doesn't touch `play_count`; `insert_session_counting_local_play` (`session_in_progress.rs:168`) raised it in the same transaction as the insert.
+  - Scenario: a Guided session from the Local Folder auto-finishes, the user taps Undo: the file shows a play that is in no session, one more per Undo.
+  - Fix: Undo lowers the count in the delete's transaction. Ask whether deleting a session in the Log should too.
+- **#325 Picking a Box Breath phase sound or pattern can undo a just-saved volume or signal mode.**
+  - Where: `timer/imp.rs:1448-1461` (sound) and 1494 (pattern) write back `p_for_pick`, a copy of the phase row taken when the chooser opened.
+  - Scenario: the user drags the Inhale volume and taps Inhale's sound within the 0.4 s save delay; the old volume comes back without a word. A sync pull while the chooser is open is lost the same way.
+  - Fix: re-read the phase in the pick callback; with #234 one write path per table would only change the field picked.
+- **#326 Five timer toasts can be cut with "…".** Same class: #392.
+  - Where: `timer/imp.rs:2664-2671, 2682-2689, 3634-3636, 3802-3804, 4031-4035` use a plain toast title, which is one line; "Couldn't save session: storage error" is cut on a narrow window.
+  - Fix: #320.
+- Already listed: applying a preset and rolling it back is not one transaction: OPEN-ISSUES #193 (see #317).
+- Plausible, narrow window: after Save commits (which deletes the snapshot), the 60 s heartbeat (2912) or closing the window (`save_snapshot_now`) can write the snapshot again before the continuation runs `reset_mode` and cancels the heartbeat; the next start then recovers the same session a second time. Fix: cancel the heartbeat and skip snapshot writes while `saving` is set.
+- Checked and not kept: "every Guided refresh writes the remembered file": `remember_guided` skips unchanged values (`guided.rs:47-54`); only the read remains (#321).
+
+### From slice 9
+- **#340 "Sync Now" drops a failed write without a word, in both apps.** Same class on Android: #427.
+  - Where: GTK `window/imp.rs:727` (`app.with_db(|db| clear_refused_uploads(..))` as a statement), Android `ui.rs:9734` (`let _ =`).
+  - Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: #327 and a core `retry_now()` (#338).
+- **#341 A failed Undo of a recovered session only reaches the log, and a successful one leaves it on screen.**
+  - Where: `application.rs:416-428`: logs the error, then only `invalidate(ALL)`.
+  - Scenario: the delete fails: no message, the session stays. It succeeds with sync off: Log, Stats and the streak show it until the next tab switch.
+  - Fix: `write_ok(.., Failed::Delete)` and a refresh of the visible page (#331).
+- **#342 The Log jumps back to the top after every edit when sync is set up.** Same class on Android: #412.
+  - Where: every write triggers a sync, and every finished sync rebuilds the Log (`application.rs:650-659`), keeping only the first 15 rows.
+  - Scenario: scroll to page 3 (Load more twice), delete a card; when the undo window ends and the sync finishes, the scroll and the loaded pages are gone, which `commit_delete_in_place` exists to avoid.
+  - Fix: #331.
+- **#343 Space on a focused Log card starts a meditation.**
+  - Where: the window's Space shortcut runs in the Capture phase (`window/imp.rs:1079-1099`) and only skips text fields and dialogs, so the card's own Space (open the edit dialog, `log/imp.rs:597-599`) never fires. The same happens on the "Has notes" switch in the filter popover.
+  - Fix: only take Space when the timer page is visible, or skip any focused widget that handles Space itself.
+- **#344 The database-open error points to a place the user can't reach.** Same on Android: #425.
+  - Where: `application.rs:258-264` says "Check the diagnostics log in About → Troubleshooting", but the error window has no menu and no way to About.
+  - Fix: a button that opens the diagnostics (or the About dialog) on that page.
+- **#345 "Load more" can't be reached with the keyboard.**
+  - Where: `log_view.blp:66-71`, `focusable: false` (a workaround for focus restore after a dialog closes).
+  - Scenario: a keyboard or screen-reader user can't load anything past the first 15 sessions.
+  - Fix: keep it focusable and fix the focus restore where the dialog closes.
+- **#346 The streak on the Timer page keeps yesterday's value overnight.**
+  - Where: `reload_for_new_day` (`window/imp.rs:779-789`) has no Timer arm, and the Timer is the default page.
+  - Fix: #331.
+- **#347 Closing the window right after a delete hides a failed delete.**
+  - Where: `close_request` (`window/imp.rs:140-144`) commits pending deletes; a failure toast goes to the window being destroyed.
+  - Scenario: delete a session and press Ctrl+W within the 5 s undo window; the delete fails, the user never sees it, and the session is back at the next start.
+  - Fix: on failure keep the window open (or tell the user before closing).
+- **#348 A paused Box Breath session redraws at full frame rate.**
+  - Where: `window/imp.rs:496-501`: the tick callback continues for `Paused`, so the canvas and three labels are redrawn every frame though nothing moves; battery on the Librem 5. The bell ring already stops when nothing changes.
+  - Fix: return `Break` while paused and restart on resume.
+- **#349 The Log edit dialog's save-failure toasts can be cut with "…".** `log/imp.rs:1272, 1277` use plain toasts; fix #334. Same class: #392.
+- **#350 Two `#[allow(deprecated)]`, against the no-suppression rule.** `window/imp.rs:1065` (`set_help_overlay`/`ShortcutsWindow`) and `application.rs:215` (`style_context_add_provider_for_display`, which is the non-deprecated function, so that one is stale). Fix the cause or drop it. Same class: #393.
+- **#351 A crashed session that can't be recovered at startup is only logged.** `application.rs:161-165`: `finalize FAILED at startup` goes to the log; the session from the crash is silently not saved. Tell the user, and keep the snapshot for a retry.
+- Checked and not kept: "Syncing with Nextcloud…" (`window/imp.rs:827`): a progress ellipsis is fine when nothing is cut (maintainer, 2026-11-10).
+
+### From slice 10
+- **#362 Import errors in the sound chooser never show.**
+  - Where: `sounds.rs:451-463` (`present_toast`) and `671-682` post to the main window's overlay, which sits on the root page hidden behind the chooser; the chooser has its own overlay for this (60-63).
+  - Scenario: pick an 11 MB file, a video-only mp4, or a file whose transcode or insert fails: nothing visible happens.
+  - Fix: `db::show_toast(anchor, ..)` (#357).
+- **#363 Holding + on a Preferences number writes hundreds of synced events.**
+  - Where: the lead-in Length (`preferences.rs:132-144`, 0.01 s steps) and Daily goal (77-88) write `set_setting` and trigger a sync on every value change; the bell edit page's time rows the same (`bells.rs:795-806`, plus a list rebuild, #353).
+  - Scenario: holding + from 0.10 to 5.00 s writes up to about 490 `setting_changed` events, kept in the event log and uploaded to every device.
+  - Fix: save when the value settles, as `VolumeRow` does (or on close).
+- **#364 Closing Preferences doesn't stop the Bluetooth test sound.**
+  - Where: the closed handler calls `sound::stop_current()` (`preferences.rs:527`), but the Test plays through `play_bell_preview` (`PREVIEW_MEDIA`, 159).
+  - Scenario: Length 5 s, press Play, close Preferences: the noise and the woodblock play on. Fix: `stop_preview()`.
+- **#365 A failed read shows an empty bell, preset or sound list.**
+  - Where: `bells.rs:135-137`, `presets.rs:202`, `sounds.rs:173` turn an error into an empty list.
+  - Scenario: a locked database shows "No interval bells configured" or an empty chooser; the user may recreate what exists. Same class as #291 and #308.
+  - Fix: show the error on the page.
+- **#366 A bell's switch stays flipped when saving it fails.**
+  - Where: `bells.rs:262-275`: a toast, but the switch isn't reverted.
+  - Scenario: the toast fades, the switch shows On while the database says Off, and the next session silently doesn't ring that bell. Fix: revert under a guard, or rebuild the row.
+- **#367 Picking a sound file freezes the window until GStreamer has probed it.** Fix together with #383 (the guided file probe).
+  - Where: `sounds.rs:420` runs `probe_duration_secs` (a playbin preroll, up to 5 s, longer without a duration header) on the main thread; the transcode right after is already off-thread and reports `NoAudioTrack` itself. If `metadata` fails (412), the size counts as 0 and the 10 MB cap is skipped.
+  - Fix: probe off-thread or leave the check to the transcode; treat a failed `metadata` as an error.
+- Plausible, to measure: the reference cycles in #352 keep every visited bell, sound and preset page and every name dialog in memory.
+
+### From slice 11
+- **#382 Recovery and label-conflict failures only reach the log.** Android side: #426, #427. Same class: #489, #491.
+  - Where: `recovery_dialog.rs:66-83` (Push My Data) and `117-140` (Wipe Local) log a failed prepare or a missing DB; `labels.rs:483` logs a failed Keep Both, then marks the conflict decided.
+  - Scenario: remote data lost, the user taps Push My Data while the write fails: no toast, no sync, the warning stays and the user thinks recovery ran. Keep Both failing: the same conflict dialog comes back with no word why.
+  - Fix: `write_ok` (log and toast) in one `run_recovery` (#379); don't mark the conflict decided on failure.
+- **#383 Opening a guided file freezes the window while GStreamer probes it.**
+  - Where: `guided.rs:147` runs `probe_duration_secs` on the main thread: up to 5 s preroll, then `duration_by_parsing` up to 30 s for a file without a duration header. `local_folder.rs:163` already does it in `spawn_blocking`.
+  - Scenario: a long MP3 without a Xing header on the Librem 5: the window hangs for seconds, GNOME may offer to force-quit.
+  - Fix: `spawn_blocking`, as local_folder does. Same as #367 for bell sounds: fix both together.
+- **#384 A slow probe rejects a good file as "no audio track", and a failed probe leaks the pipeline.**
+  - Where: `guided.rs:1450-1480`: `pipeline.state(5 s)` returns `Ok(Async)` on timeout, so the code reads `n-audio` (still 0) and returns `NoAudioTrack`; the `?` on that state change returns before `set_state(Null)`, leaving the playbin Paused.
+  - Scenario: a file on a sleeping SD card or a network share takes more than 5 s to preroll: "This file has no audio track". On error, decoder threads and the open file stay until the element is finalized, with a GStreamer warning.
+  - Fix: treat `Async` as a timeout error with its own text; set the pipeline to Null on every exit (a guard).
+- **#385 Guided audio that fails mid-session plays nothing and says nothing.** Android side: #447.
+  - Where: the `GuidedPlayback` bus watch only logs `MessageView::Error` (`guided.rs:1355-1375`).
+  - Scenario: a codec missing in the Flatpak, or the output device disappears: the timer runs a silent guided session; the user learns nothing.
+  - Fix: a toast (and stop or pause the session, the user's call).
+- **#386 A vibration preview keeps playing after leaving the chooser or the editor.**
+  - Where: `vibrations.rs:65-69` relies on dropping the chooser to cancel the preview, but the Rebuilder cycle (#368) never drops it; neither `vibrations.rs` nor `vibration_editor.rs:531` stops the preview on hide, as `guided.rs:639` and `sounds.rs:113` do.
+  - Scenario: preview a 10 s pattern, tap Back (or Save in the editor): the phone keeps vibrating on the next screen.
+  - Fix: stop the preview in `connect_hidden` on both pages; #368 then frees the slot.
+- **#387 One failed keyring open moves the sync password into a file whose key sits next to it.**
+  - Where: `keychain.rs:214-240`: when a store can't open the portal or D-Bus Secret Service, it switches to the self-keyed file backend (`nextcloud-sync.keyring` plus `nextcloud-sync.master` in the same folder); once the master file exists, every later launch uses that backend (220-224) and never tries the keyring again. Only logged.
+  - Scenario: the Secret Service starts slowly after login and the user saves sync settings in that moment: the app password is stored in a file that anyone with the user's files can decrypt, from then on, with no notice. Against the "never a password in a plain file" rule.
+  - Fix (maintainer decision): drop the fallback and tell the user the keyring isn't reachable (retry later), or at least ask before using it and move back to the keyring once it opens.
+- **#388 The "Couldn't play bell sound" notice can be used up unseen.**
+  - Where: `sound.rs:260-268` sets the once-per-run latch before `surface_audio_error_toast` (270-290), which returns silently without an active MeditateWindow.
+  - Scenario: the first bell fails while another app has focus: no toast, latch set; every later bell failure that run only reaches the log.
+  - Fix: set the latch only when the toast was shown (and use `show_toast`, #373).
+- **#389 With the Bluetooth lead-in on, every bell queries the sound devices on the main thread.**
+  - Where: `sound.rs:395-399` calls `default_output_is_bluetooth` (487-527) for each bell: starts and stops the pulse device provider, or falls back to a full `DeviceMonitor`, which the code itself says can take 2 s for a sleeping card; the first use of a length also writes the noise WAV on the main thread (415-420).
+  - Scenario (plausible, not measured): in the Flatpak without the pulse provider, each interval bell rings late and the timer display stutters.
+  - Fix: cache the answer and update it from device-changed messages, or query off the main thread before the bell.
+- **#390 A guided preview skips the Bluetooth lead-in and leaves the previous row's button on Stop.**
+  - Where: `play_preview_for_guided_file` (`sound.rs:165-181`) calls `set_playing(true)` instead of `start()` and doesn't `notify("playing")` on the media it replaces; `play_preview` (135-150) does both.
+  - Scenario: on Bluetooth headphones the first second of a guided preview is lost; a bell preview replaced by a guided one keeps its Stop icon.
+  - Fix: one `play_in_preview_slot` (#375).
+- **#391 Every Local Folder page ever opened stays alive and is rebuilt on every change.**
+  - Where: the `choose` closure captures `page` strongly and is connected to the banner inside that page (`local_folder.rs:385-389`): a cycle, so the page is never destroyed, `alive` stays true, and its listener stays in `LISTENERS`.
+  - Scenario: open Local Folder and a few subfolders, go back: each scan, length read and star tap rebuilds every one of those pages (four DB reads and all rows each, #371). Memory and CPU grow with each visit. Inferred from the code, not measured.
+  - Fix: capture `page` weakly. Related: #352, #368.
+- **#392 "Deleted …" cuts a guided file's name with "…".**
+  - Where: `guided.rs:1133`: `format!("{} {}", gettext("Deleted"), ellipsize(name, 28))`, also not reorderable for translators.
+  - Scenario: a file named "Body scan with long pauses, morning": the toast reads "Deleted Body scan with long pauses, mor…". Same class as #326, #349.
+  - Fix: a `"Deleted {name}"` msgid in full, shown through `show_toast` (#373).
+- **#393 `#[allow(dead_code)]` on `PKGDATADIR`.** `config.rs:6`, against the no-suppression rule; the constant has no user. Delete it (#379). Same class as #350.
+
+### From slice 12
+- **#406 Every recreate of the activity leaks a running tick loop.**
+  - Where: `build_ui` `Box::leak`s the tick `Timer` (4708) and the snapshot timer (4413), and `android_main` runs again on every activity recreate (the comment at 15-32 says so). The leaked closure holds the old `AppState`, the guided selection and the import slots.
+  - Scenario (plausible, not traced): after a USB attach or a low-memory recreate, the old timer keeps its state alive; if the new event loop runs on the same thread, the old tick still fires and runs `state.tick`, effects and `on_state_changed` on stale state, next to the new one.
+  - Fix: let the timers live as long as the window (return them from `build_ui` and hold them next to `ui`), never leaked.
+- **#407 Save can store one guided file's uuid with another's name.**
+  - Where: Save takes the uuid from the live `guided_sel` (5285-5294), the name from `SESSION_GUIDED_NAME` fixed at Start; an import that finishes during a session overwrites `guided_sel` (5006-5021), which `follow_guided_sel` guards against and this path doesn't.
+  - Scenario (plausible): an import is transcoding, a widget tap starts a Guided session with file A, the import finishes and selects file B; Save writes uuid B with name A, and per-file stats count the wrong file.
+  - Fix: read the uuid from the session record (#395); don't change the selection under a running session.
+- **#408 An interval bell whose sound is gone shows a blank sound name.** `populate_interval_bells` (4030-4037) uses an empty string where every other bell row shows "Missing" through `resolve_sound_name`. Fix with #397.
+- **#409 A widget tap that can't start says nothing.**
+  - Where: a deleted or not-yet-synced preset only logs "deep-link preset gone" (979), a mode mismatch logs "deep-link ignored"; a starred Local Folder file whose length isn't read yet selects the file and never starts (1058-1066: `ready` is false, and `poll_local_folder` 1571-1586 doesn't start when the length arrives).
+  - Scenario: tap a widget row for a preset deleted on the other device, or a fresh local file: the app opens on Setup, nothing runs, no message. The starred-file "not found" path (1050) does tell.
+  - Fix: a snackbar for each; start once the length arrives when the tap asked for it.
+- **#410 Creating a label can report "Save failed" for a label that was saved.** `create_label_in_db` (3405-3426) returns `None` when reading the uuid back fails after a successful insert; the caller shows "Save failed", and a retry is refused as a duplicate. The comment says failures are "just logged". Fix: `insert_label` returns the row (#401).
+- **#411 Tapping a Local Folder file can say "Save failed" for a read.** `select_local_file` (1401) runs the lookup through `local_save`, so a read error shows "Save failed" and marks a running folder refresh as failed. Fix: a read path with its own message.
+- **#412 An offline sync failure reloads every screen and collapses the Log.**
+  - Where: every failed attempt counts as "maybe changed" (197), so `refresh_after_pull` runs, including `reset_log_feed`.
+  - Scenario: offline, scroll the Log to page 3 and delete a session: the sync fails three times and the Log jumps back to the first 15 rows; Setup and the bell lists reload too. Same class as #342 (GTK).
+  - Fix: core reports whether the failed pass applied anything (a pull error before any apply did not); and #342's keep-the-scroll fix.
+- **#413 A leftover end-of-track or focus-loss file can act on a new session.** General fix: #439.
+  - Where: the drop files are not cleared when a session starts (5050, 5092); a Manage Files preview that played to its end leaves one.
+  - Scenario (plausible, a window of one tick): the preview ends and the user starts a session within 200 ms: the next tick enters Overtime (end bell at once) or pauses the session.
+  - Fix: clear both at Start, or tag them with the playback they belong to.
+
+### From slice 13
+- **#422 Saving a new interval bell with a changed volume can create it twice.**
+  - Where: `insert_interval_bell`, `find_interval_bell_by_id`, `update_interval_bell` (8117-8137) are three writes without a transaction.
+  - Scenario: the volume update fails (the sync holds the database): "Save failed", the editor stays open, but a bell at the default volume is stored; Save again adds a second one, and the bell rings twice. Against "multi-step writes are all-or-nothing".
+  - Fix: #354's `insert_interval_bell(.., volume)`.
+- **#423 Re-saving after a sync can store a duplicate pattern name.** The vibration editor only re-checks the name when it is edited (`ve_recompute_save` 7245), Save doesn't check again (7597), and a DB error counts as "not taken". A same-named pattern synced in while the editor is open is saved as a duplicate. Fix with #415.
+- **#424 Every activity recreate re-runs startup cleanup under a running sync or import.** Related: #435.
+  - Where: `open_database` (10479-10584) runs on every `android_main`; its cleanup deletes every `*.part` file and every file no row owns (`remove_orphan_files`, `remove_stale_import_files`, 10561-10566) on a second connection.
+  - Scenario (plausible): a sync downloads `guided/<uuid>.part`, the wallpaper colours change and Android recreates the activity: the half-written file is deleted, the download fails or leaves a row without its file. The second connection is then dropped.
+  - Fix: open and clean up once per process (#419).
+- **#425 After a failed database open, Preferences, About and Diagnostics can't be opened.**
+  - Where: `on_preferences_tap` returns at `lock_db()` = `None` (9036, 9057); the open failure itself only reaches the log (10570-10580).
+  - Scenario: a corrupt file or failed migration: the user taps Preferences to read or share the log and nothing happens, with no word why. Same class as #344 (GTK).
+  - Fix: say on screen that the database didn't open, and open Preferences without it.
+- **#426 "Keep both" on a label conflict that fails to save brings the same dialog back, with no message.** `dismiss_label_conflict` failing only logs (8396-8411), then `check_label_conflicts` shows the same conflict again; with no database the slot is already taken and nothing is said. The Android side of #382.
+- **#427 Recovery, the daily goal and Sync Now fail silently.**
+  - Where: the Push My Data and Wipe Local prepare steps (9213-9232, 9253-9286), the daily goal write (9347-9356) and `let _ = clear_refused_uploads` (9734) only log.
+  - Scenario: the user confirms Wipe Local twice, the prepare fails: the dialog closes, no sync starts, nothing says the data wasn't reset. A failed goal write leaves Preferences showing the new goal while Stats uses the old one. Same class as #382 and #340.
+  - Fix: `write_ok`/`setting_saved` for each.
+- **#428 Creating or renaming a label that fails closes the dialog and loses the typed name.** `create_label` and `rename_label` close the dialog and the labels page even after "Save failed" (8220-8231, 8298), unlike every other name dialog here, which stays open for a retry.
+
+### From slice 14
+- **#434 Long Log notes end in "…", a glyph the phone's font lacks.** `truncate_note_for_card` (1113-1122) cuts notes over 120 characters and appends "…"; the test (1280-1284) pins it. On the FP5 the card ends in a box. Against both Android text rules. GTK cuts the same notes with `lines: 2; ellipsize: end`. Decide whether a card preview may be cut (then elide in Slint, #433) or must show in full. Same class: #452 (widget), #462 (Setup and Stats). The comment at main.slint 4402-4411 describes a clip wrapper that does not exist (#461).
+- **#435 A screen recreated during a guided import undoes its cancel and orphans the result.** `remove_stale_import_files` (955-964) runs on every `android_main` (#419, #424) and deletes the running import's cancel and progress files: a cancel is undone, the transcode finishes, and its result and audio are never adopted until the next start. Plausible, not tried on a device. Fix: once per process (#419).
+- **#436 A Chinese or Portuguese phone outside zh-CN and pt-BR gets English.** `translation_candidates` (1344-1357) tries `lang_REGION`, then `lang`; only `zh_CN` and `pt_BR` exist, so zh-Hans, zh-Hans-SG, pt-PT and pt fall to English. Fix: map the script (`Hans`) and the bare language to the bundled one (whether pt-PT should get pt_BR is the maintainer's call).
+- **#437 A pause in Overtime would freeze it and save the wrong length.** `AppState::toggle` pauses any Active state (626-640); core's `toggle_action` makes Overtime a no-op; a paused Overtime then saves through `stop()` with the overtime included. Latent: the Overtime buttons offer no Pause today. Fix with #429.
+
+### From slice 15
+- **#443 Old Local Folder length results come back.**
+  - Where: `MeditateLocalFolder.kt:22, 100-120`: the `lengths` buffer holds every result of the run and is rewritten whole after each file; Rust applies all of it again (`ui.rs` ~1554).
+  - Scenario: file X fails to read (`X\t0`), the user taps X again and a new read starts, while a folder refresh rewrites the file with the old `X\t0`: the selection is refused as unreadable. After a folder switch, old lines can set lengths on reused row ids. A refresh of N files runs about N²/2 updates on the UI thread.
+  - Fix: write only new lines and clear on take (#439).
+- **#444 The bundled "Kanshō" bell can take the other app's spelling.** Seeding writes one insert event per row (`seeds.rs`, test `seed_bell_sounds_emits_one_insert_event_per_row..`); Android seeds "Kansho" (for the phone's font, `sounds.rs:14`), GTK "Kanshō", same uuid. After a sync one name likely wins on both devices, so the phone may show the macron it avoids. Plausible, not traced. Fix with #440: one name, or a per-app display name that isn't synced.
+- **#445 Rotating the phone during a file pick leaves an invisible screen on top.** `MeditateFilePickerActivity` returns early in a recreated instance (`savedInstanceState != null`, 38) and never finishes; the copy thread's `finish()` (148) finishes the old, destroyed instance. The translucent activity then takes every touch and the app looks frozen until Back. Kotlin-only fix possible; adding `configChanges` to the manifest **needs maintainer approval**.
+- **#446 Starting a Local Folder file can freeze the app on a cloud folder.** `MeditateGuided.kt:56-73` resolves the address (one query per path segment) and runs `setDataSource(content://..)` and `prepare()` synchronously on the UI thread inside the lock. On a Nextcloud or Drive provider that downloads in `openFile`, Start blocks for the download; after 5 s Android offers to close the app. Fix: prepare asynchronously.
+- **#447 A guided track that fails mid-session jumps to Overtime, and a late end can hit the next track.**
+  - Where: the completion and error listeners (`MeditateGuided.kt:64-73`) both write EOS, then release whatever `player` holds now, not the one that finished.
+  - Scenario: (a) a stream error (SD card pulled, cloud stream dropped) rings the end bell as if the track ended, the error only in logcat; (b) a track ends just as a new one starts: the old listener releases the new player and its late EOS forces the new session into Overtime.
+  - Fix: release only `mp`; report an error as an error (#385 is the GTK side).
+- **#448 A file pick whose provider fails the name query does nothing.** `queryDisplayName` (`MeditateFilePickerActivity.kt:153`) runs outside the try that writes `err:`; the outer catch (145) only logs. An offline cloud file or a revoked grant: the user picks a file and nothing happens.
+- **#449 A pause or resume can start a ghost media session.** `ACTION_PAUSE_SESSION`/`RESUME` (`MeditateSessionService.kt:487-494`) lack the `!started -> stopSelf()` guard the other actions have, and `LIVE` in `service.rs:40` isn't reset by `stop_leftover`. A pause after the service died creates an instance with an active MediaSession that nothing stops.
+- **#450 The widget can show one preset's name and start another.** `hasStableIds()` is true while `getItemId` returns the position (`MeditateWidgetService.kt:104-106`); after unstarring or reordering, a cached row may keep its old name while the tap sends the new row's uuid. Fix: `false`, or the uuid's hash.
+- **#451 A crash while saving the sync password loses it.** `MeditateKeychain.storePassword` truncates and rewrites `sync_secret.json` in place (55-58); `MeditateDropFile.write` already writes a temp file and renames. A full disk or a kill mid-write leaves an unreadable file, sync stops and the user must enter the password again.
+- **#452 Widget rows cut long names with "…".** `res/layout/widget_item.xml:22-23, 31-32` (`maxLines="1"`, `ellipsize="end"`). A long preset name or a German subtitle is cut on the home screen. Same class as #434, #462.
+
+### From slice 16
+- **#462 Setup and Stats cut text with "…".**
+  - Where: `overflow: elide` at 4023 (the Guided current file name), 4177 (the empty-starred hint), 4666 (the daily-goal line, 20px bold), 5023 (chart x-axis labels, 9px) and 5059 (the mini-stat values, 22px bold in a third of the width).
+  - Scenario: Guided with no starred file on a 360 px phone shows "Tap Open File then Import File, or st..." in every language, and never says where to star; German Total "123 Std 45 Min" and the goal "1 Std 48 Min / 2 Std 30 Min" are cut; a long file name ends in a box on the FP5. Widths are estimates from font size, not measured.
+  - Also without wrap and clipped by BoxedList's `clip: true`: the BY LABEL row name (5115) and the Log section date (4386), so a long label name is cut silently (plausible).
+  - Fix: wrap or stack each (the mini-stats could stack value over caption); the current-file row's fixed `height: 64px` (4008) becomes a minimum so a wrapping subtitle fits. Same class: #434, #452, #474.
+- **#463 The bell volume reveal can clip its own content (plausible).** RevealVolume opens to a hand-summed `full-height: 105px` (2090) instead of measuring; a translation that wraps "Volume", or a bigger system font, is cut at the bottom. Fixed by #453's measured `Reveal`.
+
+### From slice 17
+- **#472 The app and navigation bars pop over the sliding Edit Session page.** The overlay (5146) is declared before the AppBar (5356) and NavigationBar (5499), so both bars are hidden with `visible: !root.running-page && !root.edit-session-page` (5357, 5500), which AGENTS.md forbids. The bool flips at once while the page slides for 300 ms: on open the bars vanish before the page arrives, on Save or Cancel they paint over it while it slides out. Fix: declare the overlay after the NavigationBar (still before the Duration dialog and the label chooser), drop both gates; check Edit then Duration and Edit then Label on the phone.
+- **#473 With the 12-hour clock, an edited session time is always saved as AM.** `time-popup` passes `use_24_hour_format: root.clock-24h` (5336) and reads `get_current_time()`, whose PM conversion runs only in keyboard mode (`material-1.0/ui/components/time_picker.slint:592-603`); a dial pick of 2 with PM saves 02:30, and 12 gives noon. The Material bug of the parked Slint AM/PM work. `material-1.0` is protected: convert at the call site, or fix it upstream and update.
+- **#474 Six dialog titles are cut instead of wrapped.** Filter Sessions (5589), Custom Time (6556), Preparation Time (7985), the guided import title (9032), Daily Goal (9239) and the label conflict title (9491) are 22px Texts without `wrap` in a 280-340px card; ConfirmDialog's title wraps (1631). A long translation is cut. Same class: #462. Fixed by #465.
+- **#475 Set in the Duration dialog closes silently at 0:00.** The guard at 6609 skips the write but the dialog closes anyway; a new Log session keeps Save disabled with no word why. The Goal dialog disables Set instead. Fix: `enabled: root.dialog-hours > 0 || root.dialog-minutes > 0`.
+- **#476 TalkBack reads most icon buttons as just "button".** `IconButton`'s accessible label is its tooltip (`material-1.0/ui/components/icon_button.slint:25`), and 14 of the 19 in this range set none: AppBar Add, Filter, Menu (5440-5454), label rename and delete (6794, 6810), interval-bell delete (6220), sound edit and delete (7118, 7124), pattern delete (7286), preset rename and delete (7813, 7820), Manage Imports play, rename, delete (8179-8197). The preset and guided stars (7771, 8136) and the accent swatches (8792) are bare TouchAreas with no role. Fixed in one place by #467's LibraryRow.
+- **#477 A cancelled touch leaves the vibration drag open (plausible).** The plot's TouchArea handles `PointerEventKind.down` and `up` only (7570-7580); a back swipe or the notification shade sends `cancel`, so `ve-drag-end` never comes and the Rust drag and preview state stays on until the next touch. Fix: treat `cancel` like `up`.
+- **#478 Save in Edit Session can drop the word still being typed (plausible).** The Save action calls `edit-save-tap` (5195) without `edit-note.release()`; Rust reads `get_edit_note_text()` at once (`ui.rs` 8791), and the release runs only later in `changed edit-session-page`. The running page's end buttons (6488) and Preferences Save (8586) release first for this reason. Not reproduced on the phone.
+- **#479 A cancelled date or time pick may come back (plausible).** The Material pickers seed `current_date`/`current_time` from `date`/`time` by binding and re-seed only in `changed date`/`changed time` (`date_picker.slint:332, 506`; `time_picker.slint:408, 616`); after Cancel, reopening on the same session date shows the cancelled day, and OK writes it. Depends on whether the popup keeps its state between `show()`s, not checked. Fix: re-seed before `show()`.
+
+### From slice 18
+- **#488 Editing a Log entry on Android can move its start to now.** The edit page seeds date and time with `Local.timestamp_opt(..).single().unwrap_or_else(Local::now)` (`android ui.rs:8718-8721`); for a start in the hour that repeats when clocks go back, `single()` is None, the fields show now, and Save rebuilds the start from the fields (8818-8830), so changing only the note moves the session to today and syncs it. GTK seeds with `glib::DateTime::from_unix_local`. Fix: keep the stored start unless date or time was changed; seed with `earliest()`.
+- **#489 On Linux, a preset that can't be read does nothing when tapped.** `timer/imp.rs:3955-3963` returns on a failed read or a `PresetConfig::from_json` error (a preset from a newer version); Android's `apply_preset_json` says it failed. Same class: #382.
+- **#490 A failed seed: Linux refuses the database, Android only logs it.** GTK's open runs the seeds with `?` (`db/mod.rs:417-418`), so a failed seed shows the database as unavailable; Android logs `seed_all_non_audio FAILED` and carries on (`ui.rs:10512-10517`), so missing defaults go unsaid. Decide one rule in #483.
+- **#491 Undo on Linux's "Recovered session" toast refreshes nothing.** `application.rs:418-425` deletes and logs a failure (#382), but no Timer streak, Log or Stats refresh follows; Android's `U::Recovery` (`ui.rs` 8591) redraws them and says "Delete failed". The recovered session stays on screen until the next page switch.
+- **#492 Linux never withdraws "Meditation Complete".** It is sent with the id `timer-done` (`timer/imp.rs:2559`) and never withdrawn; Android clears it when the app comes back (`service::clear_complete`). After saving, the notification stays in GNOME's list (plausible: not checked on the desktop).
+- **#493 A bell imported on Linux is louder than the same file imported on Android.** GTK normalises to -16 LUFS (`audioloudnorm`, `sounds.rs:742-846`); Android's `MeditateGuidedImport.transcodeToOpusOgg` doesn't. The synced file depends on the importing device. Decide the rule in core (#441's import passthrough, #372).
+
 ## S. Cleanup (moved from OPEN-ISSUES.md on 2026-11-10)
 
 Re-checked against 9d3ecf6 (2026-10-22); line numbers below are current. Base suites green then (core 1390, android 261, gtk 162). Open decisions before a proposal: #197 plain show/hide without the slide; #85 whether a ringing end bell keeps ringing when its settings change; #171 comment only or `synchronous=FULL` around Save and Edit; #167/#175 protected files (ask). Proposed to drop: merging the five `(Context)V` JNI helpers (the batch-R JNI table test only sees `helper(app, "method")` calls and would need a rewrite), moving `snapshot_setup_json` timing to core (Android reads the UI and a Cell, core the DB), and `tick_mode` (not dead: read at `timer/imp.rs:2313, 2814`).
 
 ### #58 Dead and duplicated code (core and Android)
+- Related: #438 (`service.rs::call` and every other JNI bridge).
+- Related: #405, #421.
 - Core: `SessionPhase::Paused` (`session/mod.rs:145`) is never created; delete it, its arms at 488, 781, 832, the comment at 486-487 and ARCHITECTURE.md:207. (Line numbers are old: now 218-220, arms 563, 856, 981, 1019. Superseded by #273, which does it with the rest of pause.) `daily_totals()` / `get_daily_totals_from_db` (related: #297) (`db/sessions.rs:179-181, 735-761`, tests 3472, 3480, export `db/mod.rs:91`) feed only the 91-cell heatmaps (gtk `stats/imp.rs:196`, android `ui.rs:2026`); call the `_since` version with the grid's first cell (`cur_week_start - 12 weeks`, locale week start) and delete it.
 - Android: 59 `let _ = weak.clone();` in `ui.rs` (first at 5220); in 7 closures it is the only use, so their `let weak = ui.as_weak();` goes too (5209/5220, 5310/5317, 5603/5610, 7251/7255, 9064/9069, 9073/9078, 9187/9195). 4 `let _ = current_mode.get();` (5045, 7908, 7978, 8029). Other no-ops: `let _ = &weak;` 9018, `let _ = value;` 6319, 7539, 7585, `let _ = v;` 6394, 6406, `let _ = i;` 6420. `AppState::remaining` (`app.rs:640`) is test-only. Kotlin `MeditateKeychain.clearPassword` (`MeditateKeychain.kt:104-106`) has no caller.
 - gtk `keychain::delete_password` (141-156) with `Backend::delete` (313-325) has no caller (edit the source-text test at `keychain.rs:422`); core `settings::clear_nextcloud_account` (`sync/settings.rs:91-95`) has none either; then fix the comment at android `keychain.rs:63-67`. Stale `chooser_bell_volume` doc (`ui.rs:10016-10018`, talks of integer targets 0..6).
 - `service.rs::call` (105-152) repeats `jni_call::load_class` (112-125).
 
 ### #61 GTK dead code and the duplicated transcode pipeline
+- Related: #372 (the guided transcode and import, widened).
+Related: #356 (the preview button is copied the same way) and #318 and #315 (more dead parts of the timer page; do the `timer/imp.rs` bullet with them).
 - Dead: in `bells.rs` the `populating` guards at 760 and 872 can only fire on re-entry (it is set at 770/773 for the guard at 788), and the comment at 926-930 with `let _ = populating;` (931) is stale. Unused `toast_slot` (`presets.rs:332, 357-359`, one call site near 239); `chart_h` (`stats/imp.rs:443, 474`); `area` (`stats/imp.rs:669, 679`, caller 101); `let _ = BellSoundCategory::General` (`db/mod.rs:431`; check the import). Half-deleted "Throwaway" comments at `timer/imp.rs:1175-1180` and 153 (`setup_vibration_proto` no longer exists).
 - Duplicate: `sounds.rs:742-846` (`transcode_to_ogg`) and `guided.rs:461-556` (`transcode_to_ogg_preserve_channels`) differ only in the `audioloudnorm` branch and guided's cancel-aware 250 ms `timed_pop` loop. `audioloudnorm` never runs (not in the runtime, the manifest adds no GStreamer module): delete `sounds.rs:763-783, 795-801`; then one `transcode_to_ogg(source, dest, cancel: Option<&AtomicBool>)` with the polling loop. Fix guided's doc (452-455, claims the sounds version forces mono). Tests: `sounds.rs:1019-1045`, `guided.rs:1601-1641`.
 - `timer/imp.rs` (related: #281, one reader per bell slot): the `starting_bell_sound` read with its `"bowl"` fallback bound to `_starting_bell_sound_legacy` (3110-3112, 3133, 3141, 3167); `apply_preferred_label_for_mode(_mode)` (4451, callers 1891, 3230); `build_breathing_setup` (4268) and `breath_elapsed` (3040; keep the public wrapper `timer/mod.rs:126`) only pass through; 2484-2486 and 2717-2719 hand-copy `From<TimerMode>` (55-61). `PKGDATADIR` (`config.rs:6-7`, `#[allow(dead_code)]`) has no reader; it is also set in `build.rs:49-50`, `src/meson.build:14` and the Flatpak manifest (37).
 
 ### #85 Dead code, duplicates and a test that cannot fail
+- Related: #375 (`preload_end_bell`), #399, #401, #405, #418.
 - Core: `Effect::EndPrep` (`effect.rs:21-24`, 149; emitted `mod.rs:508`, mentioned 474; asserts 1132, 1144, 1705, 1989, 2312; ARCHITECTURE.md:241; gtk comments `timer/imp.rs:2243, 2845, 2863, 4113`) is never consumed (superseded by #271, which removes it with the other state-only effects). `tick_box_breath` (`mod.rs:604-667`) calls `fire_due_bells` at 658-665 though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `db_open_failure_key` (`format.rs:308-315`, tests 945-961) is unused and repeated in gtk `application.rs:178-187` (which matches gtk's own `DbError`). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (related: #273 touches `Stopwatch`). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
 - GTK: `play_starting_sound` (`sound.rs:291-320`) has no caller. `preload_end_bell` (270-286; calls `timer/imp.rs:680, 727, 1219`, `window/imp.rs:114`) builds media that `play_end_bell_uuid` (322) never uses; its only effect is stopping a ringing end bell when its settings change (decide). Stale preload docs: `sound.rs:10-15, 289-290, 331-332`, `timer/imp.rs:677-679, 1218`.
 - Android: the label rename and delete handlers still repeat part of `refresh_after_label_change` (`ui.rs:7968-7971`, 8016-8022 vs 2377-2387). `read_signal_mode_for_mode` (`ui.rs:542-550`) repeats core `bells::signal_mode_override_from_db`.
@@ -625,6 +1524,7 @@ Related: #298 (one atomic-write helper keeps the mode) and #307.
 - Fix: 1.92 in all three (Cargo.toml: ask first).
 
 ### #197 GTK: bell rows in a revealer warn on GNOME 51
+Related: #314 (one bell block instead of six): do together, or the six copies get fixed one by one.
 - Where: `meditate-gtk/data/ui/timer_view.blp`: start bell 431-470 and end bell 533-570 (sound, volume, pattern), and the four Box Breath phases (620/633/641, 668/681/689, 716/729/737, 764/777/785): 18 `Gtk.Revealer`s inside `Adw.ExpanderRow`s, matching the 18 warnings. Toggled in `timer/imp.rs` 1567-1717 (`build_signal_mode_toggle_widget`, `apply_signal_mode_state`, the phase versions).
 - Problem: libadwaita in GNOME 51 logs "AdwActionRow placed into GtkRevealer, can only be placed into GtkListBox" at every start. GNOME 50 has no such check.
 - Fix: rows directly in the expander, `set_visible` as `bells.rs:879-881` does, volume rows follow their sound row; delete `attach_revealer_row_click` (1802-1819, attached 691-694, 1360-1361) or every tap opens the chooser twice; update `every_setup_bell_has_a_volume_row` (`timer/mod.rs:193-221`) and the docs at 685-690, 1323-1324. Loses the 220 ms slide.
@@ -654,8 +1554,8 @@ So these aren't proposed again:
 - Removing the picker's `transient.<ext>` copies: one per extension, overwritten by the next pick, and the guided play-now selection plays the copy in place, so cleanup needs three separate paths for a few MB.
 - R13, small duplicates (`hm_mins_key` into `hm_secs_key`, one `session_payload()`): too little gain for touching the sync payload.
 - R7(b), a session record instead of loose session state: about -30 lines for about 54 rewritten test chains.
-- R15(c), one `SlidePage` frame for 13 pages: every page reaches into its own Flickable, so each needs rework and a retest, for a repeated frame and no bug.
-- R15(d), merging `VerticalSpinBox` and `StepperRow`: about -40 lines in the focus and keyboard code the cursor bugs came from.
+- R15(c), one `SlidePage` frame for 13 pages: every page reaches into its own Flickable, so each needs rework and a retest, for a repeated frame and no bug. #460 found a reason: each page lets go of focus its own way.
+- R15(d), merging `VerticalSpinBox` and `StepperRow`: about -40 lines in the focus and keyboard code the cursor bugs came from. Note (#461): VerticalSpinBox lacks `release()`.
 - R2b, all database writes off the UI thread: about 175 call sites, and no lock wait noticed in practice.
 - Closing the file picker before its copy ends (#37): the read grant on the picked file can end with that screen, so every pick path would need the file opened first; a local copy takes about a second.
 - Typed `BellSlot` through Slint: large, with no host safety net.

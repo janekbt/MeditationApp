@@ -55,8 +55,8 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 ### #193 Core: applying a preset is not one transaction
 - Where: `meditate-core/src/preset_config.rs` `apply` (comment above it: core::db has no nestable transactions; `set_interval_bell_enabled` opens its own); the length is written after it by each app (`set_timer_session_secs` / `set_breathing`).
-- Problem: a write that fails partway (sync lock, full disk) leaves part of the preset. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
-- Fix: nestable transactions (savepoints) in core::db, then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
+- Problem: a write that fails partway (sync lock, full disk) leaves part of the preset: settings, interval bells and box-breath phases out of step with it. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
+- Fix: nestable transactions in core::db (a savepoint helper, `SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, keeping `&self`; merged from #177), then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
 
 ## K4. GTK freeze before bells
 
@@ -236,11 +236,6 @@ Found with the first update list (#21), 2026-11-03. Each is its own change: read
 ## Later
 
 Ideas and larger improvements, not bugs; the maintainer decides if and when.
-
-### #177 Applying a preset is not atomic
-- Where: `meditate-core/src/preset_config.rs:485-` (each write in its own transaction, `db/settings.rs:25`); callers gtk `timer/imp.rs:3498`, android `ui.rs:1288`.
-- Problem: a write failing partway (busy database, full disk) leaves settings, interval bells and box-breath phases out of step with the preset.
-- Fix: a savepoint helper (`SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, keeps `&self`) and `db.run_in_transaction(|db| apply(...))`.
 
 ### #178 GTK: the Done note field should grow instead of scrolling in 180 px
 - Where: `meditate-gtk/data/ui/timer_view.blp:836-841`.
