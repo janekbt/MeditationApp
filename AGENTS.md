@@ -34,7 +34,8 @@ read that file and follow it the same way.
 - Commits: `<area>: <change>`, short, the body says why. One logical
   change per commit. `Fixes #N` only for real GitHub issues, never for
   the numbers in OPEN-ISSUES.md.
-- Open work, bugs and ideas: `OPEN-ISSUES.md`, one list.
+- Open work, bugs and ideas: `OPEN-ISSUES.md`. Refactors and cleanup:
+  `REFACTORING.md`.
 
 ## Commands
 
@@ -147,6 +148,7 @@ change (`/spec` step 5).
 | Release steps | `RELEASE.md` |
 | A feature users see | `README.md` features list |
 | A bug fixed or found | `OPEN-ISSUES.md` |
+| A refactor done or found | `REFACTORING.md` |
 
 Also: `CONTRIBUTING.md` (for people), `meditate-core/README.md` (the
 core crate). Finished plans and reports are not kept as files; git

@@ -196,7 +196,7 @@ one too, and it runs again after a later fix review (step 6). Apply
 its fixes the same way as review findings, note skipped ones in
 `tasks.md`, and run the whole suite again afterwards. A refactor it
 suggests that you skip as too big for this change goes into
-OPEN-ISSUES.md under "Deferred refactors": what, where, and the gain
+REFACTORING.md under "Deferred refactors": what, where, and the gain
 it named, with the date and the change it came from.
 
 ### 5. Specs, docs and the list
