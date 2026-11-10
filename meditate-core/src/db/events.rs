@@ -7,20 +7,20 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error,
+    conflict_suffixed_name, is_unique_constraint_error, strip_conflict_suffix,
     target_id_is_well_formed_for, BoxBreathPhaseId, Database, DbError, Result,
     CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY,
 };
 
 /// Typed variant of `Event.kind`. Replaces the bare string literals
-/// that emit_event / apply_event_inner previously passed — a typo
+/// that emit_event / apply_event previously passed — a typo
 /// on either side is now a compile error rather than a silent sync
 /// data-loss bug.
 ///
 /// `as_db_str` produces the canonical wire string stored in
 /// `events.kind`; `from_db_str` parses one back. Unknown strings
 /// (e.g. an event kind a future build understands but this one
-/// doesn't) return `None` and propagate to apply_event_inner's
+/// doesn't) return `None` and propagate to apply_event_record_only's
 /// forward-compat path: record the event, skip dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventKind {
@@ -188,65 +188,80 @@ pub struct Event {
     pub payload: String,
 }
 
+/// A whole number from a peer's payload, clamped into `u32` as a
+/// local save clamps (`as` saturates; a fraction is cut; anything
+/// else is 0).
+pub(super) fn peer_u32(v: &serde_json::Value) -> u32 {
+    v.as_f64().unwrap_or(0.0) as u32
+}
+
+/// `sync_state` key: the highest `events.id` this build has applied.
+/// Events above it were appended by an older build.
+pub(super) const LAST_APPLIED_EVENT_ID_KEY: &str = "last_applied_event_id";
+
+/// The entity an event drives, or `None` when it is not applied (the
+/// event stays recorded): a kind only a newer build knows, or a
+/// target id that isn't well formed. A malicious peer could ship a
+/// bell_sound_insert with target_id="../../../etc/passwd", which would
+/// land in bell_sounds.uuid and then be used as a path component in
+/// pull_custom_sound_files: an arbitrary file-write primitive.
+/// Skipping, not failing, keeps one bad event from poisoning a batch,
+/// and peers with another validator stay compatible.
+fn dispatchable(kind: &str, target_id: &str) -> Option<EntityKind> {
+    if !target_id_is_well_formed_for(kind, target_id) {
+        crate::diag::log("apply_event.rejected", &format!("kind={kind} target_id={target_id:?} (invalid)"));
+        return None;
+    }
+    EventKind::from_db_str(kind).map(EventKind::entity)
+}
+
 impl Database {
-    /// If the stored cache-schema version is below `CACHE_SCHEMA_VERSION`,
-    /// replay every event so any kind that this build understands but
-    /// the previous build skipped (apply_event_inner's "unknown kind"
-    /// branch) gets materialised into the cache. Idempotent: re-applying
-    /// understood kinds is a no-op (their dispatchers are UPSERT-shaped),
-    /// and lamport_clock isn't bumped because the events are not "fresh
-    /// from a peer" (was_new=false on re-record).
-    pub(super) fn maybe_walk_events_for_cache_upgrade(&self) -> Result<()> {
-        let stored = self
-            .get_sync_state(CACHE_SCHEMA_VERSION_KEY, "0")?
+    /// Rebuild what an older build applied: the targets of every event
+    /// above the last one this build applied. An older version stores
+    /// a row without the fields it doesn't know (a bell's seconds, a
+    /// session's file name) while the event keeps them. With no
+    /// marker, one past the last event (a database file put back), or
+    /// a cache-schema version below this build's (kinds the previous
+    /// build skipped), everything is rebuilt once. Nothing is
+    /// re-appended and the lamport clock stays as it is.
+    pub(super) fn rebuild_events_from_older_builds(&self) -> Result<()> {
+        let last: i64 = self.conn.query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |row| row.get(0))?;
+        let cache_current = self.get_sync_state(CACHE_SCHEMA_VERSION_KEY, "0")?
             .parse::<u32>()
+            .is_ok_and(|v| v >= CACHE_SCHEMA_VERSION);
+        let marker = self.get_sync_state(LAST_APPLIED_EVENT_ID_KEY, "")?
+            .parse::<i64>()
+            .ok()
+            .filter(|m| cache_current && *m <= last)
             .unwrap_or(0);
-        if stored >= CACHE_SCHEMA_VERSION {
+        if marker == last && cache_current {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction()?;
-        let events = {
-            let mut stmt = self.conn.prepare(
-                "SELECT event_uuid, lamport_ts, device_id, kind, target_id, payload
-                 FROM events
-                 ORDER BY lamport_ts ASC, device_id ASC",
-            )?;
-            let rows = stmt.query_map([], |row| {
-                Ok(Event {
-                    event_uuid: row.get(0)?,
-                    lamport_ts: row.get(1)?,
-                    device_id: row.get(2)?,
-                    kind: row.get(3)?,
-                    target_id: row.get(4)?,
-                    payload: row.get(5)?,
-                })
-            })?;
-            let mut out: Vec<Event> = Vec::new();
-            for r in rows {
-                out.push(r?);
-            }
-            out
-        };
-        let count = events.len();
-        for event in events {
-            self.apply_event_inner(&event)?;
-        }
+        // Each target once, skipping what applying the event skipped.
+        let touched: std::collections::HashSet<(EntityKind, String)> = self.conn
+            .prepare("SELECT DISTINCT kind, target_id FROM events WHERE id > ?1")?
+            .query_map(params![marker], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|(kind, target_id)| dispatchable(&kind, &target_id).map(|e| (e, target_id)))
+            .collect();
+        self.recompute_touched(&touched)?;
         self.reclaim_suffixed_names()?;
-        self.set_sync_state(
-            CACHE_SCHEMA_VERSION_KEY,
-            &CACHE_SCHEMA_VERSION.to_string(),
-        )?;
+        self.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, &last.to_string())?;
+        self.set_sync_state(CACHE_SCHEMA_VERSION_KEY, &CACHE_SCHEMA_VERSION.to_string())?;
         tx.commit()?;
+        let count = touched.len();
         if count > 0 {
-            crate::diag::log(
-                "cache.schema_upgrade",
-                &format!(
-                    "replayed events={count} from=v{stored} \
-                     to=v{CACHE_SCHEMA_VERSION}"
-                ),
-            );
+            crate::diag::log("cache.older_build", &format!("rebuilt targets={count} after_event={marker}"));
         }
         Ok(())
+    }
+
+    /// Every event in the log is now applied by this build.
+    fn mark_events_applied(&self) -> Result<()> {
+        let last: i64 = self.conn.query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |row| row.get(0))?;
+        self.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, &last.to_string())
     }
 
     /// Append an event to the sync log. Returns the local rowid (the
@@ -497,11 +512,30 @@ impl Database {
             target_id: target_id.to_string(),
             payload,
         };
-        self.append_event(&event)?;
+        let id = self.append_event(&event)?;
+        self.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, &id.to_string())?;
         // Counted before the caller commits; a write that then rolls
         // back costs at most one empty sync.
         self.local_changes.bump();
         Ok(())
+    }
+
+    /// Record a local write as `kind` and build its row from the log,
+    /// the way every peer builds it. The name goes out without the
+    /// row's own conflict suffix, which the rebuild puts back while
+    /// the clash lasts.
+    pub(super) fn emit_and_rebuild_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        kind: EventKind,
+        target_id: &str,
+        mut payload: serde_json::Value,
+    ) -> Result<()> {
+        if let Some(name) = payload["name"].as_str().and_then(|n| strip_conflict_suffix(n, target_id)) {
+            payload["name"] = name.to_owned().into();
+        }
+        self.emit_event(tx, kind, target_id, payload.to_string())?;
+        self.recompute_for(kind.entity(), target_id)
     }
 
     /// Handle to this database's local-change count (see
@@ -524,28 +558,13 @@ impl Database {
     /// - Insert + delete out of order → tombstone wins if its lamport
     ///   ≥ the mutate's, regardless of arrival sequence.
     ///
-    /// Production replay goes through `apply_event_inner` directly via
-    /// `replay_events`; this single-event wrapper is gated to test
-    /// builds because it has no production callers — tests that need
-    /// the simpler "one event in, one row out" entry point use it.
+    /// Production goes through `replay_events`; this single-event
+    /// wrapper is gated to test builds because it has no production
+    /// callers — tests that need the simpler "one event in, one row
+    /// out" entry point use it.
     #[cfg(test)]
     pub(crate) fn apply_event(&self, event: &Event) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.apply_event_inner(event)?;
-        self.reclaim_suffixed_names()?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// The transaction-less core of `apply_event`. Extracted so
-    /// `replay_events` can apply many events under a single outer
-    /// transaction — opening a SAVEPOINT per event would be correct but
-    /// pointlessly slow.
-    fn apply_event_inner(&self, event: &Event) -> Result<()> {
-        if let Some(entity) = self.apply_event_record_only(event)? {
-            self.recompute_for(entity, &event.target_id)?;
-        }
-        Ok(())
+        self.replay_events(std::slice::from_ref(event))
     }
 
     /// Record + validate the event without firing its recompute_*.
@@ -555,7 +574,7 @@ impl Database {
     /// future build understands but this one doesn't) — both are
     /// soft-fail / record-but-skip-dispatch paths.
     ///
-    /// Split out from `apply_event_inner` so `replay_events` can
+    /// Split from the recompute so `replay_events` can
     /// record N events first, then dedup their recomputes per
     /// `(EntityKind, target_id)` — a session edited five times in
     /// the same batch recomputes once.
@@ -583,28 +602,7 @@ impl Database {
             self.observe_remote_lamport(event.lamport_ts)?;
         }
 
-        // Validate target_id BEFORE dispatch. A malicious peer could
-        // ship a bell_sound_insert with target_id="../../../etc/passwd",
-        // which would write that string into bell_sounds.uuid and then
-        // be used as a path component in pull_custom_sound_files —
-        // arbitrary file-write primitive. Skip the dispatch on invalid
-        // target_id but keep the event row recorded; future-compat
-        // peers may have a different validator, and skipping is
-        // soft-fail-don't-rollback so one bad event doesn't poison
-        // the whole replay batch.
-        if !target_id_is_well_formed_for(&event.kind, &event.target_id) {
-            crate::diag::log(
-                "apply_event.rejected",
-                &format!(
-                    "kind={} target_id={:?} (invalid)",
-                    event.kind, event.target_id,
-                ),
-            );
-            return Ok(None);
-        }
-
-        // Unknown kind → record but skip dispatch (forward-compat).
-        Ok(EventKind::from_db_str(&event.kind).map(EventKind::entity))
+        Ok(dispatchable(&event.kind, &event.target_id))
     }
 
     /// Materialise the named entity's cache row from the events table.
@@ -737,25 +735,31 @@ impl Database {
                 touched.insert((entity, event.target_id.clone()));
             }
         }
-        // Two-pass recompute. `recompute_session` dereferences
-        // labels.uuid → labels.id during materialise, so labels must
-        // be present in the cache by the time it runs. Every other
-        // `recompute_X` reads only from `events` and is order-free.
-        // Splitting into "non-Session first, Session second" honours
-        // the one cross-entity dependency without paying for a
-        // topological sort.
-        for (entity, target_id) in &touched {
+        self.recompute_touched(&touched)?;
+        self.reclaim_suffixed_names()?;
+        self.mark_events_applied()?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Recompute each touched target once. Two passes:
+    /// `recompute_session` dereferences labels.uuid → labels.id during
+    /// materialise, so labels must be present in the cache by the time
+    /// it runs. Every other `recompute_X` reads only from `events` and
+    /// is order-free. Splitting into "non-Session first, Session
+    /// second" honours the one cross-entity dependency without paying
+    /// for a topological sort.
+    fn recompute_touched(&self, touched: &std::collections::HashSet<(EntityKind, String)>) -> Result<()> {
+        for (entity, target_id) in touched {
             if *entity != EntityKind::Session {
                 self.recompute_for(*entity, target_id)?;
             }
         }
-        for (entity, target_id) in &touched {
+        for (entity, target_id) in touched {
             if *entity == EntityKind::Session {
                 self.recompute_for(*entity, target_id)?;
             }
         }
-        self.reclaim_suffixed_names()?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -813,14 +817,19 @@ impl Database {
             (EntityKind::VibrationPattern, "vibration_patterns"),
         ] {
             let rows: Vec<(String, String)> = self.conn
-                .prepare(&format!("SELECT uuid, name FROM {table} WHERE name LIKE '% (conflict-%)'"))?
+                .prepare(&format!("SELECT uuid, name FROM {table}"))?
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
-            for (uuid, name) in rows {
+            for (uuid, name) in &rows {
                 // Only the suffix this row's own uuid gives it, not a
                 // user-typed lookalike.
-                if name.ends_with(&conflict_suffixed_name("", &uuid)) {
-                    self.recompute_for(entity, &uuid)?;
+                let Some(base) = strip_conflict_suffix(name, uuid) else { continue };
+                // Settled for good while a smaller uuid holds the name.
+                let held_by_smaller = rows.iter().any(|(other, other_name)| {
+                    other.as_str() < uuid.as_str() && other_name.eq_ignore_ascii_case(base)
+                });
+                if !held_by_smaller {
+                    self.recompute_for(entity, uuid)?;
                 }
             }
         }
@@ -884,7 +893,7 @@ mod tests {
     #[test]
     fn event_kind_from_db_str_returns_none_on_unknown_string() {
         // Forward-compat: an event kind a future build understands
-        // but this one doesn't must parse as None, so apply_event_inner
+        // but this one doesn't must parse as None, so apply_event_record_only
         // records the row and skips dispatch instead of mis-routing it.
         assert_eq!(EventKind::from_db_str("session_archive"), None);
         assert_eq!(EventKind::from_db_str(""), None);
@@ -1759,7 +1768,7 @@ mod tests {
 
     #[test]
     fn replay_events_advances_lamport_through_the_observation_rule() {
-        // replay_events processes a batch via apply_event_inner, which
+        // replay_events processes a batch via apply_event_record_only, which
         // includes the observation step. After replaying a batch from
         // a peer whose highest lamport was N, our local clock must be
         // ≥ N+1 so subsequent local writes order after the batch.
@@ -1856,4 +1865,133 @@ mod tests {
         assert_eq!(ts, sorted, "replay order");
     }
 
+    #[test]
+    fn a_permanent_name_conflict_is_not_settled_again() {
+        // aaaa < bbbb: aaaa keeps "Work", bbbb is suffixed for good.
+        let db = Database::open_in_memory().unwrap();
+        let ev = |uuid: &str, lamport: i64, device: &str| Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: lamport,
+            device_id: device.into(),
+            kind: "label_insert".into(),
+            target_id: uuid.into(),
+            payload: serde_json::json!({ "uuid": uuid, "name": "Work" }).to_string(),
+        };
+        db.replay_events(&[
+            ev("550e8400-e29b-41d4-a716-44665544aaaa", 5, "A"),
+            ev("550e8400-e29b-41d4-a716-44665544bbbb", 6, "B"),
+        ]).unwrap();
+        let before = db.conn.total_changes();
+        db.reclaim_suffixed_names().unwrap();
+        assert_eq!(db.conn.total_changes(), before, "a settled pair is not written again");
+    }
+    #[test]
+    fn every_local_write_is_stored_as_a_peer_stores_it() {
+        use crate::db::{list_guided_files_from_db, list_labels_from_db, list_presets_from_db,
+            list_sessions_from_db, list_vibration_patterns_from_db, StarredState};
+        use crate::bell_volume::BellVolume;
+        use crate::bells::{BellTime, TimeUnit};
+        let a = Database::open_in_memory().unwrap();
+        a.seed_box_breath_phases().unwrap();
+        let label = a.insert_label("Walk").unwrap();
+        let preset = "a0000000-0000-4000-8000-00000000000a";
+        a.insert_preset_with_uuid(preset, "Calm", SessionMode::Timer, false, r#"{"a":1}"#).unwrap();
+        a.update_preset_name(preset, "Quiet").unwrap();
+        a.update_preset_starred(preset, StarredState::Starred).unwrap();
+        a.update_preset_config(preset, r#"{"a":2}"#).unwrap();
+        let bell = a.insert_interval_bell(IntervalBellKind::Interval, BellTime::new(90, TimeUnit::Sec),
+            BellTime::new(1, TimeUnit::Min), BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Both).unwrap();
+        let bell = a.find_interval_bell_by_id(bell).unwrap().unwrap();
+        a.update_interval_bell(&crate::db::IntervalBell { volume: BellVolume::from_percent(40.0), ..bell.clone() }).unwrap();
+        a.copy_interval_bell(&bell, &bell, "b0000000-0000-4000-8000-00000000000b").unwrap();
+        a.set_box_breath_phase(BoxBreathPhaseId::HoldIn, true, SignalMode::Vibration,
+            BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, BellVolume::from_percent(70.0)).unwrap();
+        let pattern = a.insert_vibration_pattern("Wave", 1200, &[0.25, 0.5, 1.0], ChartKind::Bar, false).unwrap();
+        a.rename_vibration_pattern(&pattern, "Tide").unwrap();
+        let file = "e0000000-0000-4000-8000-00000000000e";
+        a.insert_guided_file_with_uuid(file, "Body Scan", "a.ogg", 600, false).unwrap();
+        a.rename_guided_file(file, "Scan").unwrap();
+        a.set_guided_file_starred(file, StarredState::Starred).unwrap();
+        let sound = a.insert_bell_sound("Chime", "chime.ogg", false, "audio/ogg", BellSoundCategory::General).unwrap();
+        let sound = a.list_bell_sounds().unwrap().into_iter().find(|s| s.id == sound).unwrap();
+        a.rename_bell_sound(sound.uuid.as_str(), "Ding").unwrap();
+        let session = a.insert_session(&Session::from_unix(1_790_000_000, 600, Some(label), Some("calm".into()),
+            SessionMode::Guided, Some(file.into()), Some("Scan".into()))).unwrap();
+        let (_, mut s) = crate::db::list_sessions_from_db(&a).unwrap().remove(0);
+        s.duration_secs = 900;
+        a.update_session(session, &s).unwrap();
+
+        let b = Database::open_in_memory().unwrap();
+        b.seed_box_breath_phases().unwrap();
+        crate::db::test_helpers::exchange(&a, &b);
+
+        // Rowids are each device's own; everything else must match.
+        let presets = |db: &Database| list_presets_from_db(db).unwrap().into_iter()
+            .map(|p| crate::db::Preset { id: 0, ..p }).collect::<Vec<_>>();
+        let bells = |db: &Database| db.list_interval_bells().unwrap().into_iter()
+            .map(|b| crate::db::IntervalBell { id: 0, ..b }).collect::<Vec<_>>();
+        let patterns = |db: &Database| list_vibration_patterns_from_db(db).unwrap().into_iter()
+            .map(|p| crate::db::VibrationPattern { id: 0, ..p }).collect::<Vec<_>>();
+        let files = |db: &Database| list_guided_files_from_db(db).unwrap().into_iter()
+            .map(|f| crate::db::GuidedFile { id: 0, ..f }).collect::<Vec<_>>();
+        let sounds = |db: &Database| db.list_bell_sounds().unwrap().into_iter()
+            .map(|s| crate::db::BellSound { id: 0, ..s }).collect::<Vec<_>>();
+        let sessions = |db: &Database| {
+            let labels = list_labels_from_db(db).unwrap();
+            list_sessions_from_db(db).unwrap().into_iter().map(|(_, s)| {
+                let name = s.label_id.and_then(|id| labels.iter().find(|l| l.id == id)).map(|l| l.name.clone());
+                (name, Session { label_id: None, ..s })
+            }).collect::<Vec<_>>()
+        };
+        assert_eq!(presets(&a), presets(&b));
+        assert_eq!(bells(&a), bells(&b));
+        assert_eq!(a.list_box_breath_phases().unwrap(), b.list_box_breath_phases().unwrap());
+        assert_eq!(patterns(&a), patterns(&b));
+        assert_eq!(files(&a), files(&b));
+        assert_eq!(sounds(&a), sounds(&b));
+        assert_eq!(sessions(&a), sessions(&b));
+        assert_eq!(sessions(&a)[0].0.as_deref(), Some("Walk"));
+    }
+    #[test]
+    fn a_marker_past_the_last_event_rebuilds_everything() {
+        // A database file put back from a backup: its events end below
+        // the marker, and a row changed outside the event log.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid("a0000000-0000-4000-8000-00000000000a", "Calm", SessionMode::Timer, false, "{}").unwrap();
+        db.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, "999999").unwrap();
+        db.conn.execute("UPDATE presets SET name = 'Stale'", []).unwrap();
+        let Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(crate::db::list_presets_from_db(&db).unwrap()[0].name, "Calm");
+    }
+
+    #[test]
+    fn a_rebuild_skips_an_event_with_a_bad_target_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('bad', 1, 'peer', 'bell_sound_insert', '../../etc/passwd', ?1)",
+            [serde_json::json!({ "name": "x", "file_path": "x" }).to_string()],
+        ).unwrap();
+        let Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert!(db.list_bell_sounds().unwrap().iter().all(|s| s.uuid.as_str() != "../../etc/passwd"));
+    }
+    #[test]
+    fn an_event_an_older_build_skipped_is_applied_when_this_build_returns() {
+        // #99: an older build recorded a kind it didn't know and left
+        // the newer cache version in place.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Walk").unwrap();
+        db.conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('old', 90, 'peer', 'preset_insert', 'a0000000-0000-4000-8000-00000000000a', ?1)",
+            [serde_json::json!({ "uuid": "a0000000-0000-4000-8000-00000000000a", "name": "Calm",
+                "mode": "timer", "is_starred": true, "config_json": "{}" }).to_string()],
+        ).unwrap();
+        let Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(crate::db::list_presets_from_db(&db).unwrap()[0].name, "Calm");
+    }
 }

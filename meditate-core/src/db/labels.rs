@@ -252,9 +252,7 @@ impl Database {
         let mut out = Vec::new();
         for l in &labels {
             let uuid = l.uuid.as_str();
-            let short: String = uuid.chars().take(8).collect();
-            let suffix = format!(" (conflict-{short})");
-            let Some(base_name) = l.name.strip_suffix(&suffix) else {
+            let Some(base_name) = super::strip_conflict_suffix(&l.name, uuid) else {
                 continue;
             };
             if dismissed.contains(uuid) {
@@ -306,6 +304,12 @@ impl Database {
                     .unwrap_or_else(|| crate::settings_keys::default_label_uuid_for_mode(mode).to_string());
                 if current == from_uuid {
                     self.set_setting_in(&tx, crate::settings_keys::label_uuid_key_for_mode(mode), &into_uuid)?;
+                }
+            }
+            // A preset pinned to the merged-away label takes the kept one.
+            for preset in crate::db::list_presets_from_db(self)? {
+                if let Some(config) = crate::preset_config::retarget_label(&preset.config_json, &from_uuid, &into_uuid) {
+                    self.edit_preset_in(&tx, preset.uuid.as_str(), |p| p.config_json = config)?;
                 }
             }
         }
@@ -1517,6 +1521,26 @@ mod tests {
             crate::labels::label_uuid_from_db(&db, SessionMode::Guided).as_deref(),
             Some(base.uuid.as_str()),
         );
+    }
+
+    #[test]
+    fn a_merge_moves_presets_to_the_kept_label() {
+        let db = Database::open_in_memory().unwrap();
+        let (base_id, suffixed_id, uuid) = make_conflict(&db, "Walk");
+        let preset = "a0000000-0000-4000-8000-00000000000a";
+        // A field a newer version wrote stays as it is.
+        let config = serde_json::json!({ "label": { "enabled": true, "uuid": uuid }, "future": 7 });
+        db.insert_preset_with_uuid(preset, "Calm", SessionMode::Timer, true, &config.to_string()).unwrap();
+        db.merge_labels(suffixed_id, base_id).unwrap();
+        let base = list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == base_id).unwrap();
+        let peer = Database::open_in_memory().unwrap();
+        exchange(&db, &peer);
+        for db in [&db, &peer] {
+            let stored = crate::db::find_preset_by_uuid_from_db(db, preset).unwrap().unwrap();
+            let stored: serde_json::Value = serde_json::from_str(&stored.config_json).unwrap();
+            assert_eq!(stored["label"]["uuid"], base.uuid.as_str());
+            assert_eq!(stored["future"], 7);
+        }
     }
 
     /// Enter on the prefilled rename dialog sent the old name with a

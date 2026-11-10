@@ -10,14 +10,14 @@ use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 /// data.
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 
-/// Cache materialization version. Bumped when `apply_event_inner`
+/// Cache materialization version. Bumped when `apply_event_record_only`
 /// learns a new event kind it previously recorded-but-skipped, or
 /// changes the cache columns a kind materialises. On open, if the
-/// stored value is less than this constant, every event in the log
-/// is re-applied so historical events for newly-understood kinds
-/// land in the cache. Stored in `sync_state` (local-only) rather
-/// than `settings` (event-sourced) so peers don't see each other's
-/// cache progress as something to sync.
+/// stored value is less than this constant, the target of every
+/// event in the log is rebuilt once so historical events for
+/// newly-understood kinds land in the cache. Stored in `sync_state`
+/// (local-only) rather than `settings` (event-sourced) so peers don't
+/// see each other's cache progress as something to sync.
 pub(crate) const CACHE_SCHEMA_VERSION: u32 = 2;
 
 /// Columns added after a release, as (table, column, definition).
@@ -25,51 +25,39 @@ pub(crate) const CACHE_SCHEMA_VERSION: u32 = 2;
 /// `add_missing_columns` adds these to databases created by an older
 /// build. Only additive, defaulted columns belong here: the release
 /// that created the database can still open and write it, so
-/// `SCHEMA_VERSION` stays put and going back stays possible.
-/// The fourth field, when set, runs once right after the column is
-/// added, to fill it from data the older release kept.
-const ADDED_COLUMNS: &[(&str, &str, &str, Option<&str>)] = &[
-    ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
-    ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50", None),
+/// `SCHEMA_VERSION` stays put and going back stays possible. Data an
+/// older release kept only in the events is filled by the start-up
+/// rebuild (`rebuild_events_from_older_builds`).
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
+    ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
     // Bell times in seconds, each with the unit it was set in. NULL on
     // rows from before them: those read from minutes and jitter_pct.
-    ("interval_bells", "secs", "INTEGER", None),
-    ("interval_bells", "secs_unit", "TEXT", None),
-    ("interval_bells", "jitter_secs", "INTEGER", None),
-    ("interval_bells", "jitter_unit", "TEXT", None),
-    ("interval_bells", "step_secs", "INTEGER", None),
-    ("interval_bells", "step_unit", "TEXT", None),
+    ("interval_bells", "secs", "INTEGER"),
+    ("interval_bells", "secs_unit", "TEXT"),
+    ("interval_bells", "jitter_secs", "INTEGER"),
+    ("interval_bells", "jitter_unit", "TEXT"),
+    ("interval_bells", "step_secs", "INTEGER"),
+    ("interval_bells", "step_unit", "TEXT"),
     // A starred local file's place in Starred Files, a key from the
     // order-key scheme (`order_key.rs`). Local only; NULL: after every
     // keyed row, by name.
-    ("local_guided_files", "star_key", "TEXT", None),
-    // A peer's name the older release received is still in its event.
-    ("sessions", "guided_file_name", "TEXT", Some(
-        "UPDATE sessions SET guided_file_name = (
-             SELECT json_extract(payload, '$.guided_file_name') FROM events
-             WHERE target_id = sessions.uuid
-               AND kind IN ('session_insert', 'session_update')
-               AND json_extract(payload, '$.guided_file_name') IS NOT NULL
-             ORDER BY lamport_ts DESC, device_id DESC LIMIT 1)"
-    )),
+    ("local_guided_files", "star_key", "TEXT"),
+    // A peer's name the older release received is still in its event;
+    // the start-up rebuild of what an older build applied restores it.
+    ("sessions", "guided_file_name", "TEXT"),
 ];
 
 /// Add any `ADDED_COLUMNS` the database lacks. Idempotent.
 pub(super) fn add_missing_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
-    for (table, column, definition, fill) in ADDED_COLUMNS {
+    for (table, column, definition) in ADDED_COLUMNS {
         let present: bool = conn.query_row(
             &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
             [column],
             |row| row.get::<_, i64>(0).map(|n| n > 0),
         )?;
         if !present {
-            // Column and fill land together, or the next open tries again.
-            let tx = conn.unchecked_transaction()?;
-            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
-            if let Some(fill) = fill {
-                tx.execute_batch(fill)?;
-            }
-            tx.commit()?;
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
         }
     }
     Ok(())

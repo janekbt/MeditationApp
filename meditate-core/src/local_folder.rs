@@ -497,10 +497,6 @@ mod tests {
             .collect()
     }
 
-    fn pending(db: &Database) -> usize {
-        db.pending_events().unwrap().len()
-    }
-
     /// Starred library files with uuids "a", "b", ... named "A", "B",
     /// ... in that order; local files under /m named by `locals`,
     /// starred.
@@ -527,32 +523,27 @@ mod tests {
         StarredGuidedId::Library(uuid.into())
     }
 
-    fn swap_events(from: &Database, to: &Database) {
-        let events: Vec<_> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-        to.replay_events(&events).unwrap();
-    }
-
     #[test]
     fn a_local_file_moves_between_library_files_without_sync() {
         let db = Database::open_in_memory().unwrap();
         starred_setup(&db, &["A", "B"], &["x"]);
         assert_eq!(starred_names(&db), ["A", "B", "x"]);
-        let before = pending(&db);
+        let before = crate::db::test_helpers::sent(&db);
         db.move_starred_guided(&local(&db, "x"), 1).unwrap();
         assert_eq!(starred_names(&db), ["A", "x", "B"]);
-        assert_eq!(pending(&db), before);
+        assert_eq!(crate::db::test_helpers::sent(&db), before);
     }
 
     #[test]
     fn a_library_file_moved_past_only_local_files_writes_no_sync() {
         let db = Database::open_in_memory().unwrap();
         starred_setup(&db, &["A", "B"], &["x", "y"]);
-        let before = pending(&db);
+        let before = crate::db::test_helpers::sent(&db);
         db.move_starred_guided(&library("b"), 3).unwrap();
         assert_eq!(starred_names(&db), ["A", "x", "y", "B"]);
         db.move_starred_guided(&library("a"), 2).unwrap();
         assert_eq!(starred_names(&db), ["x", "y", "A", "B"]);
-        assert_eq!(pending(&db), before);
+        assert_eq!(crate::db::test_helpers::sent(&db), before);
     }
 
     #[test]
@@ -561,12 +552,12 @@ mod tests {
         let two = Database::open_in_memory().unwrap();
         starred_setup(&one, &["A", "B"], &["x"]);
         one.move_starred_guided(&local(&one, "x"), 1).unwrap();
-        swap_events(&one, &two);
-        let before = pending(&one);
+        crate::db::test_helpers::push(&one, &two);
+        let before = crate::db::test_helpers::sent(&one);
         one.move_starred_guided(&library("b"), 0).unwrap();
         assert_eq!(starred_names(&one), ["B", "A", "x"]);
-        assert_eq!(pending(&one), before + 1);
-        swap_events(&one, &two);
+        assert_eq!(crate::db::test_helpers::sent(&one), before + 1);
+        crate::db::test_helpers::push(&one, &two);
         assert_eq!(starred_names(&two), ["B", "A"]);
     }
 
@@ -577,9 +568,9 @@ mod tests {
         starred_setup(&one, &["A", "B", "C"], &["x"]);
         one.move_starred_guided(&local(&one, "x"), 1).unwrap();
         assert_eq!(starred_names(&one), ["A", "x", "B", "C"]);
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         two.move_starred_guided(&library("c"), 0).unwrap();
-        swap_events(&two, &one);
+        crate::db::test_helpers::push(&two, &one);
         assert_eq!(starred_names(&one), ["C", "A", "x", "B"]);
     }
 
@@ -590,12 +581,12 @@ mod tests {
         db.set_guided_file_starred("b", crate::db::StarredState::Unstarred).unwrap();
         db.move_starred_guided(&local(&db, "x"), 1).unwrap();
         assert_eq!(starred_names(&db), ["A", "x", "C"]);
-        let before = pending(&db);
+        let before = crate::db::test_helpers::sent(&db);
         db.move_guided_file("c", 0).unwrap();
         let all: Vec<String> = crate::db::list_guided_files_from_db(&db).unwrap().into_iter().map(|g| g.name).collect();
         assert_eq!(all, ["C", "A", "B"]);
         assert_eq!(starred_names(&db), ["C", "A", "x"]);
-        assert_eq!(pending(&db), before + 1);
+        assert_eq!(crate::db::test_helpers::sent(&db), before + 1);
     }
 
     #[test]
@@ -620,11 +611,11 @@ mod tests {
         starred_setup(&db, &["A", "B"], &["x"]);
         let StarredGuidedId::Local(x_id) = local(&db, "x") else { unreachable!() };
         let x_key = || crate::db::find_local_file_from_db(&db, x_id).unwrap().unwrap().star_key;
-        let (before, key_before) = (pending(&db), x_key());
+        let (before, key_before) = (crate::db::test_helpers::sent(&db), x_key());
         db.move_starred_guided(&library("b"), 1).unwrap();
         db.move_starred_guided(&local(&db, "x"), 2).unwrap();
         assert_eq!(starred_names(&db), ["A", "B", "x"]);
-        assert_eq!(pending(&db), before);
+        assert_eq!(crate::db::test_helpers::sent(&db), before);
         assert_eq!(x_key(), key_before);
     }
 

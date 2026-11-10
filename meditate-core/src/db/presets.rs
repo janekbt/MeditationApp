@@ -7,7 +7,7 @@ use rusqlite::{params, OptionalExtension};
 use super::events::EventKind;
 use super::order_key::key_between;
 use super::{
-    map_unique_err, mint_uuid,
+    mint_uuid,
     Database, DbError, Result, SessionMode,
 };
 
@@ -212,138 +212,87 @@ impl Database {
 
     /// Insert `preset` under its uuid and times (its id is ignored).
     fn insert_preset_at(&self, preset: &Preset) -> Result<i64> {
-        let Preset { uuid, name, mode, is_starred, config_json, created_iso, updated_iso, .. } = preset;
-        let (uuid_str, mode, is_starred) = (uuid.as_str(), *mode, *is_starred);
+        let uuid_str = preset.uuid.as_str();
         let tx = self.conn.unchecked_transaction()?;
         if let Some(existing) = self.existing_rowid_by_uuid("presets", uuid_str)? {
             return Ok(existing);
         }
-        self.conn
-            .execute(
-                "INSERT INTO presets (uuid, name, mode, is_starred, config_json, created_iso, updated_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    uuid_str,
-                    name,
-                    mode.as_db_str(),
-                    i64::from(is_starred),
-                    config_json,
-                    created_iso,
-                    updated_iso,
-                ],
-            )
-            .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
-        let rowid = self.conn.last_insert_rowid();
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "mode": mode.as_db_str(),
-            "is_starred": is_starred,
-            "config_json": config_json,
-            "created_iso": created_iso,
-            "updated_iso": updated_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::PresetInsert, uuid_str, payload)?;
+        // Checked first: the rebuild would suffix a taken name instead.
+        if is_preset_name_taken_from_db(self, &preset.name, uuid_str)? {
+            return Err(DbError::DuplicatePreset(preset.name.clone()));
+        }
+        self.write_preset_in(&tx, EventKind::PresetInsert, preset)?;
+        let rowid = self.existing_rowid_by_uuid("presets", uuid_str)?.expect("just written");
         tx.commit()?;
         Ok(rowid)
     }
 
+    /// Record `preset` as `kind` and store it the way a peer stores it.
+    fn write_preset_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, preset: &Preset) -> Result<()> {
+        let uuid = preset.uuid.as_str();
+        self.emit_and_rebuild_in(tx, kind, uuid, serde_json::json!({
+            "uuid": uuid,
+            "name": preset.name,
+            "mode": preset.mode.as_db_str(),
+            "is_starred": preset.is_starred,
+            "config_json": preset.config_json,
+            "created_iso": preset.created_iso,
+            "updated_iso": preset.updated_iso,
+        }))
+    }
 
+    /// Apply `edit` to the stored preset and write it, unless that
+    /// changes nothing: a fresh event would undo an edit another
+    /// device made in the meantime. Unknown uuids write nothing.
+    pub(super) fn edit_preset_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        uuid_str: &str,
+        edit: impl FnOnce(&mut Preset),
+    ) -> Result<()> {
+        let Some(stored) = find_preset_by_uuid_from_db(self, uuid_str)? else { return Ok(()) };
+        let mut preset = stored.clone();
+        edit(&mut preset);
+        // The same settings may come back serialised in another key order.
+        let config = |p: &Preset| serde_json::from_str::<serde_json::Value>(&p.config_json).ok();
+        if config(&preset).is_some_and(|c| Some(c) == config(&stored)) {
+            preset.config_json = stored.config_json.clone();
+        }
+        if preset == stored {
+            return Ok(());
+        }
+        if preset.name != stored.name && is_preset_name_taken_from_db(self, &preset.name, uuid_str)? {
+            return Err(DbError::DuplicatePreset(preset.name));
+        }
+        preset.updated_iso = chrono::Utc::now().to_rfc3339();
+        self.write_preset_in(tx, EventKind::PresetUpdate, &preset)
+    }
 
-
-
-
-
-    /// Rename a preset. Unknown uuids are silent no-ops AND emit no
-    /// event. If `name` collides with another preset (case-insensitive)
-    /// returns `DuplicatePreset` and the transaction rolls back so no
-    /// rename event leaks to peers. Renaming to the current name (or a
-    /// case variant of itself) is allowed — SQLite's UNIQUE check
-    /// excludes the row being updated.
-    pub fn update_preset_name(&self, uuid_str: &str, name: &str) -> Result<()> {
+    fn edit_preset(&self, uuid_str: &str, edit: impl FnOnce(&mut Preset)) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let stored: Option<String> = self.conn.query_row(
-            "SELECT name FROM presets WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get(0),
-        ).optional()?;
-        // Unknown, or unchanged: a fresh event would undo a rename
-        // another device made in the meantime.
-        if stored.map_or(true, |stored| stored == name) { return Ok(()); }
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        self.conn
-            .execute(
-                "UPDATE presets SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
-                params![name, now_iso, uuid_str],
-            )
-            .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
-        let row = find_preset_by_uuid_from_db(self, uuid_str)?
-            .expect("just confirmed exists");
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "mode": row.mode.as_db_str(),
-            "is_starred": row.is_starred,
-            "config_json": row.config_json,
-            "created_iso": row.created_iso,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
+        self.edit_preset_in(&tx, uuid_str, edit)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Rename a preset. Unknown uuids and the current name write
+    /// nothing. A name another preset holds (case-insensitive)
+    /// returns `DuplicatePreset` and writes nothing. A case variant
+    /// of its own name is a rename.
+    pub fn update_preset_name(&self, uuid_str: &str, name: &str) -> Result<()> {
+        self.edit_preset(uuid_str, |p| p.name = name.to_string())
     }
 
     /// Replace the config JSON for a preset (the "Override" path in
-    /// Save mode). Unknown uuids are silent no-ops with no event.
-    /// Bumps `updated_iso`.
+    /// Save mode). Unknown uuids and the same settings write nothing.
     pub fn update_preset_config(&self, uuid_str: &str, config_json: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row = find_preset_by_uuid_from_db(self, uuid_str)?;
-        let Some(row) = row else { return Ok(()); };
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE presets SET config_json = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![config_json, now_iso, uuid_str],
-        )?;
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": row.name,
-            "mode": row.mode.as_db_str(),
-            "is_starred": row.is_starred,
-            "config_json": config_json,
-            "created_iso": row.created_iso,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.edit_preset(uuid_str, |p| p.config_json = config_json.to_string())
     }
 
-    /// Star or unstar a preset. Unknown uuids are silent no-ops with
-    /// no event. Bumps `updated_iso` so peers' last-write-wins
-    /// resolution converges on the latest toggle.
+    /// Star or unstar a preset. Unknown uuids and the current state
+    /// write nothing.
     pub fn update_preset_starred(&self, uuid_str: &str, starred: crate::db::StarredState) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row = find_preset_by_uuid_from_db(self, uuid_str)?;
-        let Some(row) = row else { return Ok(()); };
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        let is_starred = starred.is_starred();
-        self.conn.execute(
-            "UPDATE presets SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![i64::from(is_starred), now_iso, uuid_str],
-        )?;
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": row.name,
-            "mode": row.mode.as_db_str(),
-            "is_starred": is_starred,
-            "config_json": row.config_json,
-            "created_iso": row.created_iso,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.edit_preset(uuid_str, |p| p.is_starred = starred.is_starred())
     }
 
     /// Move a preset to `to` in its mode's list (clamped to the end).
@@ -373,23 +322,8 @@ impl Database {
                     .collect();
             }
         }
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        for (p, created_iso) in list.iter().zip(&times) {
-            if &p.created_iso == created_iso { continue; }
-            self.conn.execute(
-                "UPDATE presets SET created_iso = ?1, updated_iso = ?2 WHERE uuid = ?3",
-                params![created_iso, now_iso, p.uuid.as_str()],
-            )?;
-            let payload = serde_json::json!({
-                "uuid": p.uuid.as_str(),
-                "name": p.name,
-                "mode": p.mode.as_db_str(),
-                "is_starred": p.is_starred,
-                "config_json": p.config_json,
-                "created_iso": created_iso,
-                "updated_iso": now_iso,
-            }).to_string();
-            self.emit_event(&tx, EventKind::PresetUpdate, p.uuid.as_str(), payload)?;
+        for (p, created_iso) in list.iter().zip(times) {
+            self.edit_preset_in(&tx, p.uuid.as_str(), |p| p.created_iso = created_iso)?;
         }
         tx.commit()?;
         Ok(())
@@ -484,6 +418,56 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
+
+    const P_A: &str = "a0000000-0000-4000-8000-00000000000a";
+    const P_B: &str = "b0000000-0000-4000-8000-00000000000b";
+
+    #[test]
+    fn an_unchanged_override_keeps_a_peers_rename() {
+        let laptop = Database::open_in_memory().unwrap();
+        laptop.insert_preset_with_uuid(P_A, "Calm", SessionMode::Timer, false, r#"{"a":1,"b":2}"#).unwrap();
+        let phone = Database::open_in_memory().unwrap();
+        exchange(&laptop, &phone);
+        phone.update_preset_name(P_A, "Quiet").unwrap();
+        let before = sent(&laptop);
+        // The same settings, serialised in another key order.
+        laptop.update_preset_config(P_A, r#"{"b":2,"a":1}"#).unwrap();
+        assert_eq!(sent(&laptop), before, "an unchanged override sends nothing");
+        exchange(&laptop, &phone);
+        for db in [&laptop, &phone] {
+            assert_eq!(find_preset_by_uuid_from_db(db, P_A).unwrap().unwrap().name, "Quiet");
+        }
+    }
+
+    #[test]
+    fn starring_a_starred_preset_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(P_A, "Calm", SessionMode::Timer, true, "{}").unwrap();
+        let before = sent(&db);
+        db.update_preset_starred(P_A, crate::db::StarredState::Starred).unwrap();
+        db.update_preset_name(P_A, "Calm").unwrap();
+        assert_eq!(sent(&db), before);
+    }
+
+    #[test]
+    fn a_suffixed_preset_starred_here_still_heals() {
+        // Both devices create "Calm"; P_B has the larger uuid and is suffixed.
+        let laptop = Database::open_in_memory().unwrap();
+        laptop.insert_preset_with_uuid(P_A, "Calm", SessionMode::Timer, false, "{}").unwrap();
+        let phone = Database::open_in_memory().unwrap();
+        phone.insert_preset_with_uuid(P_B, "Calm", SessionMode::Timer, false, "{}").unwrap();
+        exchange(&laptop, &phone);
+        let suffixed = find_preset_by_uuid_from_db(&phone, P_B).unwrap().unwrap().name;
+        assert_ne!(suffixed, "Calm");
+        phone.update_preset_starred(P_B, crate::db::StarredState::Starred).unwrap();
+        laptop.update_preset_name(P_A, "Quiet").unwrap();
+        exchange(&laptop, &phone);
+        let fresh = Database::open_in_memory().unwrap();
+        exchange(&laptop, &fresh);
+        for db in [&laptop, &phone, &fresh] {
+            assert_eq!(find_preset_by_uuid_from_db(db, P_B).unwrap().unwrap().name, "Calm");
+        }
+    }
 
     fn insert_basic_preset(db: &Database, name: &str, mode: SessionMode) -> i64 {
         db.insert_preset(
@@ -987,18 +971,8 @@ mod tests {
         }
     }
 
-    fn sync_both(one: &Database, two: &Database) {
-        swap_events(one, two);
-        swap_events(two, one);
-    }
-
     fn longest_place(db: &Database) -> usize {
         list_presets_from_db(db).unwrap().into_iter().map(|p| p.created_iso.len()).max().unwrap()
-    }
-
-    fn swap_events(from: &Database, to: &Database) {
-        let events: Vec<Event> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-        to.replay_events(&events).unwrap();
     }
 
     fn starred_order(db: &Database, mode: SessionMode) -> Vec<String> {
@@ -1073,7 +1047,7 @@ mod tests {
         let two = Database::open_in_memory().unwrap();
         timer_presets(&one, &["A", "B", "C"]);
         one.move_preset(&uuid_of(&one, "C"), 0).unwrap();
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         assert_eq!(order(&two, SessionMode::Timer), ["C", "A", "B"]);
     }
 
@@ -1082,10 +1056,10 @@ mod tests {
         let one = Database::open_in_memory().unwrap();
         let two = Database::open_in_memory().unwrap();
         timer_presets(&one, &["A", "B", "C", "D"]);
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         one.move_preset(&uuid_of(&one, "B"), 0).unwrap();
         two.update_preset_name(&uuid_of(&two, "D"), "D2").unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         assert_eq!(order(&one, SessionMode::Timer), ["B", "A", "C", "D2"]);
         assert_eq!(order(&two, SessionMode::Timer), ["B", "A", "C", "D2"]);
     }
@@ -1105,7 +1079,7 @@ mod tests {
         let one = Database::open_in_memory().unwrap();
         let two = Database::open_in_memory().unwrap();
         timer_presets(&one, &["A", "B", "C"]);
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         two.update_preset_name(&uuid_of(&two, "B"), "B2").unwrap();
         two.delete_preset(&uuid_of(&two, "A")).unwrap();
         // The phone has written more since, so its move is the later write.
@@ -1113,7 +1087,7 @@ mod tests {
             one.update_preset_starred(&uuid_of(&one, "C"), crate::db::StarredState::from_flag(starred)).unwrap();
         }
         one.move_preset(&uuid_of(&one, "C"), 0).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         assert_eq!(order(&one, SessionMode::Timer), ["C", "B2"]);
         assert_eq!(order(&two, SessionMode::Timer), ["C", "B2"]);
     }
@@ -1131,10 +1105,10 @@ mod tests {
         let one = Database::open_in_memory().unwrap();
         let two = Database::open_in_memory().unwrap();
         timer_presets(&one, &["A", "B", "C", "D"]);
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
         two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         let settled = order(&one, SessionMode::Timer);
         assert_eq!(order(&two, SessionMode::Timer), settled);
         assert_eq!((settled[0].as_str(), settled[3].as_str()), ("A", "B"));
@@ -1166,16 +1140,16 @@ mod tests {
         let one = Database::open_in_memory().unwrap();
         let two = Database::open_in_memory().unwrap();
         timer_presets(&one, &["A", "B", "C", "D"]);
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
         two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         two.delete_preset(&uuid_of(&two, "A")).unwrap();
         for starred in [false, true, false, true] {
             one.update_preset_starred(&uuid_of(&one, "B"), crate::db::StarredState::from_flag(starred)).unwrap();
         }
         one.move_preset(&uuid_of(&one, "B"), 2).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         let settled = order(&one, SessionMode::Timer);
         assert_eq!(order(&two, SessionMode::Timer), settled);
         assert_eq!(settled.len(), 3, "A stays deleted: {settled:?}");
@@ -1199,10 +1173,10 @@ mod tests {
         // Ids whose first characters a lossy mapping would merge.
         one.insert_preset_with_uuid("00000000-0000-4000-8000-000000000001", "C", SessionMode::Timer, true, "{}").unwrap();
         one.insert_preset_with_uuid("99999999-0000-4000-8000-000000000002", "D", SessionMode::Timer, true, "{}").unwrap();
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         one.move_preset(&uuid_of(&one, "D"), 1).unwrap();
         two.move_preset(&uuid_of(&two, "C"), 1).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         let settled = order(&one, SessionMode::Timer);
         let before = one.pending_events().unwrap().len();
         one.move_preset(&uuid_of(&one, "B"), 2).unwrap();
@@ -1245,7 +1219,7 @@ mod tests {
     fn random_moves_write_only_the_moved_preset() {
         let devices = [Database::open_in_memory().unwrap(), Database::open_in_memory().unwrap()];
         timer_presets(&devices[0], &["A", "B", "C", "D", "E", "F"]);
-        swap_events(&devices[0], &devices[1]);
+        crate::db::test_helpers::push(&devices[0], &devices[1]);
         let mut state = 7_u64;
         let mut pick = |n: usize| { let (unit, next) = crate::bells::xorshift64(state); state = next; (unit * n as f64) as usize };
         for step in 0..600 {
@@ -1259,7 +1233,7 @@ mod tests {
             assert_eq!(order(db, SessionMode::Timer), expected, "step {step}");
             assert_eq!(db.pending_events().unwrap().len(), before + usize::from(from != to), "step {step}");
             if step % 50 == 49 {
-                sync_both(&devices[0], &devices[1]);
+                exchange(&devices[0], &devices[1]);
                 assert_eq!(order(&devices[0], SessionMode::Timer), order(&devices[1], SessionMode::Timer), "step {step}");
             }
         }
@@ -1276,10 +1250,10 @@ mod tests {
         // The bundled ids differ only in their last digits.
         one.insert_preset_with_uuid(crate::seeds::DEFAULT_BOX_BREATH_4444_UUID, "4-4-4-4", SessionMode::BoxBreath, true, "{}").unwrap();
         one.insert_preset_with_uuid(crate::seeds::DEFAULT_BOX_BREATH_4780_UUID, "4-7-8-0", SessionMode::BoxBreath, true, "{}").unwrap();
-        swap_events(&one, &two);
+        crate::db::test_helpers::push(&one, &two);
         one.move_preset(crate::seeds::DEFAULT_BOX_BREATH_4444_UUID, 1).unwrap();
         two.move_preset(crate::seeds::DEFAULT_BOX_BREATH_4780_UUID, 1).unwrap();
-        sync_both(&one, &two);
+        exchange(&one, &two);
         let before = one.pending_events().unwrap().len();
         one.move_preset(&uuid_of(&one, "Q"), 2).unwrap();
         assert_eq!(one.pending_events().unwrap().len(), before + 1);

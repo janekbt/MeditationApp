@@ -35,7 +35,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 | Done | Package | Items | Do with bug batch |
 |:---:|---|---|---|
-| [ ] | P1. Core write paths | #234, #225, #235, #237, #215, #216, #217, #226, #230, #231, #370 | CC, K3 |
+| [ ] | P1. Core write paths | #235, #237, #215, #216, #217, #231 (done in writes-keep-peer-edits: #234, #225, #370, #226, #230, and #218 from P15) | CC, K3 |
 | [ ] | P2. Refresh after writes and syncs | #331, #378, #397, #418, #484, #485, #316, #283, #353, #468, #327 | Q, EE |
 | [ ] | P3. Failure reporting and toasts | #320, #357, #373, #328 | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
@@ -49,7 +49,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [ ] | P12. Android screens (Slint) | #453, #454, #458, #459, #460, #461, #464, #467, #469, #470, #471, #404, #417 | GG, T, LL |
 | [ ] | P13. Android Rust and Kotlin structure | #396, #399, #401, #405, #416, #420, #421, #433, #438, #441, #442 | FF, KK |
 | [ ] | P14. GTK structure | #312, #315, #318, #319, #321, #337, #338, #352, #359, #360, #368, #369, #376, #377, #379, #287, #333, #302, #298 | MM, II |
-| [ ] | P15. Core speed and smaller ones | #218, #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487 |  |
+| [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494 |  |
 | [ ] | P16. Tests | #224, #233, #240, #262, #276, #290, #304, #322, #339, #361, #380, #432 | with each package that touches them |
 | [ ] | P17. Cleanup from the old list | #58, #61, #85, #87, #157, #167, #171, #175, #197, R12 |  |
 
@@ -69,6 +69,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: a new column means six edits; a SELECT whose `row.get` index drifts returns the wrong field. The `expect` messages already differ.
 - Related: the same pattern as #225 (presets) and #235 (the other tables); do all row readers together.
 - Fix: a `SESSION_COLUMNS` const with `fn session_from_row`, and `fn event_from_row`. `list_sessions_filtered` can become `query_sessions_from_db` with a label filter apart from its ORDER BY.
+- Also (2026-11-10, change writes-keep-peer-edits): `session_by_id` in `sessions.rs` is a fourth copy of the session mapper; route it through `session_from_row`.
 
 #### #217 Delete paths
 - Related: #335 (GTK commits pending deletes one transaction each: add a batch delete here).
@@ -76,15 +77,10 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: `delete_session` and `delete_session_by_uuid` repeat select, delete, payload and emit; `delete_all_sessions` builds the delete payload a third time. The uuid-by-rowid and label-id-by-uuid lookups are hand-written although `Database::existing_rowid_by_uuid` (`db/mod.rs:374`) exists.
 - Fix: `delete_session` looks up the uuid and calls `delete_session_by_uuid`; one `emit_session_delete(tx, uuid)`; `DELETE ... RETURNING` or `if n == 0` instead of the existence SELECT; `existing_rowid_by_uuid` for both lookups.
 
-#### #218 Cache upgrade replays the slow way
-- Where: `events.rs:199-250` (`maybe_walk_events_for_cache_upgrade`, run from `Database::init`).
-- Problem: it re-reads the log with its own SELECT and mapper and calls `apply_event_inner` per event: a re-insert with INSERT OR IGNORE and a recompute after every event, about 30k recomputes at startup after a cache-schema bump. `replay_events` (`720-759`) already dedups recomputes.
-- Fix: move the dedup-and-recompute half of `replay_events` into a helper; the upgrade collects the distinct `(kind, target_id)` pairs from `events` and recomputes each once, without re-appending.
-
 #### #219 The `guided_file_name` fallback
-- Where: `sessions.rs:900-913` and the column fill in `schema.rs:46-53`.
-- Problem: the same "newest event that named the file" SQL twice. It also treats an explicit JSON `null` like a missing key, so an edit that clears the name would bring the old one back on peers. Latent: both Log editors keep the original name today (`log/imp.rs:1259`, android `ui.rs:8849`).
-- Fix: fall back only when the key is missing (`v.get("guided_file_name").is_none()`); then delete the fill SQL and bump `CACHE_SCHEMA_VERSION`, so the upgrade walk (#218) fills old rows through the one recompute path. Do #218 first.
+- Where: `recompute_session` (`sessions.rs`, the "newest event that named the file" query) and `update_session_in`, which keeps the stored name for an edit without one so the local row matches. The column fill in `schema.rs` is gone (2026-11-10, change writes-keep-peer-edits: the start-up rebuild fills old rows).
+- Problem: an explicit JSON `null` counts like a missing key, so an edit that clears the name would bring the old one back. Latent: both Log editors keep the original name today (`log/imp.rs:1259`, android `ui.rs:8849`).
+- Fix: fall back only when the key is missing (`v.get("guided_file_name").is_none()`), in both places.
 
 #### #220 Insights queries
 - Where: `sessions.rs:707` and `782` (`best_streak`, `streak`, called back to back from `insights.rs:64-65`); `152` (median); `173`, `197` (running average, daily totals since).
@@ -123,16 +119,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
-#### #225 One preset reader and one preset writer
-- Where: reader `presets.rs:41-158` (same 8-column SELECT and `Preset` closure four times); payload `presets.rs:237-245, 282-290, 308-316, 335-343, 383-391`. Same for guided files: `guided_files.rs:204, 254, 287` and `starred_order.rs:210-218` (`write_library_key`).
-- Problem: a new preset column is nine edits; a payload copy that misses a field drops it on peers, since `recompute_preset` takes the whole row from the winning event. The unchanged-write guard exists in some writers and not others (see Bugs).
-- Fix: `PRESET_COLUMNS` with `preset_from_row` (as `local_guided_files.rs:34-37` does); one `write_preset(tx, &Preset, kind)` that compares with the stored row, updates and emits the payload from the struct. Each mutator becomes load, change one field, write. The same for guided files. Superseded by #234, its general form for every synced table: do #234 instead. The unchanged guard there also fixes #244 and #248.
-
-#### #226 One mechanism for changes an older build applied
-- Where: `mod.rs:324` (`recompute_interval_bells_from_events` on every open), `schema.rs:47-54` (one-shot `guided_file_name` fill).
-- Problem: two special cases for "the user went back to an older release, which applied events without the newer field". The bell one runs on every open; the sessions one only once, so it misses that case (see Bugs). Every future field on a synced table needs its own hook.
-- Fix: store the highest `events.id` this build has applied; on open, recompute the targets of newer events (those an older build applied). Replaces both, covers every table, costs only the new events. Do after #218.
-
 #### #227 Re-linking sessions on every label event
 - Where: `labels.rs:380-397` (`recompute_label`).
 - Problem: every label insert and rename runs an UPDATE that `json_extract`s every session event with a correlated `NOT EXISTS`. A rename keeps the label's id, so nothing needs re-linking. During the cache-upgrade walk (#218) that's one full scan per label event.
@@ -150,11 +136,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: `presets.rs:358-359, 401-415` (`move_preset`, `move_starred_preset`: four queries carrying `config_json` where two do); `starred_order.rs:100` (`move_guided_file` loads the starred list, a setting and all local files on every move, used only in the no-room branch); `presets.rs:265-281` (`update_preset_name` reads the row twice); `presets.rs:423-432`, `labels.rs:131-137` (existence SELECT before DELETE).
 - Fix: a private `move_preset_in(tx, list, from, to)` for both moves; load the starred list inside the fallback branch; read the full row once as `update_preset_config` does; `DELETE ... RETURNING` or the changed-row count.
 
-#### #230 The conflict suffix format in three places
-- Where: `error.rs:45-48` builds it, `labels.rs:255-256` rebuilds it by hand, `events.rs:816` matches it with `LIKE`.
-- Problem: the format is meant to become translatable; changing it in one place silently stops the merge prompt from finding conflicts.
-- Fix: `strip_conflict_suffix(name, uuid) -> Option<&str>` next to `conflict_suffixed_name`, used by both detection sites.
-
 #### #231 Repeated helpers
 - `order_key`: the "fresh times 1 ms apart" fallback twice (`presets.rs:369-373`, `starred_order.rs:186-189`); one `order_key::fresh_keys(n)`.
 - `known_remote.rs:18-106`: three set/record/wipe trios that differ only in table and column; table-parameterised helpers as `read_kv`/`write_kv` do. The guided trio has no tests.
@@ -162,6 +143,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - The "label uuid by id" query three times (`labels.rs:132, 301`, `sessions.rs:412`); one helper.
 - `settings.rs:70-74` repeats `write_kv`'s upsert; `presets.rs:422-427` hand-writes `existing_rowid_by_uuid`; `labels.rs:181, 233`, `device.rs:25` mint uuids by hand instead of `mint_uuid()`; `mod.rs:340-346` matches `QueryReturnedNoRows` instead of `.optional()`.
 - `error.rs:111-112` lists the four Box Breath phase names by hand; use `BoxBreathPhaseId::from_db_str` and `EventKind::BoxBreathPhaseUpdate.as_db_str()`.
+- Tests (2026-11-10, change writes-keep-peer-edits): `test_helpers::{sent, push, exchange}` exist now; inline copies of the event swap remain in `db/settings.rs` (256, 272, 282), `db/local_changes.rs` (259) and `preset_config.rs` (`sync`, 1278).
 
 #### #232 Smaller ones
 - Extra `{ ... }` block after `let Some(v) = self.winning_mutate(..) else {..};` in six recompute functions (`labels.rs:360-398`, `presets.rs:457-478`, `guided_files.rs:338`, `bell_sounds.rs:287`, `vibration_patterns.rs:356`, `interval_bells.rs:358`).
@@ -182,18 +164,13 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
-#### #234 One write path per synced table
-- Where: local writes `bell_sounds.rs:110-134, 166-179`, `guided_files.rs:183-209, 236-259, 279-292`, `vibration_patterns.rs:168-199, 287-311`, `interval_bells.rs:118-155, 181-217`, `box_breath_phases.rs:91-114`; their recomputes at `bell_sounds.rs:297-317`, `guided_files.rs:345-358`, `vibration_patterns.rs:364-379`, `interval_bells.rs:379-420`, `box_breath_phases.rs:147-166`.
-- Problem: every local write runs its own INSERT or UPDATE and builds its payload by hand; peers rebuild the row from that payload with the recompute's own SQL. Each table spells out its columns three or four times and its payload two or three times (`interval_bells` 16 columns three times), and nothing ties the local row to what a peer builds. A missed field or a different default (`mime_type` "audio/wav", `enabled` true) only shows on the other device.
-- Fix: per table, build the payload once from the row (`*_payload(&row)`), `emit_event`, then call the existing `recompute_*` in the same transaction; the write SQL in insert, rename, star and update goes away and local rows are built the way peers build them. Insert and rename keep a name check first (`is_*_name_taken_from_db`), since recompute suffixes a clash instead of returning `Duplicate*`. The general form of #225 (presets) and of the session payload, which this item now holds (folded in from #214, 2026-11-10).
-- Sessions (was #214): the eight-field sync payload is written out three times, `sessions.rs:458-467` (`insert_session_tx_less`), `576-585` (`insert_sessions_in`), `692-701` (`update_session_in`); `guided_file_name` had to be added to all three, and missing one would sync without the field and lose it on peers. The smaller step: `fn session_payload(uuid, &Session, label_uuid) -> String` used by all three, with the field set byte-identical (key order doesn't matter to readers). Rejected once as part of R13 ("too little gain for touching the sync payload"); all four /simplify angles and /code-review raised it again.
-
 #### #235 One row reader per table
 - Related: #401 (label lookups by id in both apps).
 - Related: #375 (a keyed bell-sound lookup for every bell played).
 - Where: `bell_sounds.rs:212-233, 244-266`, `vibration_patterns.rs:45-70, 76-99` (and a third partial decode in `rename_vibration_pattern` 233-253), `guided_files.rs:36-55, 109-124`, `box_breath_phases.rs:19-47, 55-75`; `interval_bells.rs:226-232, 258-263` load the whole list to find one row, because there is no second decoder.
 - Related: the same pattern as #216 (sessions, events) and #225 (presets); do all row readers together.
 - Fix: `COLUMNS` plus `from_row` as `local_guided_files.rs:34-49` does; `list_bell_sounds` becomes `list_bell_sounds_for_category(None)`; keyed queries for the single-bell lookups. The bell-sound and box-breath pairs are in #85 too.
+- Also (2026-11-10, change writes-keep-peer-edits): the unchanged guard now lives in five shapes (`edit_preset_in`/`edit_guided_file_in` take a closure, `update_vibration_pattern` an argument list, interval bells and `rename_bell_sound` find their row with `list_*().find`, Box Breath compares inline), and inserts repeat existing-uuid check, name check, write, rowid read. With keyed readers, give every table one `insert_*_at` and one `edit_*_in(tx, uuid, FnOnce(&mut Row))`, and let callers that hold the row (`move_preset`, `write_library_key`, `merge_labels`, `rename_vibration_pattern`) pass it instead of a uuid to read again.
 
 #### #236 Guided file names for the Log scan the whole event log
 - Where: `guided_files.rs:64-91` (`guided_file_names_from_db`), called on every Log refresh: android `ui.rs:2959-2971` (six call sites), gtk `log/imp.rs:188`.
@@ -208,6 +185,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #238 Replay and startup statements
 - Where: the recompute upserts and deletes use `conn.execute` (`bell_sounds.rs:281, 297`, `interval_bells.rs:352, 379`, `vibration_patterns.rs:350, 376`, `guided_files.rs:332, 355`, `box_breath_phases.rs:125, 150`); `mod.rs:314-321` raised the statement cache for exactly these, but only `winning_mutate` uses it. `recompute_box_breath_phase` (125-144) rewrites `winning_mutate`'s query with the kind as a string literal. `recompute_interval_bells_from_events` (`interval_bells.rs:323-338`) upserts every bell on every open, even when the row is already right.
 - Fix: `prepare_cached`; a `latest_mutate` helper that `winning_mutate` and the box-breath recompute share; the startup upsert only when values differ (`ON CONFLICT ... DO UPDATE ... WHERE ... IS NOT excluded...`). The startup upsert is superseded by #226: do #226 instead of that part.
+- Also (2026-11-10, change writes-keep-peer-edits): `reclaim_suffixed_names` now holds its own copy of `claim_name`'s rule ("the smaller uuid keeps the name") to skip settled pairs (#241). With the no-op upserts above and `claim_name` logging only when it renames, reclaim can recompute every suffixed row with no rule of its own.
 
 #### #239 Smaller ones
 - `rename_vibration_pattern` (`vibration_patterns.rs:232-258`) reads and decodes the row, then `update_vibration_pattern` reads it again and re-encodes the intensities; `rename_guided_file` (`guided_files.rs:245-249`) queries `is_starred` a second time.
@@ -729,10 +707,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: pick, snap and point spacing are #287. On top: the 0.5-10 s limits (`vibration_editor.rs:33-34`) are written again in Android (`main.slint`, 5..100 tenths); Save rounds the duration (`.round()`, 499), Preview truncates (`as u32`, 581), Android multiplies tenths; both editors build a `VibrationPattern` with blank id, uuid, name and times only to call `build_master_envelope` (`vibration_editor.rs:531-570`, `vibration.rs:170-182`, android `ui.rs:7263-7283`), and both write the same insert-or-update branch (`vibration_editor.rs:492-511`, android `ui.rs:7610-7630`). The aliases `EDITOR_* as …` and `resample_envelope as resample` exist for readability of pre-migration code (26-31, 56).
 - Fix: `EDITOR_DURATION_MIN_MS`/`MAX_MS` and one `duration_ms(seconds)` in core; `build_master_envelope(duration_ms, &[f32], ChartKind)` and `PatternPlayback::play` taking the same; a core `save_vibration_pattern(db, edit_uuid, ..) -> uuid`. Related: #287.
 
-#### #370 Saving a vibration pattern says whether it changed
-- Where: `vibrations.rs:374-395` reads the row back after every editor Save and compares it field by field (`patterns_equivalent`, core `vibration.rs:212`, five tests) to decide whether to show Undo, because `update_vibration_pattern` returns `()` and always writes; `rename_vibration_pattern` already returns `Result<bool>`. Android shows Undo without the check.
-- Fix: the unchanged guard in `update_vibration_pattern` returning `Result<bool>`; delete the read-back and `patterns_equivalent`. Comes free with #234's guard, which also fixes #184 and #248.
-
 #### #371 Local Folder: rebuild only when the list changes
 - Related: #481 (the job in core, its slice 18 note).
 - Related: #439, #443 (Android's lengths buffer).
@@ -1218,6 +1192,7 @@ Related: #314 (one bell block instead of six): do together, or the six copies ge
 
 Only together with other work in the same area; none has a bug behind it.
 
+- **#494, one index for the winner of a target** (2026-11-10, /simplify of change writes-keep-peer-edits): `winning_mutate` (`db/events.rs`) and the Box Breath recompute sort every event of a target to pick one, with only `events_target_idx ON events(target_id)` (`db/schema.rs`); every local write now runs it. An additive `CREATE INDEX IF NOT EXISTS events(target_id, lamport_ts, device_id)` makes it one index seek, for replay and the start-up rebuild too. No migration.
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected

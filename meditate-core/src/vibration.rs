@@ -204,11 +204,9 @@ fn sample_line_at(p: &VibrationPattern, t_ms: u32) -> f32 {
 }
 
 /// Structural equality on the user-meaningful fields of
-/// `VibrationPattern`. Used to gate the editor's Undo toast: only
-/// flash "Restored" if the pattern actually changed (same name,
-/// duration, chart-kind, and intensities-with-tolerance counts as
-/// equivalent). UUID and timestamps are intentionally skipped —
-/// they always change on update.
+/// `VibrationPattern`: same name, duration, chart kind, and points
+/// within 1e-6 (the editor resamples them). UUID and timestamps are
+/// skipped. A save equivalent to the stored pattern writes nothing.
 pub fn patterns_equivalent(a: &VibrationPattern, b: &VibrationPattern) -> bool {
     a.name == b.name
         && a.duration_ms == b.duration_ms

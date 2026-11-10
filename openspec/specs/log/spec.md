@@ -44,6 +44,11 @@ The Log SHALL show the name of the file a guided session played, whether it came
 - **THEN** it opens, its sessions are there and new sessions store a file name
 - **TEST** `meditate-core/src/db/sessions.rs::a_database_from_the_last_release_gains_the_file_name_columns`
 
+#### Scenario: A round trip through a release before file names
+- **WHEN** this version ran on a database, then 26.10.1 ran on it and pulled a phone's new guided session, and then this version starts again
+- **THEN** the Log card names the file again
+- **TEST** `meditate-core/src/db/sessions.rs::a_name_comes_back_after_a_round_trip_through_the_last_release`
+
 #### Scenario: The card shows the name on both apps
 - **WHEN** the maintainer plays a local file on the phone and an Open File pick on the laptop, then syncs
 - **THEN** both Logs on both devices name both files

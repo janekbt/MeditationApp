@@ -46,8 +46,8 @@ downgrade stops working. Only bump for non-additive changes that
 older builds really can't read.
 
 Bump `CACHE_SCHEMA_VERSION` in `schema.rs` so
-`maybe_walk_events_for_cache_upgrade` replays foo events that older
-builds recorded but skipped. A new column on an existing table goes
+`rebuild_events_from_older_builds` rebuilds the targets of foo events
+that older builds recorded but skipped. A new column on an existing table goes
 into `ADDED_COLUMNS`, not `SCHEMA_VERSION`.
 
 ## 3. Module + row struct
@@ -61,9 +61,9 @@ Add `meditate-core/src/db/foos.rs` with:
   functions, re-exported from `db/mod.rs`).
 - `pub(super) fn recompute_foo(&self, foo_uuid: &str) -> Result<()>`:
   pure function of the events table, reached through `recompute_for`
-  from `apply_event_inner` and `replay_events`. Pattern: query the
+  from `replay_events` and the start-up rebuild. Pattern: query the
   winning mutate event via `winning_mutate`, then UPSERT the cache
-  row by uuid.
+  row by uuid. Clamp peers' numbers with `peer_u32`.
 - If `name` is UNIQUE, do the UPSERT through
   `self.claim_name("foos", uuid, name, |name| upsert)` and add
   `(EntityKind::Foo, "foos")` to `reclaim_suffixed_names` in
@@ -78,12 +78,19 @@ pub use foos::Foo;
 
 CRUD methods on `Database` must:
 - Open an `unchecked_transaction` before any mutation.
-- Emit one event per mutation via `self.emit_event(&tx, ...)`; see step 5.
+- Write through one `write_foo_in(tx, kind, &Foo)` that builds the
+  payload from the row, emits it via `self.emit_event(&tx, ...)` (see
+  step 5) and calls `recompute_foo`, so the local row is built the way
+  a peer builds it. Send the name without the row's own conflict
+  suffix (`strip_conflict_suffix`).
+- Compare the edited row with the stored one before stamping
+  `updated_iso` and return without an event when they are equal: a
+  fresh event would undo an edit a peer made meanwhile.
+- Check a new name with `is_foo_name_taken_from_db` before the write;
+  the rebuild would suffix a clash instead of failing.
 - Be idempotent on uuid via `existing_rowid_by_uuid` (re-inserting
   an existing uuid returns silently; deleting an unknown uuid
   silently no-ops AND emits no event).
-- Return without an event on a rename to the current name. A fresh
-  event would override a newer rename from a peer.
 - Surface `DbError::DuplicateFoo(name)` if the row has a UNIQUE
   collision on a user-visible name column. Also map the new variant
   in `meditate-gtk/src/db/mod.rs` and `meditate-core/src/data_io.rs`

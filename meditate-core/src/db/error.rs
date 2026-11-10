@@ -47,6 +47,13 @@ pub(super) fn conflict_suffixed_name(name: &str, uuid: &str) -> String {
     format!("{name} (conflict-{short})")
 }
 
+/// The name without the suffix `conflict_suffixed_name` gives this
+/// `uuid`; `None` when it doesn't carry that suffix (a user-typed
+/// lookalike carries another uuid's).
+pub(super) fn strip_conflict_suffix<'a>(name: &'a str, uuid: &str) -> Option<&'a str> {
+    name.strip_suffix(&conflict_suffixed_name("", uuid))
+}
+
 /// Whether a rusqlite error is the UNIQUE-constraint failure shape
 /// that our cache UPSERTs hit on a sync-merge name collision.
 pub(super) fn is_unique_constraint_error(e: &rusqlite::Error) -> bool {
@@ -98,7 +105,7 @@ pub(super) fn map_unique_err(
 /// null byte, or is empty. `box_breath_phase_update` additionally
 /// demands one of the four canonical phase strings (its `target_id`
 /// is enum-shaped). Unknown kinds pass through — the dispatch in
-/// `apply_event_inner` records but does not act on them, so an
+/// `apply_event_record_only` records but does not act on them, so an
 /// over-strict validator here would block future entity types.
 pub fn target_id_is_well_formed_for(kind: &str, target_id: &str) -> bool {
     if target_id.is_empty()
@@ -186,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_event_inner_skips_dispatch_on_invalid_target_id() {
+    fn an_event_with_an_invalid_target_id_is_recorded_but_not_applied() {
         // Peer ships a bell_sound_insert with target_id that's a path-
         // traversal string. The event row records, but no bell_sounds
         // row materialises — preventing the downstream file-write

@@ -71,10 +71,6 @@ mod tests {
         }
     }
 
-    fn pending(db: &Database) -> usize {
-        db.pending_events().unwrap().len()
-    }
-
     #[test]
     fn a_fresh_watch_sees_nothing() {
         let db = Database::open_in_memory().unwrap();
@@ -130,9 +126,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mut watch = LocalChangeWatch::new(db.local_changes());
         let mut check = |what: &str, op: &dyn Fn(&Database)| {
-            let before = pending(&db);
+            let before = crate::db::test_helpers::sent(&db);
             op(&db);
-            let grew = pending(&db) > before;
+            let grew = crate::db::test_helpers::sent(&db) > before;
             assert!(grew, "{what} should record a sync event");
             assert!(watch.take_new(), "{what} was not seen as a local change");
         };

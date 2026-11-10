@@ -76,6 +76,18 @@ pub struct PresetLabel {
     pub uuid: Option<crate::db::LabelUuid>,
 }
 
+/// `config_json` pinned to label `from` instead pinned to `into`,
+/// every other field kept as stored (a newer version's too); `None`
+/// when it isn't pinned to `from` or doesn't parse.
+pub fn retarget_label(config_json: &str, from: &str, into: &str) -> Option<String> {
+    let mut config: serde_json::Value = serde_json::from_str(config_json).ok()?;
+    if config["label"]["uuid"] != from {
+        return None;
+    }
+    config["label"]["uuid"] = into.into();
+    Some(config.to_string())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetStartingBell {
     pub enabled: bool,

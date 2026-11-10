@@ -6,7 +6,6 @@
 
 use rusqlite::params;
 
-use super::events::EventKind;
 use super::order_key::key_between;
 use super::{Database, GuidedFile, Result};
 use crate::local_folder::{starred_guided_from_db, StarredGuided, StarredGuidedId};
@@ -202,21 +201,7 @@ impl Database {
     /// A library file's new place: its `created_iso`, in one synced
     /// update carrying every field, as a rename's.
     fn write_library_key(&self, tx: &rusqlite::Transaction, g: &GuidedFile, key: &str) -> Result<()> {
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE guided_files SET created_iso = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![key, now_iso, g.uuid.0],
-        )?;
-        let payload = serde_json::json!({
-            "uuid": g.uuid.0,
-            "name": g.name,
-            "file_path": g.file_path,
-            "duration_secs": g.duration_secs,
-            "is_starred": g.is_starred,
-            "created_iso": key,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(tx, EventKind::GuidedFileUpdate, &g.uuid.0, payload)
+        self.edit_guided_file_in(tx, g.uuid.as_str(), |f| f.created_iso = key.to_string())
     }
 
     fn write_star_key(&self, id: i64, key: &str) -> Result<()> {

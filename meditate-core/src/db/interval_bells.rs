@@ -4,7 +4,7 @@
 //! so the library round-trips across devices.
 
 use crate::bell_volume::BellVolume;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 
 use super::events::EventKind;
 use super::{Database, Result};
@@ -115,32 +115,17 @@ impl Database {
 
     /// Insert `bell` as it is (its `id` is ignored) and record it.
     fn insert_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<i64> {
-        self.conn.execute(
-            "INSERT INTO interval_bells
-                (uuid, kind, minutes, jitter_pct, sound_uuid,
-                 vibration_pattern_uuid, signal_mode, enabled, created_iso, volume_pct,
-                 secs, secs_unit, jitter_secs, jitter_unit, step_secs, step_unit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-            params![
-                bell.uuid,
-                bell.kind.as_db_str(),
-                legacy_minutes(bell.time),
-                legacy_jitter_pct(bell.time, bell.jitter),
-                bell.sound_uuid,
-                bell.vibration_pattern_uuid,
-                bell.signal_mode.as_db_str(),
-                i64::from(bell.enabled),
-                bell.created_iso,
-                bell.volume.percent(),
-                bell.time.secs,
-                bell.time.unit.as_db_str(),
-                bell.jitter.secs,
-                bell.jitter.unit.as_db_str(),
-                bell.step.secs,
-                bell.step.unit.as_db_str(),
-            ],
-        )?;
-        let rowid = self.conn.last_insert_rowid();
+        // A uuid already there (a repeated copy) is left as it is.
+        if let Some(existing) = self.existing_rowid_by_uuid("interval_bells", bell.uuid.as_str())? {
+            return Ok(existing);
+        }
+        self.write_bell_in(tx, EventKind::IntervalBellInsert, bell)?;
+        Ok(self.existing_rowid_by_uuid("interval_bells", bell.uuid.as_str())?.expect("just written"))
+    }
+
+    /// Record `bell` as `kind` and store it the way a peer stores it
+    /// from the event.
+    fn write_bell_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, bell: &IntervalBell) -> Result<()> {
         let mut payload = serde_json::json!({
             "uuid": bell.uuid,
             "kind": bell.kind.as_db_str(),
@@ -152,8 +137,7 @@ impl Database {
             "volume": bell.volume.percent(),
         });
         add_time_fields(&mut payload, bell.time, bell.jitter, bell.step);
-        self.emit_event(tx, EventKind::IntervalBellInsert, bell.uuid.as_str(), payload.to_string())?;
-        Ok(rowid)
+        self.emit_and_rebuild_in(tx, kind, bell.uuid.as_str(), payload)
     }
 
     /// Overwrite every mutable field of the bell. UUID + created_iso
@@ -161,7 +145,9 @@ impl Database {
     /// stored `created_iso` is preserved. Unknown uuids are a silent
     /// no-op AND emit no event — peers receiving an update for a row
     /// they've already tombstoned should not be reflected back as
-    /// "this bell is alive again". Mirrors `update_label`'s shape.
+    /// "this bell is alive again". The values the bell already has
+    /// write nothing either: a fresh event would undo an edit another
+    /// device made in the meantime.
     pub fn update_interval_bell(&self, bell: &IntervalBell) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         self.update_bell_in(&tx, bell)?;
@@ -170,52 +156,14 @@ impl Database {
     }
 
     fn update_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<()> {
-        let created_iso: Option<String> = self.conn.query_row(
-            "SELECT created_iso FROM interval_bells WHERE uuid = ?1",
-            params![bell.uuid],
-            |row| row.get::<_, String>(0),
-        ).optional()?;
-        let Some(created_iso) = created_iso else {
+        let Some(stored) = self.list_interval_bells()?.into_iter().find(|b| b.uuid == bell.uuid) else {
             return Ok(());
         };
-        self.conn.execute(
-            "UPDATE interval_bells
-                SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound_uuid = ?4,
-                    vibration_pattern_uuid = ?5, signal_mode = ?6, enabled = ?7,
-                    volume_pct = ?8, secs = ?10, secs_unit = ?11, jitter_secs = ?12,
-                    jitter_unit = ?13, step_secs = ?14, step_unit = ?15
-              WHERE uuid = ?9",
-            params![
-                bell.kind.as_db_str(),
-                legacy_minutes(bell.time),
-                legacy_jitter_pct(bell.time, bell.jitter),
-                bell.sound_uuid,
-                bell.vibration_pattern_uuid,
-                bell.signal_mode.as_db_str(),
-                i64::from(bell.enabled),
-                bell.volume.percent(),
-                bell.uuid,
-                bell.time.secs,
-                bell.time.unit.as_db_str(),
-                bell.jitter.secs,
-                bell.jitter.unit.as_db_str(),
-                bell.step.secs,
-                bell.step.unit.as_db_str(),
-            ],
-        )?;
-        let mut payload = serde_json::json!({
-            "uuid": bell.uuid,
-            "kind": bell.kind.as_db_str(),
-            "sound_uuid": bell.sound_uuid,
-            "vibration_pattern_uuid": bell.vibration_pattern_uuid,
-            "signal_mode": bell.signal_mode.as_db_str(),
-            "enabled": bell.enabled,
-            "created_iso": created_iso,
-            "volume": bell.volume.percent(),
-        });
-        add_time_fields(&mut payload, bell.time, bell.jitter, bell.step);
-        self.emit_event(tx, EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload.to_string())?;
-        Ok(())
+        let bell = IntervalBell { id: stored.id, created_iso: stored.created_iso.clone(), ..bell.clone() };
+        if bell == stored {
+            return Ok(());
+        }
+        self.write_bell_in(tx, EventKind::IntervalBellUpdate, &bell)
     }
 
     /// Convenience for the common path — toggling enabled without the
@@ -281,7 +229,7 @@ impl Database {
                 let time = |secs: usize| -> rusqlite::Result<Option<BellTime>> {
                     let n: Option<i64> = row.get(secs)?;
                     let unit: Option<String> = row.get(secs + 1)?;
-                    Ok(stored_time(n, unit.as_deref()))
+                    Ok(stored_time(n.and_then(|n| u32::try_from(n).ok()), unit.as_deref()))
                 };
                 let stored = match (time(11)?, time(13)?, time(15)?) {
                     (Some(t), Some(j), Some(s)) => Some((t, j, s)),
@@ -313,30 +261,6 @@ impl Database {
         Ok(rows)
     }
 
-    /// Rebuild every bell row from its winning event, on each open. A
-    /// version before seconds keeps only minutes and percent in the row
-    /// when it applies a newer device's event (before this device
-    /// updated, or after going back to it); the event keeps the rest.
-    /// Only existing rows that have events: a deleted bell is already
-    /// gone, a row without events has nothing to rebuild from (and
-    /// would be deleted), and the library is a handful of rows.
-    pub(super) fn recompute_interval_bells_from_events(&self) -> Result<()> {
-        let uuids: Vec<String> = self
-            .conn
-            .prepare(
-                "SELECT uuid FROM interval_bells b
-                 WHERE EXISTS (SELECT 1 FROM events WHERE target_id = b.uuid)",
-            )?
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        let tx = self.conn.unchecked_transaction()?;
-        for uuid in uuids {
-            self.recompute_interval_bell(&uuid)?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     /// Recompute the `interval_bells` row for `bell_uuid` from the
     /// events table. Same precedence rules as labels: tombstone wins
     /// on tie/precedence, else the highest-(lamport, device_id) mutate
@@ -357,11 +281,12 @@ impl Database {
         };
         {
             let kind = v["kind"].as_str().unwrap_or("interval");
-            let minutes = v["minutes"].as_u64().unwrap_or(0) as u32;
-            let jitter_pct = v["jitter_pct"].as_u64().unwrap_or(0) as u32;
+            let minutes = super::events::peer_u32(&v["minutes"]);
+            let jitter_pct = super::events::peer_u32(&v["jitter_pct"]);
             // Events from builds before seconds carry only minutes and percent.
             let [time, jitter, step] =
-                TIME_KEYS.map(|(secs, unit)| stored_time(v[secs].as_i64(), v[unit].as_str()));
+                TIME_KEYS.map(|(secs, unit)| stored_time(
+                    v[secs].is_number().then(|| super::events::peer_u32(&v[secs])), v[unit].as_str()));
             let stored = match (time, jitter, step) {
                 (Some(t), Some(j), Some(s)) => Some((t, j, s)),
                 _ => None,
@@ -429,9 +354,8 @@ const TIME_KEYS: [(&str, &str); 3] =
 
 /// A stored seconds field and its unit, `None` when either is missing
 /// or not understood.
-fn stored_time(secs: Option<i64>, unit: Option<&str>) -> Option<BellTime> {
-    let secs = u32::try_from(secs?).ok()?;
-    Some(BellTime { secs, unit: TimeUnit::from_db_str(unit?)? })
+fn stored_time(secs: Option<u32>, unit: Option<&str>) -> Option<BellTime> {
+    Some(BellTime { secs: secs?, unit: TimeUnit::from_db_str(unit?)? })
 }
 
 /// The seconds fields of a bell event, next to the `minutes` and
@@ -448,8 +372,53 @@ fn add_time_fields(payload: &mut serde_json::Value, time: BellTime, jitter: Bell
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_helpers::*;
     use crate::db::Event;
     use crate::seeds::{BUNDLED_BELL_UUID, BUNDLED_GONG_UUID};
+
+    #[test]
+    fn a_peers_damaged_bell_times_are_clamped() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid = "b0000000-0000-4000-8000-00000000000b";
+        db.apply_event(&synth_event("interval_bell_insert", uuid, 1, "peer", serde_json::json!({
+            "uuid": uuid, "kind": "interval", "minutes": 2.0, "jitter_pct": 0, "secs": 90.0, "secs_unit": "s",
+            "jitter_secs": 0, "jitter_unit": "s", "step_secs": 4_294_967_896_u64, "step_unit": "s",
+            "sound_uuid": BUNDLED_BELL_UUID, "vibration_pattern_uuid": BUNDLED_PATTERN_PULSE_UUID,
+            "signal_mode": "sound", "enabled": true, "created_iso": "2026-10-01T00:00:00Z",
+        }))).unwrap();
+        let bell = &db.list_interval_bells().unwrap()[0];
+        assert_eq!((bell.time.secs, bell.step.secs), (90, 4_294_967_295));
+    }
+
+    #[test]
+    fn copying_a_bell_twice_under_one_uuid_writes_it_once() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_interval_bell(
+            IntervalBellKind::Interval, BellTime::new(5, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO,
+            BUNDLED_BELL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        ).unwrap();
+        let bell = db.find_interval_bell_by_id(id).unwrap().unwrap();
+        let edited = IntervalBell { time: BellTime::new(7, TimeUnit::Min), ..bell.clone() };
+        db.copy_interval_bell(&bell, &edited, "b0000000-0000-4000-8000-00000000000b").unwrap();
+        let before = sent(&db);
+        let again = IntervalBell { time: BellTime::new(9, TimeUnit::Min), ..bell.clone() };
+        db.copy_interval_bell(&bell, &again, "b0000000-0000-4000-8000-00000000000b").unwrap();
+        assert_eq!(sent(&db), before);
+    }
+
+    #[test]
+    fn an_unchanged_bell_write_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_interval_bell(
+            IntervalBellKind::Interval, BellTime::new(5, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO,
+            BUNDLED_BELL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        ).unwrap();
+        let bell = db.find_interval_bell_by_id(id).unwrap().unwrap();
+        let before = sent(&db);
+        db.update_interval_bell(&bell).unwrap();
+        db.set_interval_bell_enabled(bell.uuid.as_str(), true).unwrap();
+        assert_eq!(sent(&db), before);
+    }
 
     fn synth_interval_bell_insert(
         bell_uuid: &str,

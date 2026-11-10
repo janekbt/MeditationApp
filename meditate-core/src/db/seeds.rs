@@ -177,6 +177,59 @@ mod tests {
 
     // ── Default labels ─────────────────────────────────────────────────
 
+    const KANSHO: &str = crate::seeds::BUNDLED_KANSHO_UUID;
+
+    #[test]
+    fn the_bundled_kansho_bell_drops_its_macron_once() {
+        // A Linux database seeded before both apps said "Kansho".
+        let db = Database::open_in_memory().unwrap();
+        db.seed_bell_sounds_with_paths(&[(KANSHO, "Kanshō", "kansho.ogg", "audio/ogg")]).unwrap();
+        db.conn.execute("UPDATE bell_sounds SET name = 'Kanshō'", []).unwrap();
+        db.set_sync_state(crate::db::events::LAST_APPLIED_EVENT_ID_KEY, "0").unwrap();
+        let before = crate::db::test_helpers::sent(&db);
+        let crate::db::Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        let name = |db: &Database| db.list_bell_sounds().unwrap()[0].name.clone();
+        assert_eq!(name(&db), "Kansho");
+        assert_eq!(crate::db::test_helpers::sent(&db), before, "nothing is sent");
+        let phone = Database::open_in_memory().unwrap();
+        crate::db::test_helpers::exchange(&db, &phone);
+        assert_eq!(name(&phone), "Kansho");
+    }
+
+    #[test]
+    fn a_kansho_bell_without_events_drops_its_macron_too() {
+        // Wipe Local keeps bundled rows and drops their events.
+        let db = Database::open_in_memory().unwrap();
+        db.seed_bell_sounds_with_paths(&[(KANSHO, "Kansho", "kansho.ogg", "audio/ogg")]).unwrap();
+        db.conn.execute_batch("DELETE FROM events; UPDATE bell_sounds SET name = 'Kanshō';").unwrap();
+        let crate::db::Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Kansho");
+        assert_eq!(crate::db::test_helpers::sent(&db), 0);
+    }
+
+    #[test]
+    fn typing_kansho_with_its_macron_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_bell_sounds_with_paths(&[(KANSHO, "Kansho", "kansho.ogg", "audio/ogg")]).unwrap();
+        let before = crate::db::test_helpers::sent(&db);
+        db.rename_bell_sound(KANSHO, "Kanshō").unwrap();
+        assert_eq!(crate::db::test_helpers::sent(&db), before);
+        assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Kansho");
+    }
+
+    #[test]
+    fn a_user_name_on_the_kansho_bell_stays() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_bell_sounds_with_paths(&[(KANSHO, "Kanshō", "kansho.ogg", "audio/ogg")]).unwrap();
+        db.rename_bell_sound(KANSHO, "Temple").unwrap();
+        db.set_sync_state(crate::db::events::LAST_APPLIED_EVENT_ID_KEY, "0").unwrap();
+        let crate::db::Database { conn, .. } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Temple");
+    }
+
     #[test]
     fn seed_default_labels_creates_each_default_under_its_stable_uuid() {
         let db = Database::open_in_memory().unwrap();

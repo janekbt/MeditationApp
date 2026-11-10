@@ -11,6 +11,23 @@
 
 use super::{Database, Event, SessionMode};
 
+/// How many events `db` has authored or received and not yet pushed.
+pub(crate) fn sent(db: &Database) -> usize {
+    db.pending_events().unwrap().len()
+}
+
+/// `to` applies every event `from` has not pushed yet.
+pub(crate) fn push(from: &Database, to: &Database) {
+    let events: Vec<Event> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+    to.replay_events(&events).unwrap();
+}
+
+/// Two devices sync both ways: each applies the other's events.
+pub(crate) fn exchange(a: &Database, b: &Database) {
+    push(a, b);
+    push(b, a);
+}
+
 /// Hand-construct an event without going through a Database. Lets
 /// tests pin specific lamport_ts / device_id values for tie-break
 /// and out-of-order scenarios.

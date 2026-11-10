@@ -34,7 +34,7 @@ After a sync that leaves a "(conflict-...)" label, each app SHALL ask once wheth
 - **TEST** `meditate-gtk/src/labels.rs::a_sync_asks_about_a_duplicate_label_like_the_phone`
 
 ### Requirement: A merge leaves nothing on the merged-away label
-Merging a label into another SHALL move its sessions, every mode's default label and any open selection to the kept label.
+Merging a label into another SHALL move its sessions, every mode's default label, every preset that uses it and any open selection to the kept label.
 
 #### Scenario: A mode's default label is merged away
 - **WHEN** the Timer's default label is merged into another
@@ -45,6 +45,11 @@ Merging a label into another SHALL move its sessions, every mode's default label
 - **WHEN** the phone merges a label that Setup, the session editor or a Log filter is using
 - **THEN** they switch to the kept label, and Save works
 - **TEST** `meditate-android/src/app.rs::a_merge_cleans_up_like_a_delete`
+
+#### Scenario: A preset uses the merged-away label
+- **WHEN** a preset pinned to "Walk (conflict-...)" exists and that label is merged into "Walk", then the preset is applied and a session saved
+- **THEN** the session is saved with "Walk", on this device and on a device that syncs after the merge
+- **TEST** `meditate-core/src/db/labels.rs::a_merge_moves_presets_to_the_kept_label`
 
 ### Requirement: A deleted label never blocks saving a session
 Saving a session whose selected label was deleted meanwhile SHALL save it without a label.

@@ -73,7 +73,9 @@ without emitting an event, because every peer makes the same move
 
 After each replay, every row carrying its own uuid's suffix is
 recomputed, so it takes its plain name back once the holder was
-renamed or deleted (`reclaim_suffixed_names`).
+renamed or deleted (`reclaim_suffixed_names`). A row whose name is
+held by a row with a smaller uuid is left alone: that pair is
+settled.
 
 Only labels raise a merge / keep-both prompt
 (`list_label_conflicts`, `merge_labels`). Locally authored
@@ -129,8 +131,8 @@ Audio files go to `Meditate/sounds/<uuid>.<ext>` and
 Seven insert/update/delete families plus two update-only kinds
 (`setting_changed`, `box_breath_phase_update`). `EventKind::entity()`
 maps each kind to its table and `recompute_for` dispatches to it
-(`meditate-core/src/db/events.rs`); `apply_event_inner` and
-`replay_events` call both.
+(`meditate-core/src/db/events.rs`); `replay_events` and the start-up
+rebuild call both.
 
 ## Sessions
 
@@ -309,6 +311,11 @@ Recompute: `recompute_bell_sound`. `target_id` is the sound uuid.
 ```
 
 `bell_sound_update` is emitted only by a rename.
+
+The bundled bell `f0c2e8a1-…0007` is stored as "Kansho" when its
+event says "Kanshō" (Linux seeded that spelling in 26.11.1 and before; the
+phone's font lacks the macron). Every device maps it the same way and
+no event is sent for it.
 
 - `is_bundled`: bundled sounds ship with the app and are seeded
   at first launch; the UI gates `is_bundled = true` rows from
@@ -554,13 +561,17 @@ emits nothing. The one-shot seed flags (`default_labels_seeded`,
 
 If you're writing a peer shell:
 
-- **Cache as pure function of events.** A local change writes its
-  cache row and appends its event in one transaction. The row must
-  equal what `recompute_<entity>` would build from the log. A
-  rename to the stored name emits nothing, because it would
-  override a newer peer rename. (Exception for now: saving an
-  unchanged vibration pattern in the editor still emits
-  `vibration_pattern_update`; OPEN-ISSUES #184.)
+- **Cache as pure function of events.** A local change appends its
+  event and builds its cache row with `recompute_<entity>` in one
+  transaction, so the row is what every peer builds from the log. A
+  save that changes nothing emits nothing, because it would override
+  a newer peer edit; the name in a payload never carries the row's
+  own "(conflict-...)" suffix. Known limit: a label merge rewrites
+  the presets pinned to the merged-away label as full rows, so a
+  preset edit made on another device before the merge syncs can be
+  lost (one person on one device at a time makes this unlikely).
+- **Clamp peers' numbers.** A length or time that is negative, too
+  large or not whole is stored as the nearest `u32` (`peer_u32`).
 - **Idempotency on `event_uuid`.** Your local `events` table
   should have `UNIQUE(event_uuid)`. `INSERT OR IGNORE` on
   conflict.
@@ -568,15 +579,15 @@ If you're writing a peer shell:
   event, advance your local clock to `max(local, remote) + 1`
   before any subsequent local authorship.
 - **Skip dispatch on unknown kind.** Record the row; the next
-  cache-schema bump's walk-replay will pick it up when your build
+  cache-schema bump's start-up rebuild picks it up when your build
   understands the kind.
 - **Skip dispatch on malformed `target_id`.** Apply the path-
   traversal / phase-string validator from `target_id_is_well_formed_for`
   (`meditate-core/src/db/error.rs`).
 
 Reference Rust implementation lives in
-`meditate-core/src/db/events.rs` (`apply_event_inner`,
-`replay_events`) and the per-entity `recompute_*` functions in
+`meditate-core/src/db/events.rs` (`replay_events`,
+`rebuild_events_from_older_builds`) and the per-entity `recompute_*` functions in
 each `meditate-core/src/db/<entities>.rs` file (e.g. `sessions.rs`,
 `settings.rs`).
 

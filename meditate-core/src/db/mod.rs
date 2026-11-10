@@ -108,7 +108,7 @@ pub use vibration_patterns::{
 pub use crate::vibration::ChartKind;
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
-use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};
+use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err, strip_conflict_suffix};
 use schema::schema;
 
 /// Whether a library row (preset, guided file) is currently flagged
@@ -320,8 +320,8 @@ impl Database {
         // negligible at this count.
         conn.set_prepared_statement_cache_capacity(32);
         let db = Self { conn, local_changes: LocalChanges::default() };
-        db.maybe_walk_events_for_cache_upgrade()?;
-        db.recompute_interval_bells_from_events()?;
+        db.rebuild_events_from_older_builds()?;
+        db.rename_unrebuilt_kansho()?;
         Ok(db)
     }
 
@@ -453,12 +453,12 @@ mod tests {
     }
 
     #[test]
-    fn re_open_with_old_cache_version_walks_events_and_rematerialises_cache() {
+    fn re_open_with_old_cache_version_rebuilds_the_cache() {
         // Simulate a DB that was last opened by a build whose
-        // apply_event_inner skipped some kind we now understand. The
-        // walk-on-upgrade must re-apply every event so the cache
-        // catches up to the current dispatch, then stamp the new
-        // cache version to gate future fast paths.
+        // apply_event_record_only skipped some kind we now understand.
+        // The start-up rebuild must rebuild every event's target once so
+        // the cache catches up to the current dispatch, then stamp the
+        // new cache version to gate future fast paths.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("walk.db");
         {

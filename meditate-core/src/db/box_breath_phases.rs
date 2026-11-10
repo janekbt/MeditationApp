@@ -75,10 +75,11 @@ impl Database {
         Ok(row)
     }
 
-    /// Update every mutable field on a single phase row. Emits a
-    /// `box_breath_phase_update` event carrying every column so peers
-    /// can replay in any order. Idempotent: writing the same values
-    /// twice still emits two events but converges on the same state.
+    /// Update every mutable field on a single phase row, recorded in
+    /// a `box_breath_phase_update` event carrying every column and
+    /// stored as a peer stores it. The values the row already has
+    /// write nothing: a fresh event would undo an edit another device
+    /// made in the meantime.
     pub fn set_box_breath_phase(
         &self,
         phase: BoxBreathPhaseId,
@@ -88,30 +89,23 @@ impl Database {
         pattern_uuid: &str,
         volume: BellVolume,
     ) -> Result<()> {
+        let row = BoxBreathPhase {
+            phase, enabled, signal_mode, volume,
+            sound_uuid: sound_uuid.into(),
+            pattern_uuid: pattern_uuid.into(),
+        };
+        if self.get_box_breath_phase(phase)?.as_ref() == Some(&row) {
+            return Ok(());
+        }
         let tx = self.conn.unchecked_transaction()?;
-        self.conn.execute(
-            "UPDATE box_breath_phases
-                SET enabled = ?1, signal_mode = ?2,
-                    sound_uuid = ?3, pattern_uuid = ?4, volume_pct = ?5
-              WHERE phase = ?6",
-            params![
-                i64::from(enabled),
-                signal_mode.as_db_str(),
-                sound_uuid,
-                pattern_uuid,
-                volume.percent(),
-                phase.as_db_str(),
-            ],
-        )?;
-        let payload = serde_json::json!({
+        self.emit_and_rebuild_in(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), serde_json::json!({
             "phase": phase.as_db_str(),
             "enabled": enabled,
             "signal_mode": signal_mode.as_db_str(),
             "sound_uuid": sound_uuid,
             "pattern_uuid": pattern_uuid,
             "volume": volume.percent(),
-        }).to_string();
-        self.emit_event(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), payload)?;
+        }))?;
         tx.commit()?;
         Ok(())
     }
@@ -174,6 +168,25 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
+
+    #[test]
+    fn an_unchanged_phase_write_keeps_a_peers_edit() {
+        let laptop = Database::open_in_memory().unwrap();
+        let phone = Database::open_in_memory().unwrap();
+        for db in [&laptop, &phone] { db.seed_box_breath_phases().unwrap(); }
+        let old = laptop.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap();
+        phone.set_box_breath_phase(BoxBreathPhaseId::In, old.enabled, old.signal_mode,
+            crate::seeds::BUNDLED_GONG_UUID, old.pattern_uuid.as_str(), old.volume).unwrap();
+        let before = sent(&laptop);
+        laptop.set_box_breath_phase(BoxBreathPhaseId::In, old.enabled, old.signal_mode,
+            old.sound_uuid.as_str(), old.pattern_uuid.as_str(), old.volume).unwrap();
+        assert_eq!(sent(&laptop), before, "an unchanged phase write sends nothing");
+        exchange(&laptop, &phone);
+        for db in [&laptop, &phone] {
+            assert_eq!(db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap().sound_uuid.as_str(),
+                crate::seeds::BUNDLED_GONG_UUID);
+        }
+    }
 
     #[test]
     fn box_breath_phase_id_round_trips_through_db_str() {

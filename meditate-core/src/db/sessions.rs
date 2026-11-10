@@ -137,6 +137,42 @@ pub(super) fn note_or_none(notes: &Option<String>) -> Option<&str> {
     notes.as_deref().filter(|n| !n.trim().is_empty())
 }
 
+/// A session's sync payload, the same for an insert and an update.
+fn session_payload(uuid: &str, session: &Session, label_uuid: Option<&str>) -> String {
+    serde_json::json!({
+        "uuid": uuid,
+        "start_iso": session.start_iso,
+        "duration_secs": session.duration_secs,
+        "label_uuid": label_uuid,
+        "notes": note_or_none(&session.notes),
+        "mode": session.mode.as_db_str(),
+        "guided_file_uuid": session.guided_file_uuid,
+        "guided_file_name": session.guided_file_name,
+    }).to_string()
+}
+
+/// The stored session with rowid `id`.
+fn session_by_id(db: &Database, id: i64) -> Result<Option<Session>> {
+    Ok(db.conn.query_row(
+        "SELECT start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name
+         FROM sessions WHERE id = ?1",
+        params![id],
+        |row| {
+            let mode_str: String = row.get(4)?;
+            Ok(Session {
+                start_iso: row.get(0)?,
+                duration_secs: row.get(1)?,
+                label_id: row.get(2)?,
+                notes: row.get(3)?,
+                mode: SessionMode::from_db_str(&mode_str).expect("DB CHECK constraint should restrict mode"),
+                uuid: row.get(5)?,
+                guided_file_uuid: row.get(6)?,
+                guided_file_name: row.get(7)?,
+            })
+        },
+    ).optional()?)
+}
+
 pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
     Ok(db
         .conn
@@ -455,16 +491,7 @@ impl Database {
             ],
         )?;
         let rowid = self.conn.last_insert_rowid();
-        let payload = serde_json::json!({
-            "uuid": session_uuid,
-            "start_iso": session.start_iso,
-            "duration_secs": session.duration_secs,
-            "label_uuid": label_uuid,
-            "notes": note_or_none(&session.notes),
-            "mode": session.mode.as_db_str(),
-            "guided_file_uuid": session.guided_file_uuid,
-            "guided_file_name": session.guided_file_name,
-        }).to_string();
+        let payload = session_payload(&session_uuid, session, label_uuid.as_deref());
         self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
 
         Ok((rowid, session_uuid))
@@ -573,16 +600,7 @@ impl Database {
         }
         for (s, session_uuid) in sessions.iter().zip(session_uuids) {
             let (_, label_uuid) = self.session_label(s.label_id)?;
-            let payload = serde_json::json!({
-                "uuid": session_uuid,
-                "start_iso": s.start_iso,
-                "duration_secs": s.duration_secs,
-                "label_uuid": label_uuid,
-                "notes": note_or_none(&s.notes),
-                "mode": s.mode.as_db_str(),
-                "guided_file_uuid": s.guided_file_uuid,
-                "guided_file_name": s.guided_file_name,
-            }).to_string();
+            let payload = session_payload(&session_uuid, s, label_uuid.as_deref());
             self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
         }
         Ok(sessions.len())
@@ -664,15 +682,24 @@ impl Database {
     }
 
     pub(super) fn update_session_in(&self, tx: &rusqlite::Transaction<'_>, id: i64, session: &Session) -> Result<()> {
-        let row_uuid: Option<String> = self.conn.query_row(
-            "SELECT uuid FROM sessions WHERE id = ?1",
-            params![id],
-            |row| row.get::<_, String>(0),
-        ).optional()?;
-        let Some(session_uuid) = row_uuid else {
+        let Some(stored) = session_by_id(self, id)? else {
             return Ok(());
         };
         let (label_id, label_uuid) = self.session_label(session.label_id)?;
+        // An edit without the file name keeps the stored one, as a peer
+        // rebuilding the row from this event does.
+        let session = &Session {
+            label_id,
+            notes: note_or_none(&session.notes).map(str::to_owned),
+            uuid: stored.uuid.clone(),
+            guided_file_name: session.guided_file_name.clone().or_else(|| stored.guided_file_name.clone()),
+            ..session.clone()
+        };
+        // Unchanged as stored: a fresh event would undo an edit another
+        // device made in the meantime.
+        if *session == stored {
+            return Ok(());
+        }
         self.conn.execute(
             "UPDATE sessions
              SET start_iso = ?1, duration_secs = ?2, label_id = ?3,
@@ -689,17 +716,8 @@ impl Database {
                 id,
             ],
         )?;
-        let payload = serde_json::json!({
-            "uuid": session_uuid,
-            "start_iso": session.start_iso,
-            "duration_secs": session.duration_secs,
-            "label_uuid": label_uuid,
-            "notes": note_or_none(&session.notes),
-            "mode": session.mode.as_db_str(),
-            "guided_file_uuid": session.guided_file_uuid,
-            "guided_file_name": session.guided_file_name,
-        }).to_string();
-        self.emit_event(tx, EventKind::SessionUpdate, &session_uuid, payload)
+        let payload = session_payload(session.uuid.as_str(), session, label_uuid.as_deref());
+        self.emit_event(tx, EventKind::SessionUpdate, session.uuid.as_str(), payload)
     }
 
 
@@ -884,7 +902,7 @@ impl Database {
         };
         {
             let start_iso = v["start_iso"].as_str().unwrap_or_default();
-            let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
+            let duration_secs = super::events::peer_u32(&v["duration_secs"]);
             let label_uuid = v["label_uuid"].as_str();
             let label_id: Option<i64> = match label_uuid {
                 Some(luuid) => self.conn.query_row(
@@ -964,6 +982,54 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_without_a_file_name_keeps_it_here_as_on_a_peer() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&guided_named("Body Scan")).unwrap();
+        let (_, stored) = list_sessions_from_db(&db).unwrap().remove(0);
+        db.update_session(id, &Session { notes: Some("calm".into()), guided_file_name: None, ..stored }).unwrap();
+        let peer = Database::open_in_memory().unwrap();
+        exchange(&db, &peer);
+        for db in [&db, &peer] {
+            assert_eq!(list_sessions_from_db(db).unwrap()[0].1.guided_file_name.as_deref(), Some("Body Scan"));
+        }
+    }
+
+    #[test]
+    fn an_unchanged_session_edit_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&guided_named("Body Scan")).unwrap();
+        let (_, stored) = list_sessions_from_db(&db).unwrap().remove(0);
+        let before = sent(&db);
+        // A note of only spaces is saved as none, so it is no change either.
+        db.update_session(id, &Session { notes: Some("  ".into()), ..stored.clone() }).unwrap();
+        db.update_session(id, &stored).unwrap();
+        assert_eq!(sent(&db), before);
+    }
+
+    #[test]
+    fn a_peers_damaged_length_is_clamped() {
+        let db = Database::open_in_memory().unwrap();
+        let uuids = ["d0000000-0000-4000-8000-000000000001", "d0000000-0000-4000-8000-000000000002",
+                     "d0000000-0000-4000-8000-000000000003"];
+        let lengths = [serde_json::json!(4_294_967_896_u64), serde_json::json!(600.0), serde_json::json!(-5)];
+        for (i, (uuid, secs)) in uuids.iter().zip(lengths).enumerate() {
+            let payload = serde_json::json!({
+                "uuid": uuid, "start_iso": format!("2026-10-1{i}T07:00:00"), "duration_secs": secs,
+                "label_uuid": null, "notes": null, "mode": "timer", "guided_file_uuid": null,
+            });
+            db.apply_event(&synth_event("session_insert", uuid, 1, DEVICE_A, payload)).unwrap();
+        }
+        let mut lengths: Vec<(String, u32)> = list_sessions_from_db(&db).unwrap().into_iter()
+            .map(|(_, s)| (s.uuid.as_str().to_string(), s.duration_secs)).collect();
+        lengths.sort();
+        assert_eq!(lengths, vec![
+            (uuids[0].to_string(), 4_294_967_295),
+            (uuids[1].to_string(), 600),
+            (uuids[2].to_string(), 0),
+        ]);
+    }
+
+    #[test]
     fn an_edit_without_a_file_name_keeps_the_stored_one() {
         let db = Database::open_in_memory().unwrap();
         let payload = |notes: Option<&str>, name: Option<&str>| {
@@ -1008,6 +1074,37 @@ mod tests {
         let db = Database::init(conn).unwrap();
         let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows[0].1.guided_file_name.as_deref(), Some("Body Scan"));
+    }
+
+    #[test]
+    fn a_name_comes_back_after_a_round_trip_through_the_last_release() {
+        let db = Database::init(release_v26_10_1_database()).unwrap();
+        db.insert_session(&guided_named("Morning")).unwrap();
+        let Database { conn, .. } = db;
+        // The last release pulls a phone's guided session: it records the
+        // event and stores the row without the name it doesn't know.
+        conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('e2', 50, ?1, 'session_insert', 's2', ?2)",
+            params![
+                DEVICE_A,
+                serde_json::json!({
+                    "uuid": "s2", "start_iso": "2026-10-02T07:00:00", "duration_secs": 600,
+                    "label_uuid": null, "notes": null, "mode": "guided",
+                    "guided_file_uuid": null, "guided_file_name": "Body Scan",
+                })
+                .to_string(),
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (start_iso, duration_secs, mode, uuid) VALUES ('2026-10-02T07:00:00', 600, 'guided', 's2')",
+            [],
+        )
+        .unwrap();
+        let db = Database::init(conn).unwrap();
+        let s2 = list_sessions_from_db(&db).unwrap().into_iter().find(|(_, s)| s.uuid.as_str() == "s2").unwrap();
+        assert_eq!(s2.1.guided_file_name.as_deref(), Some("Body Scan"));
     }
 
     #[test]

@@ -109,13 +109,14 @@ impl Editor {
 /// Push the editor onto `nav_view`. `initial` populates the form for
 /// edit-existing flow (and routes Save through `update_vibration_pattern`);
 /// `None` is create-new (routes through `insert_vibration_pattern`).
-/// `on_saved` fires with the resulting uuid so the caller (the chooser)
-/// can rebuild and re-select.
+/// `on_saved` fires with the resulting uuid and whether anything
+/// changed (an unchanged edit writes nothing), so the caller (the
+/// chooser) can rebuild, re-select and offer Undo.
 pub fn push_pattern_editor(
     nav_view: &adw::NavigationView,
     app: &MeditateApplication,
     initial: Option<VibrationPattern>,
-    on_saved: impl Fn(String) + 'static,
+    on_saved: impl Fn(String, bool) + 'static,
 ) {
     let editor = Editor::new(initial);
 
@@ -499,23 +500,23 @@ pub fn push_pattern_editor(
         let intensities = editor_for_save.intensities.borrow().clone();
         let chart_kind = editor_for_save.chart_kind.get();
 
-        let result: Option<crate::db::Result<String>> = match editor_for_save.edit_uuid.borrow().clone() {
+        let result: Option<crate::db::Result<(String, bool)>> = match editor_for_save.edit_uuid.borrow().clone() {
             None => app_for_save
                 .with_db_mut(|db| {
                     db.insert_vibration_pattern(
                         &name, duration_ms, &intensities, chart_kind, false,
-                    )
+                    ).map(|uuid| (uuid, true))
                 }),
             Some(uuid) => app_for_save
                 .with_db_mut(|db| {
                     db.update_vibration_pattern(
                         &uuid, &name, duration_ms, &intensities, chart_kind,
-                    ).map(|()| uuid.clone())
+                    ).map(|changed| (uuid.clone(), changed))
                 }),
         };
         match result {
-            Some(Ok(uuid)) => {
-                on_saved_for_save(uuid);
+            Some(Ok((uuid, changed))) => {
+                on_saved_for_save(uuid, changed);
                 nav_for_save.pop();
             }
             failed => {

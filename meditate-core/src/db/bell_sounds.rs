@@ -2,7 +2,7 @@
 //! shared across Starting / Interval / End bells (General category)
 //! and Box-Breath per-phase cues (BoxBreath category).
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 
 use super::events::EventKind;
 use super::{Database, Result};
@@ -64,7 +64,29 @@ impl BellSound {
     }
 }
 
+const OLD_KANSHO: &str = "Kanshō";
+const KANSHO: &str = "Kansho";
+
+/// The name a bell is stored under. Linux once seeded the bundled
+/// Kansho bell as "Kanshō"; both apps say "Kansho" (the phone's font
+/// lacks the macron). Mapped where rows are built, on every device
+/// alike, so no event is sent that could undo a peer's rename.
+fn bundled_name<'a>(uuid: &str, name: &'a str) -> &'a str {
+    if uuid == crate::seeds::BUNDLED_KANSHO_UUID && name == OLD_KANSHO { KANSHO } else { name }
+}
+
 impl Database {
+    /// A bundled Kansho row with no event behind it (Wipe Local keeps
+    /// bundled rows and drops their events) is never rebuilt; it gets
+    /// the same name here, without an event.
+    pub(super) fn rename_unrebuilt_kansho(&self) -> Result<()> {
+        self.conn.execute(
+            "UPDATE bell_sounds SET name = ?2 WHERE uuid = ?1 AND name = ?3",
+            params![crate::seeds::BUNDLED_KANSHO_UUID, KANSHO, OLD_KANSHO],
+        )?;
+        Ok(())
+    }
+
     /// Insert a bell-sound row with a fresh UUID. Used by custom-file
     /// imports (B.5). Returns the AUTOINCREMENT rowid; emits a
     /// `bell_sound_insert` event.
@@ -106,34 +128,33 @@ impl Database {
         if let Some(existing) = self.existing_rowid_by_uuid("bell_sounds", uuid_str)? {
             return Ok(existing);
         }
-        let created_iso = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO bell_sounds
-                (uuid, name, file_path, is_bundled, mime_type, category, created_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                uuid_str,
-                name,
-                file_path,
-                i64::from(is_bundled),
-                mime_type,
-                category.as_db_str(),
-                created_iso,
-            ],
-        )?;
-        let rowid = self.conn.last_insert_rowid();
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "file_path": file_path,
-            "is_bundled": is_bundled,
-            "mime_type": mime_type,
-            "category": category.as_db_str(),
-            "created_iso": created_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::BellSoundInsert, uuid_str, payload)?;
+        self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, &BellSound {
+            id: 0,
+            uuid: uuid_str.into(),
+            name: name.to_string(),
+            file_path: file_path.to_string(),
+            is_bundled,
+            mime_type: mime_type.to_string(),
+            category,
+            created_iso: chrono::Utc::now().to_rfc3339(),
+        })?;
+        let rowid = self.existing_rowid_by_uuid("bell_sounds", uuid_str)?.expect("just written");
         tx.commit()?;
         Ok(rowid)
+    }
+
+    /// Record `sound` as `kind` and store it the way a peer stores it
+    /// from the event.
+    fn write_bell_sound_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, sound: &BellSound) -> Result<()> {
+        self.emit_and_rebuild_in(tx, kind, sound.uuid.as_str(), serde_json::json!({
+            "uuid": sound.uuid,
+            "name": sound.name,
+            "file_path": sound.file_path,
+            "is_bundled": sound.is_bundled,
+            "mime_type": sound.mime_type,
+            "category": sound.category.as_db_str(),
+            "created_iso": sound.created_iso,
+        }))
     }
 
     /// Rename a bell sound. The only mutable property is `name`;
@@ -143,40 +164,15 @@ impl Database {
     /// field of the row so a peer that's missed the insert can still
     /// materialise from this rename alone.
     pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, i64, String, String, String, String)> = self.conn.query_row(
-            "SELECT file_path, is_bundled, mime_type, category, created_iso, name
-               FROM bell_sounds WHERE uuid = ?1",
-            params![uuid_str],
-            |row| Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-            )),
-        ).optional()?;
-        let Some((file_path, is_bundled, mime_type, category, created_iso, stored)) = row else {
+        let Some(stored) = self.list_bell_sounds()?.into_iter().find(|s| s.uuid == uuid_str) else {
             return Ok(());
         };
         // Unchanged: a fresh event would undo a rename another device
         // made in the meantime.
-        if stored == name { return Ok(()); }
-        self.conn.execute(
-            "UPDATE bell_sounds SET name = ?1 WHERE uuid = ?2",
-            params![name, uuid_str],
-        )?;
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "file_path": file_path,
-            "is_bundled": is_bundled != 0,
-            "mime_type": mime_type,
-            "category": category,
-            "created_iso": created_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::BellSoundUpdate, uuid_str, payload)?;
+        let name = bundled_name(uuid_str, name);
+        if stored.name == name { return Ok(()); }
+        let tx = self.conn.unchecked_transaction()?;
+        self.write_bell_sound_in(&tx, EventKind::BellSoundUpdate, &BellSound { name: name.to_string(), ..stored })?;
         tx.commit()?;
         Ok(())
     }
@@ -285,7 +281,7 @@ impl Database {
             return Ok(());
         };
         {
-            let name = v["name"].as_str().unwrap_or_default();
+            let name = bundled_name(sound_uuid, v["name"].as_str().unwrap_or_default());
             let file_path = v["file_path"].as_str().unwrap_or_default();
             let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
             let mime_type = v["mime_type"].as_str().unwrap_or("audio/wav");

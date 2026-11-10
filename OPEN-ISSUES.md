@@ -15,13 +15,12 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
-| [ ] | CC. Writes that undo another device's edit | #248, #244, #241, #242, #243, #245, #444, #249, #184 | synced data that silently goes back |
 | [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423 | what the user typed or saved goes missing |
 | [ ] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
 | [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #310, #251, #247, #490, #323, #340, #341, #491, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
-| [ ] | Q. Sync efficiency | #92, #98, #99, #100, #137 | wasted network, disk and rebuilds |
+| [ ] | Q. Sync efficiency | #92, #98, #100, #137 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
 | [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309, #408 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
@@ -43,7 +42,6 @@ Answer these once; each batch waits only for its own.
 - #387 (DD): when the Linux keyring can't be opened, keep the file fallback (and how to protect it), or refuse and ask the user?
 - #434, #452 (T): may a Log card note preview and a widget row be cut after two lines (as GTK does), or must they show in full?
 - #436 (T): should pt-PT get the pt_BR translation, and zh-Hant/zh-TW the zh_CN one, or stay English?
-- #444 (CC): one name for the bundled bell: "Kanshō" or "Kansho" on both apps?
 - #473 (GG): fix the 12-hour AM/PM at Meditate's call site now, or wait for the Slint AM/PM fix upstream (parked)?
 - #490 (EE): a failed seed at startup: open anyway and tell the user, or refuse the database as Linux does?
 - #493 (II): normalise imported bells to -16 LUFS on both apps, or on neither?
@@ -55,39 +53,6 @@ Answer these once; each batch waits only for its own.
 - REFACTORING "Considered and rejected": now that every refactor gets done eventually, should any of those come back?
 
 ---
-
-## CC. Writes that undo another device's edit
-
-Core, host-testable. The general fix is REFACTORING #234 (one write path per synced table, with #234's unchanged guard); do it with this package.
-
-### #248 Writes that change nothing still send a full-row event, which can undo another device's edit
-- No unchanged guard in `set_box_breath_phase` (`box_breath_phases.rs:82`; its doc says so on purpose), `update_interval_bell` (`interval_bells.rs:165`), `set_interval_bell_enabled`, `set_guided_file_starred` (`guided_files.rs:266`), and `update_vibration_pattern` (that one is #184). `rename_bell_sound` and `rename_guided_file` skip unchanged writes for exactly this reason. Device B changes a Box Breath phase, device A writes the same old values before syncing: A's event wins and B's change is gone. Applying a Box Breath preset writes all four phases (`preset_config.rs:700-714`). Reported, not traced: the GTK timer page rewrites a phase when it is shown again. Same class as #244 (presets) and #184 (vibration patterns): fix all together through the guard in #234. For vibration patterns, #370 removes the GTK workaround once the guard exists. Box Breath on Android: #400.
-
-### #244 Re-saving an unchanged preset can undo another device's edit
-- `presets.rs:299` (`update_preset_config`, the GTK Override and Undo paths `meditate-gtk/src/presets.rs:300, 329`) and `325` (`update_preset_starred`) emit a full-row event even when nothing changed; `update_preset_name` and `set_setting` refuse to. The phone renames a preset, the laptop overrides it with the same config before syncing: the laptop's event carries the old name with a higher clock, and the rename is lost on both. Same class as #184. Same class as #248 (box breath, interval bells, guided star, vibration) and #184: fix all together through the guard in #234.
-
-### #241 Old name conflicts are redone on every sync
-- `events.rs:808-829` (`reclaim_suffixed_names`) recomputes every row with a conflict suffix on every apply and replay, also when the conflict is permanent (larger uuid, holder still has the name); `claim_name` (798) then writes `sync.name_collision` to the log again each time. Two labels once named "Work" on two devices: from then on every sync re-resolves them and adds a log line. Fix: skip a row whose holder still has the name and whose uuid is the larger one.
-
-### #242 A peer's duration is cut or zeroed instead of clamped
-- `sessions.rs:887`: `v["duration_secs"].as_u64().unwrap_or(0) as u32`; a corrupt payload with 4294967896 becomes 600, `600.0` becomes 0. Only a damaged or hostile peer gets there; same class as #172, fix together. Fix: clamp as `Session::from_unix` does.
-
-### #243 Merging labels leaves presets pinned to the deleted one
-- `labels.rs:287-318` (`merge_labels`) moves sessions and the per-mode default, but not a preset's `config_json` label uuid. Applying such a preset (`preset_config.rs:662-663`) writes the dead uuid into the mode's label setting; `resolve_label_for_mode` finds nothing, and every session from that preset is saved without a label, with no message. Fix: rewrite the presets' label uuid in the merge transaction (or map merged uuids to the survivor on lookup).
-
-### #245 Guided file names stay empty after going back to an older release and returning
-- `schema.rs:47-54` fills `sessions.guided_file_name` only when the column is first added. New build, then the 26.10.1 release pulls a phone's Guided sessions (it doesn't know the column), then the new build again: the column exists, the fill is skipped, the cache version is unchanged, so those Log entries never get their title. Interval bells cover this case by recomputing on every open. Fix: #226, which replaces the one-shot fill (and with it #219's fill); don't patch the fill separately.
-
-### #444 The bundled "Kanshō" bell can take the other app's spelling
-- Seeding writes one insert event per row (`seeds.rs`, test `seed_bell_sounds_emits_one_insert_event_per_row..`); Android seeds "Kansho" (for the phone's font, `sounds.rs:14`), GTK "Kanshō", same uuid. After a sync one name likely wins on both devices, so the phone may show the macron it avoids. Plausible, not traced. Fix with #440: one name, or a per-app display name that isn't synced.
-
-### #249 Plausible: a session saved twice after a time zone change
-- `session_in_progress.rs:178` deletes the recovery snapshot only if its `start_iso` matches the saved session's string exactly. Both are formatted from the same unix time in the local zone at different moments; change the zone between the last snapshot and Save (travel), and the snapshot stays, so the next launch saves the session again. Fix: compare on a session token or the unix start. Not reproduced.
-
-### #184 Saving an unchanged vibration pattern overwrites another device's edit
-- Where: `meditate-core/src/db/vibration_patterns.rs:266-312` (`update_vibration_pattern` always writes and emits).
-- Problem: the same as #103 for the other kinds: the phone edits a pattern, the laptop opens the editor on the old version and saves without changing anything; after sync both show the laptop's old version.
-- Fix: return early when name, duration, intensities and chart kind equal the stored row. One test.
 
 ## DD. Passwords and edits lost or doubled
 
@@ -314,11 +279,6 @@ One screen, one device test. REFACTORING #469 and #465 touch the same code.
   - Fix: #331.
 - Related: REFACTORING #331, #485 (a sync says what changed).
 
-### #99 Going back to an older build leaves a cache marker that blocks a later replay
-- Where: `meditate-core/src/db/events.rs:198-205`.
-- Problem: `maybe_walk_events_for_cache_upgrade` returns early when the stored version is higher, so an older build leaves the newer marker. Events of a new kind that the older build recorded are never applied when the newer build comes back. Linux only (Android refuses a versionCode downgrade).
-- Fix: when `stored > CACHE_SCHEMA_VERSION`, write `CACHE_SCHEMA_VERSION` and return. One test next to `re_open_at_current_cache_version_does_not_re_walk`. Must ship before the next `CACHE_SCHEMA_VERSION` bump.
-
 ### #100 Every sync attempt runs the full database open with an integrity check
 - Where: `meditate-core/src/db/mod.rs:253-317` (quick_check at 296-305); gtk `sync_runner.rs:109`; android `sync_runner.rs:102`.
 - Problem: each attempt runs the schema setup, a `user_version` write (which takes the write lock before the sync busy timeout is set) and `PRAGMA quick_check`, which reads every page. A failing quick_check counts as "ok" and is never logged.
@@ -349,9 +309,9 @@ Decided 2026-11-03: each skipped item stays visible in the sync status that the 
 - Fix: for a per-file GET or write error, log it, leave the uuid unknown and continue, as `NotFound` already does (keep `Unauthorized` fatal). Cap `target_id` length in `target_id_is_well_formed_for` (e.g. 128). One test each.
 
 ### #172 A long Line vibration pattern overflows u32
-- Where: `meditate-core/src/vibration.rs:145`; replay `db/vibration_patterns.rs:358` (`as u32`, no clamp); editor cap `meditate-gtk/src/vibration_editor.rs:34` (10 s).
+- Where: `meditate-core/src/vibration.rs:145`; replay `recompute_vibration_pattern` (clamps to `u32` through `peer_u32` since 2026-11-10, not to the editor's range); editor cap `meditate-gtk/src/vibration_editor.rs:34` (10 s).
 - Problem: above about 463 s, `(2*i+1)*duration_ms` overflows: a panic in debug, a wrong envelope in release. Only a corrupt or hostile synced pattern gets there, because the editors cap the length.
-- Fix: compute in u64 and clamp `duration_ms` to the editor's range on replay. One test. Core has no duration bound at all (sweep, slice 6); same class as #242.
+- Fix: compute in u64 and clamp `duration_ms` to the editor's range on replay. One test. Core has no duration bound at all (sweep, slice 6).
 
 ### #173 The release-notes parser is fragile
 - Where: `meditate-core/src/release_notes.rs:24, 63-64, 74-77, 91-93`.
@@ -777,7 +737,12 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 
 ## Checked and not kept
 
-Findings of the 2026-11-10 sweep that turned out wrong, so they aren't raised again:
+Findings of the 2026-11-10 sweep that turned out wrong, or that the maintainer chose not to fix, so they aren't raised again:
+- #249, a session saved twice after a time zone change between the last recovery snapshot and Save: the snapshot is matched by its local start text. Too unlikely for a new column (maintainer, 2026-11-10).
+- Cases that need two devices editing at the same time before a sync (maintainer, 2026-11-10: one person uses one device at a time; fix such cases only when almost free, never with a new sync field):
+  - A label merge rewrites the presets pinned to the merged-away label as full rows, so a preset edit made on another device before the merge syncs can be lost, or that preset can point at the deleted label again (#243's fix, change writes-keep-peer-edits).
+  - A new preset, guided file or pattern named like the base of an existing "(conflict-...)" row passes the name check and may be suffixed later without an event.
+  - A Log entry whose start is stored in another text form (a space instead of "T") counts as changed on an unchanged save.
 - Two connections minting two device ids (`device.rs:14-31`): the startup seeds mint the row before any sync connection exists.
 - Presets' name check without `COLLATE NOCASE` (`presets.rs:129`): the column itself is `COLLATE NOCASE` (`schema.rs:192`).
 - "Box Breath's first cue is lost when the first phase is short": `In` is at least 1 s and Box Breath ticks every 200 ms in both apps.

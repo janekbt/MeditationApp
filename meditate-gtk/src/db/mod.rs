@@ -229,8 +229,8 @@ const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
         "audio/ogg",
     ),
     (
-        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0007",
-        "Kanshō",
+        meditate_core::seeds::BUNDLED_KANSHO_UUID,
+        "Kansho",
         "/io/github/janekbt/Meditate/sounds/kansho.ogg",
         "audio/ogg",
     ),
@@ -740,7 +740,7 @@ impl Database {
         duration_ms: u32,
         intensities: &[f32],
         chart_kind: ChartKind,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.inner
             .update_vibration_pattern(uuid, name, duration_ms, intensities, chart_kind)
             .map_err(map_core_err)

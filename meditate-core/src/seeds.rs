@@ -27,6 +27,8 @@ pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
 pub const BUNDLED_WOODBLOCK_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c000b";
 pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
 pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
+/// Named "Kansho" in both apps: the phone's font lacks the macron.
+pub const BUNDLED_KANSHO_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0007";
 
 // ── Default-label UUIDs ───────────────────────────────────────────
 // Stable UUIDs for the seeded default labels. The seed runs once on

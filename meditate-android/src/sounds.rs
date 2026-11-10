@@ -81,7 +81,7 @@ const BUNDLED: &[Bundled] = &[
         bytes: include_bytes!("../assets/sounds/tingsha.ogg"),
     },
     Bundled {
-        uuid: "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0007",
+        uuid: meditate_core::seeds::BUNDLED_KANSHO_UUID,
         name: "Kansho",
         file: "kansho.ogg",
         mime: "audio/ogg",

@@ -17,8 +17,6 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
-use meditate_core::vibration::patterns_equivalent;
-
 use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, VibrationPattern};
 use crate::i18n::gettext;
@@ -201,7 +199,7 @@ fn build_create_row(
             &nav_view,
             &app,
             None,
-            move |_uuid| {
+            move |_uuid, _changed| {
                 if let Some(rb) = rebuilder.borrow().as_ref() {
                     rb();
                 }
@@ -371,27 +369,17 @@ fn add_edit_button(
             &nav_view,
             &app,
             Some(before.clone()),
-            move |saved_uuid| {
+            move |_saved_uuid, changed| {
                 if let Some(rb) = rebuilder_for_saved.borrow().as_ref() {
                     rb();
                 }
-                // Skip the Undo toast when nothing actually changed
-                // (the editor's Save button stays sensitive even if
-                // the user just opened/closed) — comparing the field
-                // tuple is enough; we don't have a "dirty" flag.
-                let after = app_for_saved
-                    .with_db(|db| db.find_vibration_pattern_by_uuid(&saved_uuid))
-                    .and_then(std::result::Result::ok)
-                    .flatten();
-                if let Some(after) = after {
-                    if !patterns_equivalent(&before, &after) {
-                        show_undo_edit_toast(
-                            &toast_for_saved,
-                            &app_for_saved,
-                            before.clone(),
-                            rebuilder_for_saved.clone(),
-                        );
-                    }
+                if changed {
+                    show_undo_edit_toast(
+                        &toast_for_saved,
+                        &app_for_saved,
+                        before.clone(),
+                        rebuilder_for_saved.clone(),
+                    );
                 }
             },
         );

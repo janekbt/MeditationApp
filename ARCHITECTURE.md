@@ -145,18 +145,21 @@ The mechanisms in `db/schema.rs`:
   because a downgrade could silently drop data it doesn't know.
   Bump it only for changes an older build cannot read.
 - **`ADDED_COLUMNS`**: additive, defaulted columns.
-  `add_missing_columns` adds them to older databases on open, with an
-  optional one-time fill (`sessions.guided_file_name` takes the names
-  an older release kept only in its events). Prefer such a fill to a
-  `CACHE_SCHEMA_VERSION` bump: a full replay takes long on a phone. A
-  device that goes back to an older release after the column exists
-  and then updates again gets no second fill; names it received
-  meanwhile show once that session's next event arrives.
+  `add_missing_columns` adds them to older databases on open.
   `SCHEMA_VERSION` stays put, so the previous release can still open
   the DB.
-- **`CACHE_SCHEMA_VERSION`**: bump it when `apply_event_inner` learns
-  a new event kind or changes the columns a kind fills. On open, a
-  lower stored value replays the whole log. Unknown kinds are
+- **Start-up rebuild** (`rebuild_events_from_older_builds`): the
+  `sync_state` key `last_applied_event_id` holds the highest event id
+  this build applied; `emit_event` and `replay_events` move it. On
+  open, the targets of every event above it are rebuilt from the log:
+  those an older build appended and stored without the fields it
+  didn't know (a session's file name, a bell's seconds). With no
+  marker (a database from before it), one past the last event, or an
+  old cache version, everything is rebuilt once (about 0.6 s for 10k
+  sessions on the laptop).
+- **`CACHE_SCHEMA_VERSION`**: bump it when `apply_event_record_only`
+  learns a new event kind or changes the columns a kind fills. On
+  open, a lower stored value rebuilds every target once. Unknown kinds are
   recorded but not applied until then.
 - **Upgrade tests** start from a frozen schema of an earlier release
   in `db/fixtures/` (`schema_v26_8_5.sql` in `db/mod.rs`,
@@ -345,7 +348,7 @@ meditate-core/src/
 │   ├── schema.rs              SCHEMA, SCHEMA_VERSION, CACHE_SCHEMA_VERSION, ADDED_COLUMNS
 │   ├── fixtures/              last release's schema for upgrade tests
 │   ├── error.rs               DbError, name-collision suffix, target_id validator
-│   ├── events.rs              event log, apply_event_inner, replay_events, winning_mutate
+│   ├── events.rs              event log, replay_events, start-up rebuild, winning_mutate
 │   ├── device.rs              device_id, Lamport clock, observe_remote
 │   ├── uuids.rs               seven typed entity UUID newtypes
 │   ├── local_changes.rs       local-change counter + LocalChangeWatch

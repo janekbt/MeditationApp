@@ -6,10 +6,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
-use super::{
-    map_unique_err,
-    Database, DbError, Result,
-};
+use super::{Database, DbError, Result};
 
 /// One entry in the user's guided-meditation file library — an audio
 /// track imported via the file picker, transcoded to OGG, and stored
@@ -174,127 +171,77 @@ impl Database {
 
     /// Insert `file` under its uuid and times (its id is ignored).
     fn insert_guided_file_at(&self, file: &GuidedFile) -> Result<i64> {
-        let GuidedFile { uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso, .. } = file;
-        let (uuid_str, duration_secs, is_starred) = (uuid.as_str(), *duration_secs, *is_starred);
+        let uuid_str = file.uuid.as_str();
         let tx = self.conn.unchecked_transaction()?;
         if let Some(existing) = self.existing_rowid_by_uuid("guided_files", uuid_str)? {
             return Ok(existing);
         }
-        self.conn
-            .execute(
-                "INSERT INTO guided_files
-                    (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    uuid_str,
-                    name,
-                    file_path,
-                    duration_secs,
-                    i64::from(is_starred),
-                    created_iso,
-                    updated_iso,
-                ],
-            )
-            .map_err(|e| map_unique_err(e, || DbError::DuplicateGuidedFile(name.to_string())))?;
-        let rowid = self.conn.last_insert_rowid();
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "file_path": file_path,
-            "duration_secs": duration_secs,
-            "is_starred": is_starred,
-            "created_iso": created_iso,
-            "updated_iso": updated_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::GuidedFileInsert, uuid_str, payload)?;
+        // Checked first: the rebuild would suffix a taken name instead.
+        if is_guided_file_name_taken_from_db(self, &file.name, uuid_str)? {
+            return Err(DbError::DuplicateGuidedFile(file.name.clone()));
+        }
+        self.write_guided_file_in(&tx, EventKind::GuidedFileInsert, file)?;
+        let rowid = self.existing_rowid_by_uuid("guided_files", uuid_str)?.expect("just written");
         tx.commit()?;
         Ok(rowid)
     }
 
+    /// Record `file` as `kind` and store it the way a peer stores it.
+    fn write_guided_file_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, file: &GuidedFile) -> Result<()> {
+        let uuid = file.uuid.as_str();
+        self.emit_and_rebuild_in(tx, kind, uuid, serde_json::json!({
+            "uuid": uuid,
+            "name": file.name,
+            "file_path": file.file_path,
+            "duration_secs": file.duration_secs,
+            "is_starred": file.is_starred,
+            "created_iso": file.created_iso,
+            "updated_iso": file.updated_iso,
+        }))
+    }
 
-    /// Rename a guided-file row. Bumps `updated_iso` so the recompute
-    /// helper can resolve concurrent renames by lamport timestamp.
-    /// Unknown uuids are silent no-ops AND emit no event (mirrors the
-    /// bell-sound / preset rename pattern). Returns
-    /// `DuplicateGuidedFile(name)` if another row already holds the
-    /// new name (case-insensitive).
+    /// Apply `edit` to the stored file and write it, unless that
+    /// changes nothing: a fresh event would undo an edit another
+    /// device made in the meantime. Unknown uuids write nothing. A
+    /// new name another file holds returns `DuplicateGuidedFile`.
+    pub(super) fn edit_guided_file_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        uuid_str: &str,
+        edit: impl FnOnce(&mut GuidedFile),
+    ) -> Result<()> {
+        let Some(stored) = find_guided_file_by_uuid_from_db(self, uuid_str)? else { return Ok(()) };
+        let mut file = stored.clone();
+        edit(&mut file);
+        if file == stored {
+            return Ok(());
+        }
+        if file.name != stored.name && is_guided_file_name_taken_from_db(self, &file.name, uuid_str)? {
+            return Err(DbError::DuplicateGuidedFile(file.name));
+        }
+        file.updated_iso = chrono::Utc::now().to_rfc3339();
+        self.write_guided_file_in(tx, EventKind::GuidedFileUpdate, &file)
+    }
+
+    fn edit_guided_file(&self, uuid_str: &str, edit: impl FnOnce(&mut GuidedFile)) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.edit_guided_file_in(&tx, uuid_str, edit)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Rename a guided-file row. Unknown uuids and the current name
+    /// write nothing. Returns `DuplicateGuidedFile(name)` if another
+    /// row already holds the new name (case-insensitive).
     pub fn rename_guided_file(&self, uuid_str: &str, name: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, i64, String, String)> = self.conn.query_row(
-            "SELECT file_path, duration_secs, created_iso, name
-               FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).optional()?;
-        let Some((file_path, duration_secs, created_iso, stored)) = row else {
-            return Ok(());
-        };
-        // Unchanged: a fresh event would undo a rename another device
-        // made in the meantime.
-        if stored == name { return Ok(()); }
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        self.conn
-            .execute(
-                "UPDATE guided_files SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
-                params![name, now_iso, uuid_str],
-            )
-            .map_err(|e| map_unique_err(e, || DbError::DuplicateGuidedFile(name.to_string())))?;
-        // Read back is_starred so the event payload carries every
-        // field — peers that missed the insert can still materialise
-        // from this single update event alone.
-        let is_starred: bool = self.conn.query_row(
-            "SELECT is_starred FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        )? != 0;
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "file_path": file_path,
-            "duration_secs": duration_secs,
-            "is_starred": is_starred,
-            "created_iso": created_iso,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::GuidedFileUpdate, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.edit_guided_file(uuid_str, |f| f.name = name.to_string())
     }
 
-    /// Toggle the home-screen-pin flag. Same payload shape as rename
-    /// so peers can replay either change with the same recompute path.
+    /// Toggle the home-screen-pin flag. Unknown uuids and the current
+    /// state write nothing.
     pub fn set_guided_file_starred(&self, uuid_str: &str, starred: crate::db::StarredState) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, String, i64, String)> = self.conn.query_row(
-            "SELECT name, file_path, duration_secs, created_iso
-               FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).optional()?;
-        let Some((name, file_path, duration_secs, created_iso)) = row else {
-            return Ok(());
-        };
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        let is_starred = starred.is_starred();
-        self.conn.execute(
-            "UPDATE guided_files SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![i64::from(is_starred), now_iso, uuid_str],
-        )?;
-        let payload = serde_json::json!({
-            "uuid": uuid_str,
-            "name": name,
-            "file_path": file_path,
-            "duration_secs": duration_secs,
-            "is_starred": is_starred,
-            "created_iso": created_iso,
-            "updated_iso": now_iso,
-        }).to_string();
-        self.emit_event(&tx, EventKind::GuidedFileUpdate, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.edit_guided_file(uuid_str, |f| f.is_starred = starred.is_starred())
     }
-
-
 
     /// Drop a guided-file row. Unknown uuids are silent no-ops AND
     /// emit no event — peers would otherwise see a tombstone for a
@@ -338,7 +285,7 @@ impl Database {
         {
             let name = v["name"].as_str().unwrap_or_default();
             let file_path = v["file_path"].as_str().unwrap_or_default();
-            let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
+            let duration_secs = super::events::peer_u32(&v["duration_secs"]);
             let is_starred = v["is_starred"].as_bool().unwrap_or(false);
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             let updated_iso = v["updated_iso"].as_str().unwrap_or(created_iso);
@@ -366,6 +313,40 @@ mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
     use crate::test_macros::assert_matches;
+
+    #[test]
+    fn a_peers_damaged_file_length_is_clamped() {
+        let db = Database::open_in_memory().unwrap();
+        for (uuid, secs) in [("e0000000-0000-4000-8000-000000000001", serde_json::json!(4_294_967_896_u64)),
+                             ("e0000000-0000-4000-8000-000000000002", serde_json::json!(600.0))] {
+            db.apply_event(&synth_event("guided_file_insert", uuid, 1, DEVICE_A, serde_json::json!({
+                "uuid": uuid, "name": uuid, "file_path": "a.ogg", "duration_secs": secs,
+                "is_starred": false, "created_iso": "2026-10-01T00:00:00Z", "updated_iso": "2026-10-01T00:00:00Z",
+            }))).unwrap();
+        }
+        let lengths: Vec<u32> = list_guided_files_from_db(&db).unwrap().into_iter().map(|f| f.duration_secs).collect();
+        assert_eq!(lengths, vec![4_294_967_295, 600]);
+    }
+
+    #[test]
+    fn renaming_a_guided_file_to_a_taken_name_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("e0000000-0000-4000-8000-00000000000e", "Body Scan", "a.ogg", 600, false).unwrap();
+        db.insert_guided_file_with_uuid("f0000000-0000-4000-8000-00000000000f", "Metta", "b.ogg", 600, false).unwrap();
+        let before = sent(&db);
+        assert_matches!(db.rename_guided_file("f0000000-0000-4000-8000-00000000000f", "body scan"),
+            Err(DbError::DuplicateGuidedFile(_)));
+        assert_eq!(sent(&db), before);
+    }
+
+    #[test]
+    fn starring_a_starred_guided_file_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("e0000000-0000-4000-8000-00000000000e", "Body Scan", "a.ogg", 600, true).unwrap();
+        let before = sent(&db);
+        db.set_guided_file_starred("e0000000-0000-4000-8000-00000000000e", crate::db::StarredState::Starred).unwrap();
+        assert_eq!(sent(&db), before);
+    }
 
     #[test]
     fn guided_file_names_resolve_library_files() {
