@@ -223,14 +223,14 @@ impl Database {
     /// mutate event drives the row. Update events carry every field
     /// (name, file_path, duration, is_starred, both timestamps) so they
     /// self-suffice on out-of-order delivery.
-    pub(super) fn recompute_guided_file(&self, file_uuid: &str) -> Result<()> {
+    pub(super) fn recompute_guided_file(&self, file_uuid: &str) -> Result<Option<String>> {
         let Some(v) = self.winning_mutate(
             file_uuid,
             [EventKind::GuidedFileInsert, EventKind::GuidedFileUpdate],
             EventKind::GuidedFileDelete,
         )? else {
             self.delete_row("guided_files", file_uuid)?;
-            return Ok(());
+            return Ok(None);
         };
         {
             let name = v["name"].as_str().unwrap_or_default();
@@ -252,9 +252,9 @@ impl Database {
             self.claim_name("guided_files", file_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 file_uuid, name, file_path, duration_secs,
                 i64::from(is_starred), created_iso, updated_iso,
-            ]))?;
+            ]))
+            .map(Some)
         }
-        Ok(())
     }
 }
 

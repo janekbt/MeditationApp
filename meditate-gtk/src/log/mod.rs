@@ -1,6 +1,5 @@
 mod imp;
 
-use meditate_core::db::Refresh;
 use gtk::glib;
 use gtk::glib::subclass::prelude::ObjectSubclassIsExt;
 
@@ -32,20 +31,20 @@ impl LogView {
 
     pub fn set_filter_notes_only(&self, value: bool) {
         self.imp().filter_notes_only.set(value);
-        self.invalidate_for_filter();
+        self.reload();
     }
 
     pub fn set_filter_label_id(&self, id: Option<i64>) {
         self.imp().filter_label_id.set(id);
-        self.invalidate_for_filter();
+        self.reload();
     }
 
-    /// A filter change doesn't touch the DB but DOES invalidate the rows
-    /// currently shown — without this, the caller's follow-up `refresh()`
-    /// would no-op because the dirty flag stays false.
-    fn invalidate_for_filter(&self) {
+    /// A filter change touches no data, so it reads the Log now instead
+    /// of marking it; that read also covers a mark a sync left.
+    fn reload(&self) {
         if let Some(app) = self.imp().get_app() {
-            app.mark_stale(Refresh::LOG);
+            app.take_log_dirty();
+            self.imp().refresh();
         }
     }
 
@@ -71,6 +70,22 @@ mod tests {
             .chain(src[at + 1..].find("\n    pub(super) fn "))
             .min().map_or(src.len(), |e| at + 1 + e);
         &src[at..end]
+    }
+
+    /// #505: a filter change reads the Log at once; it doesn't mark
+    /// the app-wide "data changed" flag, and its read covers a mark a
+    /// sync left.
+    #[test]
+    fn a_filter_change_reloads_without_marking_the_data_stale() {
+        let m = production("log/mod.rs");
+        for sig in ["pub fn set_filter_notes_only(", "pub fn set_filter_label_id("] {
+            assert!(body(&m, sig).contains("self.reload();"), "{sig}");
+        }
+        let reload = body(&m, "fn reload(");
+        assert!(reload.contains("app.take_log_dirty();") && reload.contains("self.imp().refresh();"));
+        assert!(!m.contains("mark_stale"));
+        let app = production("application.rs");
+        assert!(!app.contains("pub stats_dirty") && !app.contains("pub log_dirty"), "only behind mark_stale and take_*");
     }
 
     /// The only test here that needs a display: GTK parses the
@@ -136,9 +151,8 @@ mod tests {
         let imp = production("log/imp.rs");
         let b = body(&imp, "pub fn refresh_filter_labels(");
         let gone = b.find("!labels.iter().any(|l| l.id == id)").expect("checks the label still exists");
-        let clear = b.find("self.obj().set_filter_label_id(None)").expect("clears the filter");
-        let reload = b.find("self.obj().refresh()").expect("reloads the Log");
-        assert!(gone < clear && clear < reload);
+        let clear = b.find("self.obj().set_filter_label_id(None)").expect("clears the filter, which reloads the Log");
+        assert!(gone < clear);
         // A sync that deletes the label reloads the Log on screen.
         let r = body(&imp, "pub fn refresh(&self)");
         let gone = r.find("!labels.iter().any(|l| l.id == id)").expect("every reload checks the label");

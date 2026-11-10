@@ -77,6 +77,11 @@ pub fn list_labels_from_db(db: &Database) -> Result<Vec<Label>> {
     })
 }
 
+/// Label names by uuid, for preset subtitles: one read per list.
+pub fn label_names_from_db(db: &Database) -> Result<std::collections::HashMap<String, String>> {
+    Ok(list_labels_from_db(db)?.into_iter().map(|l| (l.uuid.0, l.name)).collect())
+}
+
 /// How many colours the Log's label palette has; places wrap after it.
 pub const LABEL_COLOR_COUNT: usize = 16;
 
@@ -317,7 +322,7 @@ impl Database {
     /// Recompute the `labels` row for `label_uuid` from the events table.
     /// Same precedence rules as sessions: tombstone wins on tie/precedence,
     /// else the highest-(lamport, device_id) mutate event drives the name.
-    pub(super) fn recompute_label(&self, label_uuid: &str) -> Result<()> {
+    pub(super) fn recompute_label(&self, label_uuid: &str) -> Result<Option<String>> {
         let Some(v) = self.winning_mutate(
             label_uuid,
             [EventKind::LabelInsert, EventKind::LabelRename],
@@ -326,48 +331,46 @@ impl Database {
             // Tombstoned. `ON DELETE SET NULL` on the FK clears
             // label_id on any cached sessions that referenced this row.
             self.delete_row("labels", label_uuid)?;
-            return Ok(());
+            return Ok(None);
         };
-        {
-            let name = v["name"].as_str().unwrap_or_default();
-            // Two peers offline can pick the same name (the column is
-            // UNIQUE COLLATE NOCASE); `claim_name` settles which row
-            // carries the suffix, so the replay never stalls on it.
-            self.claim_name("labels", label_uuid, name, |name| self.conn.execute(
-                "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
-                 ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
-                params![label_uuid, name],
-            ))?;
+        let name = v["name"].as_str().unwrap_or_default();
+        // Two peers offline can pick the same name (the column is
+        // UNIQUE COLLATE NOCASE); `claim_name` settles which row
+        // carries the suffix, so the replay never stalls on it.
+        let named = self.claim_name("labels", label_uuid, name, |name| self.conn.execute(
+            "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
+             ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
+            params![label_uuid, name],
+        ))?;
 
-            // Re-link any sessions whose LATEST mutate event references
-            // this label. Without this, an out-of-order delivery
-            // (session_insert arrives in batch 1, label_insert in
-            // batch 2) leaves the session permanently orphaned —
-            // recompute_session ran before the label existed and set
-            // label_id = None, but nothing recomputes the session when
-            // the label finally arrives. Only "latest mutate references
-            // this label" matches: a session that was inserted with L1
-            // and later updated to L2 must NOT be re-stolen by L1.
-            self.conn.execute(
-                "UPDATE sessions
-                 SET label_id = (SELECT id FROM labels WHERE uuid = ?1)
-                 WHERE uuid IN (
-                     SELECT e1.target_id FROM events e1
-                     WHERE e1.kind IN ('session_insert', 'session_update')
-                       AND json_extract(e1.payload, '$.label_uuid') = ?1
-                       AND NOT EXISTS (
-                           SELECT 1 FROM events e2
-                           WHERE e2.target_id = e1.target_id
-                             AND e2.kind IN ('session_insert', 'session_update')
-                             AND (e2.lamport_ts > e1.lamport_ts
-                                  OR (e2.lamport_ts = e1.lamport_ts
-                                      AND e2.device_id > e1.device_id))
-                       )
-                 )",
-                params![label_uuid],
-            )?;
-        }
-        Ok(())
+        // Re-link any sessions whose LATEST mutate event references
+        // this label. Without this, an out-of-order delivery
+        // (session_insert arrives in batch 1, label_insert in
+        // batch 2) leaves the session permanently orphaned —
+        // recompute_session ran before the label existed and set
+        // label_id = None, but nothing recomputes the session when
+        // the label finally arrives. Only "latest mutate references
+        // this label" matches: a session that was inserted with L1
+        // and later updated to L2 must NOT be re-stolen by L1.
+        self.conn.execute(
+            "UPDATE sessions
+             SET label_id = (SELECT id FROM labels WHERE uuid = ?1)
+             WHERE uuid IN (
+                 SELECT e1.target_id FROM events e1
+                 WHERE e1.kind IN ('session_insert', 'session_update')
+                   AND json_extract(e1.payload, '$.label_uuid') = ?1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM events e2
+                       WHERE e2.target_id = e1.target_id
+                         AND e2.kind IN ('session_insert', 'session_update')
+                         AND (e2.lamport_ts > e1.lamport_ts
+                              OR (e2.lamport_ts = e1.lamport_ts
+                                  AND e2.device_id > e1.device_id))
+                   )
+             )",
+            params![label_uuid],
+        )?;
+        Ok(Some(named))
     }
 }
 
@@ -382,6 +385,16 @@ mod tests {
             .into_iter().map(|l| (l.name, places[&l.id])).collect();
         v.sort_by_key(|(_, p)| *p);
         v
+    }
+
+    #[test]
+    fn label_names_are_keyed_by_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Walking").unwrap();
+        let uuid = list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == id).unwrap().uuid;
+        let names = label_names_from_db(&db).unwrap();
+        assert_eq!(names.get(uuid.as_str()).map(String::as_str), Some("Walking"));
+        assert_eq!(names.len(), list_labels_from_db(&db).unwrap().len());
     }
 
     #[test]

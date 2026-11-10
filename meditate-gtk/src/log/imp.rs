@@ -291,7 +291,6 @@ impl LogView {
         if let Some(id) = self.filter_label_id.get() {
             if !labels.iter().any(|l| l.id == id) {
                 self.obj().set_filter_label_id(None);
-                self.obj().refresh();
             }
         }
         let all_label = gettext("All labels");

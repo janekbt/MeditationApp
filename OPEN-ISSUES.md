@@ -22,7 +22,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
-| [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309, #408 | bells and lengths that are off |
+| [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
@@ -167,7 +167,7 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 
 ### #365 A failed read shows an empty bell, preset or sound list
 - Where: `bells.rs:135-137`, `presets.rs:202`, `sounds.rs:173` turn an error into an empty list.
-- Scenario: a locked database shows "No interval bells configured" or an empty chooser; the user may recreate what exists. Same class as #291 and #308.
+- Scenario: a locked database shows "No interval bells configured" or an empty chooser; the user may recreate what exists. Same class as #291 and #308. Also a failed sound-library read names every interval bell's sound "Missing" (both apps' bell lists and Setup rows, through `sound_name`/`resolve_sound_name`), so the user may re-pick working sounds.
 - Fix: show the error on the page.
 
 ### #366 A bell's switch stays flipped when saving it fails
@@ -357,9 +357,6 @@ Mostly core, host-testable.
 ### #309 The lead-in length rounds twice
 - Where: `settings_keys.rs:287`: rounds to whole ms, then half up to 10 ms.
 - Scenario: a typed 0.1049 s becomes 105 ms, then 110 ms; rounding once gives 100 ms. Do with the lead-in bullet of #303.
-
-### #408 An interval bell whose sound is gone shows a blank sound name
-- `populate_interval_bells` (4030-4037) uses an empty string where every other bell row shows "Missing" through `resolve_sound_name`. Fix with #397.
 
 - Plausible, not yet checked to the end (sweep, slice 5): `stop()` during Prep records the prep seconds as the session length (`session/mod.rs:446-457`), against `end_buttons`' rule "Preparation seconds are never saved as meditation"; the apps show no Save during prep, but GTK's `session_ended` writes the value into the in-progress snapshot. Fix in core: `stop` from Prep ends with 0.
 
@@ -664,6 +661,7 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 ### #180 Warn about a missing bell sound before Start
 - Where: rows already say "Missing" (`meditate-core/src/bells.rs:304`, gtk `bells.rs:384`, android `ui.rs:3224`).
 - Idea: a core check over the active bells; a warning style on the row, a Setup banner, and block or confirm Start, so a bell isn't silent mid-session. Both apps; vibration patterns the same.
+- Maintainer, 2026-11-10 (phone test of one-refresh-per-change): deleted an interval bell's sound, the row said "Missing", and a session still started. That should not be possible: Start stays blocked while an active bell's sound is missing (block, not confirm).
 
 ### #181 Daily goal history
 - Idea: a `goal_history(effective_from, minutes)` table instead of the `daily_goal_mins` setting; on change, ask "from today" or "retroactively"; the heatmap and goal ring look up the value per day. Synced through events; needs a migration seeded from the current setting. Both apps.

@@ -1769,10 +1769,10 @@ mod tests {
             &lib[at..at + lib[at..].find("\n        });\n").unwrap()]
         };
         let rename = body("ui.on_rename_label_confirm(");
-        assert!(rename.contains("reset_log_feed(") && rename.contains("ui.set_edit_label_name("));
+        assert!(rename.contains("reset_log_feed(") && rename.contains("refresh_after_label_change("), "the editor's name through refresh_label_users");
         let delete = body("ui.on_delete_label_confirm(");
         assert!(delete.contains("reset_log_feed(") && !delete.contains("if ui.get_filter_label_id() != filtered"));
-        assert!(delete.contains("ui.set_edit_label_enabled(false);"));
+        assert!(delete.contains("refresh_after_label_change("), "an editor on the label lets it go through refresh_label_users");
         let menu = std::fs::read_to_string(root.join("material-1.0/ui/components/drop_down_menu.slint")).unwrap();
         assert!(menu.contains("changed items => {\n        root.update_text(root.current_index);"));
     }
@@ -2604,13 +2604,11 @@ mod tests {
         let refresh = body_of("fn refresh_after_pull(");
         for call in [
             "load_setup_for_mode(",
-            "refresh_after_pattern_change(",
-            "populate_interval_bells(",
+            "bell_names_changed(ui);",
             "refresh_label_users(",
             "refresh_filter_label_items(",
             "refresh_preset_list(",
-            "refresh_guided_files(",
-            "refresh_guided_manage(",
+            "guided_files_changed(",
             "refresh_widget(",
             "reset_log_feed(",
             "refresh_stats(",
@@ -3088,7 +3086,7 @@ mod tests {
 
         assert!(body("fn end_bell_row(").contains("meditate_core::bells::end_bell_row_state("), "row state from core");
         let rows = body("fn refresh_bell_rows(");
-        assert!(rows.contains("end_bell_row(eb_mode)"));
+        assert!(rows.contains("end_bell_row(&db, eb_mode)"));
         assert!(rows.contains("set_end_bell_sensitive(row.sensitive)"));
         assert!(rows.contains("set_end_bell_active(row.active)"));
 
@@ -3548,9 +3546,11 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_vibration_editor_save(").unwrap();
         let save = &lib[at..at + lib[at..].find("\n        });").unwrap()];
-        assert!(save.contains("populate_pattern_chooser(&ui, &ticked);"));
+        assert!(save.contains("bell_names_changed(&ui);"));
         assert!(!save.contains("populate_pattern_chooser(&ui, &uuid);"));
-        assert!(save.contains("ui.set_ie_pattern_name(name.clone().into());"));
+        let names = ui_fn(&lib, "fn bell_names_changed(");
+        assert!(names.contains("populate_pattern_chooser(ui, &ticked_uuid(ui.get_pattern_chooser_items()));"), "keeps the tick");
+        assert!(names.contains("ui.set_ie_pattern_name("), "the editor's name follows a rename");
     }
 
     #[test]
@@ -3598,8 +3598,7 @@ mod tests {
             let at = lib.find(handler).unwrap_or_else(|| panic!("{handler}"));
             let body = &lib[at..at + 3000];
             assert!(body.contains(call), "{handler}");
-            assert!(body.contains("repopulate_bell_chooser(&ui"), "{handler}");
-            assert!(body.contains("refresh_bell_rows(&ui);"), "{handler}");
+            assert!(body.contains("bell_names_changed(&ui);"), "{handler}");
         }
 
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
@@ -3788,7 +3787,7 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("U::Override(u, prior) => {").unwrap();
         let branch = &lib[at..at + lib[at..].find("\n                }").unwrap()];
-        assert!(branch.contains("refresh_preset_list(&ui, core_mode);"));
+        assert!(branch.contains("presets_changed(&ui, core_mode);"));
     }
 
     #[test]
@@ -5489,6 +5488,12 @@ mod tests {
         lib.split("#[cfg(test)]\nmod tests").next().unwrap().to_string()
     }
 
+    /// A top-level function's body in `ui.rs`.
+    fn ui_fn<'a>(code: &'a str, sig: &str) -> &'a str {
+        let at = code.find(sig).unwrap_or_else(|| panic!("missing {sig}"));
+        &code[at..at + code[at..].find("\n}\n").unwrap()]
+    }
+
     fn handler<'a>(code: &'a str, name: &str) -> &'a str {
         let sig = format!("ui.on_{name}(");
         let at = code.find(&sig).unwrap_or_else(|| panic!("missing {sig}"));
@@ -5578,10 +5583,25 @@ mod tests {
         let code = ui_code();
         let at = code.find("fn refresh_after_label_change(").unwrap();
         let labels = &code[at..at + code[at..].find("\n}\n").unwrap()];
-        assert!(labels.contains("refresh_preset_list(ui, mode);") && labels.contains("refresh_widget(ui);"));
+        assert!(labels.contains("presets_changed(ui, mode);"));
         for name in ["bell_rename_confirm", "bell_delete_confirm"] {
-            assert!(handler(&code, name).contains("populate_interval_bells(&ui);"), "{name}");
+            assert!(handler(&code, name).contains("bell_names_changed(&ui);"), "{name}");
         }
+        let names = ui_fn(&code, "fn bell_names_changed(");
+        for call in ["populate_interval_bells(ui);", "refresh_bell_rows(ui);", "ui.set_ie_sound_name("] {
+            assert!(names.contains(call), "{call}");
+        }
+    }
+
+    #[test]
+    fn interval_bell_rows_say_when_a_sound_is_missing() {
+        // #408: a gone sound reads "Missing", as every other bell row;
+        // the library is read once, not once per bell.
+        let code = ui_code();
+        let body = ui_fn(&code, "fn populate_interval_bells(");
+        assert!(body.contains("resolved_name_text(ui, meditate_core::bells::sound_name("), "names through core");
+        assert_eq!(body.matches("list_bell_sounds()").count(), 1, "one library read");
+        assert!(!body.find(".map(|b| {").is_some_and(|m| body[m..].contains("list_bell_sounds()")), "not per bell");
     }
 
     #[test]
@@ -5594,10 +5614,10 @@ mod tests {
         let pull = &tick[tick.find("refresh_after_pull(").unwrap()..];
         let pull = &pull[..pull.find("// Test-connection outcome").unwrap()];
         assert!(pull.contains("guided_follow_due.set(true)") && pull.contains("if guided_follow_due.get() && state.borrow().is_idle()") && pull.contains("follow_guided_sel(&ui, &guided_sel)"), "a pull during a session is followed once idle");
-        assert!(pull.contains("repopulate_bell_chooser("));
-        let at = code.find("fn refresh_after_pull(").unwrap();
-        let after = &code[at..at + code[at..].find("\n}\n").unwrap()];
-        assert!(after.contains("refresh_after_pattern_change(ui);"), "the pattern chooser refills");
+        assert!(ui_fn(&code, "fn refresh_after_pull(").contains("bell_names_changed(ui);"), "the choosers refill");
+        let names = ui_fn(&code, "fn bell_names_changed(");
+        assert!(names.contains("repopulate_bell_chooser(ui, BELL_CHOOSER_CATEGORY.get(), &ticked_uuid(ui.get_bell_chooser_items()))"), "keeps its category and tick");
+        assert!(names.contains("populate_pattern_chooser("));
         let at = code.find("fn follow_guided_sel(").expect("one rule for rename and delete");
         let follow = &code[at..at + code[at..].find("\n}\n").unwrap()];
         assert!(follow.contains("show_guided_sel(ui"));

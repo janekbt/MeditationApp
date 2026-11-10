@@ -145,15 +145,11 @@ fn rebuild_chooser_rows(
         group.remove(&row);
     }
 
-    // Resolve the labels table once per rebuild so every row's
-    // subtitle lookup is O(1) against the in-memory map.
+    // Once per rebuild, so each row's subtitle lookup is O(1).
     let label_names: HashMap<String, String> = app
-        .with_db(super::db::Database::list_labels)
+        .with_db(|db| meditate_core::db::label_names_from_db(db.core()))
         .and_then(std::result::Result::ok)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|l| (l.uuid.0, l.name))
-        .collect();
+        .unwrap_or_default();
 
     // Synthetic "Create new preset…" entry — Save mode only. In
     // Manage mode taps shouldn't create new presets (we'd lack a

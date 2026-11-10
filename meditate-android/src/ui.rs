@@ -693,14 +693,7 @@ fn list_starred_presets_for_mode(
         return Vec::new();
     }
     let Some(db) = lock_db() else { return Vec::new(); };
-    // One labels roundtrip per rebuild → O(1) subtitle label
-    // lookup, exactly like GTK's `label_names` map.
-    let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(&db)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|l| (l.uuid.to_string(), l.name))
-            .collect();
+    let label_names = meditate_core::db::label_names_from_db(&db).unwrap_or_default();
     let starred = meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode).unwrap_or_default();
     let active = meditate_core::preset_config::active_presets(&db, mode, &starred);
     starred
@@ -785,10 +778,17 @@ fn refresh_preset_list(ui: &MainWindow, mode: meditate_core::SessionMode) {
     // zero presets (GTK keeps the button box visible while the
     // section is); the row list hides itself when empty.
     ui.set_presets_supported(presets_supported(mode));
-    let items = list_starred_presets_for_mode(ui, mode);
-    ui.set_presets_list(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+    put_rows(ui.get_presets_list(), list_starred_presets_for_mode(ui, mode), |m| ui.set_presets_list(m));
+}
+
+/// After a preset write: the chooser (while open), Setup's list and
+/// the widget.
+fn presets_changed(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    if ui.get_preset_chooser_page() {
+        populate_preset_chooser(ui, mode);
+    }
+    refresh_preset_list(ui, mode);
+    refresh_widget(ui);
 }
 
 /// Every preset for the mode (Save/Manage chooser list — starred
@@ -802,12 +802,7 @@ fn list_presets_for_mode(
         return Vec::new();
     }
     let Some(db) = lock_db() else { return Vec::new(); };
-    let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(&db)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|l| (l.uuid.to_string(), l.name))
-            .collect();
+    let label_names = meditate_core::db::label_names_from_db(&db).unwrap_or_default();
     meditate_core::db::list_presets_for_mode_from_db(&db, mode)
         .unwrap_or_default()
         .into_iter()
@@ -826,10 +821,7 @@ fn populate_preset_chooser(
     ui: &MainWindow,
     mode: meditate_core::SessionMode,
 ) {
-    let items = list_presets_for_mode(ui, mode);
-    ui.set_preset_chooser_items(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+    put_rows(ui.get_preset_chooser_items(), list_presets_for_mode(ui, mode), |m| ui.set_preset_chooser_items(m));
 }
 
 /// The widget's rows, Timer, Guided, Box Breath: each mode's starred
@@ -840,12 +832,7 @@ fn widget_rows(ui: &MainWindow) -> Vec<widget::WidgetRow> {
     use meditate_core::SessionMode;
     let files = starred_file_items(ui);
     let Some(db) = lock_db() else { return Vec::new(); };
-    let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(&db)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|l| (l.uuid.to_string(), l.name))
-            .collect();
+    let label_names = meditate_core::db::label_names_from_db(&db).unwrap_or_default();
     widget::order_rows(|mode| match mode {
         SessionMode::Guided => files
             .iter()
@@ -1190,10 +1177,7 @@ fn insert_guided_file(
 /// duration. The Slint side shows a dim empty-state row when the
 /// model is empty.
 fn refresh_guided_files(ui: &MainWindow) {
-    let items = starred_file_items(ui);
-    ui.set_guided_files(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+    put_rows(ui.get_guided_files(), starred_file_items(ui), |m| ui.set_guided_files(m));
     // The widget lists the same rows.
     refresh_widget(ui);
 }
@@ -1256,9 +1240,16 @@ fn refresh_guided_manage(ui: &MainWindow) {
     .into_iter()
     .map(guided_file_item)
     .collect();
-    ui.set_guided_manage_items(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+    put_rows(ui.get_guided_manage_items(), items, |m| ui.set_guided_manage_items(m));
+}
+
+/// After a guided-file write: Manage Files (while open), the Starred
+/// list and the widget. The selection follows where the caller says.
+fn guided_files_changed(ui: &MainWindow) {
+    if ui.get_guided_manage_page() {
+        refresh_guided_manage(ui);
+    }
+    refresh_guided_files(ui);
 }
 
 // ── Guided Local Folder (GitHub #4) ────────────────────────────────
@@ -1505,7 +1496,7 @@ fn refresh_local_page(ui: &MainWindow) {
             })
             .collect()
     };
-    ui.set_local_rows(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+    put_rows(ui.get_local_rows(), rows, |m| ui.set_local_rows(m));
 }
 
 /// Each tick: adopt a chosen folder, a finished walk and read
@@ -1863,9 +1854,7 @@ fn refresh_chooser_items(ui: &MainWindow, current_id: Option<i64>) {
             selected,
         })
         .collect();
-    ui.set_label_items(
-        std::rc::Rc::new(slint::VecModel::from(items)).into(),
-    );
+    put_rows(ui.get_label_items(), items, |m| ui.set_label_items(m));
 }
 
 /// Pull the active mode's resolved label name out of the DB and
@@ -2089,9 +2078,7 @@ fn refresh_stats(ui: &MainWindow) {
             }
         })
         .collect();
-    ui.set_stat_insights(
-        std::rc::Rc::new(slint::VecModel::from(rows)).into(),
-    );
+    put_rows(ui.get_stat_insights(), rows, |m| ui.set_stat_insights(m));
 
     // By-label totals (S-4). Empty Vec ⇒ the Slint section
     // hides itself (`stat-label-totals.length > 0` gate),
@@ -2112,9 +2099,7 @@ fn refresh_stats(ui: &MainWindow) {
                 }
             })
             .collect();
-    ui.set_stat_label_totals(
-        std::rc::Rc::new(slint::VecModel::from(label_rows)).into(),
-    );
+    put_rows(ui.get_stat_label_totals(), label_rows, |m| ui.set_stat_label_totals(m));
 
     // Contribution heatmap (S-6). 91 cells column-major from
     // core; chunk into 13 week-columns of 7. Mirrors GTK's
@@ -2309,9 +2294,7 @@ fn refresh_chart(ui: &MainWindow) {
     ui.set_stat_chart_ymid(hm(ticks.mid).into());
     ui.set_stat_chart_line_cmd(line_cmd.into());
     ui.set_stat_chart_area_cmd(area_cmd.into());
-    ui.set_stat_chart_bars(
-        std::rc::Rc::new(slint::VecModel::from(bars)).into(),
-    );
+    put_rows(ui.get_stat_chart_bars(), bars, |m| ui.set_stat_chart_bars(m));
 }
 
 /// Bundled-SVG selector for an insight row, replacing GTK's
@@ -2476,8 +2459,7 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
     refresh_setup_summaries(ui, mode);
     refresh_label_users(ui, mode);
     // Preset subtitles in the preset list and the widget name labels.
-    refresh_preset_list(ui, mode);
-    refresh_widget(ui);
+    presets_changed(ui, mode);
 }
 
 /// The label rows outside Setup: the Edit-Session row and the chooser.
@@ -2809,10 +2791,8 @@ fn refresh_after_pull(
     if refresh.setup {
         // Also the label name and the summaries.
         load_setup_for_mode(ui, mode, timer_session_secs);
-        // An open pattern chooser drops a pattern deleted elsewhere;
-        // also the bell rows.
-        refresh_after_pattern_change(ui);
-        populate_interval_bells(ui);
+        // Open choosers drop what was deleted elsewhere.
+        bell_names_changed(ui);
         refresh_preset_list(ui, mode);
         // An open preset chooser drops a preset deleted elsewhere.
         if ui.get_preset_chooser_page() {
@@ -2828,8 +2808,7 @@ fn refresh_after_pull(
     }
     if refresh.guided {
         // Also the widget.
-        refresh_guided_files(ui);
-        refresh_guided_manage(ui);
+        guided_files_changed(ui);
     } else if refresh.setup {
         refresh_widget(ui);
     }
@@ -3676,17 +3655,16 @@ fn setup_session_mode(ui: &MainWindow) -> meditate_core::SessionMode {
 }
 
 /// Core's End Bell row state for `mode` under its Stopwatch switch.
-fn end_bell_row(mode: meditate_core::SessionMode) -> Option<meditate_core::bells::EndBellRowState> {
-    let db = lock_db()?;
-    let display = meditate_core::bells::display_mode_from_db(&db, mode);
-    Some(meditate_core::bells::end_bell_row_state(&db, display, mode))
+fn end_bell_row(db: &meditate_core::db::Database, mode: meditate_core::SessionMode) -> meditate_core::bells::EndBellRowState {
+    let display = meditate_core::bells::display_mode_from_db(db, mode);
+    meditate_core::bells::end_bell_row_state(db, display, mode)
 }
 
 /// Whether the End Bell row takes taps. While it's greyed (Stopwatch)
 /// the switch changes only because Rust set it, and the stored
 /// choice must stay.
 fn end_bell_row_sensitive(mode: meditate_core::SessionMode) -> bool {
-    end_bell_row(mode).map_or(true, |row| row.sensitive)
+    lock_db().map_or(true, |db| end_bell_row(&db, mode).sensitive)
 }
 
 /// Push the current bell settings into the Setup Bells-group
@@ -3695,94 +3673,39 @@ fn end_bell_row_sensitive(mode: meditate_core::SessionMode) -> bool {
 /// bundled bowl). Mirrors GTK's `refresh_*_bell_sound_subtitle`
 /// + enable-expansion init.
 fn refresh_bell_rows(ui: &MainWindow) {
-    ui.set_starting_bell_active(
-        read_global_setting("starting_bell_active", "false") == "true",
-    );
-    // End Bell row from core: off and greyed while the mode's
-    // Stopwatch is on (no end to ring at), else the stored choice.
-    // Mirrors GTK's refresh_end_bell_dependent_ui.
+    use meditate_core::settings_keys::{self as keys, read_bool, read_signal_mode, read_str};
+    use meditate_core::seeds::{BUNDLED_BOWL_UUID as BOWL, BUNDLED_PATTERN_PULSE_UUID as PULSE};
     let eb_mode = setup_session_mode(ui);
-    if let Some(row) = end_bell_row(eb_mode) {
+    {
+        let Some(db) = lock_db() else { return; };
+        let library = db.list_bell_sounds().unwrap_or_default();
+        let sound = |key: &str| resolved_name_text(ui, meditate_core::bells::sound_name(&read_str(&db, key, BOWL), &library));
+        let pattern = |key: &str| resolved_name_text(ui, meditate_core::bells::resolve_pattern_name(&db, &read_str(&db, key, PULSE)));
+        let signal = |key: &str| signal_mode_to_chip_index(read_signal_mode(&db, key, meditate_core::SignalMode::Sound));
+        // Unset or unreadable is the middle.
+        let volume = |key: &str| meditate_core::bell_volume::BellVolume::parse(&read_str(&db, key, "")).percent().into();
+        ui.set_starting_bell_active(read_bool(&db, "starting_bell_active", false));
+        // End Bell row from core: off and greyed while the mode's
+        // Stopwatch is on (no end to ring at), else the stored choice.
+        // Mirrors GTK's refresh_end_bell_dependent_ui.
+        let row = end_bell_row(&db, eb_mode);
         ui.set_end_bell_sensitive(row.sensitive);
         ui.set_end_bell_active(row.active);
+        ui.set_starting_bell_sound_name(sound("starting_bell_sound").into());
+        ui.set_end_bell_sound_name(sound(keys::end_bell_sound_key_for_mode(eb_mode)).into());
+        ui.set_starting_bell_signal_mode(signal("starting_bell_signal_mode"));
+        ui.set_end_bell_signal_mode(signal(keys::end_bell_signal_mode_key_for_mode(eb_mode)));
+        ui.set_starting_bell_pattern_name(pattern("starting_bell_pattern").into());
+        ui.set_end_bell_pattern_name(pattern(keys::end_bell_pattern_key_for_mode(eb_mode)).into());
+        ui.set_starting_bell_volume(volume(keys::STARTING_BELL_VOLUME_KEY));
+        ui.set_end_bell_volume(volume(keys::end_bell_volume_key_for_mode(eb_mode)));
+        ui.set_prep_time_active(read_bool(&db, "preparation_time_active", false));
+        let prep = read_str(&db, "preparation_time_secs", &meditate_core::format::PREP_SECS_DEFAULT.to_string());
+        ui.set_prep_time_secs(meditate_core::format::parse_prep_secs(&prep) as i32);
+        ui.set_interval_bells_active(read_bool(&db, "interval_bells_active", false));
+        ui.set_interval_bells_summary(interval_bells_summary(ui, &db).into());
     }
-    let ss = read_global_setting(
-        "starting_bell_sound",
-        meditate_core::seeds::BUNDLED_BOWL_UUID,
-    );
-    let es = read_global_setting(
-        meditate_core::settings_keys::end_bell_sound_key_for_mode(eb_mode),
-        meditate_core::seeds::BUNDLED_BOWL_UUID,
-    );
-    ui.set_starting_bell_sound_name(bell_sound_name(ui, &ss).into());
-    ui.set_end_bell_sound_name(bell_sound_name(ui, &es).into());
-
-    // Signal Type + Pattern (B-2b): Sound by default, and the
-    // `*_bell_pattern` → BUNDLED_PATTERN_PULSE_UUID fallback.
-    let signal_mode = |key: &str| {
-        let sound = meditate_core::SignalMode::Sound;
-        lock_db().map_or(sound, |db| meditate_core::settings_keys::read_signal_mode(&db, key, sound))
-    };
-    ui.set_starting_bell_signal_mode(signal_mode_to_chip_index(signal_mode("starting_bell_signal_mode")));
-    ui.set_end_bell_signal_mode(signal_mode_to_chip_index(signal_mode(
-        meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(eb_mode),
-    )));
-    let sp = read_global_setting(
-        "starting_bell_pattern",
-        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
-    );
-    let ep = read_global_setting(
-        meditate_core::settings_keys::end_bell_pattern_key_for_mode(eb_mode),
-        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
-    );
-    ui.set_starting_bell_pattern_name(pattern_name(ui, &sp).into());
-    ui.set_end_bell_pattern_name(pattern_name(ui, &ep).into());
-
-    // Volumes (issue #1); unset or unreadable is the middle.
-    let volume = |key: &str| {
-        meditate_core::bell_volume::BellVolume::parse(&read_global_setting(key, "")).percent()
-    };
-    ui.set_starting_bell_volume(volume(meditate_core::settings_keys::STARTING_BELL_VOLUME_KEY).into());
-    ui.set_end_bell_volume(
-        volume(meditate_core::settings_keys::end_bell_volume_key_for_mode(eb_mode)).into(),
-    );
-
-    // Preparation Time (B-5b).
-    ui.set_prep_time_active(
-        read_global_setting("preparation_time_active", "false") == "true",
-    );
-    let secs = meditate_core::format::parse_prep_secs(&read_global_setting(
-        "preparation_time_secs",
-        &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
-    ));
-    ui.set_prep_time_secs(secs as i32);
-
-    // Interval-bell editor ranges come from core (GTK's SpinRow
-    // adjustments use the same constants).
-    {
-        use meditate_core::bells::{bell_number_range, BellTimeField, TimeUnit};
-        let range = |field| {
-            let (s_lo, s_hi) = bell_number_range(field, TimeUnit::Sec);
-            let (m_lo, m_hi) = bell_number_range(field, TimeUnit::Min);
-            let range: Vec<i32> = [s_lo, s_hi, m_lo, m_hi].iter().map(|&n| n as i32).collect();
-            slint::ModelRc::new(slint::VecModel::from(range))
-        };
-        ui.set_ie_time_range(range(BellTimeField::Time));
-        // Jitter and step share one range.
-        ui.set_ie_offset_range(range(BellTimeField::Step));
-    }
-
-    // Interval Bells enable (B-5c-1) + count subtitle (B-5c-2).
-    ui.set_interval_bells_active(
-        read_global_setting("interval_bells_active", "false") == "true",
-    );
-    if let Some(db) = lock_db() {
-        ui.set_interval_bells_summary(
-            interval_bells_summary(ui, &db).into(),
-        );
-    }
-
-    // Box Breath per-phase cues (B-7).
+    // Box Breath per-phase cues (B-7); takes the lock itself.
     refresh_boxbreath_cues(ui);
 }
 
@@ -3973,18 +3896,13 @@ fn render_bell_title(
 fn populate_interval_bells(ui: &MainWindow) {
     let Some(db) = lock_db() else { return; };
     let display = meditate_core::bells::display_mode_from_db(&db, setup_session_mode(ui));
+    let library = db.list_bell_sounds().unwrap_or_default();
     let items: Vec<IntervalBellRow> = db
         .list_interval_bells()
         .unwrap_or_default()
         .into_iter()
         .map(|b| {
-            let sound = db
-                .list_bell_sounds()
-                .unwrap_or_default()
-                .into_iter()
-                .find(|s| s.uuid == b.sound_uuid)
-                .map(|s| s.name)
-                .unwrap_or_default();
+            let sound = resolved_name_text(ui, meditate_core::bells::sound_name(b.sound_uuid.as_str(), &library));
             let switch = meditate_core::bells::bell_row_switch_state(
                 b.enabled,
                 b.kind,
@@ -4038,7 +3956,7 @@ fn populate_bell_chooser(
 }
 
 /// Re-fill the open bell chooser after a rename / delete, keeping
-/// its category (`bell_chooser_category`: 1 = Box Breath) and the
+/// its category (`BELL_CHOOSER_CATEGORY`: 1 = Box Breath) and the
 /// check-marked pick.
 fn repopulate_bell_chooser(ui: &MainWindow, category: u8, current_uuid: &str) {
     let category = if category == 1 {
@@ -4057,14 +3975,15 @@ fn bell_sound_name_taken(name: &str, except_uuid: &str) -> bool {
     meditate_core::sound::name_collides_excluding(name, &library, except_uuid)
 }
 
-/// The uuid of the pattern-chooser row that is ticked now, or empty.
-fn ticked_pattern_uuid(ui: &MainWindow) -> String {
+/// The uuid of a chooser's ticked row, or empty.
+fn ticked_uuid(items: slint::ModelRc<SoundChoice>) -> String {
     use slint::Model;
-    ui.get_pattern_chooser_items()
-        .iter()
-        .find(|item| item.selected)
-        .map(|item| item.uuid.to_string())
-        .unwrap_or_default()
+    items.iter().find(|item| item.selected).map(|item| item.uuid.to_string()).unwrap_or_default()
+}
+
+thread_local! {
+    /// The bell chooser's category while open: 0 = General, 1 = Box Breath.
+    static BELL_CHOOSER_CATEGORY: Cell<u8> = const { Cell::new(0) };
 }
 
 /// Fill the pattern-chooser overlay from
@@ -4093,19 +4012,19 @@ fn populate_pattern_chooser(ui: &MainWindow, current_uuid: &str) {
     );
 }
 
-/// A pattern was deleted or restored: re-fill the open chooser (keeping
-/// its tick) and every row that names a pattern; a bell whose pattern
-/// is gone shows the fallback.
-fn refresh_after_pattern_change(ui: &MainWindow) {
-    use slint::Model;
-    let current = ui
-        .get_pattern_chooser_items()
-        .iter()
-        .find(|c| c.selected)
-        .map(|c| c.uuid.to_string())
-        .unwrap_or_default();
-    populate_pattern_chooser(ui, &current);
+/// A sound or pattern was renamed, deleted or restored: re-fill the
+/// open choosers (keeping their ticks) and every row that names one; a
+/// bell whose sound or pattern is gone shows "Missing".
+fn bell_names_changed(ui: &MainWindow) {
+    if ui.get_bell_chooser_page() {
+        repopulate_bell_chooser(ui, BELL_CHOOSER_CATEGORY.get(), &ticked_uuid(ui.get_bell_chooser_items()));
+    }
+    if ui.get_pattern_chooser_page() {
+        populate_pattern_chooser(ui, &ticked_uuid(ui.get_pattern_chooser_items()));
+    }
     refresh_bell_rows(ui);
+    populate_interval_bells(ui);
+    ui.set_ie_sound_name(bell_sound_name(ui, ui.get_ie_sound_uuid().as_str()).into());
     ui.set_ie_pattern_name(pattern_name(ui, ui.get_ie_pattern_uuid().as_str()).into());
 }
 
@@ -4240,6 +4159,21 @@ fn build_ui() -> MainWindow {
     ui.set_goal_min_mins(meditate_core::goal::DAILY_GOAL_MIN as i32);
     ui.set_goal_max_mins(meditate_core::goal::DAILY_GOAL_MAX as i32);
 
+    // Interval-bell editor ranges come from core (GTK's SpinRow
+    // adjustments use the same constants).
+    {
+        use meditate_core::bells::{bell_number_range, BellTimeField, TimeUnit};
+        let range = |field| {
+            let (s_lo, s_hi) = bell_number_range(field, TimeUnit::Sec);
+            let (m_lo, m_hi) = bell_number_range(field, TimeUnit::Min);
+            let range: Vec<i32> = [s_lo, s_hi, m_lo, m_hi].iter().map(|&n| n as i32).collect();
+            slint::ModelRc::new(slint::VecModel::from(range))
+        };
+        ui.set_ie_time_range(range(BellTimeField::Time));
+        // Jitter and step share one range.
+        ui.set_ie_offset_range(range(BellTimeField::Step));
+    }
+
     let state = Rc::new(RefCell::new(AppState::idle()));
     // Active mode chip — drives both the Setup body content and
     // the `SessionMode` recorded on Save. Defaults to Timer at
@@ -4331,16 +4265,14 @@ fn build_ui() -> MainWindow {
     // confirm so the collision check can EXCEPT this own row.
     let guided_rename_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
-    // BI import context: the open chooser's category (0 = General,
-    // 1 = BoxBreath) + its currently-selected uuid, stashed at
-    // every chooser-open site so the Import sound… flow can insert
-    // into the right category and repopulate with the highlight
-    // intact.
-    let bell_chooser_category: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+    // BI import context: the open chooser's selected uuid (its
+    // category is `BELL_CHOOSER_CATEGORY`), stashed at every
+    // chooser-open site so the Import sound flow repopulates with
+    // the highlight intact.
     let bell_chooser_current: Rc<RefCell<String>> =
         Rc::new(RefCell::new(String::new()));
     // Which flow the shared import dialog serves: 0 = guided,
-    // 1 = bell (category from bell_chooser_category at finalize).
+    // 1 = bell (category from BELL_CHOOSER_CATEGORY at finalize).
     let guided_import_kind: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
     // Session being edited via the Log card → Edit-Session
@@ -4670,7 +4602,6 @@ fn build_ui() -> MainWindow {
         let guided_create_import = guided_create_import.clone();
         let guided_import_src_tick = guided_import_src.clone();
         let guided_import_kind_tick = guided_import_kind.clone();
-        let bell_chooser_category_tick = bell_chooser_category.clone();
         let bell_chooser_current_tick = bell_chooser_current.clone();
         let loaded_log_sessions_tick = loaded_log_sessions.clone();
         let pending_deletes_tick = pending_deletes.clone();
@@ -4797,10 +4728,6 @@ fn build_ui() -> MainWindow {
                         &loaded_log_sessions_tick,
                         &pending_deletes_tick,
                     );
-                    // An open bell chooser drops a sound deleted elsewhere.
-                    if pulled.setup && ui.get_bell_chooser_page() {
-                        repopulate_bell_chooser(&ui, bell_chooser_category_tick.get(), &bell_chooser_current_tick.borrow());
-                    }
                     if pulled.guided {
                         guided_follow_due.set(true);
                     }
@@ -4946,20 +4873,11 @@ fn build_ui() -> MainWindow {
                                         &uuid,
                                         &name,
                                         &dest,
-                                        bell_chooser_category_tick.get(),
+                                        BELL_CHOOSER_CATEGORY.get(),
                                     )
                                 })
                                 .map(|()| {
-                                    let cat = if bell_chooser_category_tick.get() == 1 {
-                                        meditate_core::db::BellSoundCategory::BoxBreath
-                                    } else {
-                                        meditate_core::db::BellSoundCategory::General
-                                    };
-                                    populate_bell_chooser(
-                                        &ui,
-                                        &bell_chooser_current_tick.borrow(),
-                                        cat,
-                                    );
+                                    repopulate_bell_chooser(&ui, BELL_CHOOSER_CATEGORY.get(), &bell_chooser_current_tick.borrow());
                                     refresh_bell_rows(&ui);
                                 })
                             } else {
@@ -4980,8 +4898,7 @@ fn build_ui() -> MainWindow {
                                     // surfaces in both lists now
                                     // (Manage page may be open via
                                     // the Create row).
-                                    refresh_guided_files(&ui);
-                                    refresh_guided_manage(&ui);
+                                    guided_files_changed(&ui);
                                     show_guided_sel(&ui, guided_sel.borrow().as_ref());
                                 })
                             };
@@ -5691,16 +5608,10 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        ui.on_local_star_tap(move |key| {
+        ui.on_local_star_tap(move |key, starred| {
             let Some(ui) = weak.upgrade() else { return };
             let Ok(id) = key.parse::<i64>() else { return };
-            let starred = local_root()
-                .map(|root| local_files(&root))
-                .unwrap_or_default()
-                .into_iter()
-                .find(|f| f.id == id)
-                .is_some_and(|f| f.is_starred);
-            set_local_starred(&ui, id, !starred);
+            set_local_starred(&ui, id, starred);
             refresh_local_page(&ui);
             refresh_guided_files(&ui);
         });
@@ -5757,8 +5668,7 @@ fn build_ui() -> MainWindow {
                     );
                 let starred = lock_db().map(|db| db.set_guided_file_starred(&uuid, next));
                 write_ok(&ui, "guided.star", starred);
-                refresh_guided_manage(&ui);
-                refresh_guided_files(&ui);
+                guided_files_changed(&ui);
             }
         });
     }
@@ -5809,8 +5719,7 @@ fn build_ui() -> MainWindow {
                 // The deleted file was the selection: clear it, so a
                 // stale pick can't be started.
                 follow_guided_sel(&ui, &guided_sel);
-                refresh_guided_manage(&ui);
-                refresh_guided_files(&ui);
+                guided_files_changed(&ui);
 
                 show_notice(
                     &ui,
@@ -5926,8 +5835,7 @@ fn build_ui() -> MainWindow {
                 }
                 // The renamed file may be the selection.
                 follow_guided_sel(&ui, &guided_sel);
-                refresh_guided_manage(&ui);
-                refresh_guided_files(&ui);
+                guided_files_changed(&ui);
             }
             let _ = weak.clone();
         });
@@ -6111,12 +6019,7 @@ fn build_ui() -> MainWindow {
                     Some(Ok(_)) => {
                         close_modal(&ui, Modal::CreatePreset);
                         ui.set_preset_chooser_page(false);
-                        refresh_preset_list(&ui, mode);
-                        // New preset is starred by default → it
-                        // enters the widget projection. Lock-free
-                        // here: the `db` guard above dropped with
-                        // the `let res = { … }` scope.
-                        refresh_widget(&ui);
+                        presets_changed(&ui, mode);
                     }
                     failed => {
                         // The name was checked above, so this is a
@@ -6169,10 +6072,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 ui.set_preset_chooser_page(false);
-                refresh_preset_list(&ui, core_mode);
-                // Overriding a starred preset rewrites its
-                // subtitle on the widget too.
-                refresh_widget(&ui);
+                presets_changed(&ui, core_mode);
 
                 show_notice(
                     &ui,
@@ -6203,11 +6103,7 @@ fn build_ui() -> MainWindow {
                 if !setting_saved(&ui, "preset.star", lock_db().map(|db| db.update_preset_starred(uuid.as_str(), next))) {
                     return;
                 }
-                populate_preset_chooser(&ui, core_mode);
-                refresh_preset_list(&ui, core_mode);
-                // The whole point of the widget: star/unstar is
-                // exactly what adds/removes a widget row.
-                refresh_widget(&ui);
+                presets_changed(&ui, core_mode);
             }
         });
     }
@@ -6224,9 +6120,7 @@ fn build_ui() -> MainWindow {
             if !setting_saved(&ui, "preset.move", lock_db().map(|db| db.move_preset(uuid.as_str(), to))) {
                 return;
             }
-            populate_preset_chooser(&ui, core_mode);
-            refresh_preset_list(&ui, core_mode);
-            refresh_widget(&ui);
+            presets_changed(&ui, core_mode);
         });
     }
     {
@@ -6239,8 +6133,7 @@ fn build_ui() -> MainWindow {
             if !setting_saved(&ui, "preset.move", lock_db().map(|db| db.move_starred_preset(uuid.as_str(), to))) {
                 return;
             }
-            refresh_preset_list(&ui, core_mode);
-            refresh_widget(&ui);
+            presets_changed(&ui, core_mode);
         });
     }
     {
@@ -6259,8 +6152,7 @@ fn build_ui() -> MainWindow {
             let Some(ui) = weak.upgrade() else { return; };
             let to = usize::try_from(to).unwrap_or(0);
             write_ok(&ui, "guided.move", lock_db().map(|db| db.move_guided_file(uuid.as_str(), to)));
-            refresh_guided_manage(&ui);
-            refresh_guided_files(&ui);
+            guided_files_changed(&ui);
         });
     }
     {
@@ -6320,11 +6212,7 @@ fn build_ui() -> MainWindow {
                 if !write_ok(&ui, "preset.rename", renamed) {
                     return;
                 }
-                populate_preset_chooser(&ui, core_mode);
-                refresh_preset_list(&ui, core_mode);
-                // Renaming a starred preset changes its widget
-                // title.
-                refresh_widget(&ui);
+                presets_changed(&ui, core_mode);
             }
         });
     }
@@ -6366,10 +6254,7 @@ fn build_ui() -> MainWindow {
                 }
                 // Manage Presets stays open (like GTK), so several
                 // presets can go in a row; the snackbar shows above it.
-                populate_preset_chooser(&ui, core_mode);
-                refresh_preset_list(&ui, core_mode);
-                // Deleting a starred preset drops its widget row.
-                refresh_widget(&ui);
+                presets_changed(&ui, core_mode);
 
                 show_notice(
                     &ui,
@@ -6563,7 +6448,6 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_chooser_target = bell_chooser_target.clone();
-        let bell_chooser_category = bell_chooser_category.clone();
         let bell_chooser_current = bell_chooser_current.clone();
         ui.on_starting_bell_sound_tap(move || {
             {
@@ -6573,7 +6457,7 @@ fn build_ui() -> MainWindow {
                     "starting_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
-                bell_chooser_category.set(0);
+                BELL_CHOOSER_CATEGORY.set(0);
                 *bell_chooser_current.borrow_mut() = cur.clone();
                 populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
@@ -6584,7 +6468,6 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_chooser_target = bell_chooser_target.clone();
-        let bell_chooser_category = bell_chooser_category.clone();
         let bell_chooser_current = bell_chooser_current.clone();
         ui.on_end_bell_sound_tap(move || {
             {
@@ -6594,7 +6477,7 @@ fn build_ui() -> MainWindow {
                     meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
-                bell_chooser_category.set(0);
+                BELL_CHOOSER_CATEGORY.set(0);
                 *bell_chooser_current.borrow_mut() = cur.clone();
                 populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
@@ -6702,14 +6585,13 @@ fn build_ui() -> MainWindow {
             {
                 let weak = ui.as_weak();
                 let bell_chooser_target = bell_chooser_target.clone();
-                let bell_chooser_category = bell_chooser_category.clone();
                 let bell_chooser_current = bell_chooser_current.clone();
                 ui.$on_snd(move || {
                     {
                         let Some(ui) = weak.upgrade() else { return; };
                         bell_chooser_target.set(ChooserTarget::BoxBreathCue(bb_phase($tag)));
                         let (su, _) = bb_phase_uuids(bb_phase($tag));
-                        bell_chooser_category.set(1);
+                        BELL_CHOOSER_CATEGORY.set(1);
                         *bell_chooser_current.borrow_mut() = su.clone();
                         populate_bell_chooser(&ui, &su, meditate_core::db::BellSoundCategory::BoxBreath);
                         ui.set_bell_chooser_page(true);
@@ -6827,8 +6709,6 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_edit_uuid = bell_edit_uuid.clone();
-        let bell_chooser_category = bell_chooser_category.clone();
-        let bell_chooser_current = bell_chooser_current.clone();
         ui.on_bell_rename_confirm(move || {
             if let Some(ui) = weak.upgrade() {
                 let Some(uuid) = bell_edit_uuid.borrow().clone() else { return; };
@@ -6843,10 +6723,7 @@ fn build_ui() -> MainWindow {
                 if !write_ok(&ui, "bell_sound.rename", renamed) {
                     return;
                 }
-                repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
-                refresh_bell_rows(&ui);
-                populate_interval_bells(&ui);
-                ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
+                bell_names_changed(&ui);
             }
             let _ = weak.clone();
         });
@@ -6865,8 +6742,6 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_edit_uuid = bell_edit_uuid.clone();
-        let bell_chooser_category = bell_chooser_category.clone();
-        let bell_chooser_current = bell_chooser_current.clone();
         ui.on_bell_delete_confirm(move || {
             if let Some(ui) = weak.upgrade() {
                 let Some(uuid) = bell_edit_uuid.borrow().clone() else { return; };
@@ -6886,10 +6761,7 @@ fn build_ui() -> MainWindow {
                 if let Some(dir) = meditate_dir() {
                     meditate_core::audio_files::remove_sound_files(&dir.join("sounds"), &uuid);
                 }
-                repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
-                refresh_bell_rows(&ui);
-                populate_interval_bells(&ui);
-                ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
+                bell_names_changed(&ui);
             }
             let _ = weak.clone();
         });
@@ -7299,7 +7171,7 @@ fn build_ui() -> MainWindow {
             if !delete_ok(&ui, "pattern.delete", deleted) {
                 return;
             }
-            refresh_after_pattern_change(&ui);
+            bell_names_changed(&ui);
             show_notice(
                 &ui,
                 ui.global::<Tr>().invoke_deleted(pattern.name.clone().into()),
@@ -7579,23 +7451,12 @@ fn build_ui() -> MainWindow {
                     }
                 });
                 match saved {
-                    Some(Ok(uuid)) => {
+                    Some(Ok(_)) => {
                         ve_stop_preview(&ui);
                         ui.set_vibration_editor_page(false);
-                        // Rebuild the chooser underneath with the tick
-                        // where it was: saving a pattern doesn't pick
-                        // it for the bell (GTK rebuilds with the
-                        // caller's current pattern too).
-                        let ticked = ticked_pattern_uuid(&ui);
-                        populate_pattern_chooser(&ui, &ticked);
-                        // A renamed pattern may be the one the
-                        // interval-bell editor shows.
-                        if ui.get_ie_pattern_uuid().as_str() == uuid {
-                            ui.set_ie_pattern_name(name.clone().into());
-                        }
-                // Bug-audit #12: a rename can affect the pattern a
-                // Setup bell row currently shows — re-read subtitles.
-                refresh_bell_rows(&ui);
+                        // The chooser underneath keeps its tick: saving a
+                        // pattern doesn't pick it for the bell (as GTK).
+                        bell_names_changed(&ui);
                     }
                     // Kept open for a retry.
                     failed => {
@@ -7972,13 +7833,12 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_chooser_target = bell_chooser_target.clone();
-        let bell_chooser_category = bell_chooser_category.clone();
         let bell_chooser_current = bell_chooser_current.clone();
         ui.on_interval_editor_sound_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 bell_chooser_target.set(ChooserTarget::IntervalEditor);
-                bell_chooser_category.set(0);
+                BELL_CHOOSER_CATEGORY.set(0);
                 *bell_chooser_current.borrow_mut() =
                     ui.get_ie_sound_uuid().to_string();
                 populate_bell_chooser(&ui, ui.get_ie_sound_uuid().as_str(), meditate_core::db::BellSoundCategory::General);
@@ -8237,10 +8097,6 @@ fn build_ui() -> MainWindow {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
                     refresh_after_label_change(&ui, mode);
                     refresh_filter_label_items(&ui);
-                    // The open editors show the name, the cards too.
-                    if ui.get_edit_label_id() as i64 == id {
-                        ui.set_edit_label_name(text.trim().into());
-                    }
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 } else {
                     show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
@@ -8285,13 +8141,6 @@ fn build_ui() -> MainWindow {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
                     refresh_after_label_change(&ui, mode);
                     refresh_filter_label_items(&ui);
-                    // An open editor holding the label would fail its
-                    // Save on the dead id; sessions lose it like the DB.
-                    if ui.get_edit_label_id() as i64 == id {
-                        ui.set_edit_label_enabled(false);
-                        ui.set_edit_label_id(0);
-                        ui.set_edit_label_name("".into());
-                    }
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 } else {
                     show_notice(&ui, ui.global::<Tr>().invoke_delete_failed(), None, 4);
@@ -8558,22 +8407,18 @@ fn build_ui() -> MainWindow {
                 }
                 U::PresetDelete(p) => {
                     write_ok(&ui, "preset.undo", lock_db().map(|db| db.restore_preset(&p)));
-                    populate_preset_chooser(&ui, core_mode);
-                    refresh_preset_list(&ui, core_mode);
-                    refresh_widget(&ui);
+                    presets_changed(&ui, core_mode);
                 }
                 U::Override(u, prior) => {
                     write_ok(&ui, "preset.override.undo", lock_db().map(|db| db.update_preset_config(&u, &prior)));
                     // The preset rows on screen are the current mode's; the
                     // override may belong to the mode switched away from.
-                    refresh_preset_list(&ui, core_mode);
-                    refresh_widget(&ui);
+                    presets_changed(&ui, core_mode);
                 }
                 // The file was kept for Undo, so the row comes back whole.
                 U::GuidedDelete(f) => match lock_db().map(|db| db.restore_guided_file(&f)) {
                     Some(Ok(_)) => {
-                        refresh_guided_manage(&ui);
-                        refresh_guided_files(&ui);
+                        guided_files_changed(&ui);
                         follow_guided_sel(&ui, &guided_sel);
                     }
                     // Another file took the name meanwhile: Undo can't
@@ -8596,7 +8441,7 @@ fn build_ui() -> MainWindow {
                 },
                 U::PatternDelete(p) => {
                     write_ok(&ui, "pattern.undo", lock_db().map(|db| db.restore_vibration_pattern(&p)));
-                    refresh_after_pattern_change(&ui);
+                    bell_names_changed(&ui);
                 }
             }
         });

@@ -116,6 +116,11 @@ After a sound or pattern is renamed or deleted, the Interval Bells list, the bel
 - **THEN** the chooser no longer lists the deleted item
 - **TEST** `meditate-android/src/app.rs::a_pull_follows_the_guided_file_and_refills_choosers`
 
+#### Scenario: An interval bell's sound is gone on the phone
+- **WHEN** the sound an interval bell uses was deleted (here or on another device) and the Interval Bells list is shown
+- **THEN** that bell's row shows "Missing" as its sound, not an empty line
+- **TEST** `meditate-android/src/app.rs::interval_bell_rows_say_when_a_sound_is_missing`
+
 ### Requirement: A bell preview stops when its editor closes and never shows a silent Stop
 On the phone, a bell preview SHALL play only while its editor is open and a sound actually plays, with "Playback failed" when it cannot.
 

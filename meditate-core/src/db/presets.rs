@@ -282,14 +282,14 @@ impl Database {
     /// mutate event drives the row. Update events carry every field
     /// plus created_iso so they self-suffice if the corresponding
     /// insert event hasn't arrived yet (out-of-order delivery).
-    pub(super) fn recompute_preset(&self, preset_uuid: &str) -> Result<()> {
+    pub(super) fn recompute_preset(&self, preset_uuid: &str) -> Result<Option<String>> {
         let Some(v) = self.winning_mutate(
             preset_uuid,
             [EventKind::PresetInsert, EventKind::PresetUpdate],
             EventKind::PresetDelete,
         )? else {
             self.delete_row("presets", preset_uuid)?;
-            return Ok(());
+            return Ok(None);
         };
         {
             let name = v["name"].as_str().unwrap_or_default();
@@ -311,9 +311,9 @@ impl Database {
             self.claim_name("presets", preset_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 preset_uuid, name, mode, i64::from(is_starred),
                 config_json, created_iso, updated_iso,
-            ]))?;
+            ]))
+            .map(Some)
         }
-        Ok(())
     }
 }
 

@@ -55,10 +55,9 @@ where F: Fn() + Clone + 'static,
         .child(&toolbar)
         .build();
 
-    // Shared "rebuild + on_changed" closure stored behind a RefCell so
-    // both the synthetic create-row and the edit-page callback can fire
-    // it without us having to thread Clone through a self-referential
-    // type. Set once below after the per-row handlers are built.
+    // Shared rebuild closure behind a RefCell, so the rows the list
+    // page writes from (create, inline delete) can fire it without
+    // threading Clone through a self-referential type.
     let rebuilder: crate::Rebuilder =
         Rc::new(RefCell::new(None));
 
@@ -75,29 +74,24 @@ where F: Fn() + Clone + 'static,
             rebuilder_for_init.clone(),
             on_changed_clone.clone(),
         );
-        on_changed_clone();
     }));
 
-    if let Some(rb) = rebuilder.borrow().as_ref() {
-        rb();
-    }
-    // Back from a chooser or the edit page: a sound or pattern may
-    // have been renamed or deleted there.
-    let rebuilder_for_shown = rebuilder.clone();
-    page.connect_shown(move |_| {
-        if let Some(rb) = rebuilder_for_shown.borrow().as_ref() {
+    // Built as the page starts to show: when pushed, and back from the
+    // edit page or a chooser (a bell, sound or pattern may have changed).
+    let rebuilder_for_showing = rebuilder.clone();
+    page.connect_showing(move |_| {
+        if let Some(rb) = rebuilder_for_showing.borrow().as_ref() {
             rb();
         }
     });
     nav_view.push(&page);
 }
 
-/// Drop all rows from the group and re-add them from the current DB
-/// state. Called on initial push and after an add. Per-row Switch
-/// toggles call `set_interval_bell_enabled` directly so they don't
-/// need a rebuild.
 type Rebuilder = crate::Rebuilder;
 
+/// Drop all rows from the group and re-add them from the current DB
+/// state. Called as the page starts to show, and after a write on the
+/// list page itself; a row's Switch writes without a rebuild.
 fn rebuild_list(
     group: &adw::PreferencesGroup,
     rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
@@ -137,6 +131,11 @@ fn rebuild_list(
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
+    let library = app
+        .with_db(super::db::Database::list_bell_sounds)
+        .and_then(std::result::Result::ok)
+        .unwrap_or_default();
+
     if bells.is_empty() {
         let row = empty_state_row();
         group.add(&row);
@@ -152,6 +151,7 @@ fn rebuild_list(
             rebuilder.clone(),
             on_changed.clone(),
             stopwatch_on,
+            &library,
         );
         group.add(&row);
         rows.borrow_mut().push(row);
@@ -199,27 +199,19 @@ fn build_create_row(
             }
         };
 
-        if let Some(rb) = rebuilder_for_create.borrow().as_ref() {
-            rb();
-        }
+        on_changed_for_create();
 
         // Look up the just-inserted row's uuid (insert returns the
-        // rowid, not the uuid) and drill into its edit page.
-        if let Some(rowid) = new_id {
-            let new_uuid = app_for_create
-                .with_db(|db| db.find_interval_bell_by_id(rowid))
-                .and_then(std::result::Result::ok)
-                .flatten()
-                .map(|b| b.uuid.0);
-            if let Some(uuid) = new_uuid {
-                push_edit_page(
-                    &nav_view_for_create,
-                    &app_for_create,
-                    &uuid,
-                    rebuilder_for_create.clone(),
-                    on_changed_for_create.clone(),
-                );
-            }
+        // rowid, not the uuid) and drill into its edit page; the list
+        // rebuilds as it shows again. Without one, rebuild it now.
+        let new_uuid = new_id.and_then(|rowid| app_for_create
+            .with_db(|db| db.find_interval_bell_by_id(rowid))
+            .and_then(std::result::Result::ok)
+            .flatten()
+            .map(|b| b.uuid.0));
+        match new_uuid {
+            Some(uuid) => push_edit_page(&nav_view_for_create, &app_for_create, &uuid, on_changed_for_create.clone()),
+            None => if let Some(rb) = rebuilder_for_create.borrow().as_ref() { rb(); },
         }
     });
 
@@ -233,10 +225,11 @@ fn build_bell_row(
     rebuilder: Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     stopwatch_on: bool,
+    library: &[meditate_core::db::BellSound],
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_name(app, bell.sound_uuid.as_str()))
+        .subtitle(render_resolved_name(meditate_core::bells::sound_name(bell.sound_uuid.as_str(), library)))
         .activatable(true)
         .build();
 
@@ -308,14 +301,12 @@ fn build_bell_row(
     let bell_uuid_for_edit = bell.uuid.0.clone();
     let app_for_edit = app.clone();
     let nav_view_for_edit = nav_view.clone();
-    let rebuilder_for_edit = rebuilder.clone();
     let on_changed_for_edit = on_changed.clone();
     row.connect_activated(move |_| {
         push_edit_page(
             &nav_view_for_edit,
             &app_for_edit,
             &bell_uuid_for_edit,
-            rebuilder_for_edit.clone(),
             on_changed_for_edit.clone(),
         );
     });
@@ -526,17 +517,14 @@ impl TimeRow {
     }
 }
 
-/// Edit page for one bell — pushed when the user taps a row in the
-/// list. Save-as-you-go: every field change persists immediately
 /// Persist the current snapshot via the shell's `edit_interval_bell`
-/// pass-through and fire the rebuild + on_changed pipeline. Hoisted
-/// out of `push_edit_page` so each field-handler can call it from
-/// its own captured clones without nesting an item inside a fn body.
+/// pass-through and update Setup's count; the hidden list rebuilds when
+/// it shows again. Hoisted out of `push_edit_page` so each
+/// field-handler can call it from its own captured clones.
 fn write_back_bell(
     anchor: &impl IsA<gtk::Widget>,
     app: &MeditateApplication,
     snap: &Rc<RefCell<IntervalBell>>,
-    rebuilder: &Rebuilder,
     on_changed: &(impl Fn() + Clone + 'static),
 ) {
     let s = snap.borrow().clone();
@@ -547,21 +535,18 @@ fn write_back_bell(
         crate::db::show_toast(anchor, gettext("Saved as a new bell, your presets keep the old one"));
     }
     write_ok(anchor, "bell.update", written, Failed::Save);
-    if let Some(rb) = rebuilder.borrow().as_ref() {
-        rb();
-    }
     on_changed();
 }
 
-/// (with a populating-style guard during the initial load) and fires
-/// the same rebuilder/on_changed pipeline so the list page and the
-/// timer setup's subtitle stay in sync. Delete asks for confirmation
-/// via Adw.AlertDialog and pops the page on confirm.
+/// Edit page for one bell, pushed when the user taps a row in the
+/// list. Save-as-you-go: every field change persists immediately
+/// (with a populating-style guard during the initial load) and updates
+/// the timer setup's subtitle. Delete asks for confirmation via
+/// Adw.AlertDialog and pops the page on confirm.
 fn push_edit_page(
     nav_view: &adw::NavigationView,
     app: &MeditateApplication,
     bell_uuid: &str,
-    rebuilder: Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
 ) {
     // Resolve the bell. If it's gone (raced with a delete from a peer
@@ -744,12 +729,11 @@ fn push_edit_page(
     let volume = crate::volume_row::VolumeRow::install(&volume_row, || Some(()), {
         let snap = snapshot.clone();
         let app = app.clone();
-        let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
         let volume_row = volume_row.clone();
         move |(), volume| {
             snap.borrow_mut().volume = volume;
-            write_back_bell(&volume_row, &app, &snap, &rebuilder, &on_changed);
+            write_back_bell(&volume_row, &app, &snap, &on_changed);
             Some(snap.borrow().sound_uuid.to_string())
         }
     });
@@ -759,7 +743,6 @@ fn push_edit_page(
     // Kind changes also flip jitter row visibility.
     let snap_for_kind = snapshot.clone();
     let app_for_kind = app.clone();
-    let rebuilder_for_kind = rebuilder.clone();
     let on_changed_for_kind = on_changed.clone();
     let jitter_row_clone = jitter_row.clone();
     let step_row_clone = step_row.clone();
@@ -782,14 +765,13 @@ fn push_edit_page(
         }
         jitter_row_clone.row.set_visible(new_kind == IntervalBellKind::Interval);
         step_row_clone.row.set_visible(new_kind == IntervalBellKind::Interval);
-        write_back_bell(row, &app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
+        write_back_bell(row, &app_for_kind, &snap_for_kind, &on_changed_for_kind);
     });
 
     for row in [&time_row, &jitter_row, &step_row] {
         let field = row.field;
         let snap = snapshot.clone();
         let app = app.clone();
-        let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
         let populating = populating.clone();
         row.connect_changed(move |row, time| {
@@ -802,7 +784,7 @@ fn push_edit_page(
                     BellTimeField::Step => s.step = time,
                 }
             }
-            write_back_bell(row, &app, &snap, &rebuilder, &on_changed);
+            write_back_bell(row, &app, &snap, &on_changed);
         });
     }
 
@@ -811,7 +793,6 @@ fn push_edit_page(
     // playback so we don't need to gate on a populating flag here.
     let snap_for_sound = snapshot.clone();
     let app_for_sound = app.clone();
-    let rebuilder_for_sound = rebuilder.clone();
     let on_changed_for_sound = on_changed.clone();
     let sound_row_for_sub = sound_row.clone();
     sound_row.connect_activated(move |row| {
@@ -822,7 +803,6 @@ fn push_edit_page(
         let snap = snap_for_sound.clone();
         let app_outer = app_for_sound.clone();
         let app_inner = app_for_sound.clone();
-        let rebuilder = rebuilder_for_sound.clone();
         let on_changed = on_changed_for_sound.clone();
         let sound_row = sound_row_for_sub.clone();
         let volume = snap.borrow().volume;
@@ -834,7 +814,7 @@ fn push_edit_page(
             move |uuid| {
                 snap.borrow_mut().sound_uuid = uuid.clone().into();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
-                write_back_bell(&sound_row, &app_inner, &snap, &rebuilder, &on_changed);
+                write_back_bell(&sound_row, &app_inner, &snap, &on_changed);
             },
         );
     });
@@ -842,7 +822,6 @@ fn push_edit_page(
     // Pattern row — taps push the vibration-pattern chooser.
     let snap_for_pat = snapshot.clone();
     let app_for_pat = app.clone();
-    let rebuilder_for_pat = rebuilder.clone();
     let on_changed_for_pat = on_changed.clone();
     let pattern_row_for_sub = pattern_row.clone();
     pattern_row.connect_activated(move |row| {
@@ -853,13 +832,12 @@ fn push_edit_page(
         let snap = snap_for_pat.clone();
         let app_outer = app_for_pat.clone();
         let app_inner = app_for_pat.clone();
-        let rebuilder = rebuilder_for_pat.clone();
         let on_changed = on_changed_for_pat.clone();
         let pattern_row = pattern_row_for_sub.clone();
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
             snap.borrow_mut().vibration_pattern_uuid = uuid.clone().into();
             pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
-            write_back_bell(&pattern_row, &app_inner, &snap, &rebuilder, &on_changed);
+            write_back_bell(&pattern_row, &app_inner, &snap, &on_changed);
         });
     });
 
@@ -870,7 +848,6 @@ fn push_edit_page(
     // is preserved so a sync to a phone restores intent.
     let snap_for_sig = snapshot.clone();
     let app_for_sig = app.clone();
-    let rebuilder_for_sig = rebuilder.clone();
     let on_changed_for_sig = on_changed.clone();
     let sound_row_for_sig = sound_row.clone();
     let volume_row_for_sig = volume_row.clone();
@@ -886,14 +863,13 @@ fn push_edit_page(
         sound_row_for_sig.set_visible(mode.includes_sound());
         volume_row_for_sig.set_visible(mode.includes_sound());
         pattern_row_for_sig.set_visible(mode.includes_vibration());
-        write_back_bell(tg, &app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
+        write_back_bell(tg, &app_for_sig, &snap_for_sig, &on_changed_for_sig);
     });
 
     // ── Delete ────────────────────────────────────────────────────
     let app_for_delete = app.clone();
     let snap_for_delete = snapshot.clone();
     let nav_view_for_delete = nav_view.clone();
-    let rebuilder_for_delete = rebuilder.clone();
     let on_changed_for_delete = on_changed.clone();
     let page_for_delete = page.clone();
     delete_btn.connect_clicked(move |_| {
@@ -910,7 +886,6 @@ fn push_edit_page(
         let app = app_for_delete.clone();
         let snap = snap_for_delete.clone();
         let nav_view = nav_view_for_delete.clone();
-        let rebuilder = rebuilder_for_delete.clone();
         let on_changed = on_changed_for_delete.clone();
         let prefs_for_failure = prefs_page.clone();
         dialog.connect_response(None, move |_, id| {
@@ -920,8 +895,8 @@ fn push_edit_page(
             if !write_ok(&prefs_for_failure, "bell.delete", deleted, Failed::Delete) {
                 return;
             }
-            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
             on_changed();
+            // The list rebuilds as it shows again.
             nav_view.pop();
         });
 
@@ -1015,8 +990,13 @@ mod tests {
         // #84: a sound or pattern renamed or deleted in a chooser
         // shows its new name (or "Missing") on coming back.
         let list = production_fn("pub fn push_bells_page<");
-        let shown = list.find("page.connect_shown(").expect("the list re-reads when shown");
+        let shown = list.find("page.connect_showing(").expect("the list re-reads as it starts to show");
         assert!(list[shown..].contains("rb()"), "by rebuilding its rows");
+        // #353: built once per showing, not again after the push or on
+        // every edit-page change; the library once per rebuild.
+        assert_eq!(list.matches("rb()").count(), 1, "one build when opened");
+        assert!(!production_fn("fn write_back_bell(").contains("rb()"), "an edit doesn't rebuild the hidden list");
+        assert_eq!(production_fn("fn rebuild_list(").matches("list_bell_sounds").count(), 1);
         let edit = production_fn("fn push_edit_page(");
         let shown = edit.find("page.connect_shown(").expect("the edit page re-reads when shown");
         let after = &edit[shown..];

@@ -241,14 +241,14 @@ impl Database {
     /// presets / bell_sounds: tombstone wins on tie, else the highest-
     /// (lamport, device_id) mutate event drives the row. Update events
     /// carry every field so they self-suffice on out-of-order delivery.
-    pub(super) fn recompute_vibration_pattern(&self, pattern_uuid: &str) -> Result<()> {
+    pub(super) fn recompute_vibration_pattern(&self, pattern_uuid: &str) -> Result<Option<String>> {
         let Some(v) = self.winning_mutate(
             pattern_uuid,
             [EventKind::VibrationPatternInsert, EventKind::VibrationPatternUpdate],
             EventKind::VibrationPatternDelete,
         )? else {
             self.delete_row("vibration_patterns", pattern_uuid)?;
-            return Ok(());
+            return Ok(None);
         };
         {
             let name = v["name"].as_str().unwrap_or_default();
@@ -273,9 +273,9 @@ impl Database {
             self.claim_name("vibration_patterns", pattern_uuid, name, |name| self.conn.execute(upsert_sql, params![
                 pattern_uuid, name, duration_ms, intensities_json,
                 chart_kind, i64::from(is_bundled), created_iso, updated_iso,
-            ]))?;
+            ]))
+            .map(Some)
         }
-        Ok(())
     }
 }
 

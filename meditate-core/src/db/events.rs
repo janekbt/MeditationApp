@@ -579,7 +579,8 @@ impl Database {
             payload["name"] = name.to_owned().into();
         }
         self.emit_event(tx, kind, target_id, payload.to_string())?;
-        self.recompute_for(kind.entity(), target_id)
+        self.recompute_for(kind.entity(), target_id)?;
+        Ok(())
     }
 
     /// The screens the local writes committed since the last call
@@ -660,17 +661,19 @@ impl Database {
     /// by `target_id`, so it can run at any point after the events
     /// are recorded — `replay_events` batches them at the end of
     /// the apply loop.
-    fn recompute_for(&self, entity: EntityKind, target_id: &str) -> Result<()> {
+    /// The name a named row now carries.
+    fn recompute_for(&self, entity: EntityKind, target_id: &str) -> Result<Option<String>> {
+        let unnamed = |done: Result<()>| done.map(|()| None);
         match entity {
-            EntityKind::Session => self.recompute_session(target_id),
+            EntityKind::Session => unnamed(self.recompute_session(target_id)),
             EntityKind::Label => self.recompute_label(target_id),
-            EntityKind::IntervalBell => self.recompute_interval_bell(target_id),
-            EntityKind::BellSound => self.recompute_bell_sound(target_id),
+            EntityKind::IntervalBell => unnamed(self.recompute_interval_bell(target_id)),
+            EntityKind::BellSound => unnamed(self.recompute_bell_sound(target_id)),
             EntityKind::Preset => self.recompute_preset(target_id),
             EntityKind::GuidedFile => self.recompute_guided_file(target_id),
             EntityKind::VibrationPattern => self.recompute_vibration_pattern(target_id),
-            EntityKind::BoxBreathPhase => self.recompute_box_breath_phase(target_id),
-            EntityKind::Setting => self.recompute_setting(target_id),
+            EntityKind::BoxBreathPhase => unnamed(self.recompute_box_breath_phase(target_id)),
+            EntityKind::Setting => unnamed(self.recompute_setting(target_id)),
         }
     }
 
@@ -822,16 +825,16 @@ impl Database {
     /// synced): the smaller uuid keeps it and the other takes the
     /// "(conflict-…)" suffix, whichever arrives first, so every device
     /// suffixes the same row. The holder is renamed without an event,
-    /// as every device makes the same move.
+    /// as every device makes the same move. Returns the name `uuid` got.
     pub(super) fn claim_name(
         &self,
         table: &str,
         uuid: &str,
         name: &str,
         upsert: impl Fn(&str) -> rusqlite::Result<usize>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         match upsert(name) {
-            Ok(_) => return Ok(()),
+            Ok(_) => return Ok(name.to_owned()),
             Err(e) if is_unique_constraint_error(&e) => {}
             Err(e) => return Err(DbError::Sqlite(e)),
         }
@@ -857,7 +860,7 @@ impl Database {
             "sync.name_collision",
             &format!("{table} uuid={suffixed_uuid} original={name:?} resolved={resolved:?}"),
         );
-        Ok(())
+        Ok(if suffixed_uuid == uuid { resolved } else { name.to_owned() })
     }
 
     /// Rows that took the "(conflict-…)" suffix try for their own name
@@ -884,15 +887,9 @@ impl Database {
                 let held_by_smaller = rows.iter().any(|(other, other_name)| {
                     other.as_str() < uuid.as_str() && other_name.eq_ignore_ascii_case(base)
                 });
-                if !held_by_smaller {
-                    self.recompute_for(entity, uuid)?;
-                    // Most recomputes keep the name; only a new one is a change.
-                    let now: Option<String> = self.conn
-                        .query_row(&format!("SELECT name FROM {table} WHERE uuid = ?1"), [uuid], |row| row.get(0))
-                        .optional()?;
-                    if now.as_deref() != Some(name.as_str()) {
-                        refresh |= Refresh::of(entity, uuid);
-                    }
+                // Most recomputes keep the name; only a new one is a change.
+                if !held_by_smaller && self.recompute_for(entity, uuid)?.as_deref() != Some(name.as_str()) {
+                    refresh |= Refresh::of(entity, uuid);
                 }
             }
         }

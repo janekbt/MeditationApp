@@ -2585,7 +2585,8 @@ export component MainWindow inherits Window {
     callback local-view-changed(int);
     callback local-sort-changed(int);
     callback local-row-tap(bool, string);
-    callback local-star-tap(string);
+    // The row's key and its new starred state.
+    callback local-star-tap(string, bool);
     callback guided-file-tap(string);
     // Manage Files chooser (GM-F4) — full-screen slide-in,
     // mirrors GTK's `push_guided_files_chooser`. Lists ALL
@@ -8475,7 +8476,7 @@ export component MainWindow inherits Window {
                                             ? @image-url("assets/star_filled.svg")
                                             : @image-url("assets/star.svg");
                                         tooltip: row.starred ? @tr("Unstar") : @tr("Star");
-                                        clicked => { root.local-star-tap(row.key); }
+                                        clicked => { root.local-star-tap(row.key, !row.starred); }
                                     }
                                 }
                             }

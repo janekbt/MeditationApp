@@ -22,8 +22,8 @@ mod imp {
         // Dirty flags consumed by StatsView::refresh / LogView::refresh so
         // the aggregations re-run only when data actually changed — not on
         // every tab switch. Start `true` so the first show populates them.
-        pub stats_dirty: std::cell::Cell<bool>,
-        pub log_dirty:   std::cell::Cell<bool>,
+        pub(super) stats_dirty: std::cell::Cell<bool>,
+        pub(super) log_dirty:   std::cell::Cell<bool>,
 
         /// Whether the device exposes feedbackd's `Haptic` interface
         /// (i.e. has a vibration motor and feedbackd reachable on the

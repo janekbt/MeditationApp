@@ -36,7 +36,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | Done | Package | Items | Do with bug batch |
 |:---:|---|---|---|
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
-| [ ] | P2. Refresh after writes and syncs | step 1 done: refresh-what-changed (#331, #378, #485, #397 refresh half); step 2 done: sync-after-real-writes (#484, #316, #283, #327, #507); open: step 3 #418, #468, #353, rest of #397, #505, #506 | Q, EE |
+| [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [ ] | P3. Failure reporting and toasts | #320, #357, #373, #328 | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
@@ -325,6 +325,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #285 Box Breath phases read one at a time
 - Where: `bells.rs:880-901` (`box_breath_cues_from_db`), `preset_config.rs:592-599` (`snapshot`, which also re-lists the four phases instead of `BoxBreathPhaseId::all()`), android `ui.rs:3893`: four `get_box_breath_phase` calls where `list_box_breath_phases()` returns all four in one query.
 - Fix: one `list_box_breath_phases()` and a match. Related: #85 (`list_box_breath_phases` repeats `get_box_breath_phase`: keep the list one).
+- Also (one-refresh-per-change review, 2026-11-10): android `refresh_boxbreath_cues` names each phase's sound through `resolve_sound_name`, which lists the whole sound library per phase (four reads per refresh); read the library once and use core's `sound_name`, as `refresh_bell_rows` now does.
 
 #### #286 Breath: one rule, one enum
 - Where:
@@ -442,6 +443,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
   - What the Save button does (`end_button_clicked` 2521-2527: Overtime finishes, Done does nothing, else stop), again in Android `AppState::save_end`.
   - Which ending gets a completion notice (`notify_complete` 2547, called from 2534, 3015, 3073), again in Android `completion_notice_secs`.
 - Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision with the end (#270). Related: #270, #272, slice 18.
+
+- Also (from #505, /simplify 2026-11-10): `refresh_shown` (`window/imp.rs`) follows the `Refresh` argument for the Timer page but the dirty flags for Log and Stats, which is why the session save must add its card before `data_changed` (a source test pins the order). Fix: a Setup mark beside the two, and `refresh_shown` re-reads only what is marked; with the one `load_setup()`.
 
 #### #313 One reaction to a tick
 - Related: #394 (Android writes the transition tail seven times).
@@ -568,21 +571,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: reference cycles, so these pages and dialogs are never freed; memory grows with every visit (Librem 5). Seen in the code, not measured.
 - Fix: `Rc::downgrade` for the rebuilder, `#[weak]` in `clone!` for widgets (as `preferences.rs:275` does). Check with a heap or refcount test before and after. labels.rs and vibrations.rs use the same Rebuilder pattern (slice 11).
 
-#### #505 The Log filter's own stale mark (rest of #331)
-- Found 2026-11-10 (refresh-what-changed, review round 5): #331 is done but for two parts.
-- Where: a filter change marks the app-wide `log_dirty` (`log/mod.rs` `invalidate_for_filter`), so a filter change and a data change can't be told apart; `stats_dirty`/`log_dirty` are `pub` fields of the application's imp (`application.rs:25-26`) though only `mark_stale` and `take_*_dirty` use them.
-- Fix: the LogView keeps a filter flag of its own; the two cells private behind `mark_stale`/`take_*_dirty`.
-- Also (/simplify, 2026-11-10): `refresh_shown` (`window/imp.rs`) follows the `Refresh` argument for the Timer page but the dirty flags for Log and Stats, which is why the session save must add its card before `data_changed` (a source test pins the order). Fix: a Setup mark beside the two, and `refresh_shown` re-reads only what is marked; ties into #312's one `load_setup()`.
-
-#### #506 Replay knows when a reclaim renamed a row
-- Found 2026-11-10 (/simplify of refresh-what-changed).
-- Where: `reclaim_suffixed_names` (`db/events.rs`) recomputes a suffixed row, then reads its name again (`SELECT name ... WHERE uuid`, a fresh `format!` and prepare per row) to learn whether it changed.
-- Fix: `recompute_for` (or `claim_name`) returns whether it renamed the row. Gain: one query less per suffixed row per replay batch, one notion of "changed".
-
-#### #353 The bell list rebuilds too often
-- Where: `write_back_bell` (`bells.rs:535-554`) rebuilds the hidden list on every spin step, kind or signal change and settled volume, though the list rebuilds on `connect_shown` (87-91) when the edit page pops; the rebuilder already calls `on_changed` (78) and the callers call it again (357, 553, 924), so the count subtitle is read twice per write; opening the page builds the list twice (`rb()` at 81, then `connect_shown`); `build_create_row` (202) the same. Each row's subtitle loads the whole bell-sound library (239, `bells.rs:440-445`; see #284).
-- Fix: rebuild only on `connect_shown`; one `on_changed`; load the library once per rebuild and use core's pure `sound_name`.
-
 #### #354 Interval-bell rules in core
 - Related: #422 (the Android bug the three writes cause), #421 (one editor fill).
 - Where: `bells.rs:126-133, 249-253` builds the stopwatch display mode by hand where core has `display_mode_from_db` (Android uses it, `ui.rs:3694, 3950, 4025`); GTK hard-codes Timer, Android passes the setup page's mode, so the two decide differently (latent while Box Breath hides interval bells). `insert_interval_bell` returns a rowid, so GTK queries the uuid back (183-213) and Android queries and then updates for the volume (`ui.rs:8117-8130`); the new-bell defaults are assembled in each app. The kind-to-index mapping is written both ways inline (590-594, 769-773) and again in Android (`app.rs:267-284`) with a different fallback.
@@ -668,7 +656,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #375 sound.rs
 - Related: #85 (`preload_end_bell` was listed there first; do it once).
-- Related: #397 (Android's `bell_sound_path` and the interval bell list).
+- Folded in from #397 (2026-11-10): Android's `bell_sound_path` lists the library for every bell that rings; the same keyed lookup fixes it.
 - `preload_end_bell` (294-305) builds a `MediaFile` that is never played: `play_end_bell()` is gone and `play_end_bell_uuid` makes its own; four callers pay two DB reads and a player build each (window/imp.rs:126, timer/imp.rs:745, 792, 1284); stale comments at 286-293, 311-315, 326 and timer/imp.rs:742. Delete it.
 - `lookup_bell_sound_by_uuid` (205-216) lists and decodes the whole bell library for every bell played, and Android does the same (`ui.rs:4032-4035`): make core's private keyed `find_bell_sound` (`db/bell_sounds.rs`, one-path-per-table) public, as vibration patterns and guided files have theirs.
 - `play_preview_for_guided_file` (165-181) copies `play_preview`'s slot swap and has drifted (#390): one `play_in_preview_slot(media)`. Related: #356.
@@ -729,15 +717,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - The import-finalize branch sits 8+ levels deep in the tick closure (4939-5043), reads the kind twice, and builds a `GuidedSel` that copies `guided_file_by_uuid` (1721-1737).
 - `send_media_buttons` (320-337) rebuilds the whole notification payload (palette, guided name under a lock, header, a `Tr` call per button) five times a second and clones it to compare, for text that changes once a minute.
 - Fix: poll each drop file only while its action is pending (a flag set by the picker, export, scan; end of track and focus loss only while guided audio plays; the widget launch on Resume); extract `poll_import_result`; compare without the clone and build the payload only when the minute, buttons or pause state changed. Related: #409.
-
-#### #397 Refreshes after a pull or a local change
-- Related: #468 (chooser lists rebuilt per tap).
-- Related: #418 (the per-change refresh helpers).
-- Done 2026-11-10 (refresh-what-changed): a pull re-reads only the screens it changed, each helper once; the bell chooser only when open. Left:
-- `refresh_bell_rows` (3710-3800) takes about 12 separate `lock_db()` calls and rebuilds the interval-editor ranges from core constants as two new `VecModel`s each time (3775-3786).
-- `populate_interval_bells` lists the whole bell library once per bell (4026-4037; #408 for the missing name). `bell_sound_path` (3612-3630) lists it for every bell that rings (#375's keyed lookup).
-- Lists that refresh often get a new `VecModel` each time (784-793, 1193-1199, 1251-1263, 2139-2216), though `put_rows` (518) updates in place.
-- Fix: one lock for the bell rows; ranges set once in `build_ui`; `resolve_sound_name` with the library read once; `put_rows`. Related: #375.
 
 #### #398 Stats and Log reads
 - Related: #456 (chart and heatmap work), #457 (the Log feed).
@@ -809,11 +788,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #417 Back calls each page's own close
 - Where: `on_back_pressed` (9840-9938) calls `invoke_*` for diag, preferences, guided manage, local and the interval editor, but copies the bodies of edit cancel, labels back, preset, bell and pattern chooser back, interval bells back and vibration editor cancel. They already differ: Back stops all previews in the editor, Cancel only the editor's.
 - Fix: `invoke_*` for every page (check each callback does what Back does today); the step before #404's page enum.
-
-#### #418 One refresh per change
-- Where: "after a bell sound changed" (`repopulate_bell_chooser`, `refresh_bell_rows`, `populate_interval_bells`, the editor's sound name) is written in rename, delete and the tick (6889-6892, 6932-6935, 4845); the vibration editor's Save tail (7594-7660) is `refresh_after_pattern_change` (4149) written out; `populate_preset_chooser` + `refresh_preset_list` + `refresh_widget` five or more times (6223, 6251, 6345, 6380, near 8590), each reading all labels and presets again (three label scans, two preset queries per action); `refresh_guided_manage` + `refresh_guided_files` (+ `follow_guided_sel`) about six times (5793, 5822, 5940, 6279, 8608); the label rename and delete patch the edit label by hand after `refresh_after_label_change` already did (8286-8294, 8335-8343; #85).
-- Fix: `refresh_after_bell_sound_change`, `presets_changed(ui, mode)` with one read, `guided_files_changed(ui, sel)`; call the pattern helper. Part of #397.
-- Also (/simplify, 2026-11-10): after a pull the open bell chooser is refilled in the tick (`ui.rs`, next to the guided follow), the open preset chooser inside `refresh_after_pull`: move the bell chooser into `refresh_after_pull` (its category and current uuid as UI properties or arguments), so one list says what a pull re-reads.
 
 #### #419 Startup
 - Related: #483 (one startup sequence in core), #490.
@@ -940,12 +914,12 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: the Bars/Line toggle (4893-4900, `ui.rs` 9781) calls `refresh_chart`, a DB read of up to 365 days and a new bar model, though Slint switches renderers off `stat-chart-kind` itself and the handler says the data is the same. Every size report (4949-4963, `ui.rs` 9752) runs `refresh_chart` too, including a second one at startup (the hidden Stats page is built, `visible` at 4600) and one per rotation; `changed height` is dead (fixed 120px, 4943); `stat-plot-w`/`stat-plot-h` (3579-3580) are window properties only Rust reads, where the vibration editor keeps the same size in an `Rc<Cell>`.
 - `stat-contrib-cols` (always 91 cells, `ui.rs` 2215) and `stat-chart-bars` (2359) get new `VecModel`s on every `refresh_stats` (13 callers), so Slint rebuilds every cell and bar.
 - The heatmap level-to-colour chain is written twice (cells 4722-4727, legend 4749-4754); `InsightRow.icon-id` is an int decoded by a nine-way ladder (4808-4817).
-- Fix: delete `chart-kind-changed` and its handler; on a size change rebuild only the path strings from the cached series, size in a Rust `Cell`; `put_rows` (`ui.rs` 518); one `pure function level-color(int)`; the icon as a Slint `export enum` (#431). Related: #398, #397.
+- Fix: delete `chart-kind-changed` and its handler; on a size change rebuild only the path strings from the cached series, size in a Rust `Cell`; `put_rows` (`ui.rs` 518); one `pure function level-color(int)`; the icon as a Slint `export enum` (#431). Related: #398.
 
 #### #457 The Log feed rebuilds every card
 - Where: the feed (4363-4590) is a `for section` / `for item` in a plain Flickable, so every loaded card (15 per Load more) is a live item tree, kept while another tab shows (`visible`, 4300). Every render (`push_log_sections_to_ui`, `ui.rs` 2984-3017: Load more, each delete, Undo, save, navigation, the midnight tick) wraps everything in new `VecModel`s, so Slint drops and rebuilds every card.
 - The two empty states (4317-4338, 4340-4361) differ only in two strings.
-- Fix: one flat row model (header or card) in Material's `ListView`, which the compiler virtualizes, updated in place (`put_rows`); one empty state with ternary texts. Related: #398 (the three maps per render), #418, #397.
+- Fix: one flat row model (header or card) in Material's `ListView`, which the compiler virtualizes, updated in place (`put_rows`); one empty state with ternary texts. Related: #398 (the three maps per render).
 
 #### #458 The session ring redraws every frame
 - Where: `BellRingView` (596-601) animates `shown-filled` over 200 ms, and Rust sets `ring-filled` every 200 ms tick (`ui.rs` 482, 538), so the animation never ends while a session runs: continuous frame redraws, each re-tessellating the arc `Path`, for a glide of under a pixel per second on a 20-minute session (worse with Keep Screen Awake).
@@ -994,10 +968,10 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - The preset chooser rebuilds RowDrop (7713-7731) with `can-drop` on `save-mode` instead of `drag-index >= 0`; RowDrop works there as is.
 - Fix: `CreateRow { text; tapped }` with add.svg and without "…"; `LibraryRow` (title, subtitle, selected slot, preview, edit and delete flags, tooltips set once); the IconButton star everywhere; `RowDrop`. About -300 lines. Related: #460, #476.
 
-#### #468 One tap rebuilds a whole list
-- Where: Local rows (8416, `ui.rs` 1509), Guided Manage (8097, `ui.rs` 1260), the preset chooser (7696, `ui.rs` 831) and Interval Bells (6144, `ui.rs` 4052) get a new `VecModel` per refresh. A Local star reads every local file to learn the current state, then reads them all again and rebuilds every row (`ui.rs` 5708-5720); each batch of lengths in `poll_local_folder` (1597-1601) does the same; the preset star runs `preset_subtitle` for every preset again (6223-6241); an interval-bell Switch rebuilds every row and destroys the Switch just tapped (7898-7903).
-- Fix: `put_rows` (`ui.rs` 518); pass the row's state from Slint (`local-star-tap(key, !row.starred)`). Related: #397, #418, #443.
-
+#### #468 Interval Bells: a tap rebuilds the list
+- Rest after one-refresh-per-change (2026-11-10), which moved the other lists to `put_rows`: the Interval Bells list (`ui.rs` `populate_interval_bells`) still gets a new `VecModel` per refresh, so a Switch tap destroys the Switch just tapped.
+- Why not `put_rows` there yet: Material's Switch fires `checked-state-changed` for a change from code too and drops its `checked: item.enabled` binding once tapped, so rows set in place would write a pulled or Stopwatch-dimmed state back as the user's toggle (the dim would store `enabled = false`).
+- Fix: a guard in `on_interval_bell_toggled` (skip when the row is insensitive or the value equals the stored one) or a two-way binding, then `put_rows`.
 #### #469 Edit Session decisions in the layout
 - Where: the Save gate `edit-original-secs > 0 || hours > 0 || minutes > 0` (5193) re-derives core's `format::log_edit_duration_secs(..).is_some()`, which GTK uses (`log/imp.rs:1115-1121`) and Save runs anyway (`ui.rs` 8804); they disagree for an edited session set to 0:00, unreachable only because the Duration dialog refuses 0 (6609). The date row builds `yyyy-mm-dd` by hand (5231-5233), the only untranslated date in the app, while the time row beside it goes through Rust (`render-time`, `ui.rs` 4260) and GTK shows `short_date` (`log/imp.rs:1315`).
 - Fix: Rust sets `edit-save-enabled` from the core call; `pure callback render-date(Date)` over `short_date`/`locale_date` (`ui.rs` 2712, 2722).
@@ -1078,10 +1052,10 @@ Related: #356 (the preview button is copied the same way) and #318 and #315 (mor
 - `timer/imp.rs` (related: #281, one reader per bell slot): the `starting_bell_sound` read with its `"bowl"` fallback bound to `_starting_bell_sound_legacy` (3110-3112, 3133, 3141, 3167); `apply_preferred_label_for_mode(_mode)` (4451, callers 1891, 3230); `build_breathing_setup` (4268) and `breath_elapsed` (3040; keep the public wrapper `timer/mod.rs:126`) only pass through; 2484-2486 and 2717-2719 hand-copy `From<TimerMode>` (55-61). `PKGDATADIR` (`config.rs:6-7`, `#[allow(dead_code)]`) has no reader; it is also set in `build.rs:49-50`, `src/meson.build:14` and the Flatpak manifest (37).
 
 ### #85 Dead code, duplicates and a test that cannot fail
-- Related: #375 (`preload_end_bell`), #399, #401, #405, #418.
+- Related: #375 (`preload_end_bell`), #399, #401, #405.
 - Core: `tick_box_breath` (`mod.rs:604-667`) calls `fire_due_bells` at 658-665 though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `db_open_failure_key` (`format.rs:308-315`, tests 945-961) is unused and repeated in gtk `application.rs:178-187` (which matches gtk's own `DbError`). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (related: #273 touches `Stopwatch`). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
 - GTK: `preload_end_bell` (`sound.rs:294`; calls `timer/imp.rs:745, 792, 1284`, `window/imp.rs:126`) builds media that `play_end_bell_uuid` (322) never uses; its only effect is stopping a ringing end bell when its settings change (decide). Stale preload docs: `sound.rs:10-15, 289-290, 331-332`, `timer/imp.rs:677-679, 1218`.
-- Android: the label rename and delete handlers still repeat part of `refresh_after_label_change` (`ui.rs:7968-7971`, 8016-8022 vs 2377-2387). `read_signal_mode_for_mode` (`ui.rs:542-550`) repeats core `bells::signal_mode_override_from_db`.
+- Android: `read_signal_mode_for_mode` (`ui.rs:542-550`) repeats core `bells::signal_mode_override_from_db`.
 - Test: `bell_rng_state_advances_deterministically_from_seed` (`mod.rs:1553-1584`) uses `jitter_secs: 0` (helper at 1090), so the RNG never moves a ring time; set a jitter and assert a different seed differs, or delete it.
 - Android: `validate_label_name` (2485) is `validate_rename_label_name(n, 0)` (3043); `bell_name_taken` (1535) is `bell_sound_name_taken(n, "")` (3933); `read_global_setting` (3402-3406) is core `read_str` and its four `== "true"` callers (3541, 3594, 3619, 3719) are `read_bool`; the label-name map is built three times (609, 716, 763; a helper must take `&db`, a second `lock_db()` deadlocks); 4256-4259 repeats `push_session_length_to_ui` (2435-2438); 2644-2649 repeats `refresh_setup_label_name` (1795-1802).
 
@@ -1128,6 +1102,7 @@ Only together with other work in the same area; none has a bug behind it.
 - **#502, readers that return `Result`** (2026-11-10, /simplify of change writes-all-or-nothing): `settings_keys` now has `read_bool`/`try_read_bool`, `read_u32`/`try_read_u32`, `breathing_from_db`/`try_breathing_from_db`, two ways to read every setting. Readers returning `Result`, with `.unwrap_or(default)` at the callers that want a default, would leave one; touches every caller in both apps.
 - **#503, savepoints through the statement cache** (2026-11-10, /simplify of change writes-all-or-nothing): `tx()`, `commit` and `Drop` send `SAVEPOINT w` / `RELEASE w` / `ROLLBACK TO w` through `execute_batch`, parsed each time; `prepare_cached` would skip the parse. Microseconds per nested write today; matters for a label merge over thousands of sessions.
 - **#504, presets carry a real label uuid** (2026-11-10, /simplify of change writes-all-or-nothing): "label on, none picked" means "the mode's default", a rule now in `apply`, `retarget_label` and `resolve_label_for_mode`. Storing the default's uuid when a preset is saved (and once for stored presets) would leave one rule; changes stored presets, so it needs a migration and is the root fix for OPEN-ISSUES #498.
+- **#508, the widget built once per change** (2026-11-10, /simplify of change one-refresh-per-change): `refresh_guided_files` (android `ui.rs`) rebuilds the widget inside itself, so the pull can't combine `presets_changed` and `guided_files_changed` without building it twice and still writes the preset refresh out by hand (a third copy of what a preset change refreshes). Take `refresh_widget` out of `refresh_guided_files`, let the change helpers refresh lists only, and build the widget once at the end of each change; every `refresh_guided_files` caller (the Local star, the unstar, the moves) then calls it. Gain: one list of what a preset change refreshes.
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected

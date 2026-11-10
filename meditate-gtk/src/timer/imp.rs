@@ -3369,16 +3369,12 @@ impl TimerView {
         }
         self.presets_group.set_description(None::<&str>);
 
-        // Resolve the labels table once per rebuild so each row's
-        // subtitle lookup is O(1) against the in-memory map.
+        // Once per rebuild, so each row's subtitle lookup is O(1).
         let label_names: std::collections::HashMap<String, String> = app_opt
             .as_ref()
-            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
+            .and_then(|app| app.with_db(|db| meditate_core::db::label_names_from_db(db.core())))
             .and_then(std::result::Result::ok)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|l| (l.uuid.0, l.name))
-            .collect();
+            .unwrap_or_default();
         let active = app_opt
             .as_ref()
             .and_then(|app| app.with_db(|db| meditate_core::preset_config::active_presets(db.core(), session_mode, &presets)))
