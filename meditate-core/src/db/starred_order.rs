@@ -43,7 +43,7 @@ impl Database {
     /// Move a Starred Files row to place `to` in that list (clamped to
     /// the end). Unknown rows and a drop on the same place write nothing.
     pub fn move_starred_guided(&self, id: &StarredGuidedId, to: usize) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let mut rows = starred_guided_from_db(self)?;
         let Some(from) = rows.iter().position(|r| r.id() == *id) else { return Ok(()); };
         let to = to.min(rows.len() - 1);
@@ -68,16 +68,16 @@ impl Database {
             match key_between(prev, next, &tail) {
                 Some(key) => {
                     match &rows[to] {
-                        StarredGuided::Library(g) => self.write_library_key(&tx, g, &key)?,
+                        StarredGuided::Library(g) => self.write_library_key(g, &key)?,
                         StarredGuided::Local { file, .. } => self.write_star_key(file.id, &key)?,
                     }
                     rows[to].set_key(key);
                 }
-                None => self.retime_starred_library(&tx, &mut rows)?,
+                None => self.retime_starred_library(&mut rows)?,
             }
         }
         if !self.repair_local_runs(&mut rows)? {
-            self.retime_starred_library(&tx, &mut rows)?;
+            self.retime_starred_library(&mut rows)?;
             self.repair_local_runs(&mut rows)?;
         }
         tx.commit()?;
@@ -90,7 +90,7 @@ impl Database {
     /// follows by key. Unknown uuids and a drop on the same place write
     /// nothing.
     pub fn move_guided_file(&self, uuid_str: &str, to: usize) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let mut list = super::list_guided_files_from_db(self)?;
         let Some(from) = list.iter().position(|g| g.uuid.0 == uuid_str) else { return Ok(()); };
         let to = to.min(list.len() - 1);
@@ -102,13 +102,13 @@ impl Database {
         let prev = to.checked_sub(1).map(|i| list[i].created_iso.as_str());
         let next = list.get(to + 1).map(|g| g.created_iso.as_str());
         match key_between(prev, next, uuid_str) {
-            Some(key) => self.write_library_key(&tx, &list[to], &key)?,
+            Some(key) => self.write_library_key(&list[to], &key)?,
             None => {
                 // No room: every library file gets a fresh time in the
                 // new order, as `move_preset` does, and the local files
                 // keep the places they had among the starred rows.
                 let mut rows = rows;
-                self.retime_library(&tx, &mut list, &mut rows)?;
+                self.retime_library(&mut list, &mut rows)?;
                 self.key_unkeyed_locals(&mut rows)?;
                 self.repair_local_runs(&mut rows)?;
             }
@@ -167,7 +167,7 @@ impl Database {
     /// No room between equal library keys: every library file gets a
     /// fresh time 1 ms apart, the unstarred ones where they stand, the
     /// starred ones in their order in `rows`.
-    fn retime_starred_library(&self, tx: &rusqlite::Transaction, rows: &mut [StarredGuided]) -> Result<()> {
+    fn retime_starred_library(&self, rows: &mut [StarredGuided]) -> Result<()> {
         let mut starred = rows.iter().filter_map(|r| match r {
             StarredGuided::Library(g) => Some(g.clone()),
             StarredGuided::Local { .. } => None,
@@ -176,15 +176,15 @@ impl Database {
             .into_iter()
             .map(|g| if g.is_starred { starred.next().unwrap_or(g) } else { g })
             .collect();
-        self.retime_library(tx, &mut list, rows)
+        self.retime_library(&mut list, rows)
     }
 
     /// Fresh times 1 ms apart for the library files in `list` order;
     /// the starred ones fill the library rows of `rows` in that order.
-    fn retime_library(&self, tx: &rusqlite::Transaction, list: &mut [GuidedFile], rows: &mut [StarredGuided]) -> Result<()> {
+    fn retime_library(&self, list: &mut [GuidedFile], rows: &mut [StarredGuided]) -> Result<()> {
         let keys = super::order_key::fresh_keys(list.len());
         for (g, key) in list.iter_mut().zip(keys) {
-            self.write_library_key(tx, g, &key)?;
+            self.write_library_key(g, &key)?;
             g.created_iso = key;
         }
         let mut starred = list.iter().filter(|g| g.is_starred);
@@ -198,8 +198,8 @@ impl Database {
 
     /// A library file's new place: its `created_iso`, in one synced
     /// update carrying every field, as a rename's.
-    fn write_library_key(&self, tx: &rusqlite::Transaction, g: &GuidedFile, key: &str) -> Result<()> {
-        self.edit_guided_file_in(tx, g.uuid.as_str(), |f| f.created_iso = key.to_string())
+    fn write_library_key(&self, g: &GuidedFile, key: &str) -> Result<()> {
+        self.edit_guided_file(g.uuid.as_str(), |f| f.created_iso = key.to_string())
     }
 
     fn write_star_key(&self, id: i64, key: &str) -> Result<()> {

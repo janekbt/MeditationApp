@@ -115,15 +115,8 @@ impl Database {
     /// are silently no-ops AND emit no event — peers would otherwise
     /// receive a tombstone for a label they never knew existed.
     pub fn delete_label(&self, id: i64) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.delete_label_in(&tx, id)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn delete_label_in(&self, tx: &rusqlite::Transaction<'_>, id: i64) -> Result<()> {
         let Some(uuid) = self.uuid_by_id("labels", id)? else { return Ok(()); };
-        self.delete_synced_row_in(tx, "labels", &uuid, EventKind::LabelDelete)
+        self.delete_synced_row("labels", &uuid, EventKind::LabelDelete).map(drop)
     }
 
     /// Rename the label with `id` to `name`. Unknown ids are silently
@@ -134,7 +127,7 @@ impl Database {
     /// of itself) succeeds, since SQLite's UNIQUE check excludes the
     /// row being updated.
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let row: Option<(String, String)> = self.conn.query_row(
             "SELECT uuid, name FROM labels WHERE id = ?1",
             params![id],
@@ -175,16 +168,10 @@ impl Database {
     /// surfaces `DuplicateLabel` so unrelated callers don't silently
     /// shadow each other's rows.
     pub fn insert_label_with_uuid(&self, uuid_str: &str, name: &str) -> Result<i64> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         if let Some(existing) = self.existing_rowid_by_uuid("labels", uuid_str)? {
             return Ok(existing);
         }
-        let rowid = self.insert_label_in(&tx, uuid_str, name)?;
-        tx.commit()?;
-        Ok(rowid)
-    }
-
-    fn insert_label_in(&self, tx: &rusqlite::Transaction<'_>, uuid_str: &str, name: &str) -> Result<i64> {
         self.conn
             .execute(
                 "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
@@ -196,7 +183,8 @@ impl Database {
             "uuid": uuid_str,
             "name": name,
         }).to_string();
-        self.emit_event(tx, EventKind::LabelInsert, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::LabelInsert, uuid_str, payload)?;
+        tx.commit()?;
         Ok(rowid)
     }
 
@@ -206,7 +194,6 @@ impl Database {
     /// rather than "(conflict)" copies of them.
     pub(super) fn label_for_import(
         &self,
-        tx: &rusqlite::Transaction<'_>,
         name: &str,
         uuid: Option<&super::LabelUuid>,
     ) -> Result<i64> {
@@ -217,7 +204,7 @@ impl Database {
             return Ok(id);
         }
         let uuid = uuid.map_or_else(super::mint_uuid, ToString::to_string);
-        self.insert_label_in(tx, &uuid, name)
+        self.insert_label_with_uuid(&uuid, name)
     }
 
     /// Return a label id by name, creating the label if missing. Lookup
@@ -271,14 +258,14 @@ impl Database {
     pub fn merge_labels(&self, from_id: i64, into_id: i64) -> Result<usize> {
         // One transaction: the merge lands whole or, on an error,
         // leaves both labels as they were.
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let sessions = crate::db::sessions::list_sessions_for_label_from_db(
             self, from_id,
         )?;
         let n = sessions.len();
         for (id, mut session) in sessions {
             session.label_id = Some(into_id);
-            self.update_session_in(&tx, id, &session)?;
+            self.update_session(id, &session)?;
         }
         // A mode whose default was the merged-away label takes the kept one.
         if let (Some(from_uuid), Some(into_uuid)) = (self.uuid_by_id("labels", from_id)?, self.uuid_by_id("labels", into_id)?) {
@@ -286,17 +273,17 @@ impl Database {
                 let current = crate::labels::label_uuid_from_db(self, mode)
                     .unwrap_or_else(|| crate::settings_keys::default_label_uuid_for_mode(mode).to_string());
                 if current == from_uuid {
-                    self.set_setting_in(&tx, crate::settings_keys::label_uuid_key_for_mode(mode), &into_uuid)?;
+                    self.set_setting(crate::settings_keys::label_uuid_key_for_mode(mode), &into_uuid)?;
                 }
             }
             // A preset pinned to the merged-away label takes the kept one.
             for preset in crate::db::list_presets_from_db(self)? {
-                if let Some(config) = crate::preset_config::retarget_label(&preset.config_json, &from_uuid, &into_uuid) {
-                    self.edit_preset_in(&tx, preset.uuid.as_str(), |p| p.config_json = config)?;
+                if let Some(config) = crate::preset_config::retarget_label(&preset.config_json, preset.mode, &from_uuid, &into_uuid) {
+                    self.edit_preset(preset.uuid.as_str(), |p| p.config_json = config)?;
                 }
             }
         }
-        self.delete_label_in(&tx, from_id)?;
+        self.delete_label(from_id)?;
         tx.commit()?;
         crate::diag::log(
             "label.merge",

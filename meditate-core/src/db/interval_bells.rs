@@ -82,8 +82,7 @@ impl Database {
         vibration_pattern_uuid: &str,
         signal_mode: SignalMode,
     ) -> Result<i64> {
-        let tx = self.conn.unchecked_transaction()?;
-        let rowid = self.insert_bell_in(&tx, &IntervalBell {
+        self.insert_bell(&IntervalBell {
             id: 0,
             uuid: super::mint_uuid().into(),
             kind,
@@ -96,32 +95,33 @@ impl Database {
             enabled: true,
             created_iso: chrono::Utc::now().to_rfc3339(),
             volume: BellVolume::default(),
-        })?;
-        tx.commit()?;
-        Ok(rowid)
+        })
     }
 
     /// The edit `edited` of bell `old` as new bell `uuid` beside it
     /// (same creation time), and `old` switched off, in one
     /// transaction. Returns the new bell's uuid.
     pub fn copy_interval_bell(&self, old: &IntervalBell, edited: &IntervalBell, uuid: &str) -> Result<super::IntervalBellUuid> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let uuid: super::IntervalBellUuid = uuid.into();
-        self.insert_bell_in(&tx, &IntervalBell { uuid: uuid.clone(), created_iso: old.created_iso.clone(), ..edited.clone() })?;
-        self.update_bell_in(&tx, &IntervalBell { enabled: false, ..old.clone() })?;
+        self.insert_bell(&IntervalBell { uuid: uuid.clone(), created_iso: old.created_iso.clone(), ..edited.clone() })?;
+        self.update_interval_bell(&IntervalBell { enabled: false, ..old.clone() })?;
         tx.commit()?;
         Ok(uuid)
     }
 
     /// Insert `bell` as it is (its `id` is ignored) and record it.
-    fn insert_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<i64> {
+    fn insert_bell(&self, bell: &IntervalBell) -> Result<i64> {
+        let tx = self.tx()?;
         // A uuid already there (a repeated copy) is left as it is.
-        self.insert_new_in("interval_bells", bell.uuid.as_str(), || self.write_bell_in(tx, EventKind::IntervalBellInsert, bell))
+        let rowid = self.insert_new_in("interval_bells", bell.uuid.as_str(), || self.write_bell_in(&tx, EventKind::IntervalBellInsert, bell))?;
+        tx.commit()?;
+        Ok(rowid)
     }
 
     /// Record `bell` as `kind` and store it the way a peer stores it
     /// from the event.
-    fn write_bell_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, bell: &IntervalBell) -> Result<()> {
+    fn write_bell_in(&self, tx: &super::Tx<'_>, kind: EventKind, bell: &IntervalBell) -> Result<()> {
         let mut payload = serde_json::json!({
             "uuid": bell.uuid,
             "kind": bell.kind.as_db_str(),
@@ -145,40 +145,32 @@ impl Database {
     /// write nothing either: a fresh event would undo an edit another
     /// device made in the meantime.
     pub fn update_interval_bell(&self, bell: &IntervalBell) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.update_bell_in(&tx, bell)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn update_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<()> {
-        self.edit_bell_in(tx, bell.uuid.as_str(), |b| *b = IntervalBell { id: b.id, created_iso: b.created_iso.clone(), ..bell.clone() })
+        self.edit_bell(bell.uuid.as_str(), |b| *b = IntervalBell { id: b.id, created_iso: b.created_iso.clone(), ..bell.clone() })
     }
 
     /// Apply `edit` to the stored bell and write it, unless that
     /// changes nothing. Unknown uuids write nothing.
-    fn edit_bell_in(&self, tx: &rusqlite::Transaction<'_>, uuid: &str, edit: impl FnOnce(&mut IntervalBell)) -> Result<()> {
+    fn edit_bell(&self, uuid: &str, edit: impl FnOnce(&mut IntervalBell)) -> Result<()> {
+        let tx = self.tx()?;
         let Some(stored) = self.find_interval_bell(uuid)? else { return Ok(()) };
         let mut bell = stored.clone();
         edit(&mut bell);
         if bell == stored {
             return Ok(());
         }
-        self.write_bell_in(tx, EventKind::IntervalBellUpdate, &bell)
+        self.write_bell_in(&tx, EventKind::IntervalBellUpdate, &bell)?;
+        tx.commit()
     }
 
     /// Switch a bell on or off; the same `interval_bell_update` event
     /// as a full update, so replay handles one update kind.
     pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.edit_bell_in(&tx, uuid, |b| b.enabled = enabled)?;
-        tx.commit()?;
-        Ok(())
+        self.edit_bell(uuid, |b| b.enabled = enabled)
     }
 
     /// See `delete_synced_row`.
     pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
-        self.delete_synced_row("interval_bells", uuid, EventKind::IntervalBellDelete)
+        self.delete_synced_row("interval_bells", uuid, EventKind::IntervalBellDelete).map(drop)
     }
 
     /// Look up an interval bell by its primary-key rowid. Used by

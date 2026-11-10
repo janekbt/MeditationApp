@@ -139,7 +139,7 @@ impl Database {
         mime_type: &str,
         category: BellSoundCategory,
     ) -> Result<i64> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let rowid = self.insert_new_in("bell_sounds", uuid_str, || {
             self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, &BellSound {
                 id: 0,
@@ -158,7 +158,7 @@ impl Database {
 
     /// Record `sound` as `kind` and store it the way a peer stores it
     /// from the event.
-    fn write_bell_sound_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, sound: &BellSound) -> Result<()> {
+    fn write_bell_sound_in(&self, tx: &super::Tx<'_>, kind: EventKind, sound: &BellSound) -> Result<()> {
         self.emit_and_rebuild_in(tx, kind, sound.uuid.as_str(), serde_json::json!({
             "uuid": sound.uuid,
             "name": sound.name,
@@ -184,7 +184,7 @@ impl Database {
         // Unchanged: a fresh event would undo a rename another device
         // made in the meantime.
         if sound == stored { return Ok(()); }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         self.write_bell_sound_in(&tx, EventKind::BellSoundUpdate, &sound)?;
         tx.commit()?;
         Ok(())
@@ -193,7 +193,7 @@ impl Database {
     /// See `delete_synced_row`. The UI keeps bundled rows from being
     /// deleted; the database does not.
     pub fn delete_bell_sound(&self, uuid_str: &str) -> Result<()> {
-        self.delete_synced_row("bell_sounds", uuid_str, EventKind::BellSoundDelete)
+        self.delete_synced_row("bell_sounds", uuid_str, EventKind::BellSoundDelete).map(drop)
     }
 
     /// Every bell sound: custom imports first (the chooser puts them

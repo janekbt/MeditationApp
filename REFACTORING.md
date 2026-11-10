@@ -40,7 +40,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [ ] | P3. Failure reporting and toasts | #320, #357, #373, #328 | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
-| [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #317, #289 | HH, K3 |
+| [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
 | [ ] | P9. Stats and Log | #294, #295, #296, #297, #329, #330, #332, #334, #335, #398, #456, #457, #220, #236, #496 | T |
@@ -49,7 +49,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [ ] | P12. Android screens (Slint) | #453, #454, #458, #459, #460, #461, #464, #467, #469, #470, #471, #404, #417 | GG, T, LL |
 | [ ] | P13. Android Rust and Kotlin structure | #396, #399, #401, #405, #416, #420, #421, #433, #438, #441, #442 | FF, KK |
 | [ ] | P14. GTK structure | #312, #315, #318, #319, #321, #337, #338, #352, #359, #360, #368, #369, #376, #377, #379, #287, #333, #302, #298 | MM, II |
-| [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494, #495 (with or after K3) |  |
+| [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494, #495, #501, #502, #503, #504 |  |
 | [ ] | P16. Tests | #224, #233, #240, #262, #276, #290, #304, #322, #339, #361, #380, #432 | with each package that touches them |
 | [ ] | P17. Cleanup from the old list | #58, #61, #85, #87, #157, #167, #171, #175, #197, R12 |  |
 
@@ -469,10 +469,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: `timer/imp.rs:396-410`: a 500 ms timeout for the app's lifetime; on any local change it rebuilds the whole starred-preset list (three queries, every row recreated with its drag controllers, focus saved and restored), on top of the explicit rebuilds after chooser picks (580, 601), moves (3427), mode switches (1968) and `refresh_streak` (3348).
 - Problem: every toggle or slider save costs a full rebuild, often two within 500 ms; the app wakes twice a second while idle (Librem 5 battery).
 - Fix: on a change, recompute only the active marks on the existing rows; keep full rebuilds for list changes, which already call it; poll only while the page is mapped. Related: #283 (the core half).
-
-#### #317 Applying a preset snapshots the setup twice
-- Where: `on_preset_row_activated` builds `snapshot` (3976) for Undo, then `apply_config` builds the same `before` (3894) for its rollback; each is about 25 setting reads plus the bells and phases. The rollback itself (3893-3902, Android `ui.rs:1797`) is OPEN-ISSUES #193.
-- Fix: with #193 the rollback goes; until then pass the one snapshot to both.
 
 #### #318 Dead parts of the timer page
 - The `timer-paused` signal, its emit and `connect_timer_paused` (`mod.rs:108`, `imp.rs:371, 2415`): nobody listens (`window/imp.rs:171` says so).
@@ -1082,7 +1078,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `locale_week_start_dow` (core `date_math.rs:42-62`) is glibc `nl_langinfo` code used only by GTK (`stats/imp.rs:582-584`); it belongs in gtk `format.rs`.
 - Media: the bar anchor rule twice (gtk `mpris.rs:95`, android `app.rs:175-182`), `MediaStatus::anchor(now)`; Android's `media_tap` (`app.rs:114-123`) finds Pause or Resume in the offered buttons where GTK uses core's `toggle_action` (`mpris.rs:97, 126-128`). Related: #339.
 - `set_breathing` (core `settings_keys.rs:234-244`) writes the length unclamped and clamps on read; GTK clamps before (`timer/imp.rs:4634`), Android doesn't (`ui.rs:1847-1855`). Clamp inside.
-- Android writes a preset snapshot to JSON to parse it back (`apply_preset_json`, `ui.rs:1809-1810`): `snapshot_setup -> PresetConfig`, `.to_json()` only where stored. Related: #283, #317.
+- Android writes a preset snapshot to JSON to parse it back (`apply_preset_json`, `ui.rs:1809-1810`): `snapshot_setup -> PresetConfig`, `.to_json()` only where stored. Related: #283.
 - The default import name: GTK guided `guided.rs:142-146` copies `display_name_from_path` with an untranslated "Untitled"; Android strips the extension itself (`ui.rs:1697-1702`, #405); core's own fallback is the English "Custom sound" (`sound.rs:215-221`). Return an `Option` or a key.
 
 ## Bugs found
@@ -1152,8 +1148,13 @@ Related: #314 (one bell block instead of six): do together, or the six copies ge
 Only together with other work in the same area; none has a bug behind it.
 
 - **#494, one index for the winner of a target** (2026-11-10, /simplify of change writes-keep-peer-edits): `winning_mutate` (`db/events.rs`) and the Box Breath recompute sort every event of a target to pick one, with only `events_target_idx ON events(target_id)` (`db/schema.rs`); every local write now runs it. An additive `CREATE INDEX IF NOT EXISTS events(target_id, lamport_ts, device_id)` makes it one index seek, for replay and the start-up rebuild too. No migration.
-- **#495, one row type per synced table** (2026-11-10, /simplify of change one-path-per-table): each table still hand-writes its keyed lookup, its edit function (load, edit, compare, name check, write; vibration patterns return `bool`, bell sounds and Box Breath have no closure form) and passes its table name as a string to `insert_new_in` / `delete_synced_row`. A small `SyncedRow` trait (`TABLE`, `COLUMNS`, `from_row`, `write_in`, an equality hook for patterns and preset configs, an optional name check) with one generic `find`, `edit_row_in` and delete would make a new column one edit. Do it with or after K3's transaction helper (OPEN-ISSUES #193), which changes the same functions.
+- **#495, one row type per synced table** (2026-11-10, /simplify of change one-path-per-table): each table still hand-writes its keyed lookup, its edit function (load, edit, compare, name check, write; vibration patterns return `bool`, bell sounds and Box Breath have no closure form) and passes its table name as a string to `insert_new_in` / `delete_synced_row`. A small `SyncedRow` trait (`TABLE`, `COLUMNS`, `from_row`, `write_in`, an equality hook for patterns and preset configs, an optional name check) with one generic `find`, `edit_row_in` and delete would make a new column one edit. K3 (change writes-all-or-nothing) added the nesting `Database::tx()` and folded the `_in` twins, so a generic `edit_row` now needs no transaction parameter.
 - **#496, `query_rows` for the stats readers** (2026-11-10, /simplify of change one-path-per-table): `db/sessions.rs` median, daily totals, hour buckets, active months and days, distinct days, and `guided_file_names_from_db` still hand-write prepare, query_map, collect; `Database::query_rows` (any `FromIterator`) makes each about three lines shorter. Do with P9 (Stats and Log).
+- **#500, the Box Breath pattern edited inside one write** (2026-11-10, /simplify of change writes-all-or-nothing): Android reads the pattern (`breathing_to_change`) and writes all five values back under a second lock; GTK writes from its Cells. A core `settings_keys::edit_breathing(db, |pattern, secs|)` reading inside one `tx()` would serve both apps and close the gap a sync can land in. With OPEN-ISSUES #308 (the GTK half of the load-path defaults).
+- **#501, one "read first, lock only for a change" helper** (2026-11-10, /simplify of change writes-all-or-nothing): the seeds, crash recovery and the Box Breath phase edit each check before `tx()` and again inside it; `set_setting` and the `edit_*` helpers don't (OPEN-ISSUES #499). One core helper (`write_if(needs, write)`) would give every write the same rule.
+- **#502, readers that return `Result`** (2026-11-10, /simplify of change writes-all-or-nothing): `settings_keys` now has `read_bool`/`try_read_bool`, `read_u32`/`try_read_u32`, `breathing_from_db`/`try_breathing_from_db`, two ways to read every setting. Readers returning `Result`, with `.unwrap_or(default)` at the callers that want a default, would leave one; touches every caller in both apps.
+- **#503, savepoints through the statement cache** (2026-11-10, /simplify of change writes-all-or-nothing): `tx()`, `commit` and `Drop` send `SAVEPOINT w` / `RELEASE w` / `ROLLBACK TO w` through `execute_batch`, parsed each time; `prepare_cached` would skip the parse. Microseconds per nested write today; matters for a label merge over thousands of sessions.
+- **#504, presets carry a real label uuid** (2026-11-10, /simplify of change writes-all-or-nothing): "label on, none picked" means "the mode's default", a rule now in `apply`, `retarget_label` and `resolve_label_for_mode`. Storing the default's uuid when a preset is saved (and once for stored presets) would leave one rule; changes stored presets, so it needs a migration and is the root fix for OPEN-ISSUES #498.
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected

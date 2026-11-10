@@ -68,6 +68,16 @@ and a delete wins a tie with a mutate, so insert and delete arriving
 out of order still end deleted. A peer can drop the cache and
 rebuild it from the log at any time.
 
+Every write runs in `Database::tx()`: the outermost is an IMMEDIATE
+transaction (it waits for the sync connection's lock), one started
+inside it a savepoint, so several writes (a preset apply, a Box Breath
+pattern, a label merge) land as one or not at all. A write rolled back
+records no event, and the local-change signal that starts a sync is
+counted only when the outermost write commits. A write that would
+change nothing reads first and takes no lock where it runs at every
+start or on every Setup refresh (the seeds, crash recovery, a phase
+edit).
+
 One table is not a cache and writes no events: `local_guided_files`,
 the Guided Local Folder's files (length, star, play count, and
 `star_key`, a starred file's place in Starred Files from the same

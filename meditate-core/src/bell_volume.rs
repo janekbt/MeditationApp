@@ -217,13 +217,7 @@ pub fn write(db: &crate::db::Database, slot: BellSlot, volume: BellVolume) -> cr
     match slot {
         BellSlot::Starting => db.set_setting(STARTING_BELL_VOLUME_KEY, &percent),
         BellSlot::End(mode) => db.set_setting(end_bell_volume_key_for_mode(mode), &percent),
-        BellSlot::BoxBreathCue(phase) => {
-            let Some(p) = db.get_box_breath_phase(phase)? else { return Ok(()) };
-            db.set_box_breath_phase(
-                phase, p.enabled, p.signal_mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
-                volume,
-            )
-        }
+        BellSlot::BoxBreathCue(phase) => db.edit_box_breath_phase(phase, |p| p.volume = volume),
     }
 }
 

@@ -43,11 +43,45 @@ impl Database {
         self.query_one(&format!("SELECT {COLUMNS} FROM box_breath_phases WHERE phase = ?1"), params![phase.as_db_str()], from_row)
     }
 
-    /// Update every mutable field on a single phase row, recorded in
-    /// a `box_breath_phase_update` event carrying every column and
-    /// stored as a peer stores it. The values the row already has
-    /// write nothing: a fresh event would undo an edit another device
-    /// made in the meantime.
+    /// Change one phase as `edit` says, on the row as stored now, so a
+    /// value saved since the caller last read it stays. Recorded in a
+    /// `box_breath_phase_update` event carrying every column and stored
+    /// as a peer stores it. A row `edit` leaves as it was writes
+    /// nothing: a fresh event would undo an edit another device made in
+    /// the meantime. A row not seeded yet is made first, as the seed
+    /// makes it, so the change lands.
+    pub fn edit_box_breath_phase(&self, phase: BoxBreathPhaseId, edit: impl Fn(&mut BoxBreathPhase)) -> Result<()> {
+        // The edited row, or none when `edit` changes nothing.
+        let edited = |stored: &BoxBreathPhase| {
+            let mut row = stored.clone();
+            edit(&mut row);
+            (row != *stored).then_some(row)
+        };
+        // Nothing to change: a read, no lock (Setup echoes stored values).
+        let seeded = match self.get_box_breath_phase(phase)? {
+            Some(stored) if edited(&stored).is_none() => return Ok(()),
+            stored => stored.is_some(),
+        };
+        let tx = self.tx()?;
+        if !seeded {
+            self.seed_box_breath_phases()?;
+        }
+        let Some(row) = edited(&self.get_box_breath_phase(phase)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?) else {
+            // Keeps a row just made, so the next unchanged write is a read.
+            return tx.commit();
+        };
+        self.emit_and_rebuild_in(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), serde_json::json!({
+            "phase": phase.as_db_str(),
+            "enabled": row.enabled,
+            "signal_mode": row.signal_mode.as_db_str(),
+            "sound_uuid": row.sound_uuid,
+            "pattern_uuid": row.pattern_uuid,
+            "volume": row.volume.percent(),
+        }))?;
+        tx.commit()
+    }
+
+    /// Set every mutable field of one phase (see `edit_box_breath_phase`).
     pub fn set_box_breath_phase(
         &self,
         phase: BoxBreathPhaseId,
@@ -57,25 +91,9 @@ impl Database {
         pattern_uuid: &str,
         volume: BellVolume,
     ) -> Result<()> {
-        let row = BoxBreathPhase {
-            phase, enabled, signal_mode, volume,
-            sound_uuid: sound_uuid.into(),
-            pattern_uuid: pattern_uuid.into(),
-        };
-        if self.get_box_breath_phase(phase)?.as_ref() == Some(&row) {
-            return Ok(());
-        }
-        let tx = self.conn.unchecked_transaction()?;
-        self.emit_and_rebuild_in(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), serde_json::json!({
-            "phase": phase.as_db_str(),
-            "enabled": enabled,
-            "signal_mode": signal_mode.as_db_str(),
-            "sound_uuid": sound_uuid,
-            "pattern_uuid": pattern_uuid,
-            "volume": volume.percent(),
-        }))?;
-        tx.commit()?;
-        Ok(())
+        self.edit_box_breath_phase(phase, |p| {
+            *p = BoxBreathPhase { phase, enabled, signal_mode, volume, sound_uuid: sound_uuid.into(), pattern_uuid: pattern_uuid.into() };
+        })
     }
 
     /// Recompute the `box_breath_phases` row for `phase_id_str`
@@ -136,6 +154,59 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
+
+    #[test]
+    fn editing_one_field_keeps_a_newer_volume() {
+        // #325: the chooser opened on the old row; the volume was
+        // dragged since; picking a sound keeps the dragged volume.
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        let louder = crate::bell_volume::BellVolume::parse("80");
+        crate::bell_volume::write(&db, crate::bell_volume::BellSlot::BoxBreathCue(BoxBreathPhaseId::In), louder).unwrap();
+        db.edit_box_breath_phase(BoxBreathPhaseId::In, |p| p.sound_uuid = "gong".into()).unwrap();
+        let p = db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap();
+        assert_eq!(p.sound_uuid.as_str(), "gong");
+        assert_eq!(p.volume, louder);
+    }
+
+    #[test]
+    fn an_unchanged_phase_write_takes_no_lock() {
+        // Setup echoes stored values back on a refresh; while a sync
+        // writes, that must neither wait nor say "Save failed".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("phase.db");
+        let app = Database::open(&path).unwrap();
+        app.seed_box_breath_phases().unwrap();
+        let stored = app.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap();
+        let sync = Database::open(&path).unwrap();
+        sql(&sync, "BEGIN IMMEDIATE; INSERT INTO sync_state (key, value) VALUES ('busy', '1');");
+        app.set_busy_timeout(std::time::Duration::ZERO).unwrap();
+        app.edit_box_breath_phase(BoxBreathPhaseId::In, |p| p.signal_mode = stored.signal_mode)
+            .expect("nothing to write takes no lock");
+        sql(&sync, "COMMIT;");
+    }
+
+    #[test]
+    fn an_unchanged_write_to_a_phase_not_seeded_yet_seeds_it() {
+        // Setup echoes the defaults back; the row is then made once, so
+        // the next echo is a read again.
+        let db = Database::open_in_memory().unwrap();
+        sql(&db, "DELETE FROM box_breath_phases");
+        db.edit_box_breath_phase(BoxBreathPhaseId::In, |_| {}).unwrap();
+        assert!(db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().is_some());
+        assert_eq!(sent(&db), 0, "a seeded row is no change to send");
+    }
+
+    #[test]
+    fn editing_a_phase_not_seeded_yet_keeps_the_change() {
+        // A first start whose seed failed: the pick still lands, on the
+        // row the seed would have made.
+        let db = Database::open_in_memory().unwrap();
+        sql(&db, "DELETE FROM box_breath_phases");
+        db.edit_box_breath_phase(BoxBreathPhaseId::In, |p| p.enabled = true).unwrap();
+        assert!(db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap().enabled);
+        assert_eq!(sent(&db), 1, "the change goes to other devices");
+    }
 
     #[test]
     fn an_unchanged_phase_write_keeps_a_peers_edit() {

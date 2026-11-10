@@ -262,3 +262,8 @@ pub(crate) fn release_v26_11_0_database() -> super::Database {
     .unwrap();
     super::Database::init(conn).unwrap()
 }
+
+/// Run raw SQL on `db`, e.g. a trigger that makes a write fail.
+pub(crate) fn sql(db: &Database, sql: &str) {
+    db.conn.execute_batch(sql).unwrap();
+}

@@ -22,14 +22,7 @@ impl Database {
     /// here, and a fresh event would only push noise and could beat a
     /// newer value a peer set in the meantime.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.set_setting_in(&tx, key, value)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// `set_setting` inside the caller's transaction.
-    pub(super) fn set_setting_in(&self, tx: &rusqlite::Transaction<'_>, key: &str, value: &str) -> Result<()> {
+        let tx = self.tx()?;
         let stored: Option<String> = self.conn.query_row(
             "SELECT value FROM settings WHERE key = ?1",
             params![key],
@@ -43,7 +36,8 @@ impl Database {
             "key": key,
             "value": value,
         }).to_string();
-        self.emit_event(tx, EventKind::SettingChanged, key, payload)
+        self.emit_event(&tx, EventKind::SettingChanged, key, payload)?;
+        tx.commit()
     }
 
     /// Recompute the `settings` value for `key` from the events table.

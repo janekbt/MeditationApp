@@ -172,8 +172,8 @@ impl Database {
     ) -> Result<(i64, Session)> {
         let notes = super::sessions::note_or_none(&session.notes).map(str::to_owned);
         let session = Session { notes, ..session.clone() };
-        let tx = self.conn.unchecked_transaction()?;
-        let (rowid, uuid) = self.insert_session_tx_less(&tx, &session)?;
+        let tx = self.tx()?;
+        let (rowid, uuid) = self.insert_new_session(&session)?;
         self.conn.execute(
             "DELETE FROM session_in_progress WHERE id = 1 AND start_iso = ?1",
             [&session.start_iso],
@@ -186,6 +186,21 @@ impl Database {
         }
         tx.commit()?;
         Ok((rowid, Session { uuid: super::SessionUuid::new(uuid), ..session }))
+    }
+
+    /// Undo a session save: delete the session and take back the play
+    /// it counted on local file `local_file_id`, together. A session
+    /// already gone (deleted in the Log, by a peer) takes nothing back.
+    pub fn undo_session_save(&self, uuid: &str, local_file_id: Option<i64>) -> Result<()> {
+        let tx = self.tx()?;
+        let had = self.delete_synced_row("sessions", uuid, super::EventKind::SessionDelete)?;
+        if let (true, Some(id)) = (had, local_file_id) {
+            self.conn.execute(
+                "UPDATE local_guided_files SET play_count = MAX(play_count - 1, 0) WHERE id = ?1",
+                [id],
+            )?;
+        }
+        tx.commit()
     }
 
     /// Atomic crash-recovery primitive. Reads the in-flight snapshot;
@@ -201,7 +216,11 @@ impl Database {
     /// session — the typical clean shutdown), and for a 0 s one,
     /// which it drops.
     pub fn finalize_session_in_progress(&self) -> Result<Option<FinalizedSession>> {
-        let tx = self.conn.unchecked_transaction()?;
+        // Nothing to recover (every clean start): a read, no lock.
+        if self.get_session_in_progress()?.is_none() {
+            return Ok(None);
+        }
+        let tx = self.tx()?;
         let snapshot = self.get_session_in_progress()?;
         let Some(snapshot) = snapshot else {
             return Ok(None);
@@ -222,7 +241,7 @@ impl Database {
             guided_file_uuid: snapshot.guided_file_uuid,
             guided_file_name: snapshot.guided_file_name,
         };
-        let (_rowid, session_uuid) = self.insert_session_tx_less(&tx, &session)?;
+        let (_rowid, session_uuid) = self.insert_new_session(&session)?;
         self.conn.execute(
             "DELETE FROM session_in_progress WHERE id = 1",
             [],
@@ -391,6 +410,20 @@ mod tests {
         assert_eq!(db.get_session_in_progress().unwrap(), None, "the snapshot is gone");
         assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 0);
         assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_start_with_nothing_to_recover_takes_no_lock() {
+        // Every start asks; with no snapshot a sync write elsewhere
+        // must not hold up the open.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recover.db");
+        let app = Database::open(&path).unwrap();
+        let sync = Database::open(&path).unwrap();
+        crate::db::test_helpers::sql(&sync, "BEGIN IMMEDIATE; INSERT INTO sync_state (key, value) VALUES ('busy', '1');");
+        app.set_busy_timeout(std::time::Duration::ZERO).unwrap();
+        assert!(app.finalize_session_in_progress().expect("nothing to recover takes no lock").is_none());
+        crate::db::test_helpers::sql(&sync, "COMMIT;");
     }
 
     #[test]

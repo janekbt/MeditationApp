@@ -148,6 +148,74 @@ impl StarredState {
 pub struct Database {
     conn: Connection,
     local_changes: LocalChanges,
+    /// A local event was recorded in the open write; counted at its
+    /// commit, when a sync on another connection can see it.
+    changed: std::cell::Cell<bool>,
+    /// Writes open now (`Tx`s alive); 0 means the next is outermost.
+    depth: std::cell::Cell<u32>,
+    /// A nested write's undo failed, so its writes may still be there:
+    /// the outer write must not commit.
+    broken: std::cell::Cell<bool>,
+}
+
+/// A write from [`Database::tx`]. Dropped without [`Tx::commit`] (an
+/// error, a panic) it undoes its own writes and nothing outside it.
+pub(crate) struct Tx<'a> {
+    db: &'a Database,
+    outer: bool,
+    /// Whether a change was marked before this write began, so an
+    /// undone nested write drops only its own.
+    changed_before: bool,
+    committed: bool,
+}
+
+/// A write refused because the write it is part of can't land whole.
+fn aborted(why: &str) -> DbError {
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ABORT), Some(why.into())).into()
+}
+
+impl Tx<'_> {
+    pub(crate) fn commit(mut self) -> Result<()> {
+        if self.db.broken.get() {
+            // Drop undoes all of it.
+            return Err(aborted("a part of this write could not be undone"));
+        }
+        self.db.conn.execute_batch(if self.outer { "COMMIT" } else { "RELEASE w" })?;
+        self.committed = true;
+        if self.outer && self.db.changed.replace(false) {
+            self.db.local_changes.bump();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Tx<'_> {
+    fn drop(&mut self) {
+        self.db.depth.set(self.db.depth.get() - 1);
+        if self.committed {
+            return;
+        }
+        // Drop can't return it; the write's own error already went up.
+        // Back in autocommit, SQLite undid it all itself (disk full).
+        if !self.db.conn.is_autocommit() {
+            let undo = if self.outer { "ROLLBACK" } else { "ROLLBACK TO w; RELEASE w" };
+            if let Err(e) = self.db.conn.execute_batch(undo) {
+                crate::diag::log("db.tx", &format!("undo failed: {e}"));
+                self.db.broken.set(!self.outer);
+            }
+        }
+        if self.outer {
+            self.db.broken.set(false);
+        }
+        self.db.changed.set(!self.outer && self.changed_before);
+    }
+}
+
+impl std::ops::Deref for Tx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.db.conn
+    }
 }
 
 /// Mint a fresh v4 UUID. Exposed so the shell (which doesn't have
@@ -261,12 +329,7 @@ impl Database {
         Ok(self.conn.busy_timeout(timeout)?)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
-        // Writers take the lock when their transaction begins, so they
-        // wait out busy_timeout. A deferred transaction that reads
-        // first fails at once (SQLITE_BUSY) when another connection
-        // writes in between. Every transaction here writes.
-        conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
+    fn init(conn: Connection) -> Result<Self> {
         // Refuse to open a DB whose user_version exceeds what this
         // build knows how to read — a downgrade from a future build
         // could otherwise drop forward-only data silently. A fresh
@@ -323,7 +386,7 @@ impl Database {
         // the known-remote trackers are cached too; cost is
         // per-statement memory, negligible at this count.
         conn.set_prepared_statement_cache_capacity(64);
-        let db = Self { conn, local_changes: LocalChanges::default() };
+        let db = Self { conn, local_changes: LocalChanges::default(), changed: std::cell::Cell::new(false), depth: std::cell::Cell::new(0), broken: std::cell::Cell::new(false) };
         db.rebuild_events_from_older_builds()?;
         db.rename_unrebuilt_kansho()?;
         Ok(db)
@@ -364,6 +427,29 @@ impl Database {
         Ok(())
     }
 
+    /// Start one write. The outermost is a transaction that waits for
+    /// the lock; one started inside it is a savepoint, so writes nest.
+    /// IMMEDIATE takes the lock at the start, so a write waits out
+    /// busy_timeout; a deferred one that reads first would fail at once
+    /// (SQLITE_BUSY) when another connection writes in between.
+    pub(crate) fn tx(&self) -> Result<Tx<'_>> {
+        let outer = self.depth.get() == 0;
+        if outer && !self.conn.is_autocommit() {
+            // Left open by an undo that failed (its write already said
+            // so); nesting in it would lose every later write.
+            crate::diag::log("db.tx", "ending a transaction no write owns");
+            self.conn.execute_batch("ROLLBACK")?;
+        }
+        if !outer && self.conn.is_autocommit() {
+            // SQLite undid the write this one is part of (disk full);
+            // a savepoint now would commit on its own.
+            return Err(aborted("the write this belongs to was undone"));
+        }
+        self.conn.execute_batch(if outer { "BEGIN IMMEDIATE" } else { "SAVEPOINT w" })?;
+        self.depth.set(self.depth.get() + 1);
+        Ok(Tx { db: self, outer, changed_before: self.changed.get(), committed: false })
+    }
+
     /// Write a new synced row through `write` and return its rowid. A
     /// row already there under `uuid` (a repeated import or seed) is
     /// returned as it is, with no write and no event.
@@ -383,24 +469,14 @@ impl Database {
     /// Delete the synced row `uuid` and record `kind`, its tombstone.
     /// An unknown uuid writes nothing and sends no tombstone: a peer
     /// would otherwise get one for a row it never knew.
-    pub(super) fn delete_synced_row(&self, table: &'static str, uuid: &str, kind: EventKind) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.delete_synced_row_in(&tx, table, uuid, kind)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub(super) fn delete_synced_row_in(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        table: &'static str,
-        uuid: &str,
-        kind: EventKind,
-    ) -> Result<()> {
-        if self.delete_row(table, uuid)? {
-            self.emit_tombstone(tx, kind, uuid)?;
+    pub(super) fn delete_synced_row(&self, table: &'static str, uuid: &str, kind: EventKind) -> Result<bool> {
+        let tx = self.tx()?;
+        let deleted = self.delete_row(table, uuid)?;
+        if deleted {
+            self.emit_tombstone(&tx, kind, uuid)?;
         }
-        Ok(())
+        tx.commit()?;
+        Ok(deleted)
     }
 
     /// Delete row `uuid` from `table`; the caller decides on the event.
@@ -410,7 +486,7 @@ impl Database {
         Ok(self.conn.prepare_cached(&sql)?.execute(rusqlite::params![uuid])? > 0)
     }
 
-    pub(super) fn emit_tombstone(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, uuid: &str) -> Result<()> {
+    pub(super) fn emit_tombstone(&self, tx: &Tx<'_>, kind: EventKind, uuid: &str) -> Result<()> {
         self.emit_event(tx, kind, uuid, serde_json::json!({ "uuid": uuid }).to_string())
     }
 
@@ -449,7 +525,7 @@ impl Database {
         self.query_one(&format!("SELECT uuid FROM {table} WHERE id = ?1"), rusqlite::params![id], |row| row.get(0))
     }
 
-    pub(super) fn existing_rowid_by_uuid(
+    pub(crate) fn existing_rowid_by_uuid(
         &self,
         table: &'static str,
         uuid: &str,
@@ -462,6 +538,113 @@ impl Database {
 mod tests {
     use super::*;
     use crate::test_macros::assert_matches;
+
+    fn kv(db: &Database, key: &str) -> Option<String> {
+        db.query_one("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).unwrap()
+    }
+
+    fn put(db: &Database, key: &str) -> Result<()> {
+        db.conn.execute("INSERT INTO settings (key, value) VALUES (?1, 'x')", [key])?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_transaction_left_open_by_a_failed_undo_does_not_swallow_later_writes() {
+        // An undo that failed left the connection in a transaction no
+        // write owns; the next write must still land, not nest in it.
+        let db = Database::open_in_memory().unwrap();
+        db.conn.execute_batch("BEGIN;").unwrap();
+        db.set_setting("k", "v").unwrap();
+        assert!(db.conn.is_autocommit(), "the write committed");
+        assert_eq!(kv(&db, "k").as_deref(), Some("v"));
+    }
+
+    #[test]
+    fn an_unchanged_write_after_a_change_keeps_the_change_signal() {
+        // An unchanged setting returns without committing its nested
+        // write; the change before it in the same write still counts.
+        let db = Database::open_in_memory().unwrap();
+        let mut watch = LocalChangeWatch::new(db.local_changes());
+        let outer = db.tx().unwrap();
+        db.set_setting("k", "v").unwrap();
+        db.set_setting("k", "v").unwrap();
+        outer.commit().unwrap();
+        assert!(watch.take_new());
+    }
+
+    #[test]
+    fn a_write_inside_one_sqlite_undid_itself_fails() {
+        // Disk full: SQLite rolls the whole write back on its own. A
+        // nested write after that must fail, not commit on its own.
+        let db = Database::open_in_memory().unwrap();
+        let outer = db.tx().unwrap();
+        db.conn.execute_batch("ROLLBACK;").unwrap();
+        assert!(db.set_setting("k", "v").is_err());
+        assert_eq!(kv(&db, "k"), None);
+        drop(outer);
+        db.set_setting("k", "w").expect("the next write works");
+    }
+
+    #[test]
+    fn a_nested_write_whose_undo_failed_fails_the_whole_write() {
+        // Its writes may still be there: the outer commit must not keep
+        // half of it.
+        let db = Database::open_in_memory().unwrap();
+        let outer = db.tx().unwrap();
+        put(&db, "outer").unwrap();
+        let inner = db.tx().unwrap();
+        put(&db, "inner").unwrap();
+        db.conn.execute_batch("RELEASE w;").unwrap(); // its undo now fails
+        drop(inner);
+        assert!(outer.commit().is_err());
+        assert_eq!(kv(&db, "inner"), None);
+        assert_eq!(kv(&db, "outer"), None);
+        db.set_setting("k", "v").expect("the next write works");
+    }
+
+    #[test]
+    fn a_nested_write_undone_sends_no_change_signal() {
+        let db = Database::open_in_memory().unwrap();
+        let mut watch = LocalChangeWatch::new(db.local_changes());
+        let outer = db.tx().unwrap();
+        put(&db, "outer").unwrap();
+        let inner = db.tx().unwrap();
+        db.set_setting("k", "v").unwrap();
+        drop(inner);
+        outer.commit().unwrap();
+        assert!(!watch.take_new(), "the only event was undone");
+    }
+
+    #[test]
+    fn a_nested_write_that_fails_rolls_back_only_itself() {
+        let db = Database::open_in_memory().unwrap();
+        let outer = db.tx().unwrap();
+        put(&db, "outer").unwrap();
+        let inner = db.tx().unwrap();
+        put(&db, "inner").unwrap();
+        drop(inner); // an error before its commit
+        outer.commit().unwrap();
+        assert_eq!(kv(&db, "outer").as_deref(), Some("x"));
+        assert_eq!(kv(&db, "inner"), None);
+    }
+
+    #[test]
+    fn an_outer_write_that_fails_rolls_back_the_nested_ones() {
+        let db = Database::open_in_memory().unwrap();
+        let outer = db.tx().unwrap();
+        let inner = db.tx().unwrap();
+        put(&db, "inner").unwrap();
+        inner.commit().unwrap();
+        put(&db, "outer").unwrap();
+        drop(outer); // an error before its commit
+        assert_eq!(kv(&db, "inner"), None);
+        assert_eq!(kv(&db, "outer"), None);
+        // The connection is usable again: the next write commits.
+        let next = db.tx().unwrap();
+        put(&db, "after").unwrap();
+        next.commit().unwrap();
+        assert_eq!(kv(&db, "after").as_deref(), Some("x"));
+    }
 
     #[test]
     fn every_list_has_the_same_order_on_every_device() {

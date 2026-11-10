@@ -170,8 +170,12 @@ pub fn format_bool(b: bool) -> &'static str {
 /// The `default`-as-fallback-string handling stays inside the helper
 /// so callers only express their domain default.
 pub fn read_bool(db: &Database, key: &str, default: bool) -> bool {
-    db.get_setting(key, format_bool(default))
-        .map_or(default, |v| parse_bool(&v))
+    try_read_bool(db, key, default).unwrap_or(default)
+}
+
+/// `read_bool` that passes a failed read on.
+pub fn try_read_bool(db: &Database, key: &str, default: bool) -> crate::db::Result<bool> {
+    db.get_setting(key, format_bool(default)).map(|v| parse_bool(&v))
 }
 
 /// Read a string settings row, falling back to `default` when the
@@ -196,9 +200,12 @@ pub fn read_signal_mode(db: &Database, key: &str, default: SignalMode) -> Signal
 /// Read a `u32` settings row, falling back to `default` when the
 /// row is missing or the stored value isn't a parseable u32.
 pub fn read_u32(db: &Database, key: &str, default: u32) -> u32 {
-    read_str(db, key, &default.to_string())
-        .parse::<u32>()
-        .unwrap_or(default)
+    try_read_u32(db, key, default).unwrap_or(default)
+}
+
+/// `read_u32` that passes a failed read on.
+pub fn try_read_u32(db: &Database, key: &str, default: u32) -> crate::db::Result<u32> {
+    db.get_setting(key, &default.to_string()).map(|v| v.parse::<u32>().unwrap_or(default))
 }
 
 /// Per-mode keep-screen-awake reader. Shell calls this on visit
@@ -221,14 +228,21 @@ pub fn set_timer_session_secs(db: &Database, secs: u32) -> crate::db::Result<()>
 /// Box Breath's phase pattern and session length, clamped so a value
 /// out of range (from sync or an old version) still loads cleanly.
 pub fn breathing_from_db(db: &Database) -> (crate::breath::BreathPattern, u32) {
+    try_breathing_from_db(db).unwrap_or_else(|_| {
+        (crate::breath::BreathPattern::box_breath(), crate::session::BREATHING_DEFAULT_SECS)
+    })
+}
+
+/// `breathing_from_db` that passes a failed read on.
+pub fn try_breathing_from_db(db: &Database) -> crate::db::Result<(crate::breath::BreathPattern, u32)> {
     let pattern = crate::breath::BreathPattern::clamp_from_raw(
-        read_u32(db, "breathing_in", 4),
-        read_u32(db, "breathing_hold_in", 4),
-        read_u32(db, "breathing_out", 4),
-        read_u32(db, "breathing_hold_out", 4),
+        try_read_u32(db, "breathing_in", 4)?,
+        try_read_u32(db, "breathing_hold_in", 4)?,
+        try_read_u32(db, "breathing_out", 4)?,
+        try_read_u32(db, "breathing_hold_out", 4)?,
     );
-    let secs = read_u32(db, "breathing_session_secs", crate::session::BREATHING_DEFAULT_SECS);
-    (pattern, crate::breath::clamp_session_secs(secs))
+    let secs = try_read_u32(db, "breathing_session_secs", crate::session::BREATHING_DEFAULT_SECS)?;
+    Ok((pattern, crate::breath::clamp_session_secs(secs)))
 }
 
 pub fn set_breathing(
@@ -236,11 +250,14 @@ pub fn set_breathing(
     pattern: crate::breath::BreathPattern,
     secs: u32,
 ) -> crate::db::Result<()> {
+    // All five or none: a mixed pattern would reach every device.
+    let tx = db.tx()?;
     db.set_setting("breathing_in", &pattern.in_secs.to_string())?;
     db.set_setting("breathing_hold_in", &pattern.hold_in.to_string())?;
     db.set_setting("breathing_out", &pattern.out_secs.to_string())?;
     db.set_setting("breathing_hold_out", &pattern.hold_out.to_string())?;
-    db.set_setting("breathing_session_secs", &secs.to_string())
+    db.set_setting("breathing_session_secs", &secs.to_string())?;
+    tx.commit()
 }
 
 /// Android plays every bell as an alarm instead of as media (#10): on
@@ -658,5 +675,28 @@ mod tests {
             default_label_uuid_for_mode(SessionMode::Guided),
             DEFAULT_GUIDED_LABEL_UUID
         );
+    }
+    #[test]
+    fn a_breath_pattern_that_fails_halfway_stores_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        set_breathing(&db, crate::breath::BreathPattern::clamp_from_raw(4, 4, 4, 4), 300).unwrap();
+        let before = crate::db::test_helpers::sent(&db);
+        crate::db::test_helpers::sql(&db,
+            "CREATE TEMP TRIGGER full BEFORE UPDATE ON settings WHEN NEW.key = 'breathing_hold_out'
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
+        let pattern = crate::breath::BreathPattern::clamp_from_raw(5, 7, 8, 2);
+        assert!(set_breathing(&db, pattern, 600).is_err());
+        for (key, old) in [("breathing_in", "4"), ("breathing_hold_in", "4"), ("breathing_out", "4"), ("breathing_hold_out", "4"), ("breathing_session_secs", "300")] {
+            assert_eq!(db.get_setting(key, "unset").unwrap(), old, "{key}");
+        }
+        assert_eq!(crate::db::test_helpers::sent(&db), before, "nothing goes to other devices");
+    }
+    #[test]
+    fn an_unreadable_breath_pattern_is_an_error_not_the_default() {
+        // "Save current setup" in Box Breath must not store 4-4-4-4
+        // in place of a pattern it couldn't read (#291).
+        let db = Database::open_in_memory().unwrap();
+        crate::db::test_helpers::sql(&db, "ALTER TABLE settings RENAME TO gone");
+        assert!(try_breathing_from_db(&db).is_err());
     }
 }

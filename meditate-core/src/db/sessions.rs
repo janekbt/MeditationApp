@@ -406,28 +406,17 @@ impl Database {
 
 
     pub fn insert_session(&self, session: &Session) -> Result<i64> {
-        let tx = self.conn.unchecked_transaction()?;
-        let (rowid, _uuid) = self.insert_session_tx_less(&tx, session)?;
-        tx.commit()?;
-        Ok(rowid)
+        Ok(self.insert_new_session(session)?.0)
     }
 
-    /// Transaction-less core of `insert_session`. Inserts the row,
-    /// emits the `session_insert` event, returns `(rowid,
-    /// session_uuid)`. The caller is responsible for opening +
-    /// committing the surrounding transaction. Split out so
-    /// `finalize_session_in_progress` can atomically insert the
-    /// session AND clear the in-progress row inside one outer
-    /// transaction — without this, the gap between insert.commit
-    /// and the subsequent clear would let a crash double-finalize
-    /// the same in-flight session on the next launch.
-    pub(super) fn insert_session_tx_less(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        session: &Session,
-    ) -> Result<(i64, String)> {
+    /// Insert `session` under a new uuid and record it; returns
+    /// `(rowid, session_uuid)`.
+    pub(super) fn insert_new_session(&self, session: &Session) -> Result<(i64, String)> {
+        let tx = self.tx()?;
         let fresh = Session { uuid: super::SessionUuid::new(super::mint_uuid()), ..session.clone() };
-        Ok(self.insert_sessions_in(tx, std::slice::from_ref(&fresh))?.remove(0))
+        let row = self.insert_sessions_in(&tx, std::slice::from_ref(&fresh))?.remove(0);
+        tx.commit()?;
+        Ok(row)
     }
 
     /// Every `(start_iso, duration_secs)` pair currently in the
@@ -449,7 +438,7 @@ impl Database {
         labels: &[(String, Option<super::LabelUuid>)],
         rows: &[(Session, Option<usize>)],
     ) -> Result<usize> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let mut ids: std::collections::HashSet<String> = self.query_rows("SELECT uuid FROM sessions", [], |row| row.get(0))?;
         let mut seen = self.session_start_duration_pairs()?;
         let mut label_ids: std::collections::HashMap<usize, i64> = std::collections::HashMap::new();
@@ -464,7 +453,7 @@ impl Database {
                     Some(&id) => id,
                     None => {
                         let (name, uuid) = &labels[i];
-                        let id = self.label_for_import(&tx, name, uuid.as_ref())?;
+                        let id = self.label_for_import(name, uuid.as_ref())?;
                         label_ids.insert(i, id);
                         id
                     }
@@ -481,7 +470,7 @@ impl Database {
     /// Insert `sessions` inside `tx`, each with its own id or, when
     /// blank, a new one, and a label that is gone saved as none (see
     /// `session_label`). Returns each row's `(rowid, uuid)`.
-    fn insert_sessions_in(&self, tx: &rusqlite::Transaction<'_>, sessions: &[Session]) -> Result<Vec<(i64, String)>> {
+    fn insert_sessions_in(&self, tx: &super::Tx<'_>, sessions: &[Session]) -> Result<Vec<(i64, String)>> {
         let mut stmt = tx.prepare_cached(
             "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -516,7 +505,7 @@ impl Database {
     /// Delete a session by its uuid (the crash-recovery Undo has no
     /// rowid). See `delete_synced_row`.
     pub fn delete_session_by_uuid(&self, uuid: &str) -> Result<()> {
-        self.delete_synced_row("sessions", uuid, EventKind::SessionDelete)
+        self.delete_synced_row("sessions", uuid, EventKind::SessionDelete).map(drop)
     }
 
     /// Remove every session row. Returns how many rows were deleted.
@@ -524,7 +513,7 @@ impl Database {
     /// event per row that was actually present, so peers tombstone the
     /// same set we cleared locally.
     pub fn delete_all_sessions(&self) -> Result<usize> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let uuids: Vec<String> = self.conn.prepare("DELETE FROM sessions RETURNING uuid")?
             .query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
         for uuid in &uuids {
@@ -538,13 +527,7 @@ impl Database {
     /// no-ops AND emit no event — peers would otherwise receive an update
     /// referencing a uuid we don't have.
     pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.update_session_in(&tx, id, session)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub(super) fn update_session_in(&self, tx: &rusqlite::Transaction<'_>, id: i64, session: &Session) -> Result<()> {
+        let tx = self.tx()?;
         let Some(stored) = session_by_id(self, id)? else {
             return Ok(());
         };
@@ -580,7 +563,8 @@ impl Database {
             ],
         )?;
         let payload = session_payload(session.uuid.as_str(), session, label_uuid.as_deref());
-        self.emit_event(tx, EventKind::SessionUpdate, session.uuid.as_str(), payload)
+        self.emit_event(&tx, EventKind::SessionUpdate, session.uuid.as_str(), payload)?;
+        tx.commit()
     }
 
 

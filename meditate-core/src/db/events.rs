@@ -250,7 +250,7 @@ impl Database {
         if marker == last && cache_current {
             return Ok(());
         }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         // Each target once, skipping what applying the event skipped.
         let touched: std::collections::HashSet<(EntityKind, String)> = self.conn
             .prepare("SELECT DISTINCT kind, target_id FROM events WHERE id > ?1")?
@@ -384,7 +384,7 @@ impl Database {
     /// Box-Breath mode requires those rows to render, and the seed
     /// is gate-less so it's safe to call directly.
     pub(crate) fn wipe_local_event_log(&self) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         tx.execute("DELETE FROM known_remote_files", [])?;
         tx.execute("DELETE FROM known_remote_sounds", [])?;
         tx.execute("DELETE FROM known_remote_guided_files", [])?;
@@ -431,7 +431,7 @@ impl Database {
     /// Empty input is a no-op.
     pub fn mark_events_synced(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() { return Ok(()); }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         {
             let mut stmt = tx.prepare(
                 "UPDATE events SET synced = 1 WHERE id = ?1")?;
@@ -453,8 +453,7 @@ impl Database {
     ///
     /// # Precondition
     ///
-    /// **Every caller must already be inside an `unchecked_transaction`
-    /// on `self.conn`.** Three steps run in sequence on `self.conn`
+    /// **Every caller must already be inside a write (`Database::tx`).** Three steps run in sequence on `self.conn`
     /// (Lamport bump, event append, the caller's own data write), and
     /// a partial failure between any pair is corrupting:
     ///
@@ -469,12 +468,11 @@ impl Database {
     ///
     /// The `tx` parameter is the type-level witness for that
     /// precondition: you cannot call this without having opened a
-    /// transaction. The handle wraps the same connection
-    /// (`unchecked_transaction` on `self.conn`), so the three writes
+    /// transaction. The handle wraps the same connection, so the three writes
     /// commit or roll back together with the caller's data write.
     pub(super) fn emit_event(
         &self,
-        tx: &rusqlite::Transaction<'_>,
+        tx: &super::Tx<'_>,
         kind: EventKind,
         target_id: &str,
         payload: String,
@@ -493,9 +491,8 @@ impl Database {
         };
         let id = self.append_event(&event)?;
         self.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, &id.to_string())?;
-        // Counted before the caller commits; a write that then rolls
-        // back costs at most one empty sync.
-        self.local_changes.bump();
+        // Counted when the outermost write commits (`Tx::commit`).
+        self.changed.set(true);
         Ok(())
     }
 
@@ -505,7 +502,7 @@ impl Database {
     /// the clash lasts.
     pub(super) fn emit_and_rebuild_in(
         &self,
-        tx: &rusqlite::Transaction<'_>,
+        tx: &super::Tx<'_>,
         kind: EventKind,
         target_id: &str,
         mut payload: serde_json::Value,
@@ -700,7 +697,7 @@ impl Database {
     /// ~10k targets) this drops the 2–3× duplicate-recompute factor.
     pub fn replay_events(&self, events: &[Event]) -> Result<()> {
         if events.is_empty() { return Ok(()); }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let mut sorted: Vec<&Event> = events.iter().collect();
         sorted.sort_by(|a, b| {
             a.lamport_ts.cmp(&b.lamport_ts)

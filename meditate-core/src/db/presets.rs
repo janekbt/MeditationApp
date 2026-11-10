@@ -153,7 +153,7 @@ impl Database {
     /// Insert `preset` under its uuid and times (its id is ignored).
     fn insert_preset_at(&self, preset: &Preset) -> Result<i64> {
         let uuid_str = preset.uuid.as_str();
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let rowid = self.insert_new_in("presets", uuid_str, || {
             // Checked first: the rebuild would suffix a taken name instead.
             if is_preset_name_taken_from_db(self, &preset.name, uuid_str)? {
@@ -166,7 +166,7 @@ impl Database {
     }
 
     /// Record `preset` as `kind` and store it the way a peer stores it.
-    fn write_preset_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, preset: &Preset) -> Result<()> {
+    fn write_preset_in(&self, tx: &super::Tx<'_>, kind: EventKind, preset: &Preset) -> Result<()> {
         let uuid = preset.uuid.as_str();
         self.emit_and_rebuild_in(tx, kind, uuid, serde_json::json!({
             "uuid": uuid,
@@ -182,12 +182,8 @@ impl Database {
     /// Apply `edit` to the stored preset and write it, unless that
     /// changes nothing: a fresh event would undo an edit another
     /// device made in the meantime. Unknown uuids write nothing.
-    pub(super) fn edit_preset_in(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        uuid_str: &str,
-        edit: impl FnOnce(&mut Preset),
-    ) -> Result<()> {
+    pub(super) fn edit_preset(&self, uuid_str: &str, edit: impl FnOnce(&mut Preset)) -> Result<()> {
+        let tx = self.tx()?;
         let Some(stored) = find_preset_by_uuid_from_db(self, uuid_str)? else { return Ok(()) };
         let mut preset = stored.clone();
         edit(&mut preset);
@@ -203,14 +199,8 @@ impl Database {
             return Err(DbError::DuplicatePreset(preset.name));
         }
         preset.updated_iso = chrono::Utc::now().to_rfc3339();
-        self.write_preset_in(tx, EventKind::PresetUpdate, &preset)
-    }
-
-    fn edit_preset(&self, uuid_str: &str, edit: impl FnOnce(&mut Preset)) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.edit_preset_in(&tx, uuid_str, edit)?;
-        tx.commit()?;
-        Ok(())
+        self.write_preset_in(&tx, EventKind::PresetUpdate, &preset)?;
+        tx.commit()
     }
 
     /// Rename a preset. Unknown uuids and the current name write
@@ -241,7 +231,7 @@ impl Database {
     /// presets get fresh times 1 ms apart from now.
     /// Unknown uuids and a move onto the same place write nothing.
     pub fn move_preset(&self, uuid_str: &str, to: usize) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let Some(row) = find_preset_by_uuid_from_db(self, uuid_str)? else { return Ok(()); };
         let mut list = list_presets_for_mode_from_db(self, row.mode)?;
         let from = list.iter().position(|p| p.uuid == row.uuid).expect("a preset is listed under its mode");
@@ -255,7 +245,7 @@ impl Database {
             None => times = super::order_key::fresh_keys(list.len()),
         }
         for (p, created_iso) in list.iter().zip(times) {
-            self.edit_preset_in(&tx, p.uuid.as_str(), |p| p.created_iso = created_iso)?;
+            self.edit_preset(p.uuid.as_str(), |p| p.created_iso = created_iso)?;
         }
         tx.commit()?;
         Ok(())
@@ -283,7 +273,7 @@ impl Database {
 
     /// See `delete_synced_row`.
     pub fn delete_preset(&self, uuid_str: &str) -> Result<()> {
-        self.delete_synced_row("presets", uuid_str, EventKind::PresetDelete)
+        self.delete_synced_row("presets", uuid_str, EventKind::PresetDelete).map(drop)
     }
 
     /// Recompute the `presets` row for `preset_uuid` from the events

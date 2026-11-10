@@ -968,8 +968,9 @@ pub fn remove_stale_import_files(dir: &std::path::Path) {
 pub enum PendingUndo {
     /// Hidden Log cards; the rows wait in the feed's pending deletes.
     LogDeletes,
-    /// A crash-recovered session's uuid.
-    Recovery(String),
+    /// A saved session's uuid (crash-recovered or auto-finished), and
+    /// the local file it counted a play on.
+    Recovery(String, Option<i64>),
     /// The pre-apply snapshot. A mode switch closes the snackbar, so
     /// it always belongs to the mode shown.
     PresetApply(String),
@@ -1397,8 +1398,8 @@ mod tests {
     #[test]
     fn a_new_notice_hands_back_the_one_it_replaces() {
         let mut n = Notice::default();
-        assert_eq!(n.show(Some(PendingUndo::Recovery("u".into()))), None);
-        assert_eq!(n.show(Some(apply())), Some(PendingUndo::Recovery("u".into())));
+        assert_eq!(n.show(Some(PendingUndo::Recovery("u".into(), None))), None);
+        assert_eq!(n.show(Some(apply())), Some(PendingUndo::Recovery("u".into(), None)));
         assert_eq!(n.show(None), Some(apply()), "a plain message replaces it too");
         assert_eq!(n.take(), None);
     }
@@ -2730,6 +2731,33 @@ mod tests {
         assert!(start[..400].contains("invoke_import_failed()"), "and the user hears why");
     }
 
+    #[test]
+    fn a_breath_pattern_that_cannot_be_read_is_never_written_back_as_the_default() {
+        // #291 / #306: the snapshot and the two writes that start from
+        // the stored pattern read it with the error passed on, never
+        // through the reader that falls back to 4-4-4-4.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let body = |sig: &str| {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig}"));
+            &code[at..at + code[at..].find("\n}\n").unwrap()]
+        };
+        assert!(body("fn snapshot_setup_json(").contains("try_breathing_from_db("));
+        let change = body("fn breathing_to_change(");
+        assert!(change.contains("read_or_say(") && change.contains("try_breathing_from_db("), "a failed read says so and gives nothing");
+        let say = body("fn read_or_say<");
+        let failed = &say[say.find("setting_saved(").expect("says Save failed")..];
+        assert!(failed[..failed.find('}').unwrap()].trim_end().ends_with("None"), "a failed read gives nothing to write");
+        for default in ["box_breath()", "BREATHING_DEFAULT_SECS", "read_breathing(", "::breathing_from_db("] {
+            assert!(!change.contains(default), "no default to write back: {default}");
+        }
+        let adjust = &code[code.find("ui.on_bb_adjust(").unwrap()..];
+        assert!(adjust[..adjust.find("write_breathing(").unwrap()].contains("breathing_to_change(&ui)"));
+        let commit = &code[code.find("ui.on_duration_committed(").unwrap()..];
+        assert!(commit[..commit.find("write_breathing(").unwrap()].contains("breathing_to_change(&ui)"));
+    }
+
     /// Settings sync, so a pull must reload the per-mode Setup values
     /// the same way a mode switch and startup do; it reloaded only the
     /// label switch.
@@ -2978,14 +3006,12 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
-        let outer = code.find("fn apply_preset_once(").unwrap();
-        let outer = &code[outer..outer + code[outer..].find("\n}\n").unwrap()];
-        // Every failure says so: a bad config, the apply, the length.
-        let wrapper = &code[code.find("fn apply_preset_json(").unwrap()..];
-        assert!(wrapper[..wrapper.find("\n}\n").unwrap()].contains("show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);"), "a bad config");
-        assert!(outer.contains("setting_saved(ui, \"preset.apply\", failed);"), "the apply");
-        assert!(outer.contains("if !write_timer_session_secs(") && outer.contains("if !write_breathing("), "the length");
-        assert_eq!(outer.matches("return false;").count(), 3, "no failure path stays silent");
+        let at = code.find("fn apply_preset_json(").unwrap();
+        let apply = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        // Every failure says so: a bad config, the apply (the length is part of it).
+        assert!(apply.contains("show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);"), "a bad config");
+        assert!(apply.contains("if !setting_saved(ui, \"preset.apply\", outcome)"), "the apply");
+        assert_eq!(apply.matches("return false;").count(), 2, "no failure path stays silent");
 
         // Sync brings rows in order: a missing sound was deleted, and
         // "Wait for sync" never ended.
@@ -5031,13 +5057,15 @@ mod tests {
         let notice = &save[ok..];
         assert!(notice.contains("if auto && "));
         assert!(notice.contains("invoke_session_saved()"));
-        assert!(notice.contains("Some(app::PendingUndo::Recovery(uuid))"));
+        assert!(notice.contains("Some(app::PendingUndo::Recovery(uuid, session_local_file()))"), "the play goes with Undo");
         assert!(notice[..notice.find("invoke_session_saved()").unwrap()].contains("APP_IN_FOREGROUND.load("), "no notice left waiting in the background");
         let err = save.find("Err(kind) =>").unwrap();
         assert!(save[err..].contains("pending_done.set(Some("), "a failed auto-save stays on the running page");
         let undo = handler(&code, "snackbar_undo_tap");
-        let rec = &undo[undo.find("U::Recovery(uuid) =>").unwrap()..];
+        let rec = &undo[undo.find("U::Recovery(uuid, local_file) =>").unwrap()..];
         assert!(rec[..300].contains("delete_ok(&ui, \"session.recovery.undo\""), "a failed Undo says Delete failed");
+        let rec = &rec[..rec[1..].find("U::").unwrap()];
+        assert!(rec.contains("refresh_local_page(&ui)") && rec.contains("refresh_guided_files(&ui)"), "the play taken back shows (#324)");
         let slint = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint")).unwrap();
         assert!(slint.contains("@tr(\"Session saved\")"));
         assert!(slint.contains("title: @tr(\"Auto-Finish\");"));
@@ -5709,7 +5737,7 @@ mod tests {
         assert!(!code.contains("write FAILED"), "a setting failure only logged");
         for dropped in [
             "let _ = meditate_core::labels::persist_", "let _ = db.update_preset_starred(",
-            "let _ = db.set_setting(", "let _ = db.set_box_breath_phase(",
+            "let _ = db.set_setting(", "let _ = db.set_box_breath_phase(", "let _ = db.edit_box_breath_phase(",
         ] {
             assert!(!code.contains(dropped), "{dropped}");
         }
@@ -5718,9 +5746,6 @@ mod tests {
         let write = volume.find("bell_volume::write(").unwrap();
         assert!(volume[..write].contains("setting_saved(") || volume[write..].contains("setting_saved("));
         assert!(volume.find("setting_saved(").unwrap() < volume.find("play_volume_preview(").unwrap());
-        // A preset whose length didn't save is a failed apply.
-        let apply = fn_body("fn apply_preset_once(");
-        assert!(apply.contains("if !write_timer_session_secs(") && apply.contains("if !write_breathing("));
         // The accent springs back without being applied.
         let accent = handler(&code, "accent_picked");
         let saved = accent.find("if !write_global_setting(&ui, \"android_accent\"").expect("accent checks the save");
@@ -5895,20 +5920,16 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_that_fails_halfway_is_put_back() {
-        // #191 review: core saves a preset's values one by one, so a
-        // failure can leave half of it; "Save failed" then puts the
-        // setup from before back (no Undo: nothing was done).
+    fn a_failed_preset_apply_is_not_written_twice() {
+        // K3 #193: core applies a preset whole or not at all, so a
+        // failure leaves the setup from before; writing it again could
+        // fail on the same lock and leave half of it.
         let code = ui_code();
         let at = code.find("fn apply_preset_json(").unwrap();
         let apply = &code[at..at + code[at..].find("\n}\n").unwrap()];
-        // A config that doesn't parse changed nothing: nothing to put back.
-        let parsed = apply.find("PresetConfig::from_json(json)").expect("parsed first");
-        let before = apply.find("snapshot_setup_json(").expect("the setup before");
-        let once = apply.find("apply_preset_once(ui, &cfg,").unwrap();
-        let back = apply.find("apply_preset_once(ui, &before,").expect("put back");
-        assert!(parsed < before && before < once && once < back);
-        assert!(apply.contains("if apply_preset_once(ui, &cfg, mode, timer_session_secs) {\n        return true;"), "put back only on failure");
+        assert_eq!(apply.matches("apply(&db, ").count(), 1, "one apply");
+        assert!(!apply.contains("snapshot_setup_json"), "nothing to put back");
+        assert!(apply.contains("setting_saved("), "a failure says Save failed");
     }
 
     #[test]

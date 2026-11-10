@@ -78,10 +78,16 @@ pub struct PresetLabel {
 
 /// `config_json` pinned to label `from` instead pinned to `into`,
 /// every other field kept as stored (a newer version's too); `None`
-/// when it isn't pinned to `from` or doesn't parse.
-pub fn retarget_label(config_json: &str, from: &str, into: &str) -> Option<String> {
+/// when it isn't pinned to `from` or doesn't parse. A preset of `mode`
+/// with the label on and none picked means the mode's default, so it
+/// is pinned to `into` too when `from` is that default.
+pub fn retarget_label(config_json: &str, mode: SessionMode, from: &str, into: &str) -> Option<String> {
     let mut config: serde_json::Value = serde_json::from_str(config_json).ok()?;
-    if config["label"]["uuid"] != from {
+    let label = &config["label"];
+    let the_default = label["enabled"] == true
+        && label["uuid"].is_null()
+        && crate::settings_keys::default_label_uuid_for_mode(mode) == from;
+    if label["uuid"] != from && !the_default {
         return None;
     }
     config["label"]["uuid"] = into.into();
@@ -312,14 +318,8 @@ impl PresetConfig {
 // rows, interval-bell library, box-breath phase rows) and combines it
 // with the live UI state (`mode`, `timing`) the shell already knows to
 // produce a `PresetConfig`. `apply` is the inverse: writes settings,
-// switches library bells and writes phase rows; returns the cfg's
-// `timing` so the shell can reflect it into widget state.
-//
-// Apply is NOT atomic — each underlying `db.set_setting` /
-// `db.set_interval_bell_enabled` opens its own per-method transaction. A
-// future infrastructure pass on core::db (item: nestable transactions)
-// would let apply wrap everything in one outer transaction; until then
-// behaviour matches the GTK shell's prior non-transactional walker.
+// the length, library bells and phase rows as one write, all of it or
+// none; the shell then reloads its Setup from the DB.
 
 use crate::db::{
     BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SessionMode, SignalMode,
@@ -506,7 +506,14 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
     } else {
         PresetTiming::Timer { stopwatch, duration_secs: timer_session_secs_from_db(db) }
     };
-    let current = snapshot(db, mode, timing);
+    // Unreadable: no preset shows as active; a message for it is #308.
+    let current = match snapshot(db, mode, timing) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::diag::log("preset.active", &format!("setup unreadable: {e:?}"));
+            return std::collections::HashSet::new();
+        }
+    };
     let shown = |mut c: PresetConfig| {
         let vis = setup_visibility(mode);
         if stopwatch {
@@ -549,50 +556,45 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
 }
 
 /// Snapshot the current setup state into a `PresetConfig`. The shell
-/// builds `timing` from its widget / Cell state (no Database has the
-/// in-flight Box-Breath pattern or countdown target — those are gtk-
-/// side reactive plumbing) and supplies `mode` from its current view.
-pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> PresetConfig {
-    // Forward to the canonical helpers in `settings_keys` (one
-    // implementation of the get-or-default recipe) while keeping
-    // the local `read_*(key, default)` call shape so this function's
-    // body doesn't drown in `db,` arguments.
-    let read_bool = |k: &str, default: bool| crate::settings_keys::read_bool(db, k, default);
-    let read_str = |k: &str, default: &str| crate::settings_keys::read_str(db, k, default);
-    let read_u32 = |k: &str, default: u32| crate::settings_keys::read_u32(db, k, default);
-    let read_volume = |k: &str| crate::bell_volume::BellVolume::parse(&read_str(k, ""));
+/// supplies `timing` (the length shown) and `mode` from its current
+/// view. A read that fails is an error, never a default.
+pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> crate::db::Result<PresetConfig> {
+    // Every read passes its error on: a preset saved from a setup
+    // that couldn't be read would carry defaults in its place. A value
+    // that reads but doesn't parse keeps the default, as everywhere.
+    let read_str = |k: &str, default: &str| db.get_setting(k, default);
+    let read_bool = |k: &str, default: bool| crate::settings_keys::try_read_bool(db, k, default);
+    let read_u32 = |k: &str, default: u32| crate::settings_keys::try_read_u32(db, k, default);
+    let read_volume = |k: &str| read_str(k, "").map(|v| crate::bell_volume::BellVolume::parse(&v));
 
     let label = PresetLabel {
-        enabled: read_bool(label_active_key_for_mode(mode), false),
-        uuid: db
-            .get_setting(label_uuid_key_for_mode(mode), "")
-            .ok()
+        enabled: read_bool(label_active_key_for_mode(mode), false)?,
+        uuid: Some(read_str(label_uuid_key_for_mode(mode), "")?)
             .filter(|s| !s.is_empty())
             .map(crate::db::LabelUuid::new),
     };
 
     let starting_bell = PresetStartingBell {
-        enabled: read_bool("starting_bell_active", false),
-        sound_uuid: read_str("starting_bell_sound", BUNDLED_BOWL_UUID).into(),
-        prep_time_enabled: read_bool("preparation_time_active", false),
-        prep_time_secs: read_u32("preparation_time_secs", PREP_SECS_DEFAULT),
-        signal_mode: read_str("starting_bell_signal_mode", "sound"),
-        vibration_pattern_uuid: read_str("starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID).into(),
-        volume: read_volume(STARTING_BELL_VOLUME_KEY),
+        enabled: read_bool("starting_bell_active", false)?,
+        sound_uuid: read_str("starting_bell_sound", BUNDLED_BOWL_UUID)?.into(),
+        prep_time_enabled: read_bool("preparation_time_active", false)?,
+        prep_time_secs: read_u32("preparation_time_secs", PREP_SECS_DEFAULT)?,
+        signal_mode: read_str("starting_bell_signal_mode", "sound")?,
+        vibration_pattern_uuid: read_str("starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID)?.into(),
+        volume: read_volume(STARTING_BELL_VOLUME_KEY)?,
     };
 
     let end_bell = PresetEndBell {
-        enabled: read_bool(end_bell_active_key_for_mode(mode), true),
-        sound_uuid: read_str(end_bell_sound_key_for_mode(mode), BUNDLED_BOWL_UUID).into(),
-        signal_mode: read_str(end_bell_signal_mode_key_for_mode(mode), "sound"),
-        vibration_pattern_uuid: read_str(end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID).into(),
-        volume: read_volume(end_bell_volume_key_for_mode(mode)),
+        enabled: read_bool(end_bell_active_key_for_mode(mode), true)?,
+        sound_uuid: read_str(end_bell_sound_key_for_mode(mode), BUNDLED_BOWL_UUID)?.into(),
+        signal_mode: read_str(end_bell_signal_mode_key_for_mode(mode), "sound")?,
+        vibration_pattern_uuid: read_str(end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID)?.into(),
+        volume: read_volume(end_bell_volume_key_for_mode(mode))?,
     };
 
-    let intervals_enabled = read_bool("interval_bells_active", false);
+    let intervals_enabled = read_bool("interval_bells_active", false)?;
     let bells: Vec<PresetIntervalBell> = db
-        .list_interval_bells()
-        .unwrap_or_default()
+        .list_interval_bells()?
         .into_iter()
         .map(PresetIntervalBell::from)
         .collect();
@@ -608,7 +610,9 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         BoxBreathPhaseId::HoldOut,
     ]
     .iter()
-    .filter_map(|&id| db.get_box_breath_phase(id).ok().flatten())
+    .filter_map(|&id| db.get_box_breath_phase(id).transpose())
+    .collect::<crate::db::Result<Vec<_>>>()?
+    .into_iter()
     .map(|p| PresetBoxBreathPhase {
         phase: p.phase.as_db_str().to_string(),
         enabled: p.enabled,
@@ -619,15 +623,15 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
     })
     .collect();
     let box_breath_cues = PresetBoxBreathCues {
-        master_enabled: read_bool("boxbreath_cues_active", false),
+        master_enabled: read_bool("boxbreath_cues_active", false)?,
         phases,
     };
 
-    let cues_signal_mode = read_str(signal_mode_key_for_mode(mode), "both");
-    let keep_screen_awake = read_bool(keep_screen_awake_key_for_mode(mode), false);
-    let auto_finish = read_bool(crate::settings_keys::auto_finish_key_for_mode(mode), false);
+    let cues_signal_mode = read_str(signal_mode_key_for_mode(mode), "both")?;
+    let keep_screen_awake = read_bool(keep_screen_awake_key_for_mode(mode), false)?;
+    let auto_finish = read_bool(crate::settings_keys::auto_finish_key_for_mode(mode), false)?;
 
-    PresetConfig {
+    Ok(PresetConfig {
         label,
         starting_bell,
         interval_bells,
@@ -637,7 +641,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         keep_screen_awake,
         auto_finish,
         box_breath_cues,
-    }
+    })
 }
 
 /// Apply a `PresetConfig` to the DB: writes the per-mode and bell
@@ -655,13 +659,15 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
 /// the captured timing in the preset (which may not match `mode` if
 /// e.g. a Timer-mode user applies a Box-Breath preset).
 ///
-/// Returns `Ok(timing)` on success — the shell uses it to update its
-/// widget / Cell state.
-pub fn apply(
-    db: &Database,
-    cfg: &PresetConfig,
-    mode: SessionMode,
-) -> crate::db::Result<PresetTiming> {
+/// All of it is stored, the length included, or nothing; the shell
+/// then reloads its Setup from the DB.
+pub fn apply(db: &Database, cfg: &PresetConfig, mode: SessionMode) -> crate::db::Result<()> {
+    let tx = db.tx()?;
+    apply_writes(db, cfg, mode)?;
+    tx.commit()
+}
+
+fn apply_writes(db: &Database, cfg: &PresetConfig, mode: SessionMode) -> crate::db::Result<()> {
     // 1. Per-mode + bell-related settings.
     let (stopwatch_active, is_timer) = match cfg.timing {
         PresetTiming::Timer { stopwatch, .. } => (stopwatch, true),
@@ -671,8 +677,30 @@ pub fn apply(
     let bool_str = crate::settings_keys::format_bool;
 
     set(label_active_key_for_mode(mode), bool_str(cfg.label.enabled))?;
-    if let Some(luuid) = cfg.label.uuid.as_ref() {
-        set(label_uuid_key_for_mode(mode), luuid.as_str())?;
+    match (cfg.label.enabled, cfg.label.uuid.as_ref()) {
+        (_, Some(luuid)) => set(label_uuid_key_for_mode(mode), luuid.as_str())?,
+        // Saved with the mode's default label: empty reads as that. A
+        // default merged away left the mode on the kept label; it stays.
+        (true, None) => {
+            let default = crate::settings_keys::default_label_uuid_for_mode(mode);
+            if db.existing_rowid_by_uuid("labels", default)?.is_some() {
+                set(label_uuid_key_for_mode(mode), "")?;
+            }
+        }
+        // Switched off: the label picked behind the switch stays.
+        (false, None) => {}
+    }
+    match cfg.timing {
+        PresetTiming::Timer { duration_secs, .. } => {
+            crate::settings_keys::set_timer_session_secs(db, duration_secs)?;
+        }
+        PresetTiming::BoxBreath { inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs, duration_secs, .. } => {
+            crate::settings_keys::set_breathing(
+                db,
+                crate::breath::BreathPattern::clamp_from_raw(inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs),
+                crate::breath::clamp_session_secs(duration_secs),
+            )?;
+        }
     }
     if is_timer {
         set("starting_bell_active", bool_str(cfg.starting_bell.enabled))?;
@@ -725,7 +753,7 @@ pub fn apply(
                 p.volume,
             )?;
         }
-        return Ok(cfg.timing.clone());
+        return Ok(());
     }
 
     // 3. Interval bells: switch each library bell on or off and never
@@ -774,8 +802,7 @@ pub fn apply(
             db.set_interval_bell_enabled(b.uuid.as_str(), !b.enabled)?;
         }
     }
-
-    Ok(cfg.timing.clone())
+    Ok(())
 }
 
 /// What `edit_interval_bell` did with an edit.
@@ -1148,11 +1175,11 @@ mod tests {
             &pattern,
         );
         apply(&db, &timer, SessionMode::Timer).unwrap();
-        let before = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        let before = snapshot(&db, SessionMode::Timer, timer.timing.clone()).unwrap();
         let [.., (_, _, mode, box_breath)] = crate::seeds::default_presets();
         assert_eq!(mode, SessionMode::BoxBreath);
         apply(&db, &box_breath, SessionMode::BoxBreath).unwrap();
-        let after = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        let after = snapshot(&db, SessionMode::Timer, timer.timing.clone()).unwrap();
         assert_eq!(after.starting_bell, before.starting_bell);
         assert_eq!(after.interval_bells, before.interval_bells);
     }
@@ -1272,7 +1299,7 @@ mod tests {
     fn a_preset_finds_its_own_bell_after_the_bell_was_edited() {
         let db = Database::open_in_memory().unwrap();
         apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
-        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         let row = db.list_interval_bells().unwrap().remove(0);
         db.update_interval_bell(&IntervalBell { time: BellTime::new(7, TimeUnit::Min), enabled: false, ..row }).unwrap();
         apply(&db, &saved, SessionMode::Timer).unwrap();
@@ -1282,7 +1309,7 @@ mod tests {
     /// Apply `bells`, save them as a starred Timer preset, return it.
     fn saved_preset(db: &Database, bells: Vec<PresetIntervalBell>) -> PresetConfig {
         apply(db, &with_bells(bells), SessionMode::Timer).unwrap();
-        let saved = snapshot(db, SessionMode::Timer, PresetTiming::default());
+        let saved = snapshot(db, SessionMode::Timer, PresetTiming::default()).unwrap();
         db.insert_preset("P", SessionMode::Timer, true, &saved.to_json()).unwrap();
         saved
     }
@@ -1330,7 +1357,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         apply(&db, &with_bells(vec![bell(10, true)]), SessionMode::Timer).unwrap();
         saved_preset(&db, vec![bell(5, true)]);
-        let mut bells_off = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let mut bells_off = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         bells_off.interval_bells.enabled = false;
         bells_off.interval_bells.bells.retain(|b| b.time.number() == 5);
         bells_off.interval_bells.bells[0].uuid = row_at(&db, 10).uuid;
@@ -1419,7 +1446,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let a = saved_preset(&db, vec![bell(5, true)]);
         edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap();
-        let b = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let b = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         db.insert_preset("B", SessionMode::Timer, true, &b.to_json()).unwrap();
         db.delete_interval_bell(row_at(&db, 7).uuid.as_str()).unwrap();
         apply(&db, &a, SessionMode::Timer).unwrap();
@@ -1442,7 +1469,7 @@ mod tests {
     fn an_old_preset_keeps_its_bell_too() {
         let db = Database::open_in_memory().unwrap();
         apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
-        let mut old = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let mut old = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         old.interval_bells.bells[0].uuid = Default::default();
         db.insert_preset("Old", SessionMode::Timer, true, &old.to_json()).unwrap();
         assert!(matches!(edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap(), BellEdit::Copied(_)));
@@ -1479,7 +1506,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("timer_session_secs", "600").unwrap();
         apply(&db, &with_bells(vec![bell(5, true), bell(10, true)]), SessionMode::Timer).unwrap();
-        let mut saved = snapshot(&db, SessionMode::Timer, PresetTiming::default());
+        let mut saved = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         saved.interval_bells.bells.reverse();
         db.insert_preset("Two bells", SessionMode::Timer, true, &saved.to_json()).unwrap();
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "saved in another order");
@@ -1510,10 +1537,10 @@ mod tests {
         let config = cfg_with_known_uuids(timing.clone(), &sound, &pattern);
         apply(&db, &config, SessionMode::Timer).unwrap();
         db.set_setting("timer_session_secs", "1200").unwrap();
-        let quiet = snapshot(&db, SessionMode::Timer, timing.clone());
+        let quiet = snapshot(&db, SessionMode::Timer, timing.clone()).unwrap();
         db.insert_preset("Quiet", SessionMode::Timer, true, &quiet.to_json()).unwrap();
         db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "false" } else { "true" }).unwrap();
-        let other = snapshot(&db, SessionMode::Timer, timing.clone());
+        let other = snapshot(&db, SessionMode::Timer, timing.clone()).unwrap();
         db.insert_preset("Other", SessionMode::Timer, true, &other.to_json()).unwrap();
         db.insert_preset("Unstarred", SessionMode::Timer, false, &other.to_json()).unwrap();
         let names = || active_names(&db, SessionMode::Timer);
@@ -1552,11 +1579,11 @@ mod tests {
         let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
         apply(&db, &cfg_with_known_uuids(timing.clone(), &sound, &pattern), SessionMode::Timer).unwrap();
         db.set_setting("timer_session_secs", "1200").unwrap();
-        let timer = snapshot(&db, SessionMode::Timer, timing);
+        let timer = snapshot(&db, SessionMode::Timer, timing).unwrap();
         db.insert_preset("Sit", SessionMode::Timer, true, &timer.to_json()).unwrap();
         let mut breath = snapshot(&db, SessionMode::BoxBreath, PresetTiming::BoxBreath {
             stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 300,
-        });
+        }).unwrap();
         breath.box_breath_cues.phases.clear();
         db.insert_preset("Box", SessionMode::BoxBreath, true, &breath.to_json()).unwrap();
         db.set_box_breath_phase(
@@ -1590,7 +1617,8 @@ mod tests {
             &db,
             SessionMode::Timer,
             original.timing.clone(),
-        );
+        )
+        .unwrap();
 
         // Settings + label should round-trip. Added interval bells get
         // fresh row UUIDs, so we compare by structural fields rather
@@ -1733,14 +1761,14 @@ mod tests {
         let (db, sound, pattern) = fresh_db();
         let (timer, box_breath) = presets_with_volumes(&sound, &pattern);
         apply(&db, &timer, SessionMode::Timer).unwrap();
-        let saved = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        let saved = snapshot(&db, SessionMode::Timer, timer.timing.clone()).unwrap();
         assert_eq!(saved.starting_bell.volume, pct(15.0));
         assert_eq!(saved.end_bell.volume, pct(85.0));
         let bells: Vec<BellVolume> = saved.interval_bells.bells.iter().map(|b| b.volume).collect();
         assert_eq!(bells, vec![pct(25.0), pct(70.0)]);
 
         apply(&db, &box_breath, SessionMode::BoxBreath).unwrap();
-        let saved = snapshot(&db, SessionMode::BoxBreath, box_breath.timing.clone());
+        let saved = snapshot(&db, SessionMode::BoxBreath, box_breath.timing.clone()).unwrap();
         assert_eq!(saved.end_bell.volume, pct(35.0));
         let phases: Vec<BellVolume> =
             saved.box_breath_cues.phases.iter().map(|p| p.volume).collect();
@@ -1753,7 +1781,7 @@ mod tests {
         let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 1200 };
         apply(&db, &cfg_with_known_uuids(timing.clone(), &sound, &pattern), SessionMode::Timer).unwrap();
         db.set_setting("timer_auto_finish", "true").unwrap();
-        let saved = snapshot(&db, SessionMode::Timer, timing);
+        let saved = snapshot(&db, SessionMode::Timer, timing).unwrap();
         db.set_setting("timer_auto_finish", "false").unwrap();
         apply(&db, &saved, SessionMode::Timer).unwrap();
         assert_eq!(db.get_setting("timer_auto_finish", "").unwrap(), "true");
@@ -1790,12 +1818,12 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("timer_session_secs", "600").unwrap();
         db.set_setting("timer_stopwatch_active", "true").unwrap();
-        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: true, duration_secs: 600 });
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: true, duration_secs: 600 }).unwrap();
         db.insert_preset("Open", SessionMode::Timer, true, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "true").unwrap();
         assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "hidden while counting up");
         db.set_setting("timer_stopwatch_active", "false").unwrap();
-        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 });
+        let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 }).unwrap();
         db.insert_preset("Countdown", SessionMode::Timer, true, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "false").unwrap();
         assert!(active_presets(&db, SessionMode::Timer).is_empty(), "shown for a countdown, it counts");
@@ -1972,6 +2000,156 @@ mod tests {
         set_phases(&db, false);
         for mode in [SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided] {
             assert_eq!(bells_summary(&db, mode), vec![], "{mode:?}");
+        }
+    }
+    #[test]
+    fn a_preset_that_fails_halfway_stores_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let before = crate::db::test_helpers::sent(&db);
+        crate::db::test_helpers::sql(&db,
+            "CREATE TEMP TRIGGER full BEFORE INSERT ON interval_bells
+             WHEN (SELECT COUNT(*) FROM interval_bells) >= 1
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
+        let cfg = PresetConfig {
+            label: PresetLabel { enabled: true, uuid: Some("label-uuid".into()) },
+            timing: PresetTiming::Timer { stopwatch: false, duration_secs: 1500 },
+            ..with_bells(vec![bell(5, true), bell(7, true)])
+        };
+        assert!(apply(&db, &cfg, SessionMode::Timer).is_err());
+        assert_eq!(bell_rows(&db), vec![]);
+        assert_eq!(db.get_setting("interval_bells_active", "unset").unwrap(), "unset");
+        assert_eq!(db.get_setting(label_uuid_key_for_mode(SessionMode::Timer), "unset").unwrap(), "unset");
+        assert_eq!(db.get_setting("timer_session_secs", "unset").unwrap(), "unset");
+        assert_eq!(crate::db::test_helpers::sent(&db), before, "nothing goes to other devices");
+    }
+
+    #[test]
+    fn applying_a_preset_stores_its_length() {
+        let db = Database::open_in_memory().unwrap();
+        let timer = PresetConfig {
+            timing: PresetTiming::Timer { stopwatch: false, duration_secs: 1500 },
+            ..PresetConfig::default()
+        };
+        apply(&db, &timer, SessionMode::Timer).unwrap();
+        assert_eq!(crate::settings_keys::timer_session_secs_from_db(&db), 1500);
+
+        let breath = PresetConfig {
+            timing: PresetTiming::BoxBreath {
+                stopwatch: false,
+                inhale_secs: 4, hold_full_secs: 7, exhale_secs: 8, hold_empty_secs: 0,
+                duration_secs: 600,
+            },
+            ..PresetConfig::default()
+        };
+        apply(&db, &breath, SessionMode::BoxBreath).unwrap();
+        assert_eq!(db.get_setting("breathing_in", "").unwrap(), "4");
+        assert_eq!(db.get_setting("breathing_hold_in", "").unwrap(), "7");
+        assert_eq!(db.get_setting("breathing_out", "").unwrap(), "8");
+        assert_eq!(db.get_setting("breathing_hold_out", "").unwrap(), "0");
+        assert_eq!(db.get_setting("breathing_session_secs", "").unwrap(), "600");
+
+        // Out of range is stored as the apps store it: clamped.
+        let long = PresetConfig {
+            timing: PresetTiming::BoxBreath {
+                stopwatch: false,
+                inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4,
+                duration_secs: 30,
+            },
+            ..PresetConfig::default()
+        };
+        apply(&db, &long, SessionMode::BoxBreath).unwrap();
+        assert_eq!(db.get_setting("breathing_session_secs", "").unwrap(), "60");
+    }
+
+    #[test]
+    fn a_preset_without_a_label_picks_the_mode_default() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_default_labels().unwrap();
+        crate::labels::persist_uuid_for_mode(&db, SessionMode::Timer, "walking-uuid").unwrap();
+        let cfg = PresetConfig {
+            label: PresetLabel { enabled: true, uuid: None },
+            ..timer_config()
+        };
+        db.insert_preset("No label", SessionMode::Timer, true, &cfg.to_json()).unwrap();
+        apply(&db, &cfg, SessionMode::Timer).unwrap();
+        assert_eq!(crate::labels::label_uuid_from_db(&db, SessionMode::Timer), None, "the mode default");
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
+    }
+
+    #[test]
+    fn a_preset_without_a_label_keeps_the_label_its_merged_default_went_into() {
+        // The mode's default label was merged into "Sitting": the mode
+        // and the presets meaning "the default" now mean "Sitting".
+        let db = Database::open_in_memory().unwrap();
+        db.seed_default_labels().unwrap();
+        let default_id = db.insert_label_with_uuid(crate::seeds::DEFAULT_TIMER_LABEL_UUID, "Meditation").unwrap();
+        let sitting = db.insert_label_with_uuid("sitting-uuid", "Sitting").unwrap();
+        db.insert_label_with_uuid("walking-uuid", "Walking").unwrap();
+        let cfg = PresetConfig {
+            label: PresetLabel { enabled: true, uuid: None },
+            ..timer_config()
+        };
+        db.insert_preset("Default label", SessionMode::Timer, true, &cfg.to_json()).unwrap();
+        db.merge_labels(default_id, sitting).unwrap();
+        crate::labels::persist_uuid_for_mode(&db, SessionMode::Timer, "walking-uuid").unwrap();
+        let stored = crate::db::list_presets_from_db(&db).unwrap().remove(0);
+        apply(&db, &PresetConfig::from_json(&stored.config_json).unwrap(), SessionMode::Timer).unwrap();
+        assert_eq!(crate::labels::resolve_label_for_mode(&db, SessionMode::Timer).map(|l| l.name).as_deref(), Some("Sitting"));
+        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
+    }
+
+    #[test]
+    fn a_preset_from_before_a_merge_keeps_the_kept_label() {
+        // Merged before presets were carried along: the preset still
+        // means "the default", which is gone; the mode keeps "Sitting".
+        let db = Database::open_in_memory().unwrap();
+        db.seed_default_labels().unwrap();
+        let default_id = db.insert_label_with_uuid(crate::seeds::DEFAULT_TIMER_LABEL_UUID, "Meditation").unwrap();
+        let sitting = db.insert_label_with_uuid("sitting-uuid", "Sitting").unwrap();
+        db.merge_labels(default_id, sitting).unwrap();
+        let cfg = PresetConfig {
+            label: PresetLabel { enabled: true, uuid: None },
+            ..timer_config()
+        };
+        apply(&db, &cfg, SessionMode::Timer).unwrap();
+        assert_eq!(crate::labels::resolve_label_for_mode(&db, SessionMode::Timer).map(|l| l.name).as_deref(), Some("Sitting"));
+    }
+
+    #[test]
+    fn merging_a_default_away_leaves_other_presets_alone() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_default_labels().unwrap();
+        let default_id = db.insert_label_with_uuid(crate::seeds::DEFAULT_TIMER_LABEL_UUID, "Meditation").unwrap();
+        let sitting = db.insert_label_with_uuid("sitting-uuid", "Sitting").unwrap();
+        // Another mode's "default", and a Timer preset with the label off.
+        let breath = PresetConfig { label: PresetLabel { enabled: true, uuid: None }, ..PresetConfig::default() }.to_json();
+        let off = PresetConfig { label: PresetLabel { enabled: false, uuid: None }, ..timer_config() }.to_json();
+        db.insert_preset("Breath", SessionMode::BoxBreath, true, &breath).unwrap();
+        db.insert_preset("Off", SessionMode::Timer, true, &off).unwrap();
+        db.merge_labels(default_id, sitting).unwrap();
+        let after: Vec<String> = crate::db::list_presets_from_db(&db).unwrap().into_iter().map(|p| p.config_json).collect();
+        assert!(after.contains(&breath) && after.contains(&off), "{after:?}");
+    }
+
+    #[test]
+    fn a_preset_with_the_label_off_keeps_the_label_behind_it() {
+        let db = Database::open_in_memory().unwrap();
+        crate::labels::persist_uuid_for_mode(&db, SessionMode::Timer, "walking-uuid").unwrap();
+        let cfg = PresetConfig {
+            label: PresetLabel { enabled: false, uuid: None },
+            ..PresetConfig::default()
+        };
+        apply(&db, &cfg, SessionMode::Timer).unwrap();
+        assert_eq!(db.get_setting(label_active_key_for_mode(SessionMode::Timer), "").unwrap(), "false");
+        assert_eq!(crate::labels::label_uuid_from_db(&db, SessionMode::Timer).as_deref(), Some("walking-uuid"));
+    }
+    #[test]
+    fn a_setup_whose_bells_cannot_be_read_is_not_saved() {
+        let timing = PresetTiming::Timer { stopwatch: false, duration_secs: 600 };
+        for table in ["interval_bells", "settings"] {
+            let db = Database::open_in_memory().unwrap();
+            crate::db::test_helpers::sql(&db, &format!("ALTER TABLE {table} RENAME TO gone"));
+            assert!(snapshot(&db, SessionMode::Timer, timing.clone()).is_err(), "{table}");
         }
     }
 }

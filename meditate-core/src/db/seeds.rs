@@ -40,7 +40,12 @@ impl Database {
     /// only, so a peer that already has them seeded would see a
     /// pointless overwrite.
     pub fn seed_box_breath_phases(&self) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        // Seeded: a read, so a sync write elsewhere doesn't hold up the open.
+        let have: i64 = self.conn.query_row("SELECT COUNT(*) FROM box_breath_phases", [], |r| r.get(0))?;
+        if have as usize == BoxBreathPhaseId::all().len() {
+            return Ok(());
+        }
+        let tx = self.tx()?;
         let mut new_rows = 0;
         for phase in BoxBreathPhaseId::all() {
             new_rows += self.conn.execute(
@@ -112,13 +117,22 @@ impl Database {
     }
 
     /// Run `seed` once per database: the `key` setting (synced) marks
-    /// it done, so a seeded row the user deleted never comes back.
+    /// it done, so a seeded row the user deleted never comes back. The
+    /// rows and the marker land together.
     fn seed_once(&self, key: &str, tag: &str, seed: impl FnOnce() -> Result<usize>) -> Result<()> {
+        // Done: a read, so a sync write elsewhere doesn't hold up the
+        // open. Checked again inside the write, which another
+        // connection may have beaten.
+        if self.get_setting(key, "0")? == "1" {
+            return Ok(());
+        }
+        let tx = self.tx()?;
         if self.get_setting(key, "0")? == "1" {
             return Ok(());
         }
         let rows = seed()?;
         self.set_setting(key, "1")?;
+        tx.commit()?;
         crate::diag::log(tag, &format!("rows={rows}"));
         Ok(())
     }
@@ -162,6 +176,37 @@ mod tests {
         (BUNDLED_BELL_UUID, "Bell",         "/test/bell.ogg", "audio/ogg"),
         (BUNDLED_GONG_UUID, "Gong",         "/test/gong.ogg", "audio/ogg"),
     ];
+
+    #[test]
+    fn a_seeded_database_seeds_without_the_write_lock() {
+        // Seeding runs at every start; once done it only reads, so a
+        // sync write in progress doesn't hold up the app's open.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seeded.db");
+        let app = Database::open(&path).unwrap();
+        app.seed_all_non_audio().unwrap();
+        app.seed_bell_sounds_with_paths(TEST_BELL_SOUNDS).unwrap();
+        let sync = Database::open(&path).unwrap();
+        crate::db::test_helpers::sql(&sync, "BEGIN IMMEDIATE; INSERT INTO sync_state (key, value) VALUES ('busy', '1');");
+        app.set_busy_timeout(std::time::Duration::ZERO).unwrap();
+        app.seed_all_non_audio().expect("nothing to seed takes no lock");
+        app.seed_bell_sounds_with_paths(TEST_BELL_SOUNDS).expect("nothing to seed takes no lock");
+        crate::db::test_helpers::sql(&sync, "COMMIT;");
+    }
+
+    #[test]
+    fn a_seed_that_fails_leaves_no_done_marker() {
+        // The seed's rows and its done marker land together: a failure
+        // halfway leaves nothing, so the next start seeds it whole.
+        let db = Database::open_in_memory().unwrap();
+        crate::db::test_helpers::sql(&db,
+            "CREATE TEMP TRIGGER full BEFORE INSERT ON bell_sounds WHEN NEW.name = 'Gong'
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END;");
+        assert!(db.seed_bell_sounds_with_paths(TEST_BELL_SOUNDS).is_err());
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+        assert_eq!(db.get_setting(crate::seeds::BELLS_SEEDED_KEY, "0").unwrap(), "0");
+        assert!(db.pending_events().unwrap().is_empty());
+    }
 
     // ── Default labels ─────────────────────────────────────────────────
 

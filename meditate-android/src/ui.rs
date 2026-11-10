@@ -1787,13 +1787,10 @@ fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
 /// the snackbar Undo (re-apply the pre-apply snapshot), exactly
 /// as GTK's Undo calls the same `apply_config(&snapshot)`.
 ///
-/// `apply()` does all the DB writes; the lock is dropped before
-/// the UI refreshes (they re-lock). The returned `PresetTiming`
-/// is shell-side reactive state (duration / stopwatch / BB
-/// pattern), persisted here like GTK's `set_countdown_target` /
-/// `set_breathing_duration_secs`. Returns `false` on parse or
-/// a failed write, and then the snackbar says so, like GTK; core
-/// saves value by value, so the setup from before is put back.
+/// `apply()` does all the DB writes, the length included; the lock
+/// is dropped before the UI reloads from the DB (it re-locks).
+/// Returns `false` on parse or a failed write, and then the
+/// snackbar says so, like GTK; nothing of the preset was stored.
 fn apply_preset_json(
     ui: &MainWindow,
     json: &str,
@@ -1806,57 +1803,11 @@ fn apply_preset_json(
         show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
         return false;
     };
-    let before = snapshot_setup_json(ui, mode, timer_session_secs.get())
-        .and_then(|j| PresetConfig::from_json(&j).ok());
-    if apply_preset_once(ui, &cfg, mode, timer_session_secs) {
-        return true;
-    }
-    if let Some(before) = before {
-        apply_preset_once(ui, &before, mode, timer_session_secs);
-    }
-    false
-}
-
-fn apply_preset_once(
-    ui: &MainWindow,
-    cfg: &meditate_core::preset_config::PresetConfig,
-    mode: meditate_core::SessionMode,
-    timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
-) -> bool {
-    use meditate_core::preset_config::{apply, PresetTiming};
-    let outcome = lock_db().map(|db| apply(&db, cfg, mode));
-    let timing = match outcome {
-        Some(Ok(t)) => t,
-        failed => {
-            setting_saved(ui, "preset.apply", failed);
-            return false;
-        }
-    };
-    // apply() saved the rest; the timing is the app's to write. Then
-    // re-read everything (settings / bells / box-breath cues / label /
-    // cues override / keep-awake).
-    match timing {
-        PresetTiming::Timer { duration_secs, .. } => {
-            if !write_timer_session_secs(ui, duration_secs) { return false; }
-        }
-        PresetTiming::BoxBreath {
-            inhale_secs,
-            hold_full_secs,
-            exhale_secs,
-            hold_empty_secs,
-            duration_secs,
-            ..
-        } => {
-            if !write_breathing(ui,
-                meditate_core::breath::BreathPattern::clamp_from_raw(
-                    inhale_secs,
-                    hold_full_secs,
-                    exhale_secs,
-                    hold_empty_secs,
-                ),
-                duration_secs,
-            ) { return false; }
-        }
+    // Core stores all of it, the length included, or nothing; the
+    // reload shows what is stored.
+    let outcome = lock_db().map(|db| meditate_core::preset_config::apply(&db, &cfg, mode));
+    if !setting_saved(ui, "preset.apply", outcome) {
+        return false;
     }
     load_setup_for_mode(ui, mode, timer_session_secs);
     refresh_bell_rows(ui);
@@ -1875,25 +1826,28 @@ fn snapshot_setup_json(
     timer_session_secs: u32,
 ) -> Option<String> {
     use meditate_core::preset_config::{snapshot, PresetTiming};
-    let timing = match mode {
-        meditate_core::SessionMode::BoxBreath => {
-            let (p, duration_secs) = read_breathing();
-            PresetTiming::BoxBreath {
-                stopwatch: ui.get_stopwatch_on(),
-                inhale_secs: p.in_secs,
-                hold_full_secs: p.hold_in,
-                exhale_secs: p.out_secs,
-                hold_empty_secs: p.hold_out,
-                duration_secs,
+    // A setup that can't be read is no preset: "Save failed" (#291).
+    let outcome = lock_db().map(|db| {
+        let timing = match mode {
+            meditate_core::SessionMode::BoxBreath => {
+                let (p, duration_secs) = meditate_core::settings_keys::try_breathing_from_db(&db)?;
+                PresetTiming::BoxBreath {
+                    stopwatch: ui.get_stopwatch_on(),
+                    inhale_secs: p.in_secs,
+                    hold_full_secs: p.hold_in,
+                    exhale_secs: p.out_secs,
+                    hold_empty_secs: p.hold_out,
+                    duration_secs,
+                }
             }
-        }
-        _ => PresetTiming::Timer {
-            stopwatch: ui.get_stopwatch_on(),
-            duration_secs: timer_session_secs,
-        },
-    };
-    let db = lock_db()?;
-    Some(snapshot(&db, mode, timing).to_json())
+            _ => PresetTiming::Timer {
+                stopwatch: ui.get_stopwatch_on(),
+                duration_secs: timer_session_secs,
+            },
+        };
+        snapshot(&db, mode, timing)
+    });
+    read_or_say(ui, "preset.snapshot", outcome).map(|cfg| cfg.to_json())
 }
 
 
@@ -2542,6 +2496,13 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
     // Preset subtitles in the preset list and the widget name labels.
     refresh_preset_list(ui, mode);
     refresh_widget(ui);
+}
+
+/// The stored pattern and length a change starts from; a failed read
+/// says "Save failed" and gives none, so the defaults are never
+/// written back over the real pattern.
+fn breathing_to_change(ui: &MainWindow) -> Option<(meditate_core::breath::BreathPattern, u32)> {
+    read_or_say(ui, "settings.breathing", lock_db().map(|db| meditate_core::settings_keys::try_breathing_from_db(&db)))
 }
 
 /// Box Breath's pattern and session length (core clamps both and
@@ -3828,54 +3789,17 @@ fn bb_phase_uuids(
     }
 }
 
-/// Read-modify-write one Box-Breath phase row. `set_box_breath_
-/// phase` is a whole-row setter, so we load the current row and
-/// override only the `Some(_)` fields — the Android analogue of
-/// GTK's per-field phase writes. Missing row falls back to the
-/// schema defaults (seeded, so this is just defensive).
+/// Change one Box-Breath phase as `edit` says, on the row as stored
+/// now, so a value saved since (the volume) stays (#325). A failure
+/// says so; a row not seeded yet is made first.
 fn write_bb_phase(
     ui: &MainWindow,
     phase: meditate_core::db::BoxBreathPhaseId,
-    enabled: Option<bool>,
-    signal_mode: Option<meditate_core::bells::SignalMode>,
-    sound_uuid: Option<&str>,
-    pattern_uuid: Option<&str>,
+    edit: impl Fn(&mut meditate_core::db::BoxBreathPhase),
 ) {
     if RELOADING.get() { return; }
-    let res = lock_db().map(|db| write_bb_phase_locked(&db, phase, enabled, signal_mode, sound_uuid, pattern_uuid));
+    let res = lock_db().map(|db| db.edit_box_breath_phase(phase, edit));
     setting_saved(ui, "settings.bb_phase", res);
-}
-
-fn write_bb_phase_locked(
-    db: &meditate_core::db::Database,
-    phase: meditate_core::db::BoxBreathPhaseId,
-    enabled: Option<bool>,
-    signal_mode: Option<meditate_core::bells::SignalMode>,
-    sound_uuid: Option<&str>,
-    pattern_uuid: Option<&str>,
-) -> Result<(), meditate_core::db::DbError> {
-    let (ce, csm, csu, cpu, volume) = match db.get_box_breath_phase(phase) {
-        Ok(Some(r)) => (
-            r.enabled,
-            r.signal_mode,
-            r.sound_uuid.to_string(),
-            r.pattern_uuid.to_string(),
-            r.volume,
-        ),
-        _ => (
-            false,
-            meditate_core::bells::SignalMode::Sound,
-            meditate_core::seeds::BUNDLED_BOWL_UUID.to_string(),
-            meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.to_string(),
-            meditate_core::bell_volume::BellVolume::default(),
-        ),
-    };
-    let e = enabled.unwrap_or(ce);
-    let sm = signal_mode.unwrap_or(csm);
-    let su = sound_uuid.map_or(csu, str::to_string);
-    let pu = pattern_uuid.map_or(cpu, str::to_string);
-    // The volume has its own row (`meditate_core::bell_volume::write`).
-    db.set_box_breath_phase(phase, e, sm, &su, &pu, volume)
 }
 
 /// Push every Box-Breath phase's persisted cue state into the
@@ -5301,7 +5225,8 @@ fn build_ui() -> MainWindow {
                     Ok(saved) => {
                         if auto && APP_IN_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed) {
                             if let Some(uuid) = saved {
-                                show_notice(&ui, ui.global::<Tr>().invoke_session_saved(), Some(app::PendingUndo::Recovery(uuid)), 8);
+                                // Undo takes back the play it counted too (#324).
+                                show_notice(&ui, ui.global::<Tr>().invoke_session_saved(), Some(app::PendingUndo::Recovery(uuid, session_local_file())), 8);
                             }
                         }
                     }
@@ -5338,7 +5263,7 @@ fn build_ui() -> MainWindow {
         ui.on_bb_adjust(move |index, delta| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let (mut pattern, secs) = read_breathing();
+                let Some((mut pattern, secs)) = breathing_to_change(&ui) else { return; };
                 let min = meditate_core::breath::BreathPattern::phase_min_secs(
                     index.max(0) as u8,
                 );
@@ -5994,12 +5919,15 @@ fn build_ui() -> MainWindow {
                 if preset.mode != core_mode {
                     return;
                 }
-                // Snapshot BEFORE apply so Undo can restore it.
-                let snapshot = snapshot_setup_json(
+                // Snapshot BEFORE apply so Undo can restore it; a
+                // failure has said so already.
+                let Some(snapshot) = snapshot_setup_json(
                     &ui,
                     core_mode,
                     timer_session_secs.get(),
-                );
+                ) else {
+                    return;
+                };
                 if !apply_preset_json(
                     &ui,
                     &preset.config_json,
@@ -6013,11 +5941,10 @@ fn build_ui() -> MainWindow {
                     &format!("applied uuid={uuid}"),
                 );
 
-                // No snapshot: the message without Undo.
                 show_notice(
                     &ui,
                     ui.global::<Tr>().invoke_applied(preset.name.clone().into()),
-                    snapshot.map(app::PendingUndo::PresetApply),
+                    Some(app::PendingUndo::PresetApply(snapshot)),
                     5,
                 );
             }
@@ -6055,13 +5982,15 @@ fn build_ui() -> MainWindow {
                 if !presets_supported(core_mode) {
                     return;
                 }
-                let snap = snapshot_setup_json(
+                // A failure has said so already.
+                let Some(snap) = snapshot_setup_json(
                     &ui,
                     core_mode,
                     timer_session_secs.get(),
-                );
-                *pending_save_snapshot.borrow_mut() =
-                    snap.map(|j| (j, core_mode));
+                ) else {
+                    return;
+                };
+                *pending_save_snapshot.borrow_mut() = Some((snap, core_mode));
                 populate_preset_chooser(&ui, core_mode);
                 ui.set_preset_chooser_save_mode(true);
                 ui.set_preset_chooser_page(true);
@@ -6427,7 +6356,9 @@ fn build_ui() -> MainWindow {
                 + (ui.get_setup_minutes().max(0) as u32) * 60;
             match current_mode.get() {
                 TimerMode::Breathing => {
-                    write_breathing(&ui, read_breathing().0, total_secs);
+                    if let Some((pattern, _)) = breathing_to_change(&ui) {
+                        write_breathing(&ui, pattern, total_secs);
+                    }
                 }
                 _ => {
                     // The cell follows only a saved length (`reload_setup`).
@@ -6698,7 +6629,7 @@ fn build_ui() -> MainWindow {
     // ── Box-Breath per-phase cues (B-7) ─────────────────────────
     // Master toggle + per-phase enable / Type / Sound / Pattern.
     // Cue firing is already wired (B-6); these only persist the
-    // config via boxbreath_cues_active + db.set_box_breath_phase.
+    // config via boxbreath_cues_active + db.edit_box_breath_phase.
     {
         let weak = ui.as_weak();
         ui.on_boxbreath_cues_toggled(move |v| {
@@ -6718,22 +6649,14 @@ fn build_ui() -> MainWindow {
                 let weak = ui.as_weak();
                 ui.$on_tog(move |v| {
                     let Some(ui) = weak.upgrade() else { return; };
-                    write_bb_phase(&ui, bb_phase($tag), Some(v), None, None, None);
-                    let _ = v;
+                    write_bb_phase(&ui, bb_phase($tag), |p| p.enabled = v);
                 });
             }
             {
                 let weak = ui.as_weak();
                 ui.$on_sm(move |i| {
                     let Some(ui) = weak.upgrade() else { return; };
-                    write_bb_phase(&ui,
-                        bb_phase($tag),
-                        None,
-                        Some(signal_mode_from_chip_index(i)),
-                        None,
-                        None,
-                    );
-                    let _ = i;
+                    write_bb_phase(&ui, bb_phase($tag), |p| p.signal_mode = signal_mode_from_chip_index(i));
                 });
             }
             {
@@ -6818,13 +6741,7 @@ fn build_ui() -> MainWindow {
                     }
                     ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase sound (B-7).
-                        write_bb_phase(&ui,
-                            phase,
-                            None,
-                            None,
-                            Some(uuid.as_str()),
-                            None,
-                        );
+                        write_bb_phase(&ui, phase, |p| p.sound_uuid = uuid.as_str().into());
                         refresh_bell_rows(&ui);
                     }
                     ChooserTarget::StartingBell => {
@@ -7037,13 +6954,7 @@ fn build_ui() -> MainWindow {
                     }
                     ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase pattern (B-7).
-                        write_bb_phase(&ui,
-                            phase,
-                            None,
-                            None,
-                            None,
-                            Some(uuid.as_str()),
-                        );
+                        write_bb_phase(&ui, phase, |p| p.pattern_uuid = uuid.as_str().into());
                         refresh_bell_rows(&ui);
                     }
                     ChooserTarget::StartingBell => {
@@ -8588,12 +8499,19 @@ fn build_ui() -> MainWindow {
                     pending_deletes.borrow_mut().clear();
                     render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
-                U::Recovery(uuid) => {
+                U::Recovery(uuid, local_file) => {
                     // Deleting by uuid tombstones it for sync peers
-                    // too, like GTK's recovery toast Undo.
-                    delete_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
+                    // too, like GTK's recovery toast Undo; the play it
+                    // counted on a local file goes with it.
+                    delete_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.undo_session_save(&uuid, local_file)));
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                     refresh_stats(&ui);
+                    if local_file.is_some() {
+                        if ui.get_local_page() {
+                            refresh_local_page(&ui);
+                        }
+                        refresh_guided_files(&ui);
+                    }
                 }
                 U::PresetApply(json) => {
                     apply_preset_json(&ui, &json, core_mode, &timer_session_secs);
@@ -9962,7 +9880,7 @@ fn build_ui() -> MainWindow {
             show_notice(
                 &ui,
                 ui.global::<Tr>().invoke_recovered_min(minutes as i32),
-                Some(app::PendingUndo::Recovery(uuid)),
+                Some(app::PendingUndo::Recovery(uuid, None)),
                 8,
             );
         }
@@ -10191,6 +10109,18 @@ thread_local! {
 /// #191: a setting that failed to save says so, and the page shows
 /// the saved value again on the next turn (a control is mid-change
 /// inside its handler).
+/// The value read, or `None` after saying "Save failed" as
+/// `setting_saved` does: a read a write would start from.
+fn read_or_say<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> Option<T> {
+    match res {
+        Some(Ok(v)) => Some(v),
+        failed => {
+            setting_saved(ui, tag, failed);
+            None
+        }
+    }
+}
+
 fn setting_saved<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> bool {
     if write_ok(ui, tag, res) {
         return true;

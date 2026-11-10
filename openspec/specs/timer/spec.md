@@ -112,15 +112,15 @@ When a Timer page setting fails to save, the app SHALL show "Save failed" and sh
 - **THEN** "Save failed" shows and the page shows the value that is saved
 - **TEST** `meditate-android/src/app.rs::a_failed_setting_says_so_and_springs_back`
 
-#### Scenario: Laptop, a preset that fails halfway is put back
-- **WHEN** applying a preset, or its Undo, fails after some of its values were saved
-- **THEN** "Save failed" shows, no Undo, and the setup from before is saved again
-- **TEST** `meditate-gtk/src/timer/imp.rs::a_preset_that_fails_halfway_is_put_back`
+#### Scenario: Laptop, a preset that fails halfway saves nothing of it
+- **WHEN** applying a preset, or its Undo, fails partway
+- **THEN** "Save failed" shows, no Undo, nothing of the preset is saved, and nothing is written a second time
+- **TEST** `meditate-gtk/src/timer/imp.rs::a_failed_preset_apply_is_not_written_twice`
 
-#### Scenario: Phone, a preset that fails halfway is put back
-- **WHEN** on the phone applying a preset, or its Undo, fails after some of its values were saved
-- **THEN** "Save failed" shows, no Undo, and the setup from before is saved again
-- **TEST** `meditate-android/src/app.rs::a_preset_that_fails_halfway_is_put_back`
+#### Scenario: Phone, a preset that fails halfway saves nothing of it
+- **WHEN** on the phone applying a preset, or its Undo, fails partway
+- **THEN** "Save failed" shows, no Undo, nothing of the preset is saved, and nothing is written a second time
+- **TEST** `meditate-android/src/app.rs::a_failed_preset_apply_is_not_written_twice`
 
 #### Scenario: A real failure on each device
 - **WHEN** a sync lock is held on the database (BEGIN EXCLUSIVE from sqlite3) and a bell switch is flipped

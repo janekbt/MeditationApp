@@ -219,7 +219,7 @@ mod tests {
         use crate::preset_config::{snapshot, PresetTiming};
         let db = Database::open_in_memory().unwrap();
         set_active_for_mode(&db, SessionMode::Timer, true).unwrap();
-        let cfg = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 });
+        let cfg = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 }).unwrap();
         assert!(cfg.label.enabled);
         assert_eq!(
             cfg.label.uuid.as_ref().map(|u| u.as_str()),

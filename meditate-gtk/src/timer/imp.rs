@@ -571,7 +571,9 @@ impl TimerView {
                 if !meditate_core::preset_config::mode_supports_presets(session_mode) {
                     return;
                 }
-                let snapshot = Box::new(imp.snapshot_current_setup());
+                // A failure has said so already.
+                let Some(snapshot) = imp.snapshot_current_setup() else { return; };
+                let snapshot = Box::new(snapshot);
                 let this_for_changed = this.clone();
                 window.push_presets_chooser(
                     &app,
@@ -1377,7 +1379,7 @@ impl TimerView {
 
     /// Wire one Box Breath phase row's interactive widgets:
     ///   * The phase's enable-switch persists to its row's `enabled`
-    ///     column via set_box_breath_phase.
+    ///     column via edit_box_breath_phase.
     ///   * The Sound/Vibration/Both toggle group persists to the
     ///     row's `signal_mode` column + reveals the right config rows.
     ///   * Bell Sound row pushes the bell-sound chooser
@@ -1407,16 +1409,7 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
-                    if let Some(p) = app
-                        .with_db(|db| db.get_box_breath_phase(phase))
-                        .and_then(std::result::Result::ok)
-                        .flatten()
-                    {
-                        setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.set_box_breath_phase(
-                            phase, on, p.signal_mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
-                            p.volume,
-                        )));
-                    }
+                    setting_saved(&this, "timer.setting", app.with_db_mut(|db| db.edit_box_breath_phase(phase, |p| p.enabled = on)));
                 }
             }
         ));
@@ -1445,21 +1438,16 @@ impl TimerView {
                 };
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
-                let p_for_pick = p.clone();
                 window.push_sound_chooser(
                     &app,
                     crate::db::BellSoundCategory::BoxBreath,
                     Some(p.sound_uuid.0.clone()),
                     p.volume,
                     move |uuid| {
-                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
-                            phase_for_sound,
-                            p_for_pick.enabled,
-                            p_for_pick.signal_mode,
-                            &uuid,
-                            p_for_pick.pattern_uuid.as_str(),
-                            p_for_pick.volume,
-                        )));
+                        // The row as stored now: a volume dragged since stays (#325).
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| {
+                            db.edit_box_breath_phase(phase_for_sound, |p| p.sound_uuid = uuid.as_str().into())
+                        }));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_sound);
                     },
                 );
@@ -1486,19 +1474,13 @@ impl TimerView {
                 };
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
-                let p_for_pick = p.clone();
                 window.push_vibrations_chooser(
                     &app,
                     Some(p.pattern_uuid.0.clone()),
                     move |uuid| {
-                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
-                            phase_for_pattern,
-                            p_for_pick.enabled,
-                            p_for_pick.signal_mode,
-                            p_for_pick.sound_uuid.as_str(),
-                            &uuid,
-                            p_for_pick.volume,
-                        )));
+                        setting_saved(&this_for_pick, "timer.setting", app_for_pick.with_db_mut(|db| {
+                            db.edit_box_breath_phase(phase_for_pattern, |p| p.pattern_uuid = uuid.as_str().into())
+                        }));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_pattern);
                     },
                 );
@@ -1507,7 +1489,7 @@ impl TimerView {
 
         // Sound/Vibration/Both AdwToggleGroup. Built imperatively
         // (no app at construction time); persistence resolves app
-        // lazily and writes through set_box_breath_phase.
+        // lazily and writes through edit_box_breath_phase.
         build_phase_signal_mode_toggle_widget(
             toggle_host,
             sound_revealer,
@@ -1702,7 +1684,7 @@ pub(crate) fn apply_signal_mode_state(
 
 /// Phase-config variant of `build_signal_mode_toggle_widget`. The
 /// notify handler resolves app lazily (via `get_app`) and persists
-/// the new mode through `set_box_breath_phase` instead of writing
+/// the new mode through `edit_box_breath_phase` instead of writing
 /// to a settings key. Initial state is sound-revealed / pattern-
 /// hidden; refresh-on-visit applies the saved column value.
 pub(crate) fn build_phase_signal_mode_toggle_widget(
@@ -1736,16 +1718,7 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
             .unwrap_or(crate::db::SignalMode::Sound);
         show_no_vibration_note(tg);
         if let Some(app) = get_app() {
-            if let Some(p) = app
-                .with_db(|db| db.get_box_breath_phase(phase))
-                .and_then(std::result::Result::ok)
-                .flatten()
-            {
-                setting_saved(tg, "timer.setting", app.with_db_mut(|db| db.set_box_breath_phase(
-                    phase, p.enabled, mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
-                    p.volume,
-                )));
-            }
+            setting_saved(tg, "timer.setting", app.with_db_mut(|db| db.edit_box_breath_phase(phase, |p| p.signal_mode = mode)));
         }
         sound_revealer.set_reveal_child(mode.includes_sound());
         pattern_revealer.set_reveal_child(mode.includes_vibration());
@@ -2695,7 +2668,7 @@ impl TimerView {
                 // next Start would overwrite the snapshot, the only copy.
                 obj.imp().reset_mode(mode, false);
                 app.invalidate(crate::application::InvalidateScope::STATS);
-                let id = session.id;
+                let uuid = session.uuid.clone();
                 if let Some(win) = app.active_window()
                     .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                 {
@@ -2711,7 +2684,8 @@ impl TimerView {
                         let app_for_undo = app.clone();
                         let win_for_undo = win.clone();
                         toast.connect_button_clicked(move |_| {
-                            let deleted = app_for_undo.with_db_mut(|db| db.delete_session(id));
+                            // The play it counted goes with it (#324).
+                            let deleted = app_for_undo.with_db_mut(|db| db.undo_session_save(&uuid, local_file_id));
                             crate::db::write_ok(&win_for_undo, "session.auto_finish.undo", deleted, crate::db::Failed::Delete);
                             app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
                             win_for_undo.imp().timer_view.refresh_streak();
@@ -3821,15 +3795,13 @@ impl TimerView {
     /// Snapshot the live Setup state into a `PresetConfig`. Reads
     /// from the same persistence points the apply path writes to, so
     /// `apply_config(snapshot_current_setup())` is a round-trip with
-    /// no observable change. Used by both the Undo path on
-    /// preset-tap (capture pre-apply state) and the future "Save
-    /// Settings" chooser flow (capture state to write into a new or
-    /// overwritten preset).
-    fn snapshot_current_setup(&self) -> meditate_core::preset_config::PresetConfig {
-        use meditate_core::preset_config::{
-            snapshot, PresetBoxBreathCues, PresetConfig, PresetEndBell,
-            PresetIntervalBells, PresetLabel, PresetStartingBell, PresetTiming,
-        };
+    /// no observable change. Used by the Undo path on preset-tap
+    /// (capture pre-apply state) and "Save current setup" (capture
+    /// state to write into a new or overwritten preset). `None` when
+    /// it can't be read (that said "Save failed") and in Guided, which
+    /// has no presets.
+    fn snapshot_current_setup(&self) -> Option<meditate_core::preset_config::PresetConfig> {
+        use meditate_core::preset_config::{snapshot, PresetTiming};
         let mode = self.current_mode();
 
         // Build the live-UI-state half from gtk Cell<>s. Core's
@@ -3850,96 +3822,39 @@ impl TimerView {
                     duration_secs:  self.breathing_session_secs.get(),
                 }
             }
-            // Snapshot is unreachable in Guided (Save Settings button
-            // is hidden + early-returns above). Synthesise a Timer-
-            // shaped value just to satisfy the match — never read.
-            TimerMode::Guided => PresetTiming::Timer {
-                stopwatch: false,
-                duration_secs: 0,
-            },
+            // Guided has no presets (its buttons are hidden); a
+            // snapshot there would carry no length to apply.
+            TimerMode::Guided => return None,
         };
 
-        // App / DB unavailable: return a defaults-shaped PresetConfig
-        // with the timing we just built. Unreachable in normal flow
-        // (snapshot is called from a UI handler that has an app).
-        self.get_app()
-            .and_then(|app| {
-                app.with_db(|db| snapshot(db.core(), mode.into(), timing.clone()))
-            })
-            .unwrap_or_else(|| PresetConfig {
-                label: PresetLabel::default(),
-                starting_bell: PresetStartingBell::default(),
-                interval_bells: PresetIntervalBells::default(),
-                end_bell: PresetEndBell::default(),
-                timing,
-                cues_signal_mode: "both".to_string(),
-                keep_screen_awake: false,
-                auto_finish: false,
-                box_breath_cues: PresetBoxBreathCues::default(),
-            })
+        // A setup that can't be read is no preset: "Save failed" (#291).
+        match self.get_app().and_then(|app| app.with_db(|db| snapshot(db.core(), mode.into(), timing))) {
+            Some(Ok(cfg)) => Some(cfg),
+            failed => {
+                setting_saved(&*self.obj(), "preset.snapshot", failed);
+                None
+            }
+        }
     }
 
     /// Apply a `PresetConfig` to the live Setup state. Delegates the
     /// persistence work (settings + interval-bell replay +
-    /// box-breath phase rows) to `meditate_core::preset_config::apply`,
-    /// then unpacks the returned timing into the gtk-side Cell<>s and
-    /// widgets, and finishes with `refresh_streak` so dependent rows
-    /// converge.
+    /// box-breath phase rows, the length) to
+    /// `meditate_core::preset_config::apply`, then reloads the Setup
+    /// from the DB with `refresh_streak`.
     ///
-    /// Returns true iff the apply happened. Returns false on a DB error
-    /// (or no DB); callers can decide how to surface that to the user.
-    /// Apply `cfg`; when that fails partway (core saves value by value),
-    /// put the setup from before back. The failure has said so already.
+    /// Returns true iff the apply happened. On a DB error (or no DB)
+    /// nothing of it was stored, and a failure has said "Save failed".
     fn apply_config(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
-        let before = self.snapshot_current_setup();
-        if self.apply_config_once(cfg) {
-            return true;
-        }
-        self.apply_config_once(&before);
-        false
-    }
-
-    fn apply_config_once(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
-        use meditate_core::preset_config::{apply, PresetTiming};
+        use meditate_core::preset_config::apply;
         let Some(app) = self.get_app() else { return false; };
         let mode = self.current_mode();
 
-        let outcome = app.with_db_mut(|db| apply(db.core(), cfg, mode.into()));
-        let timing = match outcome {
-            Some(Ok(t)) => t,
-            failed => {
-                setting_saved(&*self.obj(), "preset.apply", failed);
-                return false;
-            }
-        };
-
-        // Apply mode-specific live state from the timing core just
-        // wrote. The shell owns the gtk-side reactive plumbing.
-        match timing {
-            PresetTiming::Timer { stopwatch, duration_secs } => {
-                if !self.set_countdown_target(duration_secs) { return false; }
-                self.stopwatch_loading.set(true);
-                self.stopwatch_mode_row.set_active(stopwatch);
-                self.stopwatch_toggle_on.set(stopwatch);
-                self.stopwatch_loading.set(false);
-            }
-            PresetTiming::BoxBreath {
-                stopwatch,
-                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-                duration_secs,
-            } => {
-                self.breathing_pattern.set(BreathPattern::clamp_from_raw(
-                    inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-                ));
-                if !self.set_breathing_duration_secs(duration_secs) { return false; }
-                self.refresh_phase_tiles();
-                self.stopwatch_loading.set(true);
-                self.stopwatch_mode_row.set_active(stopwatch);
-                self.stopwatch_toggle_on.set(stopwatch);
-                self.stopwatch_loading.set(false);
-            }
+        if !setting_saved(&*self.obj(), "preset.apply", app.with_db_mut(|db| apply(db.core(), cfg, mode.into()))) {
+            return false;
         }
-
+        // Core stored all of it, the length included; the reload shows
+        // it (the hero too, through refresh_stopwatch_dependent_ui).
         self.refresh_streak();
         true
     }
@@ -3973,8 +3888,8 @@ impl TimerView {
             return;
         }
 
-        let snapshot = self.snapshot_current_setup();
         // A failure has said so already.
+        let Some(snapshot) = self.snapshot_current_setup() else { return; };
         if !self.apply_config(&cfg) { return; }
 
         // Toast with Undo. The action callback re-applies the
@@ -4837,9 +4752,12 @@ mod tests {
         // A volume that didn't save plays no preview: `save` gives no sound.
         let volume = body(&code, "let save = move |&(slot, mode)");
         assert!(volume.contains("setting_saved(") && volume.contains("return None"));
-        // A preset whose length didn't save is a failed apply.
-        let apply = body(&code, "fn apply_config_once(&self");
-        assert!(apply.contains("if !self.set_countdown_target("));
+        // A preset's length is saved inside core's apply; the widgets
+        // follow without a second write that could fail on its own.
+        let apply = body(&code, "fn apply_config(&self");
+        assert!(!apply.contains("set_countdown_target(") && !apply.contains("set_breathing_duration_secs("));
+        assert!(!apply.contains("PresetTiming::"), "the reload shows the stored length");
+        assert!(apply.contains("self.refresh_streak();"));
         assert!(body(&code, "fn set_countdown_target(&self, secs: u32) -> bool").contains("setting_saved("));
     }
 
@@ -4855,17 +4773,15 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_that_fails_halfway_is_put_back() {
-        // #191 review: core saves a preset's values one by one, so a
-        // failure can leave half of it; "Save failed" then puts the
-        // setup from before back (no Undo: nothing was done).
+    fn a_failed_preset_apply_is_not_written_twice() {
+        // K3 #193: core applies a preset whole or not at all, so a
+        // failure leaves the setup from before; writing it again could
+        // fail on the same lock and leave half of it.
         let code = production();
         let apply = body(&code, "fn apply_config(&self");
-        let before = apply.find("self.snapshot_current_setup()").expect("the setup before");
-        let once = apply.find("self.apply_config_once(cfg)").unwrap();
-        let back = apply.find("self.apply_config_once(&before)").expect("put back");
-        assert!(before < once && once < back);
-        assert!(apply.contains("if self.apply_config_once(cfg) {\n            return true;"), "put back only on failure");
+        assert_eq!(apply.matches("apply(db.core(), ").count(), 1, "one apply");
+        assert!(!apply.contains("snapshot_current_setup"), "nothing to put back");
+        assert!(apply.contains("setting_saved("), "a failure says Save failed");
     }
 
     #[test]
@@ -4907,12 +4823,12 @@ mod tests {
         let save = &save[..save.find("\n    fn ").unwrap()];
         let ok = save.find("reset_mode(mode, false)").unwrap();
         assert!(save.contains("gettext(\"Session saved\")"));
-        assert!(save.contains("delete_session(id)"));
+        assert!(save.contains("undo_session_save(&uuid, local_file_id)"));
         assert!(save.contains("crate::db::Failed::Delete"));
         // Away from the window no toast is left waiting.
         assert!(save[ok..].contains("if auto && win.is_active() {"), "only after the write landed");
         // Undo also puts the streak chip under it back.
-        let undo = &save[save.find("delete_session(id)").unwrap()..];
+        let undo = &save[save.find("undo_session_save(&uuid, local_file_id)").unwrap()..];
         assert!(undo[..undo.find("win.add_toast").unwrap()].contains("refresh_streak()"));
         assert!(undo[..undo.find("win.add_toast").unwrap()].contains("log_view.refresh()"), "an open Log follows at once");
         // The switch: per mode, written like every other setting.

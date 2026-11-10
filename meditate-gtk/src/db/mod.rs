@@ -286,6 +286,8 @@ pub use meditate_core::seeds::{
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: i64,
+    /// Cross-device id; Undo of a save deletes by it.
+    pub uuid: String,
     /// Unix timestamp (seconds since epoch) of when the session started.
     pub start_time: i64,
     pub duration_secs: i64,
@@ -341,6 +343,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
 fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     Session {
         id,
+        uuid: core.uuid.to_string(),
         start_time: core.start_unix(),
         duration_secs: i64::from(core.duration_secs),
         mode: core.mode,
@@ -777,18 +780,12 @@ impl Database {
         self.inner.get_box_breath_phase(phase).map_err(map_core_err)
     }
 
-    pub fn set_box_breath_phase(
+    pub fn edit_box_breath_phase(
         &self,
         phase: BoxBreathPhaseId,
-        enabled: bool,
-        signal_mode: SignalMode,
-        sound_uuid: &str,
-        pattern_uuid: &str,
-        volume: meditate_core::bell_volume::BellVolume,
+        edit: impl Fn(&mut BoxBreathPhase),
     ) -> Result<()> {
-        self.inner
-            .set_box_breath_phase(phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume)
-            .map_err(map_core_err)
+        self.inner.edit_box_breath_phase(phase, edit).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
@@ -809,6 +806,11 @@ impl Database {
             .insert_session_counting_local_play(&core, local_file_id)
             .map_err(map_core_err)?;
         Ok(session_from_core(id, &stored))
+    }
+
+    /// Undo a save: the session and the play it counted go together.
+    pub fn undo_session_save(&self, uuid: &str, local_file_id: Option<i64>) -> Result<()> {
+        self.inner.undo_session_save(uuid, local_file_id).map_err(map_core_err)
     }
 
     pub fn delete_all_sessions(&self) -> Result<usize> {
@@ -1075,7 +1077,7 @@ mod tests {
             }
             let t = line.trim_start();
             // #191: a setting write whose error only reaches the log.
-            let settings = ["set_setting(", "bell_volume::write(", "set_box_breath_phase(", "settings_keys::set_", "labels::set_", "labels::persist_"];
+            let settings = ["set_setting(", "bell_volume::write(", "set_box_breath_phase(", "edit_box_breath_phase(", "settings_keys::set_", "labels::set_", "labels::persist_"];
             if t.starts_with("if let Err(") && settings.iter().any(|s| t.contains(s)) {
                 found.push(format!("{file}:{}: {t}", n + 1));
             }

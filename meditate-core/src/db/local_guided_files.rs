@@ -119,7 +119,7 @@ impl Database {
     /// in which case nothing changes.
     pub fn apply_local_scan(&self, root: &str, scan: &FolderScan) -> Result<bool> {
         let FolderScan::Found(files) = scan else { return Ok(false) };
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         self.conn.execute("UPDATE local_guided_files SET missing = 1 WHERE root = ?1", [root])?;
         let mut upsert = self.conn.prepare_cached(
             "INSERT INTO local_guided_files (root, rel_path, size, mtime) VALUES (?1, ?2, ?3, ?4)
@@ -154,7 +154,7 @@ impl Database {
     /// A newly starred file comes last in Starred Files; unstarring
     /// forgets its place. Starring a starred file keeps it.
     pub fn set_local_file_starred(&self, id: i64, starred: bool) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let Some(file) = find_local_file_from_db(self, id)? else { return Ok(()); };
         if file.is_starred == starred { return Ok(()); }
         let key = if starred {
@@ -424,6 +424,43 @@ mod tests {
         db.insert_session_counting_local_play(&guided_session(), Some(id)).unwrap();
         assert_eq!(file(&db, "Sleep/b.ogg").play_count, 3);
         assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1);
+    }
+
+    fn saved_with_plays(db: &Database, plays: u32) -> (i64, String) {
+        db.apply_local_scan(ROOT, &found(&[scanned("Sleep/b.ogg", 10, 100)])).unwrap();
+        let id = file(db, "Sleep/b.ogg").id;
+        db.conn.execute("UPDATE local_guided_files SET play_count = ?1 WHERE id = ?2", [i64::from(plays), id]).unwrap();
+        let (_, saved) = db.insert_session_counting_local_play(&guided_session(), Some(id)).unwrap();
+        (id, saved.uuid.to_string())
+    }
+
+    #[test]
+    fn undoing_a_saved_session_takes_its_local_play_back() {
+        let db = Database::open_in_memory().unwrap();
+        let (id, uuid) = saved_with_plays(&db, 2);
+        assert_eq!(file(&db, "Sleep/b.ogg").play_count, 3);
+        db.undo_session_save(&uuid, Some(id)).unwrap();
+        assert_eq!(file(&db, "Sleep/b.ogg").play_count, 2);
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn undoing_a_save_never_counts_below_zero() {
+        let db = Database::open_in_memory().unwrap();
+        let (id, uuid) = saved_with_plays(&db, 0);
+        db.conn.execute("UPDATE local_guided_files SET play_count = 0 WHERE id = ?1", [id]).unwrap();
+        db.undo_session_save(&uuid, Some(id)).unwrap();
+        assert_eq!(file(&db, "Sleep/b.ogg").play_count, 0);
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn undo_after_the_session_is_gone_takes_no_play_back() {
+        let db = Database::open_in_memory().unwrap();
+        let (id, uuid) = saved_with_plays(&db, 2);
+        db.delete_session_by_uuid(&uuid).unwrap();
+        db.undo_session_save(&uuid, Some(id)).unwrap();
+        assert_eq!(file(&db, "Sleep/b.ogg").play_count, 3);
     }
 
     #[test]

@@ -125,7 +125,7 @@ impl Database {
     /// ignored).
     fn insert_vibration_pattern_at(&self, pattern: &VibrationPattern) -> Result<i64> {
         let uuid_str = pattern.uuid.as_str();
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let rowid = self.insert_new_in("vibration_patterns", uuid_str, || {
             // Checked first: the rebuild would suffix a taken name instead.
             if is_vibration_pattern_name_taken_from_db(self, &pattern.name, uuid_str)? {
@@ -140,7 +140,7 @@ impl Database {
     /// Record `pattern` as `kind` and store it the way a peer stores it.
     fn write_vibration_pattern_in(
         &self,
-        tx: &rusqlite::Transaction<'_>,
+        tx: &super::Tx<'_>,
         kind: EventKind,
         pattern: &VibrationPattern,
     ) -> Result<()> {
@@ -224,7 +224,7 @@ impl Database {
             return Err(DbError::DuplicateVibrationPattern(pattern.name));
         }
         pattern.updated_iso = chrono::Utc::now().to_rfc3339();
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         self.write_vibration_pattern_in(&tx, EventKind::VibrationPatternUpdate, &pattern)?;
         tx.commit()?;
         Ok(true)
@@ -232,7 +232,7 @@ impl Database {
 
     /// See `delete_synced_row`.
     pub fn delete_vibration_pattern(&self, uuid_str: &str) -> Result<()> {
-        self.delete_synced_row("vibration_patterns", uuid_str, EventKind::VibrationPatternDelete)
+        self.delete_synced_row("vibration_patterns", uuid_str, EventKind::VibrationPatternDelete).map(drop)
     }
 
 

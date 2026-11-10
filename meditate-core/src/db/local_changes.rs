@@ -1,7 +1,8 @@
 //! Lock-free count of local changes that need syncing.
 //!
 //! `emit_event` — the one place every local write records its sync
-//! event — bumps it; events replayed from peers and device-local
+//! event — marks it, and the write's commit counts it (a sync on
+//! another connection sees the change only then); events replayed from peers and device-local
 //! writes (the running-session snapshot) don't. A shell holds a
 //! `LocalChangeWatch` and asks it, from any thread and without the
 //! DB lock, whether something new needs pushing, so no write path
@@ -57,6 +58,23 @@ mod tests {
         SessionInProgress, SessionMode, SessionUuid, SignalMode, StarredState,
     };
     use crate::seeds::{BUNDLED_BELL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+
+    #[test]
+    fn a_change_is_seen_once_its_write_commits() {
+        // A sync started on the signal must find the change: before
+        // the commit its own connection can't see it yet.
+        let db = Database::open_in_memory().unwrap();
+        let mut watch = LocalChangeWatch::new(db.local_changes());
+        let tx = db.tx().unwrap();
+        db.set_setting("k", "v").unwrap();
+        assert!(!watch.take_new(), "not while the write is open");
+        tx.commit().unwrap();
+        assert!(watch.take_new(), "once it committed");
+        let tx = db.tx().unwrap();
+        db.set_setting("k", "w").unwrap();
+        drop(tx);
+        assert!(!watch.take_new(), "a write undone sends nothing");
+    }
 
     fn session(start_iso: &str) -> Session {
         Session {

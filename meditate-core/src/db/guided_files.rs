@@ -153,7 +153,7 @@ impl Database {
     /// Insert `file` under its uuid and times (its id is ignored).
     fn insert_guided_file_at(&self, file: &GuidedFile) -> Result<i64> {
         let uuid_str = file.uuid.as_str();
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.tx()?;
         let rowid = self.insert_new_in("guided_files", uuid_str, || {
             // Checked first: the rebuild would suffix a taken name instead.
             if is_guided_file_name_taken_from_db(self, &file.name, uuid_str)? {
@@ -166,7 +166,7 @@ impl Database {
     }
 
     /// Record `file` as `kind` and store it the way a peer stores it.
-    fn write_guided_file_in(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, file: &GuidedFile) -> Result<()> {
+    fn write_guided_file_in(&self, tx: &super::Tx<'_>, kind: EventKind, file: &GuidedFile) -> Result<()> {
         let uuid = file.uuid.as_str();
         self.emit_and_rebuild_in(tx, kind, uuid, serde_json::json!({
             "uuid": uuid,
@@ -183,12 +183,8 @@ impl Database {
     /// changes nothing: a fresh event would undo an edit another
     /// device made in the meantime. Unknown uuids write nothing. A
     /// new name another file holds returns `DuplicateGuidedFile`.
-    pub(super) fn edit_guided_file_in(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        uuid_str: &str,
-        edit: impl FnOnce(&mut GuidedFile),
-    ) -> Result<()> {
+    pub(super) fn edit_guided_file(&self, uuid_str: &str, edit: impl FnOnce(&mut GuidedFile)) -> Result<()> {
+        let tx = self.tx()?;
         let Some(stored) = find_guided_file_by_uuid_from_db(self, uuid_str)? else { return Ok(()) };
         let mut file = stored.clone();
         edit(&mut file);
@@ -199,14 +195,8 @@ impl Database {
             return Err(DbError::DuplicateGuidedFile(file.name));
         }
         file.updated_iso = chrono::Utc::now().to_rfc3339();
-        self.write_guided_file_in(tx, EventKind::GuidedFileUpdate, &file)
-    }
-
-    fn edit_guided_file(&self, uuid_str: &str, edit: impl FnOnce(&mut GuidedFile)) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        self.edit_guided_file_in(&tx, uuid_str, edit)?;
-        tx.commit()?;
-        Ok(())
+        self.write_guided_file_in(&tx, EventKind::GuidedFileUpdate, &file)?;
+        tx.commit()
     }
 
     /// Rename a guided-file row. Unknown uuids and the current name
@@ -224,7 +214,7 @@ impl Database {
 
     /// See `delete_synced_row`.
     pub fn delete_guided_file(&self, uuid_str: &str) -> Result<()> {
-        self.delete_synced_row("guided_files", uuid_str, EventKind::GuidedFileDelete)
+        self.delete_synced_row("guided_files", uuid_str, EventKind::GuidedFileDelete).map(drop)
     }
 
     /// Recompute the `guided_files` row for `file_uuid` from the events

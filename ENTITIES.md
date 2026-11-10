@@ -77,7 +77,10 @@ pub use foos::Foo;
 ```
 
 CRUD methods on `Database` must:
-- Open an `unchecked_transaction` before any mutation.
+- Open a write with `let tx = self.tx()?;` before any mutation and end
+  it with `tx.commit()`. Writes nest (savepoints), so a caller that
+  needs several writes as one wraps them in its own `tx()` and calls
+  the plain methods; no `_in` twin per method.
 - Write through one `write_foo_in(tx, kind, &Foo)` that builds the
   payload from the row, emits it via `self.emit_event(&tx, ...)` (see
   step 5) and calls `recompute_foo`, so the local row is built the way

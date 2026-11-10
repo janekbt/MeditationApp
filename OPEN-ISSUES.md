@@ -16,8 +16,8 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
 | [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
-| [ ] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
-| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #310, #251, #247, #490, #323, #340, #341, #491, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
+| [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
+| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #341, #491, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #98, #100, #137 | wasted network, disk and rebuilds |
@@ -91,38 +91,7 @@ Data the user typed or saved goes missing, moves, or exists twice.
 
 ## K3. Presets and multi-step writes all or nothing
 
-### #193 Core: applying a preset is not one transaction
-- Where: `meditate-core/src/preset_config.rs` `apply` (comment above it: core::db has no nestable transactions; `set_interval_bell_enabled` opens its own); the length is written after it by each app (`set_timer_session_secs` / `set_breathing`).
-- Problem: a write that fails partway (sync lock, full disk) leaves part of the preset: settings, interval bells and box-breath phases out of step with it. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
-- Fix: nestable transactions in core::db (a savepoint helper, `SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, keeping `&self`; merged from #177), then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
-- From change one-path-per-table (2026-11-10): about 40 writes in `db/` open their own `unchecked_transaction` and many come as `x` / `x_in` pairs (`delete_synced_row`, `edit_preset`, `edit_guided_file`, `set_interval_bell_enabled`, the `insert_*_at`); the savepoint helper as `in_tx(|tx| ..)` makes each pair one function. `apply` should call `edit_bell_in(tx, ..)` instead of `set_interval_bell_enabled` (one transaction per bell). REFACTORING #495 changes the same functions.
-- From the sweep: both apps re-apply the old setup on failure (gtk `timer/imp.rs:3895-3902`, android `ui.rs:1809`), which can fail the same way and leaves inserted bells behind; GTK snapshots the setup twice for it (REFACTORING #317).
-
-### #306 A Box Breath pattern is saved in five steps
-- Where: `settings_keys.rs:243-253` (`set_breathing`): five `set_setting` calls, each its own transaction and synced event.
-- Scenario: a write fails after the first two (locked or full database); every device ends up with a mixed old and new pattern, and the message doesn't say what landed.
-- Fix: one transaction (a `set_settings(&[(k, v)])` looping `set_setting_in`). Same class as OPEN-ISSUES #193 (presets); the savepoint helper there covers both. `set_box_breath_phase` needs an `_in` form for it. The seeds' `seed_once` (`db/seeds.rs`) also writes its rows and its done marker in separate transactions; harmless (a re-run skips existing uuids) but the same helper would make it one.
-
-### #291 A read error while saving a preset stores it without its interval bells, silently
-- (Same class as #308.)
-- Where: `preset_config.rs:581-586` (`snapshot`: `list_interval_bells().unwrap_or_default()`); the same at session start, `bells.rs:800`.
-- Scenario: the database is busy during "Save current setup"; the preset is stored with an empty bell list and the bells switched on. Applying it later switches every library bell off. At session start the same error starts a session with no interval bells. No message, not even a log line.
-- Fix: pass the error on (`snapshot` returns `Result`); the apps already show "Save failed". Same class as #251 (an unreadable row read as empty).
-
-### #292 Applying a preset saved without a label keeps whatever label is picked now
-- Where: `preset_config.rs:662-664`: the label is only written when the preset has one, though the field's doc (74-75) says `None` means "the mode's default".
-- Scenario: a preset saved with no label picked; the user picks "Walking" and applies the preset; the session is tagged "Walking", and the preset no longer shows as active.
-- Fix: write the mode default (or clear the setting) when `uuid` is `None`.
-
-### #325 Picking a Box Breath phase sound or pattern can undo a just-saved volume or signal mode
-- Where: `timer/imp.rs:1448-1461` (sound) and 1494 (pattern) write back `p_for_pick`, a copy of the phase row taken when the chooser opened.
-- Scenario: the user drags the Inhale volume and taps Inhale's sound within the 0.4 s save delay; the old volume comes back without a word. A sync pull while the chooser is open is lost the same way.
-- Fix: re-read the phase in the pick callback; with #234 one write path per table would only change the field picked.
-
-### #324 Undoing an Auto-Finish save leaves the Local Folder file's play counted
-- Where: Undo (`timer/imp.rs:2714`) calls `delete_session`, which doesn't touch `play_count`; `insert_session_counting_local_play` (`session_in_progress.rs:168`) raised it in the same transaction as the insert.
-- Scenario: a Guided session from the Local Folder auto-finishes, the user taps Undo: the file shows a play that is in no session, one more per Undo.
-- Fix: Undo lowers the count in the delete's transaction. Ask whether deleting a session in the Log should too.
+Done 2026-11-10 (change writes-all-or-nothing). Moved on: the session-start half of #291, the load-path defaults the review found, and an unreadable setup in the active-preset check go with #308 (EE); a deleted default label and the general "read before locking" are below in EE.
 
 ## EE. Failures nobody sees: core and Linux
 
@@ -145,7 +114,22 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 - Where: `insights.rs:55-80` turns every read error into 0 or empty (`unwrap_or_default`, `unwrap_or(0)`), not even logged; `goal::today_from_db` the same.
 - Scenario: the database is locked at refresh; Stats shows an empty history or a 0-minute goal ring as if the user had never meditated.
 - Fix: return the error and show it; do with #297. Same class as #291 and #251.
+- From K3 (2026-11-10, maintainer: with #308), the same class at other reads:
+  - Session start (#291's other half): `bells.rs` `session_bells_from_db` reads the interval bells with `unwrap_or_default`, so a failed read starts a session with no interval bells, silently; `SessionSettings::from_db` reads every other setting the same way.
+  - Setup's loaded values: a failed read at a page load puts defaults into the shell's state, and the next write starts from them. Linux: `load_breathing_settings` (4-4-4-4 and the default length into the Cells), then a phase step (`adjust_phase`), a length commit (`set_breathing_duration_secs`) or "Save current setup" (`snapshot_current_setup` takes its Box Breath timing from the Cells) stores and syncs the defaults without a word. Both apps: a failed read of the Timer length leaves 10 minutes in the length cell, which "Save current setup" and a preset tap's Undo snapshot then store. Android's Box Breath step and length commit already start from `try_breathing_from_db` (`breathing_to_change`). A core `edit_breathing(db, |pattern, secs|)` would serve both apps (Related: REFACTORING #500).
+  - The active-preset check: `preset_config::active_presets` logs an unreadable setup (`preset.active`) and shows no preset active, with no message.
 
+
+### #498 A deleted default label leaves a "default" preset unable to pick a label
+- Where: `preset_config::apply_writes`, the `(true, None)` label arm, writes the mode default only while the default label exists.
+- Scenario: the mode's default label was deleted (not merged; a merge now carries such presets along), the user picks "Walking" and applies a preset saved with the label on and none picked: "Walking" stays, and the preset never shows as active. As before K3.
+- Fix: let a label delete do what `merge_labels` does for these presets (pin them, or switch their label off), or store presets with a real label uuid (Related: REFACTORING #504).
+
+### #499 Unchanged writes still wait for the write lock
+- Where: `set_setting`, `edit_bell`, `edit_preset`, `edit_guided_file`, `update_label`, `update_session` open `tx()` (BEGIN IMMEDIATE) before seeing that nothing changes.
+- Scenario: a Setup refresh writes stored values back while a sync holds the lock: the refresh waits out busy_timeout and can say "Save failed" for a write that changes nothing. K3 fixed it for the Box Breath phase edit, the seeds and crash recovery.
+- Fix: one "read first, lock only for a change" helper in core for all of them (Related: REFACTORING #501).
+- Also check: `Database::open` stamps `PRAGMA user_version` at every open; if that takes the write lock, an open during a sync write still waits (unverified, from K3's review).
 ### #310 A corrupt database row during export is reported as a "CSV error"
 - Where: `data_io.rs:84` maps `DbError::Decode` to `DataIoError::Csv`. Fix: #300.
 
