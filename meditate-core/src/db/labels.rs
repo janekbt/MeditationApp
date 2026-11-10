@@ -72,15 +72,9 @@ pub fn count_labels_from_db(db: &Database) -> Result<i64> {
 /// with the column's NOCASE collation so 'apple', 'Banana', 'cherry'
 /// come back in dictionary order regardless of casing.
 pub fn list_labels_from_db(db: &Database) -> Result<Vec<Label>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT id, name, uuid FROM labels ORDER BY name",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(Label { id: row.get(0)?, name: row.get(1)?, uuid: row.get(2)? })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows("SELECT id, name, uuid FROM labels ORDER BY name", [], |row| {
+        Ok(Label { id: row.get(0)?, name: row.get(1)?, uuid: row.get(2)? })
+    })
 }
 
 /// How many colours the Log's label palette has; places wrap after it.
@@ -91,15 +85,15 @@ pub const LABEL_COLOR_COUNT: usize = 16;
 /// uuid by (lamport_ts, device_id), so synced devices agree. Labels
 /// with no such event come last, by id.
 pub fn label_color_places_from_db(db: &Database) -> Result<std::collections::HashMap<i64, usize>> {
-    let mut stmt = db.conn.prepare(
+    let ids: Vec<i64> = db.query_rows(
         "SELECT l.id FROM labels l LEFT JOIN events e ON e.event_uuid = (
              SELECT event_uuid FROM events
              WHERE target_id = l.uuid AND kind = 'label_insert'
              ORDER BY lamport_ts, device_id LIMIT 1)
          ORDER BY e.lamport_ts IS NULL, e.lamport_ts, e.device_id, l.id",
+        [],
+        |row| row.get(0),
     )?;
-    let ids = stmt.query_map([], |row| row.get::<_, i64>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(ids.into_iter().enumerate().map(|(rank, id)| (id, rank % LABEL_COLOR_COUNT)).collect())
 }
 
@@ -128,15 +122,8 @@ impl Database {
     }
 
     fn delete_label_in(&self, tx: &rusqlite::Transaction<'_>, id: i64) -> Result<()> {
-        let row_uuid: Option<String> = self.conn.query_row(
-            "SELECT uuid FROM labels WHERE id = ?1",
-            params![id],
-            |row| row.get::<_, String>(0),
-        ).optional()?;
-        let Some(uuid) = row_uuid else { return Ok(()); };
-        self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
-        let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(tx, EventKind::LabelDelete, &uuid, payload)
+        let Some(uuid) = self.uuid_by_id("labels", id)? else { return Ok(()); };
+        self.delete_synced_row_in(tx, "labels", &uuid, EventKind::LabelDelete)
     }
 
     /// Rename the label with `id` to `name`. Unknown ids are silently
@@ -178,8 +165,7 @@ impl Database {
     /// silently reuse an existing row (e.g. CSV import) should call
     /// `find_or_create_label` instead.
     pub fn insert_label(&self, name: &str) -> Result<i64> {
-        let label_uuid = uuid::Uuid::new_v4().to_string();
-        self.insert_label_with_uuid(&label_uuid, name)
+        self.insert_label_with_uuid(&super::mint_uuid(), name)
     }
 
     /// Insert a label with a caller-supplied uuid. Idempotent on the
@@ -230,7 +216,7 @@ impl Database {
         if let Some(id) = find_label_by_name_from_db(self, name)? {
             return Ok(id);
         }
-        let uuid = uuid.map_or_else(|| uuid::Uuid::new_v4().to_string(), ToString::to_string);
+        let uuid = uuid.map_or_else(super::mint_uuid, ToString::to_string);
         self.insert_label_in(tx, &uuid, name)
     }
 
@@ -295,10 +281,7 @@ impl Database {
             self.update_session_in(&tx, id, &session)?;
         }
         // A mode whose default was the merged-away label takes the kept one.
-        let uuid_of = |id: i64| self.conn.query_row(
-            "SELECT uuid FROM labels WHERE id = ?1", params![id], |row| row.get::<_, String>(0),
-        ).optional();
-        if let (Some(from_uuid), Some(into_uuid)) = (uuid_of(from_id)?, uuid_of(into_id)?) {
+        if let (Some(from_uuid), Some(into_uuid)) = (self.uuid_by_id("labels", from_id)?, self.uuid_by_id("labels", into_id)?) {
             for mode in [crate::SessionMode::Timer, crate::SessionMode::BoxBreath, crate::SessionMode::Guided] {
                 let current = crate::labels::label_uuid_from_db(self, mode)
                     .unwrap_or_else(|| crate::settings_keys::default_label_uuid_for_mode(mode).to_string());
@@ -355,10 +338,7 @@ impl Database {
         )? else {
             // Tombstoned. `ON DELETE SET NULL` on the FK clears
             // label_id on any cached sessions that referenced this row.
-            self.conn.execute(
-                "DELETE FROM labels WHERE uuid = ?1",
-                params![label_uuid],
-            )?;
+            self.delete_row("labels", label_uuid)?;
             return Ok(());
         };
         {

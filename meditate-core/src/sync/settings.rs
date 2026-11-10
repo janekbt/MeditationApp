@@ -13,7 +13,7 @@
 //! `sync::credentials` module — they don't touch the DB so they
 //! stayed split out.
 
-use crate::db::{Database, Result};
+use crate::db::{Database, Known, Result};
 use crate::sync::indicator::SyncFailureKey;
 
 pub const KEY_URL: &str = "nextcloud_url";
@@ -76,9 +76,9 @@ pub fn adopt_account(db: &Database, url: &str, username: &str) -> Result<()> {
         return Ok(());
     }
     if !tracked.is_empty() {
-        db.wipe_known_remote_files()?;
-        db.wipe_known_remote_sounds()?;
-        db.wipe_known_remote_guided_files()?;
+        for known in Known::ALL {
+            db.wipe_known_remote(known)?;
+        }
         db.flag_all_events_unsynced()?;
         clear_refused_uploads(db)?;
     }
@@ -250,9 +250,9 @@ pub fn clear_refused_uploads(db: &Database) -> Result<()> {
 /// display state. The caller follows this with an explicit sync
 /// trigger.
 pub fn prepare_push_local_recovery(db: &Database) -> Result<()> {
-    db.wipe_known_remote_files()?;
-    db.wipe_known_remote_sounds()?;
-    db.wipe_known_remote_guided_files()?;
+    for known in Known::ALL {
+        db.wipe_known_remote(known)?;
+    }
     db.flag_all_events_unsynced()?;
     clear_sync_error(db)?;
     Ok(())
@@ -321,31 +321,31 @@ mod tests {
         adopt_account(&db, "https://old.example/", "u").unwrap();
         let events: Vec<i64> = db.pending_events().unwrap().iter().map(|(id, _)| *id).collect();
         db.mark_events_synced(&events).unwrap();
-        db.record_known_remote_file("from-old-server").unwrap();
+        db.record_known_remote(Known::Files, "from-old-server").unwrap();
         set_refused_uploads(&db, &[RefusedUpload { uuid: "x".into(), reason: UploadRefusal::ServerFull }]).unwrap();
 
         // Saving only writes the account: the pass does the reset.
         set_nextcloud_account(&db, "https://new.example/", "u").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        assert_eq!(db.known_remote(Known::Files).unwrap().len(), 1);
 
         adopt_account(&db, "https://new.example/", "u").unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+        assert!(db.known_remote(Known::Files).unwrap().is_empty());
         assert_eq!(db.pending_events().unwrap().len(), events.len());
         assert!(refused_uploads(&db).unwrap().is_empty());
 
         // The next pass for the same account leaves its work alone.
-        db.record_known_remote_file("on-new-server").unwrap();
+        db.record_known_remote(Known::Files, "on-new-server").unwrap();
         adopt_account(&db, "https://new.example/", "u").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        assert_eq!(db.known_remote(Known::Files).unwrap().len(), 1);
     }
 
     #[test]
     fn a_username_change_is_a_new_account() {
         let db = fresh();
         adopt_account(&db, "https://nc.example/", "alice").unwrap();
-        db.record_known_remote_file("from-alice").unwrap();
+        db.record_known_remote(Known::Files, "from-alice").unwrap();
         adopt_account(&db, "https://nc.example/", "bob").unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+        assert!(db.known_remote(Known::Files).unwrap().is_empty());
     }
 
     /// Installs from before the marker: the trackers belong to the
@@ -356,9 +356,9 @@ mod tests {
         db.insert_label("focus").unwrap();
         let events: Vec<i64> = db.pending_events().unwrap().iter().map(|(id, _)| *id).collect();
         db.mark_events_synced(&events).unwrap();
-        db.record_known_remote_file("a").unwrap();
+        db.record_known_remote(Known::Files, "a").unwrap();
         adopt_account(&db, "https://nc.example/", "alice").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        assert_eq!(db.known_remote(Known::Files).unwrap().len(), 1);
         assert!(db.pending_events().unwrap().is_empty());
     }
 
@@ -379,10 +379,10 @@ mod tests {
     #[test]
     fn prepare_push_local_recovery_wipes_known_remote_files() {
         let db = fresh();
-        db.record_known_remote_file("a").unwrap();
-        db.record_known_remote_file("b").unwrap();
+        db.record_known_remote(Known::Files, "a").unwrap();
+        db.record_known_remote(Known::Files, "b").unwrap();
         prepare_push_local_recovery(&db).unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+        assert!(db.known_remote(Known::Files).unwrap().is_empty());
     }
 
     #[test]

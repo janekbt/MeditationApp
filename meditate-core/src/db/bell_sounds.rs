@@ -64,6 +64,23 @@ impl BellSound {
     }
 }
 
+const COLUMNS: &str = "id, uuid, name, file_path, is_bundled, mime_type, category, created_iso";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<BellSound> {
+    let category: String = row.get(6)?;
+    Ok(BellSound {
+        id: row.get(0)?,
+        uuid: row.get(1)?,
+        name: row.get(2)?,
+        file_path: row.get(3)?,
+        is_bundled: row.get::<_, i64>(4)? != 0,
+        mime_type: row.get(5)?,
+        category: BellSoundCategory::from_db_str(&category)
+            .expect("bell_sounds.category violates CHECK constraint"),
+        created_iso: row.get(7)?,
+    })
+}
+
 const OLD_KANSHO: &str = "Kanshō";
 const KANSHO: &str = "Kansho";
 
@@ -99,7 +116,7 @@ impl Database {
         category: BellSoundCategory,
     ) -> Result<i64> {
         self.insert_bell_sound_with_uuid(
-            &uuid::Uuid::new_v4().to_string(),
+            &super::mint_uuid(),
             name,
             file_path,
             is_bundled,
@@ -123,22 +140,18 @@ impl Database {
         category: BellSoundCategory,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        // Pre-check for an existing row with this uuid — return its
-        // rowid without inserting or emitting an event.
-        if let Some(existing) = self.existing_rowid_by_uuid("bell_sounds", uuid_str)? {
-            return Ok(existing);
-        }
-        self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, &BellSound {
-            id: 0,
-            uuid: uuid_str.into(),
-            name: name.to_string(),
-            file_path: file_path.to_string(),
-            is_bundled,
-            mime_type: mime_type.to_string(),
-            category,
-            created_iso: chrono::Utc::now().to_rfc3339(),
+        let rowid = self.insert_new_in("bell_sounds", uuid_str, || {
+            self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, &BellSound {
+                id: 0,
+                uuid: uuid_str.into(),
+                name: name.to_string(),
+                file_path: file_path.to_string(),
+                is_bundled,
+                mime_type: mime_type.to_string(),
+                category,
+                created_iso: chrono::Utc::now().to_rfc3339(),
+            })
         })?;
-        let rowid = self.existing_rowid_by_uuid("bell_sounds", uuid_str)?.expect("just written");
         tx.commit()?;
         Ok(rowid)
     }
@@ -164,102 +177,51 @@ impl Database {
     /// field of the row so a peer that's missed the insert can still
     /// materialise from this rename alone.
     pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
-        let Some(stored) = self.list_bell_sounds()?.into_iter().find(|s| s.uuid == uuid_str) else {
+        let Some(stored) = self.find_bell_sound(uuid_str)? else {
             return Ok(());
         };
+        let sound = BellSound { name: bundled_name(uuid_str, name).to_string(), ..stored.clone() };
         // Unchanged: a fresh event would undo a rename another device
         // made in the meantime.
-        let name = bundled_name(uuid_str, name);
-        if stored.name == name { return Ok(()); }
+        if sound == stored { return Ok(()); }
         let tx = self.conn.unchecked_transaction()?;
-        self.write_bell_sound_in(&tx, EventKind::BellSoundUpdate, &BellSound { name: name.to_string(), ..stored })?;
+        self.write_bell_sound_in(&tx, EventKind::BellSoundUpdate, &sound)?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Remove a bell-sound row and emit a tombstone. Unknown uuids
-    /// are silent no-ops AND emit no event. The UI gates by
-    /// `is_bundled` to keep bundled rows from being deleted by mistake;
-    /// no DB-level enforcement here.
+    /// See `delete_synced_row`. The UI keeps bundled rows from being
+    /// deleted; the database does not.
     pub fn delete_bell_sound(&self, uuid_str: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        if self.existing_rowid_by_uuid("bell_sounds", uuid_str)?.is_none() {
-            return Ok(());
-        }
-        self.conn.execute(
-            "DELETE FROM bell_sounds WHERE uuid = ?1",
-            params![uuid_str],
-        )?;
-        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(&tx, EventKind::BellSoundDelete, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_synced_row("bell_sounds", uuid_str, EventKind::BellSoundDelete)
     }
 
-    /// Every bell sound in creation order, which syncs, so every
-    /// device lists them alike (rowids follow arrival order). The
-    /// B.4.3 chooser renders this directly.
+    /// Every bell sound: custom imports first (the chooser puts them
+    /// right under "Choose your own"), then the bundled set, each in
+    /// creation order, which syncs, so every device lists them alike.
     pub fn list_bell_sounds(&self) -> Result<Vec<BellSound>> {
-        // Custom imports first (is_bundled = 0), then the curated
-        // bundled set. The chooser places "Choose your own…" at the
-        // very top, then this list — so the user's own imports sit
-        // immediately under the import affordance instead of being
-        // pushed to the bottom of a long bundled list.
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
-             FROM bell_sounds
-             ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let cat_str: String = row.get(6)?;
-                Ok(BellSound {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    file_path: row.get(3)?,
-                    is_bundled: row.get::<_, i64>(4)? != 0,
-                    mime_type: row.get(5)?,
-                    category: BellSoundCategory::from_db_str(&cat_str)
-                        .expect("bell_sounds.category violates CHECK constraint"),
-                    created_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        self.query_bell_sounds(None)
     }
 
     /// Same as `list_bell_sounds`, but filters to a single category.
     /// The chooser passes the category implied by its caller — bell
     /// rows pass General, Box Breath phase rows pass BoxBreath — so
     /// the user only sees sounds tailored to the slot they're filling.
-    pub fn list_bell_sounds_for_category(
-        &self,
-        category: BellSoundCategory,
-    ) -> Result<Vec<BellSound>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
-             FROM bell_sounds
-             WHERE category = ?1
-             ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![category.as_db_str()], |row| {
-                let cat_str: String = row.get(6)?;
-                Ok(BellSound {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    file_path: row.get(3)?,
-                    is_bundled: row.get::<_, i64>(4)? != 0,
-                    mime_type: row.get(5)?,
-                    category: BellSoundCategory::from_db_str(&cat_str)
-                        .expect("bell_sounds.category violates CHECK constraint"),
-                    created_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    pub fn list_bell_sounds_for_category(&self, category: BellSoundCategory) -> Result<Vec<BellSound>> {
+        self.query_bell_sounds(Some(category))
+    }
+
+    fn query_bell_sounds(&self, category: Option<BellSoundCategory>) -> Result<Vec<BellSound>> {
+        self.query_rows(
+            &format!("SELECT {COLUMNS} FROM bell_sounds WHERE ?1 IS NULL OR category = ?1
+                      ORDER BY is_bundled ASC, created_iso ASC, uuid ASC"),
+            params![category.map(BellSoundCategory::as_db_str)],
+            from_row,
+        )
+    }
+
+    fn find_bell_sound(&self, uuid: &str) -> Result<Option<BellSound>> {
+        self.query_one(&format!("SELECT {COLUMNS} FROM bell_sounds WHERE uuid = ?1"), params![uuid], from_row)
     }
 
     /// Recompute the `bell_sounds` row for `sound_uuid` from the events
@@ -274,10 +236,7 @@ impl Database {
             [EventKind::BellSoundInsert, EventKind::BellSoundUpdate],
             EventKind::BellSoundDelete,
         )? else {
-            self.conn.execute(
-                "DELETE FROM bell_sounds WHERE uuid = ?1",
-                params![sound_uuid],
-            )?;
+            self.delete_row("bell_sounds", sound_uuid)?;
             return Ok(());
         };
         {

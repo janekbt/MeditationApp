@@ -13,7 +13,7 @@
 //! `events.event_uuid UNIQUE` so a peer re-uploading our events is
 //! a no-op locally.
 
-use crate::db::{Database, DbError, Event};
+use crate::db::{Database, DbError, Event, Known};
 use super::backoff::BackoffState;
 use super::settings;
 use super::webdav::{WebDav, WebDavError};
@@ -253,7 +253,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             Err(e) => return Err(e.into()),
         };
 
-        let known_files = self.db.known_remote_file_uuids()?;
+        let known_files = self.db.known_remote(Known::Files)?;
 
         // Remote-data-lost fail-safe. Trigger when this device has
         // previously synced (known set non-empty) but the current
@@ -334,7 +334,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // so a partial replay doesn't leave us thinking we're done with
         // a file we didn't fully process.
         for batch_uuid in newly_ingested_files {
-            self.db.record_known_remote_file(&batch_uuid)?;
+            self.db.record_known_remote(Known::Files, &batch_uuid)?;
         }
 
         // After event replay, fetch any custom audio binaries
@@ -447,7 +447,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // cheap, and grouping them in one outer transaction would
         // require new plumbing).
         self.db.mark_events_synced(&event_ids)?;
-        self.db.record_known_remote_file(&batch_uuid)?;
+        self.db.record_known_remote(Known::Files, &batch_uuid)?;
 
         let pushed = events.len();
         progress(pushed, pushed);
@@ -527,7 +527,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             Err(WebDavError::NotFound) => return Ok(0),
             Err(e) => return Err(e.into()),
         };
-        let known = self.db.known_remote_file_uuids()?;
+        let known = self.db.known_remote(Known::Files)?;
         let batches: Vec<(String, String)> = listing
             .iter()
             .filter_map(|n| {
@@ -578,7 +578,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         )?;
         // Known immediately, so our own next pull neither re-GETs the
         // consolidated file nor trips the zero-match fail-safe.
-        self.db.record_known_remote_file(&batch_uuid)?;
+        self.db.record_known_remote(Known::Files, &batch_uuid)?;
 
         // Merge (not overwrite) the swallowed uuids into the manifest
         // BEFORE any delete: a peer must never observe "batches gone,
@@ -759,7 +759,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             }
             write_whole_file(&local, &bytes)?;
-            self.db.record_known_remote_sound(bell.uuid.as_str())?;
+            self.db.record_known_remote(Known::Sounds, bell.uuid.as_str())?;
             pulled += 1;
         }
         Ok(pulled)
@@ -822,7 +822,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// so a mid-batch interrupt leaves a coherent state — already-
     /// uploaded files are marked, the rest get retried next sync.
     fn push_custom_sound_files(&self, refused: &mut Vec<settings::RefusedUpload>) -> SyncResult<usize> {
-        let known = self.db.known_remote_sound_uuids()?;
+        let known = self.db.known_remote(Known::Sounds)?;
         let bells = self.db.list_bell_sounds()?;
         let pending: Vec<crate::db::BellSound> = bells
             .into_iter()
@@ -840,7 +840,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             let remote = self.sound_remote_path(uuid, ext);
             // Same cap as the pull side, which drops bigger files.
             if self.push_file(uuid, &local, &remote, MAX_CUSTOM_BELL_BYTES, refused)? {
-                self.db.record_known_remote_sound(uuid)?;
+                self.db.record_known_remote(Known::Sounds, uuid)?;
                 pushed += 1;
             }
         }
@@ -911,7 +911,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             }
             write_whole_file(&local, &bytes)?;
-            self.db.record_known_remote_guided_file(file.uuid.as_str())?;
+            self.db.record_known_remote(Known::GuidedFiles, file.uuid.as_str())?;
             pulled += 1;
         }
         Ok(pulled)
@@ -922,7 +922,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// PUTs to `<base>/guided/<uuid>.ogg` atomically, marks the uuid
     /// as known.
     fn push_custom_guided_files(&self, refused: &mut Vec<settings::RefusedUpload>) -> SyncResult<usize> {
-        let known = self.db.known_remote_guided_file_uuids()?;
+        let known = self.db.known_remote(Known::GuidedFiles)?;
         let files = crate::db::list_guided_files_from_db(self.db)?;
         let pending: Vec<crate::db::GuidedFile> = files
             .into_iter()
@@ -938,7 +938,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             let local = self.guided_local_path(uuid);
             let remote = self.guided_remote_path(uuid);
             if self.push_file(uuid, &local, &remote, MAX_CUSTOM_GUIDED_BYTES, refused)? {
-                self.db.record_known_remote_guided_file(uuid)?;
+                self.db.record_known_remote(Known::GuidedFiles, uuid)?;
                 pushed += 1;
             }
         }
@@ -1262,7 +1262,7 @@ mod tests {
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         let batch_uuid = parse_batch_uuid_from_filename(&listing[0]).unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().contains(&batch_uuid),
+        assert!(db.known_remote(Known::Files).unwrap().contains(&batch_uuid),
             "push must record the freshly-written batch_uuid as known");
     }
 
@@ -1657,7 +1657,7 @@ mod tests {
         let (db, fs) = setup();
         insert_session(&db, "first", 100);
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        assert_eq!(db.known_remote(Known::Files).unwrap().len(), 1);
         // Wipe the remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
@@ -1737,7 +1737,7 @@ mod tests {
         // Author a new pending event AFTER the successful sync.
         insert_session(&db, "second", 200);
         let pending_before = db.pending_events().unwrap().len();
-        let known_before = db.known_remote_file_uuids().unwrap();
+        let known_before = db.known_remote(Known::Files).unwrap();
 
         // Wipe remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
@@ -1746,7 +1746,7 @@ mod tests {
 
         let _ = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap_err();
         let pending_after = db.pending_events().unwrap().len();
-        let known_after = db.known_remote_file_uuids().unwrap();
+        let known_after = db.known_remote(Known::Files).unwrap();
         assert_eq!(pending_after, pending_before,
             "RemoteDataLost must not flip the pending flag on any event");
         assert_eq!(known_after, known_before,
@@ -2138,7 +2138,7 @@ mod tests {
         Sync::new(&db_b, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert_eq!(crate::db::list_sessions_from_db(&db_b).unwrap().len(), 2);
         assert!(db_b.pending_events().unwrap().is_empty());
-        assert!(!db_b.known_remote_file_uuids().unwrap().contains("ghost"));
+        assert!(!db_b.known_remote(Known::Files).unwrap().contains("ghost"));
     }
 
     // ── B.6.2: Push side for custom bell-sound audio files ──────────────
@@ -2192,7 +2192,7 @@ mod tests {
         let remote_path = format!("/Meditate/sounds/{uuid}.ogg");
         assert_eq!(fs.get(&remote_path, u64::MAX).unwrap(), b"AUDIO");
         // Recorded as known so a second push doesn't re-PUT.
-        assert!(db.known_remote_sound_uuids().unwrap().contains(&uuid));
+        assert!(db.known_remote(Known::Sounds).unwrap().contains(&uuid));
     }
 
     #[test]
@@ -2201,7 +2201,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let uuid = seed_custom_bell_sound(&db, tmp.path(), "Already up", b"AUDIO", "wav");
         // Pretend a previous sync already uploaded it.
-        db.record_known_remote_sound(&uuid).unwrap();
+        db.record_known_remote(Known::Sounds, &uuid).unwrap();
 
         Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .push().unwrap();
@@ -2266,7 +2266,7 @@ mod tests {
             !paths.iter().any(|p| p.contains("/sounds/")),
             "no /sounds/ PUT expected when local file is missing, got {paths:?}",
         );
-        assert!(!db.known_remote_sound_uuids().unwrap().contains(&uuid),
+        assert!(!db.known_remote(Known::Sounds).unwrap().contains(&uuid),
             "row must NOT be marked known when its file wasn't actually uploaded");
     }
 
@@ -2300,7 +2300,7 @@ mod tests {
         assert_eq!(std::fs::read(&local).unwrap(), b"AUDIO");
 
         // Recorded as known.
-        assert!(db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+        assert!(db_peer.known_remote(Known::Sounds).unwrap().contains(&uuid));
     }
 
     #[test]
@@ -2540,7 +2540,7 @@ mod tests {
         assert!(!db_peer.list_bell_sounds().unwrap().is_empty(), "the row still replicates");
         let local = tmp_peer.path().join(format!("{uuid}.wav"));
         assert!(!local.exists(), "10 MB + 1 byte must be dropped");
-        assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+        assert!(!db_peer.known_remote(Known::Sounds).unwrap().contains(&uuid));
 
         server.put(&format!("/Meditate/sounds/{uuid}.wav"), b"SMALL").unwrap();
         Sync::new(&db_peer, &server, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
@@ -2556,7 +2556,7 @@ mod tests {
         let (server, db_peer, tmp_peer, uuid) = sync_sound_resized_on_server(12 * 1024 * 1024);
         assert_eq!(server.refused.load(std::sync::atomic::Ordering::SeqCst), 1, "the download was cut off");
         assert!(!tmp_peer.path().join(format!("{uuid}.wav")).exists());
-        assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+        assert!(!db_peer.known_remote(Known::Sounds).unwrap().contains(&uuid));
     }
 
     #[test]
@@ -2584,7 +2584,7 @@ mod tests {
         // Body intact.
         assert_eq!(fs.get(&format!("/Meditate/sounds/{uuid}.wav"), u64::MAX).unwrap(), b"AUDIO");
         // Known set marks it now (post-PUT).
-        assert!(db.known_remote_sound_uuids().unwrap().contains(&uuid));
+        assert!(db.known_remote(Known::Sounds).unwrap().contains(&uuid));
     }
 
     #[test]
@@ -2763,7 +2763,7 @@ mod tests {
         let survivor = parse_batch_uuid_from_filename(
             &events_listing(&fs)[0]).unwrap();
         assert!(
-            db.known_remote_file_uuids().unwrap().contains(&survivor),
+            db.known_remote(Known::Files).unwrap().contains(&survivor),
             "compacting device must know its own consolidated file",
         );
         // Follow-up sync: ordinary round, nothing re-ingested, no
@@ -2839,7 +2839,7 @@ mod tests {
         let db_b = Database::open_in_memory().unwrap();
         push_n_batches(&db_b, &fs, 1);
         let b_batch = events_listing(&fs).into_iter()
-            .find(|n| !db_a.known_remote_file_uuids().unwrap()
+            .find(|n| !db_a.known_remote(Known::Files).unwrap()
                 .contains(&parse_batch_uuid_from_filename(n).unwrap()))
             .unwrap();
 

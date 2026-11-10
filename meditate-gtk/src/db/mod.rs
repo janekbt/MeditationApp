@@ -811,14 +811,6 @@ impl Database {
         Ok(session_from_core(id, &stored))
     }
 
-    /// Insert many sessions inside a single core-side transaction.
-    /// Atomic on error: a constraint violation rolls back the whole
-    /// batch (see core's `bulk_insert_sessions` tests).
-    pub fn bulk_insert_sessions(&self, sessions: &[SessionData]) -> Result<usize> {
-        let core_rows: Vec<_> = sessions.iter().map(session_data_to_core).collect();
-        self.inner.bulk_insert_sessions(&core_rows).map_err(map_core_err)
-    }
-
     pub fn delete_all_sessions(&self) -> Result<usize> {
         self.inner.delete_all_sessions().map_err(map_core_err)
     }

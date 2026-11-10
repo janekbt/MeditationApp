@@ -3,7 +3,7 @@
 //! and presets. Imports flow through `_with_uuid` so the on-disk
 //! filename can encode the same uuid the row uses.
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 
 use super::events::EventKind;
 use super::{Database, DbError, Result};
@@ -29,27 +29,23 @@ pub struct GuidedFile {
     pub updated_iso: String,
 }
 
+const COLUMNS: &str = "id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<GuidedFile> {
+    Ok(GuidedFile {
+        id: row.get(0)?,
+        uuid: row.get(1)?,
+        name: row.get(2)?,
+        file_path: row.get(3)?,
+        duration_secs: row.get::<_, i64>(4)? as u32,
+        is_starred: row.get::<_, i64>(5)? != 0,
+        created_iso: row.get(6)?,
+        updated_iso: row.get(7)?,
+    })
+}
+
 pub fn list_guided_files_from_db(db: &Database) -> Result<Vec<GuidedFile>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
-         FROM guided_files
-         ORDER BY created_iso ASC, uuid ASC",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(GuidedFile {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                file_path: row.get(3)?,
-                duration_secs: row.get::<_, i64>(4)? as u32,
-                is_starred: row.get::<_, i64>(5)? != 0,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows(&format!("SELECT {COLUMNS} FROM guided_files ORDER BY created_iso ASC, uuid ASC"), [], from_row)
 }
 /// Display name of every guided file this device has ever known,
 /// keyed by uuid, for the Log's per-session file line. Current
@@ -103,22 +99,7 @@ pub fn guided_file_name_for<'a>(
 /// uuid → row → file_path / duration), and the import flow's
 /// "did this UUID land?" check.
 pub fn find_guided_file_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Option<GuidedFile>> {
-    let row = db.conn.query_row(
-        "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
-         FROM guided_files WHERE uuid = ?1",
-        params![uuid_str],
-        |row| Ok(GuidedFile {
-            id: row.get(0)?,
-            uuid: row.get(1)?,
-            name: row.get(2)?,
-            file_path: row.get(3)?,
-            duration_secs: row.get::<_, i64>(4)? as u32,
-            is_starred: row.get::<_, i64>(5)? != 0,
-            created_iso: row.get(6)?,
-            updated_iso: row.get(7)?,
-        }),
-    ).optional()?;
-    Ok(row)
+    db.query_one(&format!("SELECT {COLUMNS} FROM guided_files WHERE uuid = ?1"), params![uuid_str], from_row)
 }
 /// True iff a row other than `except_uuid` already holds `name`
 /// (case-insensitive). The import / rename dialogs use this to
@@ -173,15 +154,13 @@ impl Database {
     fn insert_guided_file_at(&self, file: &GuidedFile) -> Result<i64> {
         let uuid_str = file.uuid.as_str();
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.existing_rowid_by_uuid("guided_files", uuid_str)? {
-            return Ok(existing);
-        }
-        // Checked first: the rebuild would suffix a taken name instead.
-        if is_guided_file_name_taken_from_db(self, &file.name, uuid_str)? {
-            return Err(DbError::DuplicateGuidedFile(file.name.clone()));
-        }
-        self.write_guided_file_in(&tx, EventKind::GuidedFileInsert, file)?;
-        let rowid = self.existing_rowid_by_uuid("guided_files", uuid_str)?.expect("just written");
+        let rowid = self.insert_new_in("guided_files", uuid_str, || {
+            // Checked first: the rebuild would suffix a taken name instead.
+            if is_guided_file_name_taken_from_db(self, &file.name, uuid_str)? {
+                return Err(DbError::DuplicateGuidedFile(file.name.clone()));
+            }
+            self.write_guided_file_in(&tx, EventKind::GuidedFileInsert, file)
+        })?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -243,25 +222,9 @@ impl Database {
         self.edit_guided_file(uuid_str, |f| f.is_starred = starred.is_starred())
     }
 
-    /// Drop a guided-file row. Unknown uuids are silent no-ops AND
-    /// emit no event — peers would otherwise see a tombstone for a
-    /// row they never knew existed. Mirrors bell_sounds / presets.
+    /// See `delete_synced_row`.
     pub fn delete_guided_file(&self, uuid_str: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let exists: bool = self.conn.query_row(
-            "SELECT 1 FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |_| Ok(true),
-        ).optional()?.unwrap_or(false);
-        if !exists { return Ok(()); }
-        self.conn.execute(
-            "DELETE FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-        )?;
-        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(&tx, EventKind::GuidedFileDelete, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_synced_row("guided_files", uuid_str, EventKind::GuidedFileDelete)
     }
 
     /// Recompute the `guided_files` row for `file_uuid` from the events
@@ -276,10 +239,7 @@ impl Database {
             [EventKind::GuidedFileInsert, EventKind::GuidedFileUpdate],
             EventKind::GuidedFileDelete,
         )? else {
-            self.conn.execute(
-                "DELETE FROM guided_files WHERE uuid = ?1",
-                params![file_uuid],
-            )?;
+            self.delete_row("guided_files", file_uuid)?;
             return Ok(());
         };
         {

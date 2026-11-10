@@ -1287,11 +1287,6 @@ mod tests {
         saved
     }
 
-    fn sync(from: &Database, to: &Database) {
-        let events: Vec<_> = from.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-        to.replay_events(&events).unwrap();
-    }
-
     fn row_at(db: &Database, minutes: u32) -> IntervalBell {
         db.list_interval_bells().unwrap().into_iter().find(|b| b.time.number() == minutes).unwrap()
     }
@@ -1384,7 +1379,7 @@ mod tests {
         let loud = IntervalBell { volume: crate::bell_volume::BellVolume::from_percent(80.0), ..at(7, row_at(&db, 5)) };
         edit_interval_bell(&db, &loud).unwrap();
         let peer = Database::open_in_memory().unwrap();
-        sync(&db, &peer);
+        crate::db::test_helpers::push(&db, &peer);
         let rows = |db: &Database| -> Vec<(String, u32, bool, u8, String)> {
             db.list_interval_bells().unwrap().into_iter()
                 .map(|b| (b.uuid.as_str().to_owned(), b.time.number(), b.enabled, b.volume.percent(), b.created_iso))
@@ -1398,11 +1393,10 @@ mod tests {
         let phone = Database::open_in_memory().unwrap();
         saved_preset(&phone, vec![bell(5, true)]);
         let laptop = Database::open_in_memory().unwrap();
-        sync(&phone, &laptop);
+        crate::db::test_helpers::push(&phone, &laptop);
         edit_interval_bell(&phone, &at(7, row_at(&phone, 5))).unwrap();
         edit_interval_bell(&laptop, &at(9, row_at(&laptop, 5))).unwrap();
-        sync(&phone, &laptop);
-        sync(&laptop, &phone);
+        crate::db::test_helpers::exchange(&phone, &laptop);
         assert_eq!(sorted_rows(&phone).len(), 2, "{:?}", sorted_rows(&phone));
         assert_eq!(sorted_rows(&phone), sorted_rows(&laptop));
         assert_eq!(sorted_rows(&phone)[0], (5, false));

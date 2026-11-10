@@ -115,8 +115,8 @@ pub fn target_id_is_well_formed_for(kind: &str, target_id: &str) -> bool {
     {
         return false;
     }
-    if kind == "box_breath_phase_update" {
-        return matches!(target_id, "in" | "holdin" | "out" | "holdout");
+    if kind == super::events::EventKind::BoxBreathPhaseUpdate.as_db_str() {
+        return crate::breath::BoxBreathPhaseId::from_db_str(target_id).is_some();
     }
     true
 }

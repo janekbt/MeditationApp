@@ -41,6 +41,15 @@ pub(crate) fn key_between(before: Option<&str>, after: Option<&str>, uuid: &str)
     (before.map_or(true, |lo| lo < key.as_str()) && after.map_or(true, |hi| key.as_str() < hi)).then_some(key)
 }
 
+/// `n` fresh keys from now, 1 ms apart, in order: the fallback when a
+/// list has no room left between neighbours.
+pub(crate) fn fresh_keys(n: usize) -> Vec<String> {
+    let start = chrono::Utc::now();
+    (0..n)
+        .map(|i| (start + chrono::Duration::milliseconds(i as i64)).to_rfc3339_opts(chrono::SecondsFormat::Millis, false))
+        .collect()
+}
+
 /// The shortest start of `lo`, with one digit raised, that sorts above
 /// `lo` and below `hi`, where `hi` doesn't start with `lo`; so moves
 /// back and forth don't grow the text.
@@ -81,4 +90,18 @@ fn digits_below(rest: &str) -> Option<String> {
         _ => return None,
     };
     Some(format!("{}{low}", &rest[..zeros]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_keys_are_ascending_and_one_per_item() {
+        let keys = fresh_keys(3);
+        assert_eq!(keys.len(), 3);
+        assert!(keys[0] < keys[1] && keys[1] < keys[2], "{keys:?}");
+        assert_eq!(keys[0].len(), "2026-11-10T12:00:00.000+00:00".len(), "{keys:?}");
+        assert!(fresh_keys(0).is_empty());
+    }
 }

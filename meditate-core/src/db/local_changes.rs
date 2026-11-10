@@ -140,7 +140,7 @@ mod tests {
             s.notes = Some("edited".into());
             db.update_session(id, &s).unwrap();
         });
-        check("bulk insert", &|db| { db.bulk_insert_sessions(&[session("2026-10-02T07:00:00")]).unwrap(); });
+        check("import", &|db| { db.insert_imported(&[], &[(session("2026-10-02T07:00:00"), None)]).unwrap(); });
         check("delete session", &|db| db.delete_session(id).unwrap());
         check("delete all sessions", &|db| { db.delete_all_sessions().unwrap(); });
 
@@ -252,11 +252,9 @@ mod tests {
         peer.insert_label("From peer").unwrap();
         peer.insert_session(&session("2026-10-01T07:00:00")).unwrap();
         peer.set_setting("daily_goal", "30").unwrap();
-        let events: Vec<_> = peer.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-
         let db = Database::open_in_memory().unwrap();
         let mut watch = LocalChangeWatch::new(db.local_changes());
-        db.replay_events(&events).unwrap();
+        crate::db::test_helpers::push(&peer, &db);
         assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1, "the pull applied");
         assert!(!watch.take_new());
     }

@@ -67,11 +67,7 @@ impl Database {
                 .map_err(|e| DbError::Decode(
                     format!("setting_changed payload not valid JSON: {e}")))?;
             let value = v["value"].as_str().unwrap_or_default();
-            self.conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![key, value],
-            )?;
+            self.write_kv("settings", key, value)?;
         }
         Ok(())
     }
@@ -253,10 +249,8 @@ mod tests {
     fn re_saving_a_value_pulled_from_a_peer_records_nothing() {
         let peer = Database::open_in_memory().unwrap();
         peer.set_setting("daily_goal", "20").unwrap();
-        let events: Vec<_> = peer.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-
         let db = Database::open_in_memory().unwrap();
-        db.replay_events(&events).unwrap();
+        push(&peer, &db);
         let before = setting_events(&db, "daily_goal");
         db.set_setting("daily_goal", "20").unwrap();
         assert_eq!(setting_events(&db, "daily_goal"), before, "the peer's value is already ours");
@@ -269,8 +263,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("k", "a").unwrap();
         let peer = Database::open_in_memory().unwrap();
-        let ours: Vec<_> = db.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-        peer.replay_events(&ours).unwrap();
+        push(&db, &peer);
         peer.set_setting("k", "b").unwrap();
 
         // Our clock runs ahead of the peer's, so any new event of ours
@@ -279,8 +272,7 @@ mod tests {
             db.set_setting("other", v).unwrap();
         }
         db.set_setting("k", "a").unwrap();
-        let theirs: Vec<_> = peer.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
-        db.replay_events(&theirs).unwrap();
+        push(&peer, &db);
         assert_eq!(db.get_setting("k", "").unwrap(), "b");
     }
 }

@@ -26,6 +26,8 @@
 //! inside `init`.
 
 use rusqlite::Connection;
+
+use events::EventKind;
 use std::path::Path;
 use std::time::Duration;
 
@@ -42,6 +44,7 @@ mod events;
 mod guided_files;
 mod interval_bells;
 mod known_remote;
+pub(crate) use known_remote::Known;
 pub(crate) mod local_guided_files;
 mod labels;
 mod local_changes;
@@ -315,10 +318,11 @@ impl Database {
         // family + hot stats queries all stay parsed. rusqlite
         // defaults to 16 — too small once you count the seven
         // recompute targets times two queries each (winning_mutate)
-        // plus the per-tab stats queries. 32 fits the working set
-        // comfortably with headroom; cost is per-statement memory,
-        // negligible at this count.
-        conn.set_prepared_statement_cache_capacity(32);
+        // plus the per-tab stats queries. 64 fits the working set
+        // with headroom, now that every table's readers, deletes and
+        // the known-remote trackers are cached too; cost is
+        // per-statement memory, negligible at this count.
+        conn.set_prepared_statement_cache_capacity(64);
         let db = Self { conn, local_changes: LocalChanges::default() };
         db.rebuild_events_from_older_builds()?;
         db.rename_unrebuilt_kansho()?;
@@ -336,14 +340,10 @@ impl Database {
         key: &str,
         default: &str,
     ) -> Result<String> {
+        use rusqlite::OptionalExtension;
         let sql = format!("SELECT value FROM {table} WHERE key = ?1");
-        match self.conn.query_row(&sql, rusqlite::params![key], |row| {
-            row.get::<_, String>(0)
-        }) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        let value = self.conn.query_row(&sql, rusqlite::params![key], |row| row.get(0)).optional()?;
+        Ok(value.unwrap_or_else(|| default.to_string()))
     }
 
     /// UPSERT a `(key, value)` row. The settings table caller wraps
@@ -364,6 +364,80 @@ impl Database {
         Ok(())
     }
 
+    /// Write a new synced row through `write` and return its rowid. A
+    /// row already there under `uuid` (a repeated import or seed) is
+    /// returned as it is, with no write and no event.
+    pub(super) fn insert_new_in(
+        &self,
+        table: &'static str,
+        uuid: &str,
+        write: impl FnOnce() -> Result<()>,
+    ) -> Result<i64> {
+        if let Some(existing) = self.existing_rowid_by_uuid(table, uuid)? {
+            return Ok(existing);
+        }
+        write()?;
+        Ok(self.existing_rowid_by_uuid(table, uuid)?.expect("just written"))
+    }
+
+    /// Delete the synced row `uuid` and record `kind`, its tombstone.
+    /// An unknown uuid writes nothing and sends no tombstone: a peer
+    /// would otherwise get one for a row it never knew.
+    pub(super) fn delete_synced_row(&self, table: &'static str, uuid: &str, kind: EventKind) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.delete_synced_row_in(&tx, table, uuid, kind)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn delete_synced_row_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        table: &'static str,
+        uuid: &str,
+        kind: EventKind,
+    ) -> Result<()> {
+        if self.delete_row(table, uuid)? {
+            self.emit_tombstone(tx, kind, uuid)?;
+        }
+        Ok(())
+    }
+
+    /// Delete row `uuid` from `table`; the caller decides on the event.
+    /// True when a row was there.
+    pub(super) fn delete_row(&self, table: &'static str, uuid: &str) -> Result<bool> {
+        let sql = format!("DELETE FROM {table} WHERE uuid = ?1");
+        Ok(self.conn.prepare_cached(&sql)?.execute(rusqlite::params![uuid])? > 0)
+    }
+
+    pub(super) fn emit_tombstone(&self, tx: &rusqlite::Transaction<'_>, kind: EventKind, uuid: &str) -> Result<()> {
+        self.emit_event(tx, kind, uuid, serde_json::json!({ "uuid": uuid }).to_string())
+    }
+
+    /// Every row `sql` returns, each read by `from_row`, collected
+    /// into a `Vec`, a set or a map.
+    pub(super) fn query_rows<T, C: FromIterator<T>>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+        from_row: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
+    ) -> Result<C> {
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(params, from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The first row `sql` returns, read by `from_row`, or `None`.
+    pub(super) fn query_one<T>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+        from_row: impl FnOnce(&rusqlite::Row) -> rusqlite::Result<T>,
+    ) -> Result<Option<T>> {
+        use rusqlite::OptionalExtension;
+        Ok(self.conn.prepare_cached(sql)?.query_row(params, from_row).optional()?)
+    }
+
     /// `SELECT id FROM <table> WHERE uuid = ?1`. Used by every
     /// `insert_*_with_uuid` entry point to make the insert
     /// idempotent — a row with the requested uuid already present
@@ -371,17 +445,16 @@ impl Database {
     /// emitting a sync event, since no state changed). The pre-
     /// flight check is what makes "import the same payload twice"
     /// safe across sync replay.
+    pub(super) fn uuid_by_id(&self, table: &'static str, id: i64) -> Result<Option<String>> {
+        self.query_one(&format!("SELECT uuid FROM {table} WHERE id = ?1"), rusqlite::params![id], |row| row.get(0))
+    }
+
     pub(super) fn existing_rowid_by_uuid(
         &self,
         table: &'static str,
         uuid: &str,
     ) -> Result<Option<i64>> {
-        use rusqlite::OptionalExtension;
-        let sql = format!("SELECT id FROM {table} WHERE uuid = ?1");
-        Ok(self
-            .conn
-            .query_row(&sql, rusqlite::params![uuid], |row| row.get::<_, i64>(0))
-            .optional()?)
+        self.query_one(&format!("SELECT id FROM {table} WHERE uuid = ?1"), rusqlite::params![uuid], |row| row.get(0))
     }
 }
 

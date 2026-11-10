@@ -24,17 +24,14 @@ impl Database {
         &self,
         rows: &[(&str, &str, &str, &str)],
     ) -> Result<()> {
-        if self.get_setting(crate::seeds::BELLS_SEEDED_KEY, "0")? == "1" {
-            return Ok(());
-        }
-        for (uuid, name, file_path, mime) in rows {
-            self.insert_bell_sound_with_uuid(
-                uuid, name, file_path, true, mime, BellSoundCategory::General,
-            )?;
-        }
-        self.set_setting(crate::seeds::BELLS_SEEDED_KEY, "1")?;
-        crate::diag::log("seed.bell_sounds", &format!("rows={}", rows.len()));
-        Ok(())
+        self.seed_once(crate::seeds::BELLS_SEEDED_KEY, "seed.bell_sounds", || {
+            for (uuid, name, file_path, mime) in rows {
+                self.insert_bell_sound_with_uuid(
+                    uuid, name, file_path, true, mime, BellSoundCategory::General,
+                )?;
+            }
+            Ok(rows.len())
+        })
     }
 
     /// Seed all four rows once on first open. Idempotent — re-seeding
@@ -67,22 +64,15 @@ impl Database {
     /// owns a label with the same name under a different UUID) is
     /// silently swallowed so we don't shadow user-managed rows.
     pub fn seed_default_labels(&self) -> Result<()> {
-        if self.get_setting(crate::seeds::LABELS_SEEDED_KEY, "0")? == "1" {
-            return Ok(());
-        }
-        for (uuid, name) in crate::seeds::DEFAULT_LABELS {
-            match self.insert_label_with_uuid(uuid, name) {
-                Ok(_) => {}
-                Err(DbError::DuplicateLabel(_)) => {}
-                Err(e) => return Err(e),
+        self.seed_once(crate::seeds::LABELS_SEEDED_KEY, "seed.default_labels", || {
+            for (uuid, name) in crate::seeds::DEFAULT_LABELS {
+                match self.insert_label_with_uuid(uuid, name) {
+                    Ok(_) | Err(DbError::DuplicateLabel(_)) => {}
+                    Err(e) => return Err(e),
+                }
             }
-        }
-        self.set_setting(crate::seeds::LABELS_SEEDED_KEY, "1")?;
-        crate::diag::log(
-            "seed.default_labels",
-            &format!("rows={}", crate::seeds::DEFAULT_LABELS.len()),
-        );
-        Ok(())
+            Ok(crate::seeds::DEFAULT_LABELS.len())
+        })
     }
 
     /// Seed the five bundled vibration patterns (Pulse / Heartbeat
@@ -90,22 +80,12 @@ impl Database {
     /// one-shot `bundled_vibration_patterns_seeded` settings flag.
     /// Same resurrect-bug guard as the labels seed.
     pub fn seed_bundled_vibration_patterns(&self) -> Result<()> {
-        if self.get_setting(crate::seeds::VIBRATION_PATTERNS_SEEDED_KEY, "0")? == "1" {
-            return Ok(());
-        }
-        for &(uuid, name, duration_ms, intensities, chart_kind) in
-            crate::seeds::BUNDLED_VIBRATION_PATTERNS
-        {
-            self.insert_vibration_pattern_with_uuid(
-                uuid, name, duration_ms, intensities, chart_kind, true,
-            )?;
-        }
-        self.set_setting(crate::seeds::VIBRATION_PATTERNS_SEEDED_KEY, "1")?;
-        crate::diag::log(
-            "seed.bundled_vibration_patterns",
-            &format!("rows={}", crate::seeds::BUNDLED_VIBRATION_PATTERNS.len()),
-        );
-        Ok(())
+        self.seed_once(crate::seeds::VIBRATION_PATTERNS_SEEDED_KEY, "seed.bundled_vibration_patterns", || {
+            for &(uuid, name, duration_ms, intensities, chart_kind) in crate::seeds::BUNDLED_VIBRATION_PATTERNS {
+                self.insert_vibration_pattern_with_uuid(uuid, name, duration_ms, intensities, chart_kind, true)?;
+            }
+            Ok(crate::seeds::BUNDLED_VIBRATION_PATTERNS.len())
+        })
     }
 
     /// Seed the three bundled presets — one Timer ("Sitting") plus
@@ -118,20 +98,28 @@ impl Database {
     /// (user has a preset with the same name under a different UUID)
     /// is silently swallowed.
     pub fn seed_default_presets(&self) -> Result<()> {
-        if self.get_setting(crate::seeds::PRESETS_SEEDED_KEY, "0")? == "1" {
+        self.seed_once(crate::seeds::PRESETS_SEEDED_KEY, "seed.default_presets", || {
+            let presets = crate::seeds::default_presets();
+            let n = presets.len();
+            for (uuid, name, mode, cfg) in presets {
+                match self.insert_preset_with_uuid(uuid, name, mode, true, &cfg.to_json()) {
+                    Ok(_) | Err(DbError::DuplicatePreset(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(n)
+        })
+    }
+
+    /// Run `seed` once per database: the `key` setting (synced) marks
+    /// it done, so a seeded row the user deleted never comes back.
+    fn seed_once(&self, key: &str, tag: &str, seed: impl FnOnce() -> Result<usize>) -> Result<()> {
+        if self.get_setting(key, "0")? == "1" {
             return Ok(());
         }
-        let presets = crate::seeds::default_presets();
-        let n = presets.len();
-        for (uuid, name, mode, cfg) in presets {
-            match self.insert_preset_with_uuid(uuid, name, mode, true, &cfg.to_json()) {
-                Ok(_) => {}
-                Err(DbError::DuplicatePreset(_)) => {}
-                Err(e) => return Err(e),
-            }
-        }
-        self.set_setting(crate::seeds::PRESETS_SEEDED_KEY, "1")?;
-        crate::diag::log("seed.default_presets", &format!("rows={n}"));
+        let rows = seed()?;
+        self.set_setting(key, "1")?;
+        crate::diag::log(tag, &format!("rows={rows}"));
         Ok(())
     }
 

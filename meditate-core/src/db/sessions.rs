@@ -151,26 +151,28 @@ fn session_payload(uuid: &str, session: &Session, label_uuid: Option<&str>) -> S
     }).to_string()
 }
 
+const SESSION_COLUMNS: &str =
+    "id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name";
+
+fn session_from_row(row: &rusqlite::Row) -> rusqlite::Result<(i64, Session)> {
+    let mode_str: String = row.get(5)?;
+    Ok((row.get(0)?, Session {
+        start_iso: row.get(1)?,
+        duration_secs: row.get(2)?,
+        label_id: row.get(3)?,
+        notes: row.get(4)?,
+        mode: SessionMode::from_db_str(&mode_str)
+            .expect("DB CHECK constraint should restrict mode to known values"),
+        uuid: row.get(6)?,
+        guided_file_uuid: row.get(7)?,
+        guided_file_name: row.get(8)?,
+    }))
+}
+
 /// The stored session with rowid `id`.
 fn session_by_id(db: &Database, id: i64) -> Result<Option<Session>> {
-    Ok(db.conn.query_row(
-        "SELECT start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name
-         FROM sessions WHERE id = ?1",
-        params![id],
-        |row| {
-            let mode_str: String = row.get(4)?;
-            Ok(Session {
-                start_iso: row.get(0)?,
-                duration_secs: row.get(1)?,
-                label_id: row.get(2)?,
-                notes: row.get(3)?,
-                mode: SessionMode::from_db_str(&mode_str).expect("DB CHECK constraint should restrict mode"),
-                uuid: row.get(5)?,
-                guided_file_uuid: row.get(6)?,
-                guided_file_name: row.get(7)?,
-            })
-        },
-    ).optional()?)
+    Ok(db.query_one(&format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?1"), params![id], session_from_row)?
+        .map(|(_, s)| s))
 }
 
 pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
@@ -257,33 +259,7 @@ pub fn get_streak_from_db(db: &Database, today: chrono::NaiveDate) -> Result<u32
 /// Tie-break is unspecified (whichever SQLite returns first); callers
 /// should not depend on the order of equal-duration rows.
 pub fn get_longest_session_from_db(db: &Database) -> Result<Option<(i64, Session)>> {
-    let mut stmt = db.conn.prepare_cached(
-        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name
-         FROM sessions
-         ORDER BY duration_secs DESC LIMIT 1",
-    )?;
-    let mut rows = stmt.query([])?;
-    match rows.next()? {
-        None => Ok(None),
-        Some(row) => {
-            let mode_str: String = row.get(5)?;
-            let mode = SessionMode::from_db_str(&mode_str)
-                .expect("DB CHECK constraint should restrict mode");
-            Ok(Some((
-                row.get::<_, i64>(0)?,
-                Session {
-                    start_iso: row.get(1)?,
-                    duration_secs: row.get(2)?,
-                    label_id: row.get(3)?,
-                    notes: row.get(4)?,
-                    mode,
-                    uuid: row.get(6)?,
-                    guided_file_uuid: row.get(7)?,
-                    guided_file_name: row.get(8)?,
-                },
-            )))
-        }
-    }
+    db.query_one(&format!("SELECT {SESSION_COLUMNS} FROM sessions ORDER BY duration_secs DESC LIMIT 1"), [], session_from_row)
 }
 /// Counts of sessions bucketed by start hour: morning < 12 (hours
 /// 0-11), afternoon 12-17, evening ≥ 18 (18-23). Returns
@@ -382,10 +358,7 @@ pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<V
     // (label_id, only_with_notes) combinations each end up with
     // their own cached statement just like the previous hand-
     // unrolled branches.
-    let mut sql = String::from(
-        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name \
-         FROM sessions"
-    );
+    let mut sql = format!("SELECT {SESSION_COLUMNS} FROM sessions");
     let mut clauses: Vec<&'static str> = Vec::new();
     if filter.label_id.is_some() {
         clauses.push("label_id = ?");
@@ -410,24 +383,7 @@ pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<V
     params.push(&offset_val);
 
     let mut s = db.conn.prepare_cached(&sql)?;
-    let rows = s.query_map(rusqlite::params_from_iter(params), |row| {
-        let mode_str: String = row.get(5)?;
-        let mode = SessionMode::from_db_str(&mode_str)
-            .expect("DB CHECK constraint should restrict mode to known values");
-        Ok((
-            row.get::<_, i64>(0)?,
-            Session {
-                start_iso: row.get(1)?,
-                duration_secs: row.get(2)?,
-                label_id: row.get(3)?,
-                notes: row.get(4)?,
-                mode,
-                uuid: row.get(6)?,
-                guided_file_uuid: row.get(7)?,
-                guided_file_name: row.get(8)?,
-            },
-        ))
-    })?;
+    let rows = s.query_map(rusqlite::params_from_iter(params), session_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 pub fn list_sessions_from_db(db: &Database) -> Result<Vec<(i64, Session)>> {
@@ -444,11 +400,7 @@ impl Database {
     /// none, instead of failing the save and losing the session.
     fn session_label(&self, id: Option<i64>) -> Result<(Option<i64>, Option<String>)> {
         let Some(id) = id else { return Ok((None, None)); };
-        let uuid: Option<String> = self.conn.query_row(
-            "SELECT uuid FROM labels WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        ).optional()?;
+        let uuid = self.uuid_by_id("labels", id)?;
         Ok((uuid.as_ref().map(|_| id), uuid))
     }
 
@@ -474,56 +426,16 @@ impl Database {
         tx: &rusqlite::Transaction<'_>,
         session: &Session,
     ) -> Result<(i64, String)> {
-        let session_uuid = uuid::Uuid::new_v4().to_string();
-        let (label_id, label_uuid) = self.session_label(session.label_id)?;
-        self.conn.execute(
-            "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                session.start_iso,
-                session.duration_secs,
-                label_id,
-                note_or_none(&session.notes),
-                session.mode.as_db_str(),
-                session_uuid,
-                session.guided_file_uuid,
-                session.guided_file_name,
-            ],
-        )?;
-        let rowid = self.conn.last_insert_rowid();
-        let payload = session_payload(&session_uuid, session, label_uuid.as_deref());
-        self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
-
-        Ok((rowid, session_uuid))
+        let fresh = Session { uuid: super::SessionUuid::new(super::mint_uuid()), ..session.clone() };
+        Ok(self.insert_sessions_in(tx, std::slice::from_ref(&fresh))?.remove(0))
     }
 
-    /// Insert many sessions inside a single transaction — orders of
-    /// magnitude faster than calling `insert_session` in a loop. Atomic:
-    /// if any row fails a constraint, the whole batch is rolled back and
-    /// the caller never sees a partially-imported DB. Each row also
-    /// emits its own `session_insert` event — peers replay them
-    /// independently, there is no "bulk" event kind.
     /// Every `(start_iso, duration_secs)` pair currently in the
     /// log — the CSV-import dedupe key (see `insert_imported`).
     pub fn session_start_duration_pairs(
         &self,
     ) -> Result<std::collections::HashSet<(String, u32)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT start_iso, duration_secs FROM sessions",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        Ok(rows)
-    }
-
-    pub fn bulk_insert_sessions(&self, sessions: &[Session]) -> Result<usize> {
-        let tx = self.conn.unchecked_transaction()?;
-        let n = self.insert_sessions_in(&tx, sessions)?;
-        tx.commit()?;
-        Ok(n)
+        self.query_rows("SELECT start_iso, duration_secs FROM sessions", [], |row| Ok((row.get(0)?, row.get(1)?)))
     }
 
     /// Write an import in one transaction, so it lands whole or not at
@@ -538,11 +450,7 @@ impl Database {
         rows: &[(Session, Option<usize>)],
     ) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
-        let mut ids: std::collections::HashSet<String> = self
-            .conn
-            .prepare("SELECT uuid FROM sessions")?
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let mut ids: std::collections::HashSet<String> = self.query_rows("SELECT uuid FROM sessions", [], |row| row.get(0))?;
         let mut seen = self.session_start_duration_pairs()?;
         let mut label_ids: std::collections::HashMap<usize, i64> = std::collections::HashMap::new();
         let mut write = Vec::new();
@@ -565,88 +473,50 @@ impl Database {
             };
             write.push(Session { label_id, ..s.clone() });
         }
-        let n = self.insert_sessions_in(&tx, &write)?;
+        let n = self.insert_sessions_in(&tx, &write)?.len();
         tx.commit()?;
         Ok(n)
     }
 
     /// Insert `sessions` inside `tx`, each with its own id or, when
-    /// blank, a new one.
-    fn insert_sessions_in(&self, tx: &rusqlite::Transaction<'_>, sessions: &[Session]) -> Result<usize> {
-        let mut session_uuids: Vec<String> = Vec::with_capacity(sessions.len());
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            )?;
-            for s in sessions {
-                let uuid = if s.uuid.is_empty() {
-                    uuid::Uuid::new_v4().to_string()
-                } else {
-                    s.uuid.to_string()
-                };
-                stmt.execute(params![
-                    s.start_iso,
-                    s.duration_secs,
-                    s.label_id,
-                    note_or_none(&s.notes),
-                    s.mode.as_db_str(),
-                    uuid,
-                    s.guided_file_uuid,
-                    s.guided_file_name,
-                ])?;
-                session_uuids.push(uuid);
-            }
+    /// blank, a new one, and a label that is gone saved as none (see
+    /// `session_label`). Returns each row's `(rowid, uuid)`.
+    fn insert_sessions_in(&self, tx: &rusqlite::Transaction<'_>, sessions: &[Session]) -> Result<Vec<(i64, String)>> {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        let mut written = Vec::with_capacity(sessions.len());
+        for s in sessions {
+            let uuid = if s.uuid.is_empty() { super::mint_uuid() } else { s.uuid.to_string() };
+            let (label_id, label_uuid) = self.session_label(s.label_id)?;
+            let rowid = stmt.insert(params![
+                s.start_iso,
+                s.duration_secs,
+                label_id,
+                note_or_none(&s.notes),
+                s.mode.as_db_str(),
+                uuid,
+                s.guided_file_uuid,
+                s.guided_file_name,
+            ])?;
+            self.emit_event(tx, EventKind::SessionInsert, &uuid, session_payload(&uuid, s, label_uuid.as_deref()))?;
+            written.push((rowid, uuid));
         }
-        for (s, session_uuid) in sessions.iter().zip(session_uuids) {
-            let (_, label_uuid) = self.session_label(s.label_id)?;
-            let payload = session_payload(&session_uuid, s, label_uuid.as_deref());
-            self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
-        }
-        Ok(sessions.len())
+        Ok(written)
     }
 
     /// Remove the row with `id`. Unknown ids are silently no-ops AND
     /// emit no event — otherwise peers would see a tombstone for a
     /// session they never knew existed.
     pub fn delete_session(&self, id: i64) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let row_uuid: Option<String> = self.conn.query_row(
-            "SELECT uuid FROM sessions WHERE id = ?1",
-            params![id],
-            |row| row.get::<_, String>(0),
-        ).optional()?;
-        let Some(uuid) = row_uuid else {
-            return Ok(());
-        };
-        self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-        let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(&tx, EventKind::SessionDelete, &uuid, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.uuid_by_id("sessions", id)?.map_or(Ok(()), |uuid| self.delete_session_by_uuid(&uuid))
     }
 
-    /// Delete a session row by its cross-device uuid. Used by the
-    /// crash-recovery Undo flow — the toast carries the uuid that
-    /// `finalize_session_in_progress` minted, not the local rowid.
-    /// Emits one `session_delete` event so peers tombstone the row
-    /// too. Unknown uuids are a silent no-op (the row may have been
-    /// deleted via a peer-authored event between finalize and Undo).
+    /// Delete a session by its uuid (the crash-recovery Undo has no
+    /// rowid). See `delete_synced_row`.
     pub fn delete_session_by_uuid(&self, uuid: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let exists: Option<i64> = self.conn.query_row(
-            "SELECT id FROM sessions WHERE uuid = ?1",
-            params![uuid],
-            |row| row.get::<_, i64>(0),
-        ).optional()?;
-        if exists.is_none() {
-            return Ok(());
-        }
-        self.conn.execute("DELETE FROM sessions WHERE uuid = ?1", params![uuid])?;
-        let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(&tx, EventKind::SessionDelete, uuid, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_synced_row("sessions", uuid, EventKind::SessionDelete)
     }
 
     /// Remove every session row. Returns how many rows were deleted.
@@ -655,20 +525,13 @@ impl Database {
     /// same set we cleared locally.
     pub fn delete_all_sessions(&self) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
-        let row_uuids: Vec<String> = {
-            let mut stmt = self.conn.prepare("SELECT uuid FROM sessions")?;
-            let rows = stmt
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
-        };
-        let n = self.conn.execute("DELETE FROM sessions", [])?;
-        for uuid in &row_uuids {
-            let payload = serde_json::json!({ "uuid": uuid }).to_string();
-            self.emit_event(&tx, EventKind::SessionDelete, uuid, payload)?;
+        let uuids: Vec<String> = self.conn.prepare("DELETE FROM sessions RETURNING uuid")?
+            .query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        for uuid in &uuids {
+            self.emit_tombstone(&tx, EventKind::SessionDelete, uuid)?;
         }
         tx.commit()?;
-        Ok(n)
+        Ok(uuids.len())
     }
 
     /// Replace every field of the row with `id`. Unknown ids are silently
@@ -852,33 +715,11 @@ impl Database {
 
 
     fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<(i64, Session)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid, guided_file_name FROM sessions
-             WHERE ?1 IS NULL OR label_id = ?1
-             ORDER BY id",
-        )?;
-        let sessions = stmt
-            .query_map(params![label_filter], |row| {
-                let mode_str: String = row.get(5)?;
-                let mode = SessionMode::from_db_str(&mode_str).expect(
-                    "DB CHECK constraint should restrict mode to known values",
-                );
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    Session {
-                        start_iso: row.get(1)?,
-                        duration_secs: row.get(2)?,
-                        label_id: row.get(3)?,
-                        notes: row.get(4)?,
-                        mode,
-                        uuid: row.get(6)?,
-                        guided_file_uuid: row.get(7)?,
-                        guided_file_name: row.get(8)?,
-                    },
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<(i64, Session)>>>()?;
-        Ok(sessions)
+        self.query_rows(
+            &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE ?1 IS NULL OR label_id = ?1 ORDER BY id"),
+            params![label_filter],
+            session_from_row,
+        )
     }
 
     /// Recompute the `sessions` row for `session_uuid` from the events
@@ -894,22 +735,15 @@ impl Database {
             EventKind::SessionDelete,
         )? else {
             // Tombstoned (or no mutate event yet) → ensure absent.
-            self.conn.execute(
-                "DELETE FROM sessions WHERE uuid = ?1",
-                params![session_uuid],
-            )?;
+            self.delete_row("sessions", session_uuid)?;
             return Ok(());
         };
         {
             let start_iso = v["start_iso"].as_str().unwrap_or_default();
             let duration_secs = super::events::peer_u32(&v["duration_secs"]);
             let label_uuid = v["label_uuid"].as_str();
-            let label_id: Option<i64> = match label_uuid {
-                Some(luuid) => self.conn.query_row(
-                    "SELECT id FROM labels WHERE uuid = ?1",
-                    params![luuid],
-                    |row| row.get::<_, i64>(0),
-                ).optional()?,
+            let label_id = match label_uuid {
+                Some(luuid) => self.existing_rowid_by_uuid("labels", luuid)?,
                 None => None,
             };
             let notes = v["notes"].as_str();
@@ -1836,10 +1670,47 @@ mod tests {
             "no-match delete must produce no event");
     }
 
-    // ── A3.3: bulk operations emit one event per row ─────────────────────────
+    #[test]
+    fn deleting_a_session_by_its_uuid_sends_one_tombstone() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+            guided_file_name: None,
+        }).unwrap();
+        let uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
+        drain_events(&db);
+
+        db.delete_session_by_uuid(uuid.as_str()).unwrap();
+
+        assert!(list_sessions_from_db(&db).unwrap().is_empty());
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "session_delete");
+        assert_eq!(events[0].1.target_id, uuid.as_str());
+    }
 
     #[test]
-    fn bulk_insert_sessions_emits_one_event_per_row() {
+    fn deleting_an_unknown_session_uuid_sends_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.delete_session_by_uuid("00000000-0000-4000-8000-000000000000").unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    // ── A3.3: bulk operations emit one event per row ─────────────────────────
+
+    fn import(db: &Database, sessions: &[Session]) -> Result<usize> {
+        db.insert_imported(&[], &sessions.iter().map(|s| (s.clone(), None)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn import_sessions_emits_one_event_per_row() {
         // Each row crosses the network as its own SessionInserted event —
         // the cross-device replay model has no concept of "bulk insert",
         // every row is independent. So N inputs must yield N events.
@@ -1854,7 +1725,7 @@ mod tests {
             guided_file_uuid: None,
             guided_file_name: None,
         }).collect();
-        db.bulk_insert_sessions(&to_insert).unwrap();
+        import(&db, &to_insert).unwrap();
         let events = db.pending_events().unwrap();
         assert_eq!(events.len(), 3,
             "three input rows must yield three events");
@@ -1864,7 +1735,7 @@ mod tests {
     }
 
     #[test]
-    fn bulk_insert_sessions_event_uuids_match_inserted_rows() {
+    fn import_sessions_event_uuids_match_inserted_rows() {
         // Each event's session uuid must correspond to a stored row's
         // uuid — the set must be equal. Otherwise a peer would receive
         // events for rows we don't have, or skip rows we do.
@@ -1879,7 +1750,7 @@ mod tests {
             guided_file_uuid: None,
             guided_file_name: None,
         }).collect();
-        db.bulk_insert_sessions(&to_insert).unwrap();
+        import(&db, &to_insert).unwrap();
         let row_uuids: std::collections::HashSet<String> = list_sessions_from_db(&db)
             .unwrap()
             .iter().map(|(_, s)| s.uuid.0.clone()).collect();
@@ -1894,15 +1765,7 @@ mod tests {
     }
 
     #[test]
-    fn bulk_insert_sessions_with_empty_slice_emits_no_events() {
-        let db = Database::open_in_memory().unwrap();
-        drain_events(&db);
-        db.bulk_insert_sessions(&[]).unwrap();
-        assert!(db.pending_events().unwrap().is_empty());
-    }
-
-    #[test]
-    fn bulk_insert_session_events_have_strictly_increasing_lamport_ts() {
+    fn imported_session_events_have_strictly_increasing_lamport_ts() {
         // Replay order is determined by lamport_ts. Even within a bulk
         // op, each row gets its own ts so peers can apply them in a
         // consistent order across devices.
@@ -1917,7 +1780,7 @@ mod tests {
             guided_file_uuid: None,
             guided_file_name: None,
         }).collect();
-        db.bulk_insert_sessions(&to_insert).unwrap();
+        import(&db, &to_insert).unwrap();
         let timestamps: Vec<i64> = db.pending_events().unwrap()
             .iter().map(|(_, e)| e.lamport_ts).collect();
         let mut sorted = timestamps.clone();
@@ -3150,10 +3013,10 @@ mod tests {
     }
 
     #[test]
-    fn bulk_insert_sessions_inserts_every_row_and_returns_count() {
-        // Bulk insert is the import-CSV path's transactional API: every
-        // row in the slice goes in (or none on error — see rollback test).
-        // Returns the count for "imported N sessions" toasts.
+    fn import_sessions_inserts_every_row_and_returns_count() {
+        // Every imported row goes in (or none on error, see
+        // `an_import_lands_whole_or_not_at_all`). Returns the count for
+        // "imported N sessions" toasts.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
         let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
@@ -3191,7 +3054,10 @@ mod tests {
             },
         ];
 
-        let n = db.bulk_insert_sessions(&to_insert).unwrap();
+        let labels = [("Morning".to_string(), None)];
+        let rows: Vec<(Session, Option<usize>)> =
+            to_insert.iter().map(|s| (s.clone(), s.label_id.map(|_| 0))).collect();
+        let n = db.insert_imported(&labels, &rows).unwrap();
         assert_eq!(n, 3);
         assert_eq!(count_sessions_from_db(&db).unwrap(), 3);
 
@@ -3207,100 +3073,27 @@ mod tests {
         let mut expected = to_insert.clone();
         for (got, want) in stored.iter().zip(expected.iter_mut()) {
             assert!(looks_like_uuid_v4(got.uuid.as_str()),
-                "bulk-inserted row missing v4 uuid: {got:?}");
+                "imported row missing v4 uuid: {got:?}");
             want.uuid = got.uuid.clone();
         }
         // All uuids must also be distinct.
         let unique: std::collections::HashSet<_> =
             stored.iter().map(|s| s.uuid.clone()).collect();
-        assert_eq!(unique.len(), stored.len(), "bulk insert must give unique uuids");
+        assert_eq!(unique.len(), stored.len(), "an import must give unique uuids");
         // Strip nothing here: we've populated `expected.uuid` to match.
         let _ = stored.iter_mut(); // silence "doesn't need mut" if linter trips
         assert_eq!(stored, expected);
     }
 
     #[test]
-    fn bulk_insert_sessions_empty_slice_is_zero_and_no_op() {
+    fn import_sessions_empty_slice_is_zero_and_no_op() {
         // Empty input is not an error; the DB is unchanged.
         let db = Database::open_in_memory().unwrap();
-        let n = db.bulk_insert_sessions(&[]).unwrap();
+        drain_events(&db);
+        let n = import(&db, &[]).unwrap();
         assert_eq!(n, 0);
         assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
-    }
-
-    #[test]
-    fn bulk_insert_sessions_rolls_back_on_constraint_violation() {
-        // If any row in the batch violates a constraint (here: a foreign-key
-        // pointing at a non-existent label), the WHOLE batch is reverted —
-        // the caller never gets a half-imported DB.
-        let db = Database::open_in_memory().unwrap();
-        let pre_id = db.insert_session(&Session {
-            start_iso: "2026-04-27T09:00:00Z".to_string(),
-            duration_secs: 600,
-            label_id: None,
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-            guided_file_name: None,
-        }).unwrap();
-        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
-
-        let bad_label = 9999i64; // No label has this id.
-        let batch = vec![
-            Session {
-                start_iso: "2026-04-27T10:00:00Z".to_string(),
-                duration_secs: 600,
-                label_id: None, // OK
-                notes: None,
-                mode: SessionMode::Timer,
-                uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
-                guided_file_name: None,
-            },
-            Session {
-                start_iso: "2026-04-27T11:00:00Z".to_string(),
-                duration_secs: 600,
-                label_id: Some(bad_label), // FK violation
-                notes: None,
-                mode: SessionMode::Timer,
-                uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
-                guided_file_name: None,
-            },
-        ];
-        let result = db.bulk_insert_sessions(&batch);
-        assert!(result.is_err(), "expected FK violation, got {result:?}");
-
-        // No rows from the failed batch landed; the pre-existing row is intact.
-        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
-        let rows = list_sessions_from_db(&db).unwrap();
-        assert_eq!(rows[0].0, pre_id);
-    }
-
-    #[test]
-    fn bulk_insert_sessions_is_atomic_with_no_partial_state_visible() {
-        // Atomic-on-error: even after a failed bulk insert, count_sessions
-        // and list_sessions agree on the pre-batch state. (This pins the
-        // contract: "rolled back" means no observable side effect, not
-        // just "rows aren't there".)
-        let db = Database::open_in_memory().unwrap();
-        let bad_label = 9999i64;
-        let batch = vec![
-            Session {
-                start_iso: "2026-04-27T10:00:00Z".to_string(),
-                duration_secs: 600,
-                label_id: Some(bad_label), // fails immediately
-                notes: None,
-                mode: SessionMode::Timer,
-                uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
-                guided_file_name: None,
-            },
-        ];
-        let _ = db.bulk_insert_sessions(&batch);
-        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
-        assert!(list_sessions_from_db(&db).unwrap().is_empty());
+        assert!(db.pending_events().unwrap().is_empty());
     }
 
     #[test]
@@ -3837,7 +3630,7 @@ mod tests {
             guided_file_name: None,
         };
         db.insert_session(&with_note("2026-10-01T08:00:00", "  ")).unwrap();
-        db.bulk_insert_sessions(&[with_note("2026-10-02T08:00:00", "\t\n")]).unwrap();
+        import(&db, &[with_note("2026-10-02T08:00:00", "\t\n")]).unwrap();
         let kept = db.insert_session(&with_note("2026-10-03T08:00:00", " typed ")).unwrap();
         db.update_session(kept, &with_note("2026-10-03T08:00:00", "   ")).unwrap();
         let notes: Vec<Option<String>> = list_sessions_from_db(&db)

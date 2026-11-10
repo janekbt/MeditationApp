@@ -85,7 +85,7 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
         let rowid = self.insert_bell_in(&tx, &IntervalBell {
             id: 0,
-            uuid: uuid::Uuid::new_v4().to_string().into(),
+            uuid: super::mint_uuid().into(),
             kind,
             time,
             jitter,
@@ -116,11 +116,7 @@ impl Database {
     /// Insert `bell` as it is (its `id` is ignored) and record it.
     fn insert_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<i64> {
         // A uuid already there (a repeated copy) is left as it is.
-        if let Some(existing) = self.existing_rowid_by_uuid("interval_bells", bell.uuid.as_str())? {
-            return Ok(existing);
-        }
-        self.write_bell_in(tx, EventKind::IntervalBellInsert, bell)?;
-        Ok(self.existing_rowid_by_uuid("interval_bells", bell.uuid.as_str())?.expect("just written"))
+        self.insert_new_in("interval_bells", bell.uuid.as_str(), || self.write_bell_in(tx, EventKind::IntervalBellInsert, bell))
     }
 
     /// Record `bell` as `kind` and store it the way a peer stores it
@@ -156,46 +152,33 @@ impl Database {
     }
 
     fn update_bell_in(&self, tx: &rusqlite::Transaction<'_>, bell: &IntervalBell) -> Result<()> {
-        let Some(stored) = self.list_interval_bells()?.into_iter().find(|b| b.uuid == bell.uuid) else {
-            return Ok(());
-        };
-        let bell = IntervalBell { id: stored.id, created_iso: stored.created_iso.clone(), ..bell.clone() };
+        self.edit_bell_in(tx, bell.uuid.as_str(), |b| *b = IntervalBell { id: b.id, created_iso: b.created_iso.clone(), ..bell.clone() })
+    }
+
+    /// Apply `edit` to the stored bell and write it, unless that
+    /// changes nothing. Unknown uuids write nothing.
+    fn edit_bell_in(&self, tx: &rusqlite::Transaction<'_>, uuid: &str, edit: impl FnOnce(&mut IntervalBell)) -> Result<()> {
+        let Some(stored) = self.find_interval_bell(uuid)? else { return Ok(()) };
+        let mut bell = stored.clone();
+        edit(&mut bell);
         if bell == stored {
             return Ok(());
         }
         self.write_bell_in(tx, EventKind::IntervalBellUpdate, &bell)
     }
 
-    /// Convenience for the common path — toggling enabled without the
-    /// UI having to read the other fields back. Emits the same
-    /// `interval_bell_update` event as a full-fields update so the
-    /// sync replay code only has to handle one update kind.
+    /// Switch a bell on or off; the same `interval_bell_update` event
+    /// as a full update, so replay handles one update kind.
     pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
-        let Some(bell) = self.list_interval_bells()?
-            .into_iter()
-            .find(|b| b.uuid == uuid)
-        else {
-            return Ok(());
-        };
-        self.update_interval_bell(&IntervalBell { enabled, ..bell })
-    }
-
-    /// Remove the bell row with `uuid` and emit a tombstone event.
-    /// Unknown uuids are silent no-ops AND emit no event (peers
-    /// shouldn't get a delete for a row they never knew existed).
-    pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        if self.existing_rowid_by_uuid("interval_bells", uuid)?.is_none() {
-            return Ok(());
-        }
-        self.conn.execute(
-            "DELETE FROM interval_bells WHERE uuid = ?1",
-            params![uuid],
-        )?;
-        let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(&tx, EventKind::IntervalBellDelete, uuid, payload)?;
+        self.edit_bell_in(&tx, uuid, |b| b.enabled = enabled)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// See `delete_synced_row`.
+    pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
+        self.delete_synced_row("interval_bells", uuid, EventKind::IntervalBellDelete)
     }
 
     /// Look up an interval bell by its primary-key rowid. Used by
@@ -204,61 +187,18 @@ impl Database {
     /// the full row (including the generated uuid) without
     /// re-listing the whole library.
     pub fn find_interval_bell_by_id(&self, rowid: i64) -> Result<Option<IntervalBell>> {
-        // Cheap to delegate to list_interval_bells then filter — the
-        // library is small (typically <20 rows). Avoids duplicating
-        // the row→IntervalBell decoder.
-        Ok(self.list_interval_bells()?.into_iter().find(|b| b.id == rowid))
+        self.query_one(&format!("SELECT {COLUMNS} FROM interval_bells WHERE id = ?1"), params![rowid], from_row)
     }
 
     /// Every bell row in creation order: the first one added is at the
     /// top, on every device (`created_iso` syncs; rowids follow arrival
     /// order). The B.3.3 list page renders this directly.
     pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, kind, minutes, jitter_pct, sound_uuid,
-                    vibration_pattern_uuid, signal_mode, enabled, created_iso,
-                    volume_pct, secs, secs_unit, jitter_secs, jitter_unit,
-                    step_secs, step_unit
-             FROM interval_bells
-             ORDER BY created_iso ASC, uuid ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let kind_str: String = row.get(2)?;
-                let signal_mode_str: String = row.get(7)?;
-                let time = |secs: usize| -> rusqlite::Result<Option<BellTime>> {
-                    let n: Option<i64> = row.get(secs)?;
-                    let unit: Option<String> = row.get(secs + 1)?;
-                    Ok(stored_time(n.and_then(|n| u32::try_from(n).ok()), unit.as_deref()))
-                };
-                let stored = match (time(11)?, time(13)?, time(15)?) {
-                    (Some(t), Some(j), Some(s)) => Some((t, j, s)),
-                    _ => None,
-                };
-                let (time, jitter, step) = resolve_bell_times(
-                    row.get::<_, i64>(3)? as u32,
-                    row.get::<_, i64>(4)? as u32,
-                    stored,
-                );
-                Ok(IntervalBell {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    kind: IntervalBellKind::from_db_str(&kind_str)
-                        .expect("interval_bells.kind violates CHECK constraint"),
-                    time,
-                    jitter,
-                    step,
-                    sound_uuid: row.get(5)?,
-                    vibration_pattern_uuid: row.get(6)?,
-                    signal_mode: SignalMode::from_db_str(&signal_mode_str)
-                        .expect("interval_bells.signal_mode violates CHECK constraint"),
-                    enabled: row.get::<_, i64>(8)? != 0,
-                    created_iso: row.get(9)?,
-                    volume: BellVolume::from_percent(row.get::<_, i64>(10)? as f64),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        self.query_rows(&format!("SELECT {COLUMNS} FROM interval_bells ORDER BY created_iso ASC, uuid ASC"), [], from_row)
+    }
+
+    fn find_interval_bell(&self, uuid: &str) -> Result<Option<IntervalBell>> {
+        self.query_one(&format!("SELECT {COLUMNS} FROM interval_bells WHERE uuid = ?1"), params![uuid], from_row)
     }
 
     /// Recompute the `interval_bells` row for `bell_uuid` from the
@@ -273,10 +213,7 @@ impl Database {
             [EventKind::IntervalBellInsert, EventKind::IntervalBellUpdate],
             EventKind::IntervalBellDelete,
         )? else {
-            self.conn.execute(
-                "DELETE FROM interval_bells WHERE uuid = ?1",
-                params![bell_uuid],
-            )?;
+            self.delete_row("interval_bells", bell_uuid)?;
             return Ok(());
         };
         {
@@ -351,6 +288,45 @@ impl Database {
 /// The event keys of a bell's time, jitter and step, each with its unit.
 const TIME_KEYS: [(&str, &str); 3] =
     [("secs", "secs_unit"), ("jitter_secs", "jitter_unit"), ("step_secs", "step_unit")];
+
+const COLUMNS: &str = "id, uuid, kind, minutes, jitter_pct, sound_uuid,
+    vibration_pattern_uuid, signal_mode, enabled, created_iso,
+    volume_pct, secs, secs_unit, jitter_secs, jitter_unit, step_secs, step_unit";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<IntervalBell> {
+    let kind_str: String = row.get(2)?;
+    let signal_mode_str: String = row.get(7)?;
+    let time = |secs: usize| -> rusqlite::Result<Option<BellTime>> {
+        let n: Option<i64> = row.get(secs)?;
+        let unit: Option<String> = row.get(secs + 1)?;
+        Ok(stored_time(n.and_then(|n| u32::try_from(n).ok()), unit.as_deref()))
+    };
+    let stored = match (time(11)?, time(13)?, time(15)?) {
+        (Some(t), Some(j), Some(s)) => Some((t, j, s)),
+        _ => None,
+    };
+    let (time, jitter, step) = resolve_bell_times(
+        row.get::<_, i64>(3)? as u32,
+        row.get::<_, i64>(4)? as u32,
+        stored,
+    );
+    Ok(IntervalBell {
+        id: row.get(0)?,
+        uuid: row.get(1)?,
+        kind: IntervalBellKind::from_db_str(&kind_str)
+            .expect("interval_bells.kind violates CHECK constraint"),
+        time,
+        jitter,
+        step,
+        sound_uuid: row.get(5)?,
+        vibration_pattern_uuid: row.get(6)?,
+        signal_mode: SignalMode::from_db_str(&signal_mode_str)
+            .expect("interval_bells.signal_mode violates CHECK constraint"),
+        enabled: row.get::<_, i64>(8)? != 0,
+        created_iso: row.get(9)?,
+        volume: BellVolume::from_percent(row.get::<_, i64>(10)? as f64),
+    })
+}
 
 /// A stored seconds field and its unit, `None` when either is missing
 /// or not understood.

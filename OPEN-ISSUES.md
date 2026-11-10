@@ -15,7 +15,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
-| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423 | what the user typed or saved goes missing |
+| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
 | [ ] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
 | [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #310, #251, #247, #490, #323, #340, #341, #491, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
@@ -82,6 +82,11 @@ Data the user typed or saved goes missing, moves, or exists twice.
 ### #423 Re-saving after a sync can store a duplicate pattern name
 - The vibration editor only re-checks the name when it is edited (`ve_recompute_save` 7245), Save doesn't check again (7597), and a DB error counts as "not taken". A same-named pattern synced in while the editor is open is saved as a duplicate. Fix with #415.
 
+### #497 Opening a pattern on Android cuts its points to the length's limit
+- Where: android `ui.rs` `on_pattern_edit` (about 7378-7386) sets `ve-points-max` from `max_points_for_duration_s` (one point per 100 ms, `vibration.rs:249`) before `ve-points`; the points control clamps a stored count above it and `on_ve_points_changed` resamples. Linux keeps the stored points (`vibration_editor.rs:188`).
+- Scenario (seen 2026-11-10, device test of one-path-per-table): "Tiny-Dots", 19 points at 0.5 s (3.0 s with 19 points since May; on 2026-10-08 the phone saved 0.5 s, the Duration field's minimum in tenths, keeping the 19 points, likely a typed value below 5 during a device test; a typed length then didn't cut the points, it does now), opened on the phone and saved unchanged: stored with 5 points, synced to every device.
+- Fix (maintainer, 2026-11-10: like Linux, own change): opening keeps the stored points; the limit applies only when the user changes the length or the points.
+
 - Plausible, narrow window (sweep, slice 8): after Save commits (which deletes the snapshot), the 60 s heartbeat (gtk `timer/imp.rs:2912`) or closing the window (`save_snapshot_now`) can write the snapshot again before the continuation runs `reset_mode` and cancels the heartbeat; the next start then recovers the same session a second time. Fix: cancel the heartbeat and skip snapshot writes while `saving` is set.
 
 ## K3. Presets and multi-step writes all or nothing
@@ -90,12 +95,13 @@ Data the user typed or saved goes missing, moves, or exists twice.
 - Where: `meditate-core/src/preset_config.rs` `apply` (comment above it: core::db has no nestable transactions; `set_interval_bell_enabled` opens its own); the length is written after it by each app (`set_timer_session_secs` / `set_breathing`).
 - Problem: a write that fails partway (sync lock, full disk) leaves part of the preset: settings, interval bells and box-breath phases out of step with it. Since K2 both apps say "Save failed" and re-apply the setup from before, but that can fail under the same lock, and then the page shows the half-applied setup.
 - Fix: nestable transactions in core::db (a savepoint helper, `SAVEPOINT` / `RELEASE` / `ROLLBACK TO`, keeping `&self`; merged from #177), then `apply` with the length inside one transaction; the apps drop the re-apply. Check what the sync event log records for a rolled-back apply.
+- From change one-path-per-table (2026-11-10): about 40 writes in `db/` open their own `unchecked_transaction` and many come as `x` / `x_in` pairs (`delete_synced_row`, `edit_preset`, `edit_guided_file`, `set_interval_bell_enabled`, the `insert_*_at`); the savepoint helper as `in_tx(|tx| ..)` makes each pair one function. `apply` should call `edit_bell_in(tx, ..)` instead of `set_interval_bell_enabled` (one transaction per bell). REFACTORING #495 changes the same functions.
 - From the sweep: both apps re-apply the old setup on failure (gtk `timer/imp.rs:3895-3902`, android `ui.rs:1809`), which can fail the same way and leaves inserted bells behind; GTK snapshots the setup twice for it (REFACTORING #317).
 
 ### #306 A Box Breath pattern is saved in five steps
 - Where: `settings_keys.rs:243-253` (`set_breathing`): five `set_setting` calls, each its own transaction and synced event.
 - Scenario: a write fails after the first two (locked or full database); every device ends up with a mixed old and new pattern, and the message doesn't say what landed.
-- Fix: one transaction (a `set_settings(&[(k, v)])`). Same class as OPEN-ISSUES #193 (presets); the savepoint helper there covers both.
+- Fix: one transaction (a `set_settings(&[(k, v)])` looping `set_setting_in`). Same class as OPEN-ISSUES #193 (presets); the savepoint helper there covers both. `set_box_breath_phase` needs an `_in` form for it. The seeds' `seed_once` (`db/seeds.rs`) also writes its rows and its done marker in separate transactions; harmless (a re-run skips existing uuids) but the same helper would make it one.
 
 ### #291 A read error while saving a preset stores it without its interval bells, silently
 - (Same class as #308.)

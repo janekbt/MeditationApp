@@ -12,67 +12,35 @@ use crate::bell_volume::BellVolume;
 use crate::bells::SignalMode;
 use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 
+const COLUMNS: &str = "phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<BoxBreathPhase> {
+    let phase: String = row.get(0)?;
+    let signal_mode: String = row.get(2)?;
+    Ok(BoxBreathPhase {
+        phase: BoxBreathPhaseId::from_db_str(&phase).expect("box_breath_phases.phase violates CHECK constraint"),
+        enabled: row.get::<_, i64>(1)? != 0,
+        signal_mode: SignalMode::from_db_str(&signal_mode)
+            .expect("box_breath_phases.signal_mode violates CHECK constraint"),
+        sound_uuid: row.get(3)?,
+        pattern_uuid: row.get(4)?,
+        volume: BellVolume::from_percent(row.get::<_, i64>(5)? as f64),
+    })
+}
+
 impl Database {
     /// Read every phase row in cycle order (in / hold-in / out /
     /// hold-out). Always returns exactly four rows after the seed.
     pub fn list_box_breath_phases(&self) -> Result<Vec<BoxBreathPhase>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct
-             FROM box_breath_phases",
-        )?;
-        let mut by_id: std::collections::HashMap<BoxBreathPhaseId, BoxBreathPhase> =
-            std::collections::HashMap::new();
-        let rows = stmt.query_map([], |row| {
-            let phase_str: String = row.get(0)?;
-            let signal_mode_str: String = row.get(2)?;
-            Ok(BoxBreathPhase {
-                phase: BoxBreathPhaseId::from_db_str(&phase_str)
-                    .expect("box_breath_phases.phase violates CHECK constraint"),
-                enabled: row.get::<_, i64>(1)? != 0,
-                signal_mode: SignalMode::from_db_str(&signal_mode_str)
-                    .expect("box_breath_phases.signal_mode violates CHECK constraint"),
-                sound_uuid: row.get(3)?,
-                pattern_uuid: row.get(4)?,
-                volume: BellVolume::from_percent(row.get::<_, i64>(5)? as f64),
-            })
-        })?;
-        for r in rows {
-            let p = r?;
-            by_id.insert(p.phase, p);
-        }
-        // Return in cycle order regardless of how SQLite returned them.
-        Ok(BoxBreathPhaseId::all()
-            .iter()
-            .filter_map(|id| by_id.remove(id))
-            .collect())
+        let mut phases: Vec<BoxBreathPhase> = self.query_rows(&format!("SELECT {COLUMNS} FROM box_breath_phases"), [], from_row)?;
+        phases.sort_by_key(|p| BoxBreathPhaseId::all().iter().position(|&id| id == p.phase));
+        Ok(phases)
     }
 
     /// Read a single phase row. Returns `None` if the phase hasn't
     /// been seeded yet (only happens during the seed cycle itself).
-    pub fn get_box_breath_phase(
-        &self,
-        phase: BoxBreathPhaseId,
-    ) -> Result<Option<BoxBreathPhase>> {
-        let row = self.conn.query_row(
-            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct
-             FROM box_breath_phases WHERE phase = ?1",
-            params![phase.as_db_str()],
-            |row| {
-                let phase_str: String = row.get(0)?;
-                let signal_mode_str: String = row.get(2)?;
-                Ok(BoxBreathPhase {
-                    phase: BoxBreathPhaseId::from_db_str(&phase_str)
-                        .expect("box_breath_phases.phase violates CHECK constraint"),
-                    enabled: row.get::<_, i64>(1)? != 0,
-                    signal_mode: SignalMode::from_db_str(&signal_mode_str)
-                        .expect("box_breath_phases.signal_mode violates CHECK constraint"),
-                    sound_uuid: row.get(3)?,
-                    pattern_uuid: row.get(4)?,
-                    volume: BellVolume::from_percent(row.get::<_, i64>(5)? as f64),
-                })
-            },
-        ).optional()?;
-        Ok(row)
+    pub fn get_box_breath_phase(&self, phase: BoxBreathPhaseId) -> Result<Option<BoxBreathPhase>> {
+        self.query_one(&format!("SELECT {COLUMNS} FROM box_breath_phases WHERE phase = ?1"), params![phase.as_db_str()], from_row)
     }
 
     /// Update every mutable field on a single phase row, recorded in

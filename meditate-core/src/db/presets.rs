@@ -2,7 +2,7 @@
 //! shell defines and serialises `config_json`; core only stores +
 //! round-trips it through sync events.
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 
 use super::events::EventKind;
 use super::order_key::key_between;
@@ -35,32 +35,27 @@ pub struct Preset {
     pub updated_iso: String,
 }
 
-/// Every preset, ordered by mode (timer first, then box_breath)
+const COLUMNS: &str = "id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Preset> {
+    let mode_str: String = row.get(3)?;
+    Ok(Preset {
+        id: row.get(0)?,
+        uuid: row.get(1)?,
+        name: row.get(2)?,
+        mode: SessionMode::from_db_str(&mode_str).expect("presets.mode violates CHECK constraint"),
+        is_starred: row.get::<_, i64>(4)? != 0,
+        config_json: row.get(5)?,
+        created_iso: row.get(6)?,
+        updated_iso: row.get(7)?,
+    })
+}
+
+/// Every preset, ordered by mode (as text: box_breath before timer)
 /// then created_iso ASC. Stable order: rows don't shuffle when a
 /// star toggles or a config gets overwritten.
 pub fn list_presets_from_db(db: &Database) -> Result<Vec<Preset>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-         FROM presets
-         ORDER BY mode, created_iso ASC, uuid ASC",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            let mode_str: String = row.get(3)?;
-            Ok(Preset {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                mode: SessionMode::from_db_str(&mode_str)
-                    .expect("presets.mode violates CHECK constraint"),
-                is_starred: row.get::<_, i64>(4)? != 0,
-                config_json: row.get(5)?,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows(&format!("SELECT {COLUMNS} FROM presets ORDER BY mode, created_iso ASC, uuid ASC"), [], from_row)
 }
 /// Presets for one mode, ordered by created_iso ASC. Used by the
 /// chooser pages (Save / Manage), both of which are mode-strict
@@ -68,58 +63,22 @@ pub fn list_presets_from_db(db: &Database) -> Result<Vec<Preset>> {
 /// config into a Box-Breath preset, or see other-mode presets in
 /// the management page).
 pub fn list_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result<Vec<Preset>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-         FROM presets
-         WHERE mode = ?1
-         ORDER BY created_iso ASC, uuid ASC",
-    )?;
-    let rows = stmt
-        .query_map(params![mode.as_db_str()], |row| {
-            let mode_str: String = row.get(3)?;
-            Ok(Preset {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                mode: SessionMode::from_db_str(&mode_str)
-                    .expect("presets.mode violates CHECK constraint"),
-                is_starred: row.get::<_, i64>(4)? != 0,
-                config_json: row.get(5)?,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows(
+        &format!("SELECT {COLUMNS} FROM presets WHERE mode = ?1 ORDER BY created_iso ASC, uuid ASC"),
+        params![mode.as_db_str()],
+        from_row,
+    )
 }
 /// Starred presets for one mode, ordered by created_iso ASC.
 /// Drives the visible chip list above the Save / Manage buttons
 /// in the Setup view. When this list is empty, the chip section
 /// hides entirely (just the two buttons remain).
 pub fn list_starred_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result<Vec<Preset>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-         FROM presets
-         WHERE mode = ?1 AND is_starred = 1
-         ORDER BY created_iso ASC, uuid ASC",
-    )?;
-    let rows = stmt
-        .query_map(params![mode.as_db_str()], |row| {
-            let mode_str: String = row.get(3)?;
-            Ok(Preset {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                mode: SessionMode::from_db_str(&mode_str)
-                    .expect("presets.mode violates CHECK constraint"),
-                is_starred: row.get::<_, i64>(4)? != 0,
-                config_json: row.get(5)?,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows(
+        &format!("SELECT {COLUMNS} FROM presets WHERE mode = ?1 AND is_starred = 1 ORDER BY created_iso ASC, uuid ASC"),
+        params![mode.as_db_str()],
+        from_row,
+    )
 }
 /// True iff any preset other than `except_uuid` already uses
 /// `name` (case-insensitive — the column is COLLATE NOCASE).
@@ -135,26 +94,7 @@ pub fn is_preset_name_taken_from_db(db: &Database, name: &str, except_uuid: &str
     Ok(n > 0)
 }
 pub fn find_preset_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Option<Preset>> {
-    let row = db.conn.query_row(
-        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-         FROM presets WHERE uuid = ?1",
-        params![uuid_str],
-        |row| {
-            let mode_str: String = row.get(3)?;
-            Ok(Preset {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                mode: SessionMode::from_db_str(&mode_str)
-                    .expect("presets.mode violates CHECK constraint"),
-                is_starred: row.get::<_, i64>(4)? != 0,
-                config_json: row.get(5)?,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            })
-        },
-    ).optional()?;
-    Ok(row)
+    db.query_one(&format!("SELECT {COLUMNS} FROM presets WHERE uuid = ?1"), params![uuid_str], from_row)
 }
 impl Database {
     /// Create a preset under a freshly-minted v4 UUID. Convenience
@@ -214,15 +154,13 @@ impl Database {
     fn insert_preset_at(&self, preset: &Preset) -> Result<i64> {
         let uuid_str = preset.uuid.as_str();
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.existing_rowid_by_uuid("presets", uuid_str)? {
-            return Ok(existing);
-        }
-        // Checked first: the rebuild would suffix a taken name instead.
-        if is_preset_name_taken_from_db(self, &preset.name, uuid_str)? {
-            return Err(DbError::DuplicatePreset(preset.name.clone()));
-        }
-        self.write_preset_in(&tx, EventKind::PresetInsert, preset)?;
-        let rowid = self.existing_rowid_by_uuid("presets", uuid_str)?.expect("just written");
+        let rowid = self.insert_new_in("presets", uuid_str, || {
+            // Checked first: the rebuild would suffix a taken name instead.
+            if is_preset_name_taken_from_db(self, &preset.name, uuid_str)? {
+                return Err(DbError::DuplicatePreset(preset.name.clone()));
+            }
+            self.write_preset_in(&tx, EventKind::PresetInsert, preset)
+        })?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -314,13 +252,7 @@ impl Database {
         let mut times: Vec<String> = list.iter().map(|p| p.created_iso.clone()).collect();
         match key_between(to.checked_sub(1).map(|i| times[i].as_str()), times.get(to + 1).map(String::as_str), uuid_str) {
             Some(key) => times[to] = key,
-            None => {
-                let start = chrono::Utc::now();
-                times = (0..list.len())
-                    .map(|i| (start + chrono::Duration::milliseconds(i as i64))
-                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, false))
-                    .collect();
-            }
+            None => times = super::order_key::fresh_keys(list.len()),
         }
         for (p, created_iso) in list.iter().zip(times) {
             self.edit_preset_in(&tx, p.uuid.as_str(), |p| p.created_iso = created_iso)?;
@@ -349,25 +281,9 @@ impl Database {
         self.move_preset(uuid_str, place)
     }
 
-    /// Remove a preset row and emit a tombstone. Unknown uuids are
-    /// silent no-ops with no event — peers would otherwise receive a
-    /// tombstone for a preset they never knew existed.
+    /// See `delete_synced_row`.
     pub fn delete_preset(&self, uuid_str: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let exists: bool = self.conn.query_row(
-            "SELECT 1 FROM presets WHERE uuid = ?1",
-            params![uuid_str],
-            |_| Ok(true),
-        ).optional()?.unwrap_or(false);
-        if !exists { return Ok(()); }
-        self.conn.execute(
-            "DELETE FROM presets WHERE uuid = ?1",
-            params![uuid_str],
-        )?;
-        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(&tx, EventKind::PresetDelete, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_synced_row("presets", uuid_str, EventKind::PresetDelete)
     }
 
     /// Recompute the `presets` row for `preset_uuid` from the events
@@ -382,10 +298,7 @@ impl Database {
             [EventKind::PresetInsert, EventKind::PresetUpdate],
             EventKind::PresetDelete,
         )? else {
-            self.conn.execute(
-                "DELETE FROM presets WHERE uuid = ?1",
-                params![preset_uuid],
-            )?;
+            self.delete_row("presets", preset_uuid)?;
             return Ok(());
         };
         {

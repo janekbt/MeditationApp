@@ -3,7 +3,7 @@
 //! a chart_kind (Line / Bar interpolation). Bundled rows ship with
 //! the app under stable UUIDs.
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 
 use super::events::EventKind;
 use super::{Database, DbError, Result};
@@ -34,67 +34,40 @@ pub struct VibrationPattern {
 }
 
 
+const COLUMNS: &str =
+    "id, uuid, name, duration_ms, intensities_json, chart_kind, is_bundled, created_iso, updated_iso";
+
+fn from_row(row: &rusqlite::Row) -> rusqlite::Result<VibrationPattern> {
+    let intensities_json: String = row.get(4)?;
+    let chart_kind: String = row.get(5)?;
+    Ok(VibrationPattern {
+        id: row.get(0)?,
+        uuid: row.get(1)?,
+        name: row.get(2)?,
+        duration_ms: row.get::<_, i64>(3)? as u32,
+        intensities: serde_json::from_str(&intensities_json).unwrap_or_default(),
+        chart_kind: ChartKind::from_db_str(&chart_kind)
+            .expect("vibration_patterns.chart_kind violates CHECK constraint"),
+        is_bundled: row.get::<_, i64>(6)? != 0,
+        created_iso: row.get(7)?,
+        updated_iso: row.get(8)?,
+    })
+}
+
+/// Custom rows first, then the bundled set, as `list_bell_sounds`
+/// does: a new pattern sits at the top of the chooser.
 pub fn list_vibration_patterns_from_db(db: &Database) -> Result<Vec<VibrationPattern>> {
-    // Custom rows first (is_bundled = 0), then the bundled seed
-    // set. Mirrors list_bell_sounds — a freshly authored custom
-    // pattern lives at the top of the chooser instead of being
-    // pushed to the bottom of the bundled list.
-    let mut stmt = db.conn.prepare(
-        "SELECT id, uuid, name, duration_ms, intensities_json,
-                chart_kind, is_bundled, created_iso, updated_iso
-         FROM vibration_patterns
-         ORDER BY is_bundled ASC, created_iso ASC, uuid ASC",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            let intensities_json: String = row.get(4)?;
-            let chart_str: String = row.get(5)?;
-            Ok(VibrationPattern {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                duration_ms: row.get::<_, i64>(3)? as u32,
-                intensities: serde_json::from_str(&intensities_json)
-                    .unwrap_or_default(),
-                chart_kind: ChartKind::from_db_str(&chart_str)
-                    .expect("vibration_patterns.chart_kind violates CHECK constraint"),
-                is_bundled: row.get::<_, i64>(6)? != 0,
-                created_iso: row.get(7)?,
-                updated_iso: row.get(8)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    db.query_rows(
+        &format!("SELECT {COLUMNS} FROM vibration_patterns ORDER BY is_bundled ASC, created_iso ASC, uuid ASC"),
+        [],
+        from_row,
+    )
 }
-pub fn find_vibration_pattern_by_uuid_from_db(
-    db: &Database,
-    uuid_str: &str,
-) -> Result<Option<VibrationPattern>> {
-    let row = db.conn.query_row(
-        "SELECT id, uuid, name, duration_ms, intensities_json,
-                chart_kind, is_bundled, created_iso, updated_iso
-         FROM vibration_patterns WHERE uuid = ?1",
-        params![uuid_str],
-        |row| {
-            let intensities_json: String = row.get(4)?;
-            let chart_str: String = row.get(5)?;
-            Ok(VibrationPattern {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                duration_ms: row.get::<_, i64>(3)? as u32,
-                intensities: serde_json::from_str(&intensities_json)
-                    .unwrap_or_default(),
-                chart_kind: ChartKind::from_db_str(&chart_str)
-                    .expect("vibration_patterns.chart_kind violates CHECK constraint"),
-                is_bundled: row.get::<_, i64>(6)? != 0,
-                created_iso: row.get(7)?,
-                updated_iso: row.get(8)?,
-            })
-        },
-    ).optional()?;
-    Ok(row)
+
+pub fn find_vibration_pattern_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Option<VibrationPattern>> {
+    db.query_one(&format!("SELECT {COLUMNS} FROM vibration_patterns WHERE uuid = ?1"), params![uuid_str], from_row)
 }
+
 /// True iff a row other than `except_uuid` already holds `name`
 /// (case-insensitive). The editor and chooser use this for live
 /// validation; `except_uuid` is the row currently being renamed
@@ -153,15 +126,13 @@ impl Database {
     fn insert_vibration_pattern_at(&self, pattern: &VibrationPattern) -> Result<i64> {
         let uuid_str = pattern.uuid.as_str();
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.existing_rowid_by_uuid("vibration_patterns", uuid_str)? {
-            return Ok(existing);
-        }
-        // Checked first: the rebuild would suffix a taken name instead.
-        if is_vibration_pattern_name_taken_from_db(self, &pattern.name, uuid_str)? {
-            return Err(DbError::DuplicateVibrationPattern(pattern.name.clone()));
-        }
-        self.write_vibration_pattern_in(&tx, EventKind::VibrationPatternInsert, pattern)?;
-        let rowid = self.existing_rowid_by_uuid("vibration_patterns", uuid_str)?.expect("just written");
+        let rowid = self.insert_new_in("vibration_patterns", uuid_str, || {
+            // Checked first: the rebuild would suffix a taken name instead.
+            if is_vibration_pattern_name_taken_from_db(self, &pattern.name, uuid_str)? {
+                return Err(DbError::DuplicateVibrationPattern(pattern.name.clone()));
+            }
+            self.write_vibration_pattern_in(&tx, EventKind::VibrationPatternInsert, pattern)
+        })?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -201,7 +172,7 @@ impl Database {
         chart_kind: ChartKind,
         is_bundled: bool,
     ) -> Result<String> {
-        let uuid_str = uuid::Uuid::new_v4().to_string();
+        let uuid_str = super::mint_uuid();
         self.insert_vibration_pattern_with_uuid(
             &uuid_str, name, duration_ms, intensities, chart_kind, is_bundled,
         )?;
@@ -209,28 +180,19 @@ impl Database {
     }
 
 
-    /// Focused rename: re-uses `update_vibration_pattern` internally
-    /// but lets the shell skip the read-modify-write of all four
-    /// mutable fields when only the name changes. Returns `Ok(false)`
-    /// when the row doesn't exist OR `new_name == existing.name`
-    /// (a no-op rename — the shell uses this to skip the undo toast).
-    /// Returns `DuplicateVibrationPattern` if another row already
-    /// holds the new name.
+    /// Rename a pattern. `Ok(false)` when the row doesn't exist or
+    /// already has that name (the shell skips its undo toast then);
+    /// `DuplicateVibrationPattern` if another row holds the name.
     pub fn rename_vibration_pattern(&self, uuid_str: &str, new_name: &str) -> Result<bool> {
-        let Some(p) = find_vibration_pattern_by_uuid_from_db(self, uuid_str)? else {
-            return Ok(false);
-        };
-        self.update_vibration_pattern(uuid_str, new_name, p.duration_ms, &p.intensities, p.chart_kind)
+        self.edit_vibration_pattern(uuid_str, |p| p.name = new_name.to_string())
     }
 
-    /// Update the four mutable fields on an existing pattern. Bumps
-    /// `updated_iso` so the recompute helper can resolve concurrent
-    /// edits by lamport timestamp. Unknown uuids, and the values the
-    /// pattern already has (points within 1e-6, as the editor
-    /// resamples), write nothing and return `false`: a fresh event
-    /// would undo an edit another device made in the meantime.
-    /// Returns `DuplicateVibrationPattern(name)` if another row already
-    /// holds the new name (case-insensitive).
+    /// Update the four mutable fields on an existing pattern. Unknown
+    /// uuids, and the values the pattern already has (points within
+    /// 1e-6, as the editor resamples), write nothing and return
+    /// `false`: a fresh event would undo an edit another device made
+    /// in the meantime. Returns `DuplicateVibrationPattern(name)` if
+    /// another row already holds the new name (case-insensitive).
     pub fn update_vibration_pattern(
         &self,
         uuid_str: &str,
@@ -239,48 +201,38 @@ impl Database {
         intensities: &[f32],
         chart_kind: ChartKind,
     ) -> Result<bool> {
+        self.edit_vibration_pattern(uuid_str, |p| {
+            p.name = name.to_string();
+            p.duration_ms = duration_ms;
+            p.intensities = intensities.to_vec();
+            p.chart_kind = chart_kind;
+        })
+    }
+
+    /// Apply `edit` to the stored pattern and write it, unless that
+    /// changes nothing (see `update_vibration_pattern`).
+    fn edit_vibration_pattern(&self, uuid_str: &str, edit: impl FnOnce(&mut VibrationPattern)) -> Result<bool> {
         let Some(stored) = find_vibration_pattern_by_uuid_from_db(self, uuid_str)? else {
             return Ok(false);
         };
-        let pattern = VibrationPattern {
-            name: name.to_string(),
-            duration_ms,
-            intensities: intensities.to_vec(),
-            chart_kind,
-            updated_iso: chrono::Utc::now().to_rfc3339(),
-            ..stored.clone()
-        };
+        let mut pattern = stored.clone();
+        edit(&mut pattern);
         if crate::vibration::patterns_equivalent(&pattern, &stored) {
             return Ok(false);
         }
-        if name != stored.name && is_vibration_pattern_name_taken_from_db(self, name, uuid_str)? {
-            return Err(DbError::DuplicateVibrationPattern(name.to_string()));
+        if pattern.name != stored.name && is_vibration_pattern_name_taken_from_db(self, &pattern.name, uuid_str)? {
+            return Err(DbError::DuplicateVibrationPattern(pattern.name));
         }
+        pattern.updated_iso = chrono::Utc::now().to_rfc3339();
         let tx = self.conn.unchecked_transaction()?;
         self.write_vibration_pattern_in(&tx, EventKind::VibrationPatternUpdate, &pattern)?;
         tx.commit()?;
         Ok(true)
     }
 
-    /// Drop a vibration-pattern row. Unknown uuids are silent no-ops
-    /// AND emit no event — peers would otherwise see a tombstone for
-    /// a row they never knew existed. Mirrors guided_file delete.
+    /// See `delete_synced_row`.
     pub fn delete_vibration_pattern(&self, uuid_str: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let exists: bool = self.conn.query_row(
-            "SELECT 1 FROM vibration_patterns WHERE uuid = ?1",
-            params![uuid_str],
-            |_| Ok(true),
-        ).optional()?.unwrap_or(false);
-        if !exists { return Ok(()); }
-        self.conn.execute(
-            "DELETE FROM vibration_patterns WHERE uuid = ?1",
-            params![uuid_str],
-        )?;
-        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(&tx, EventKind::VibrationPatternDelete, uuid_str, payload)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_synced_row("vibration_patterns", uuid_str, EventKind::VibrationPatternDelete)
     }
 
 
@@ -295,10 +247,7 @@ impl Database {
             [EventKind::VibrationPatternInsert, EventKind::VibrationPatternUpdate],
             EventKind::VibrationPatternDelete,
         )? else {
-            self.conn.execute(
-                "DELETE FROM vibration_patterns WHERE uuid = ?1",
-                params![pattern_uuid],
-            )?;
+            self.delete_row("vibration_patterns", pattern_uuid)?;
             return Ok(());
         };
         {

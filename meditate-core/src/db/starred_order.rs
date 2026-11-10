@@ -182,10 +182,8 @@ impl Database {
     /// Fresh times 1 ms apart for the library files in `list` order;
     /// the starred ones fill the library rows of `rows` in that order.
     fn retime_library(&self, tx: &rusqlite::Transaction, list: &mut [GuidedFile], rows: &mut [StarredGuided]) -> Result<()> {
-        let start = chrono::Utc::now();
-        for (i, g) in list.iter_mut().enumerate() {
-            let key = (start + chrono::Duration::milliseconds(i as i64))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, false);
+        let keys = super::order_key::fresh_keys(list.len());
+        for (g, key) in list.iter_mut().zip(keys) {
             self.write_library_key(tx, g, &key)?;
             g.created_iso = key;
         }

@@ -22,7 +22,7 @@ impl Database {
             return Ok(existing);
         }
         // First call on a fresh DB — mint a new id and remember it.
-        let new_id = uuid::Uuid::new_v4().to_string();
+        let new_id = super::mint_uuid();
         self.conn.execute(
             "INSERT INTO device (device_id) VALUES (?1)",
             params![new_id],

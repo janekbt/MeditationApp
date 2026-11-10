@@ -188,6 +188,19 @@ pub struct Event {
     pub payload: String,
 }
 
+const EVENT_COLUMNS: &str = "id, event_uuid, lamport_ts, device_id, kind, target_id, payload";
+
+fn event_from_row(row: &rusqlite::Row) -> rusqlite::Result<(i64, Event)> {
+    Ok((row.get(0)?, Event {
+        event_uuid: row.get(1)?,
+        lamport_ts: row.get(2)?,
+        device_id: row.get(3)?,
+        kind: row.get(4)?,
+        target_id: row.get(5)?,
+        payload: row.get(6)?,
+    }))
+}
+
 /// A whole number from a peer's payload, clamped into `u32` as a
 /// local save clamps (`as` saturates; a fraction is cut; anything
 /// else is 0).
@@ -322,49 +335,19 @@ impl Database {
     /// after a successful pull it is a superset of the remote union,
     /// so the consolidated file can never drop a peer's events.
     pub fn all_events(&self) -> Result<Vec<Event>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT event_uuid, lamport_ts, device_id, kind, target_id, payload
-             FROM events
-             ORDER BY lamport_ts ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(Event {
-                    event_uuid: row.get(0)?,
-                    lamport_ts: row.get(1)?,
-                    device_id: row.get(2)?,
-                    kind: row.get(3)?,
-                    target_id: row.get(4)?,
-                    payload: row.get(5)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        self.query_rows(
+            &format!("SELECT {EVENT_COLUMNS} FROM events ORDER BY lamport_ts ASC, id ASC"),
+            [],
+            |row| event_from_row(row).map(|(_, e)| e),
+        )
     }
 
     pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, event_uuid, lamport_ts, device_id, kind, target_id, payload
-             FROM events
-             WHERE synced = 0
-             ORDER BY lamport_ts ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    Event {
-                        event_uuid: row.get(1)?,
-                        lamport_ts: row.get(2)?,
-                        device_id: row.get(3)?,
-                        kind: row.get(4)?,
-                        target_id: row.get(5)?,
-                        payload: row.get(6)?,
-                    },
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        self.query_rows(
+            &format!("SELECT {EVENT_COLUMNS} FROM events WHERE synced = 0 ORDER BY lamport_ts ASC, id ASC"),
+            [],
+            event_from_row,
+        )
     }
 
     /// Every `event_uuid` we've seen, in a HashSet for fast existence
@@ -372,11 +355,7 @@ impl Database {
     /// listing — only events we don't have get GETted. Cheap up to
     /// the order of (event count) — fine for personal use sizes.
     pub(crate) fn known_event_uuids(&self) -> Result<std::collections::HashSet<String>> {
-        let mut stmt = self.conn.prepare_cached("SELECT event_uuid FROM events")?;
-        let ids = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
-        Ok(ids)
+        self.query_rows("SELECT event_uuid FROM events", [], |row| row.get(0))
     }
 
     /// Reset the synced flag on every event row to 0, putting all of
@@ -386,9 +365,9 @@ impl Database {
     /// see every authored event as pending so it can bundle them all
     /// into a fresh batch file.
     ///
-    /// Scoped to the events table only. The caller is responsible for
-    /// also calling `wipe_known_remote_files` (so the dedup tracker
-    /// doesn't claim the freshly-emptied remote already has them).
+    /// Scoped to the events table only. The caller also wipes the
+    /// `Known` trackers (`wipe_known_remote`), so they don't claim the
+    /// freshly-emptied remote already has them.
     pub(crate) fn flag_all_events_unsynced(&self) -> Result<()> {
         self.conn.execute("UPDATE events SET synced = 0", [])?;
         Ok(())
@@ -842,7 +821,7 @@ mod tests {
     use super::*;
     use crate::db::{
         test_helpers::*, BellSoundCategory, BoxBreathPhaseId, ChartKind,
-        IntervalBellKind, Session, SessionMode, SignalMode,
+        IntervalBellKind, Known, Session, SessionMode, SignalMode,
     };
     use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 
@@ -1125,7 +1104,7 @@ mod tests {
         db.append_event(&sample_event(1)).unwrap();
         let label_id = db.insert_label("focus").unwrap();
         db.set_setting("k", "v").unwrap();
-        db.record_known_remote_file("a").unwrap();
+        db.record_known_remote(Known::Files, "a").unwrap();
         let labels_before = crate::db::list_labels_from_db(&db).unwrap().len();
 
         db.flag_all_events_unsynced().unwrap();
@@ -1133,7 +1112,7 @@ mod tests {
         assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), labels_before);
         assert!(crate::db::list_labels_from_db(&db).unwrap().iter().any(|l| l.id == label_id));
         assert_eq!(db.get_setting("k", "default").unwrap(), "v");
-        assert!(db.known_remote_file_uuids().unwrap().contains("a"),
+        assert!(db.known_remote(Known::Files).unwrap().contains("a"),
             "known_remote_files must be left alone — the caller wipes it \
              explicitly when needed");
     }
@@ -1167,8 +1146,8 @@ mod tests {
         db.insert_bell_sound("Bundled", "/p/b.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         db.insert_vibration_pattern("Bundled Pulse", 200, &[1.0, 0.0], ChartKind::Bar, true).unwrap();
         db.set_box_breath_phase(BoxBreathPhaseId::In, false, SignalMode::Sound, "x", "y", crate::bell_volume::BellVolume::default()).unwrap();
-        db.record_known_remote_file("a").unwrap();
-        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote(Known::Files, "a").unwrap();
+        db.record_known_remote(Known::Sounds, "bs-1").unwrap();
         // Sanity: rows present before wipe.
         assert!(!db.pending_events().unwrap().is_empty());
         assert!(!crate::db::list_labels_from_db(&db).unwrap().is_empty());
@@ -1178,8 +1157,8 @@ mod tests {
         assert!(!crate::db::list_presets_from_db(&db).unwrap().is_empty());
         assert!(!crate::db::list_guided_files_from_db(&db).unwrap().is_empty());
         assert!(!crate::db::list_vibration_patterns_from_db(&db).unwrap().is_empty());
-        assert!(!db.known_remote_file_uuids().unwrap().is_empty());
-        assert!(!db.known_remote_sound_uuids().unwrap().is_empty());
+        assert!(!db.known_remote(Known::Files).unwrap().is_empty());
+        assert!(!db.known_remote(Known::Sounds).unwrap().is_empty());
 
         db.wipe_local_event_log().unwrap();
 
@@ -1202,9 +1181,9 @@ mod tests {
         let patterns: Vec<_> = crate::db::list_vibration_patterns_from_db(&db).unwrap()
             .into_iter().map(|p| p.name).collect();
         assert_eq!(patterns, ["Bundled Pulse"]);
-        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
+        assert!(db.known_remote(Known::Files).unwrap().is_empty(),
             "file dedup tracker must be empty");
-        assert!(db.known_remote_sound_uuids().unwrap().is_empty(),
+        assert!(db.known_remote(Known::Sounds).unwrap().is_empty(),
             "sound dedup tracker must be empty");
     }
 
