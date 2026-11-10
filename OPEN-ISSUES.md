@@ -147,10 +147,10 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 - Scenario: the disk is full or the database locked; the session runs with no crash protection and nothing says so, so a crash loses it. A failed clear leaves a phantom session for the next start (the comment admits it). Android the same (`ui.rs:3101`).
 - Fix: tell the user once per session that recovery is off, and show a failed clear like any failed save.
 
-### #340 "Sync Now" drops a failed write without a word, in both apps
-- Same class on Android: #427.
-- Where: GTK `window/imp.rs:727` (`app.with_db(|db| clear_refused_uploads(..))` as a statement), Android `ui.rs:9734` (`let _ =`).
-- Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: #327 and a core `retry_now()` (#338).
+### #340 "Sync Now" drops a failed write without a word (Android)
+- Same class on Android: #427. GTK fixed in sync-after-real-writes (says "Save failed").
+- Where: Android `ui.rs:9734` (`let _ =`).
+- Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: show "Save failed" as GTK does, or a core `retry_now()` (#338).
 
 ### #347 Closing the window right after a delete hides a failed delete
 - Where: `close_request` (`window/imp.rs:140-144`) commits pending deletes; a failure toast goes to the window being destroyed.

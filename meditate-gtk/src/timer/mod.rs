@@ -336,17 +336,6 @@ mod tests {
         assert!(!imp.contains("FinishOvertime"));
     }
 
-    /// The snapshot emits no event, so writing it must not start a
-    /// network sync (once a minute during every session).
-    #[test]
-    fn snapshot_writes_do_not_start_a_sync() {
-        let imp = read("src/timer/imp.rs");
-        for sig in ["    fn write_in_progress_snapshot(", "    fn clear_in_progress_snapshot("] {
-            let body = body_of(&imp, sig);
-            assert!(body.contains("app.with_db(") && !body.contains("with_db_mut"), "{sig}");
-        }
-    }
-
     /// Alt+Left, the mouse Back button or a swipe returned to Setup,
     /// where Start replaced the running session.
     #[test]

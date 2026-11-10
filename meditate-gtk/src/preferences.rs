@@ -81,9 +81,8 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                let written = app.with_db_mut(|db| write_daily_goal_mins(db.core(), val));
+                let written = app.with_db(|db| write_daily_goal_mins(db.core(), val));
                 crate::db::write_ok(row, "goal.write", written, crate::db::Failed::Save);
-                app.mark_stale(Refresh::STATS);
             }
         ),
     );
@@ -116,7 +115,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
     lead_switch.connect_active_notify(clone!(
         #[weak] app,
         move |row| {
-            let written = app.with_db_mut(|db| db.set_setting(
+            let written = app.with_db(|db| db.set_setting(
                 meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_KEY,
                 meditate_core::format_bool(row.is_active()),
             ));
@@ -135,7 +134,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
         clone!(
             #[weak] app,
             move |row, _| {
-                let written = app.with_db_mut(|db| db.set_setting(
+                let written = app.with_db(|db| db.set_setting(
                     meditate_core::settings_keys::BLUETOOTH_WAKE_LEAD_IN_MS_KEY,
                     &meditate_core::settings_keys::lead_in_ms(row.value()).to_string(),
                 ));
@@ -439,8 +438,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
 
             // Order matters: store the password FIRST, then save the
             // account, then fire the sync trigger explicitly. The
-            // alternative (account → with_db_mut auto-trigger →
-            // password) races the worker thread against the keychain
+            // alternative (account → sync → password) races the worker thread against the keychain
             // write — the worker reads the keychain before the
             // password lands, sees PasswordMissing, bails. First
             // sync never happens until the user authors something
@@ -463,9 +461,8 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                 }
             }
 
-            // Now save the account. Use `with_db` (not `with_db_mut`)
-            // so we control when the trigger fires — explicitly,
-            // below, after BOTH credentials are in place.
+            // Now save the account. It records no event, so no sync
+            // starts before the explicit trigger below.
             let account_result = app.with_db(|db| {
                 meditate_core::sync::settings::set_nextcloud_account(db.core(), url_trimmed, username_trimmed)
             });

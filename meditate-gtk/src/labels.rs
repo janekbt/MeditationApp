@@ -278,11 +278,9 @@ fn present_create_label_dialog(
         if id != "create" { return; }
         let name = entry_for_response.text().trim().to_string();
         if name.is_empty() { return; }
-        let outcome = app.with_db_mut(|db| db.create_label(&name));
+        let outcome = app.with_db(|db| db.create_label(&name));
         match outcome {
             Some(Ok(label)) => {
-                // The Log's label filter lists it.
-                app.mark_stale(Refresh::LOG);
                 on_created(label);
             }
             // A name clash that raced past the live validation, or a
@@ -349,14 +347,12 @@ fn present_rename_label_dialog(
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        let renamed = app.with_db_mut(|db| db.update_label(label_id, &new_name));
+        let renamed = app.with_db(|db| db.update_label(label_id, &new_name));
         if !write_ok(&anchor_for_response, "label.rename", renamed, Failed::Save) {
             return;
         }
-        // Log chips, its filter and the Stats rows show the name: they
-        // re-read when shown (the Log edit dialog re-reads on close); the
-        // chooser rebuilds below, Setup's row when the chooser closes.
-        app.mark_stale(Refresh::SESSIONS);
+        // The chooser rebuilds below, Setup's row when the chooser closes;
+        // the Log edit dialog re-reads on close.
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -412,11 +408,10 @@ fn present_delete_label_dialog(
     let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        let deleted = app.with_db_mut(|db| db.delete_label(label_id));
+        let deleted = app.with_db(|db| db.delete_label(label_id));
         if !write_ok(&anchor_for_failure, "label.delete", deleted, Failed::Delete) {
             return;
         }
-        app.mark_stale(Refresh::SESSIONS);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -470,7 +465,7 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
         let app = &app_for_response;
         match response {
             "merge" => {
-                let merged = app.with_db_mut(|db| db.core().merge_labels(conflict.suffixed_id, conflict.base_id));
+                let merged = app.with_db(|db| db.core().merge_labels(conflict.suffixed_id, conflict.base_id));
                 if !matches!(merged, Some(Ok(_))) {
                     meditate_core::log("label.merge", &format!("failed: {merged:?}"));
                     win_for_response.add_toast(adw::Toast::new(&gettext("Save failed")));

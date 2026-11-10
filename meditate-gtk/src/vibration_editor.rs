@@ -502,13 +502,13 @@ pub fn push_pattern_editor(
 
         let result: Option<crate::db::Result<(String, bool)>> = match editor_for_save.edit_uuid.borrow().clone() {
             None => app_for_save
-                .with_db_mut(|db| {
+                .with_db(|db| {
                     db.insert_vibration_pattern(
                         &name, duration_ms, &intensities, chart_kind, false,
                     ).map(|uuid| (uuid, true))
                 }),
             Some(uuid) => app_for_save
-                .with_db_mut(|db| {
+                .with_db(|db| {
                     db.update_vibration_pattern(
                         &uuid, &name, duration_ms, &intensities, chart_kind,
                     ).map(|changed| (uuid.clone(), changed))

@@ -180,7 +180,7 @@ fn build_create_row(
     let rebuilder_for_create = rebuilder.clone();
     let on_changed_for_create = on_changed.clone();
     row.connect_activated(move |row| {
-        let created = app_for_create.with_db_mut(|db| {
+        let created = app_for_create.with_db(|db| {
             db.insert_interval_bell(
                 meditate_core::bells::DEFAULT_NEW_BELL_KIND,
                 meditate_core::bells::DEFAULT_NEW_BELL_TIME,
@@ -267,7 +267,7 @@ fn build_bell_row(
     let app_for_toggle = app.clone();
     let on_changed_for_toggle = on_changed.clone();
     switch.connect_active_notify(move |s| {
-        let written = app_for_toggle.with_db_mut(|db| {
+        let written = app_for_toggle.with_db(|db| {
             db.set_interval_bell_enabled(&bell_uuid_for_toggle, s.is_active())
         });
         write_ok(s, "bell.enable", written, Failed::Save);
@@ -349,7 +349,7 @@ fn confirm_and_delete(
     let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        let deleted = app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+        let deleted = app.with_db(|db| db.delete_interval_bell(&uuid));
         if !write_ok(&anchor_for_failure, "bell.delete", deleted, Failed::Delete) {
             return;
         }
@@ -540,7 +540,7 @@ fn write_back_bell(
     on_changed: &(impl Fn() + Clone + 'static),
 ) {
     let s = snap.borrow().clone();
-    let written = app.with_db_mut(|db| db.edit_interval_bell(&s));
+    let written = app.with_db(|db| db.edit_interval_bell(&s));
     // A preset rings the old bell: the page edits the new one from now on.
     if let Some(Ok(meditate_core::preset_config::BellEdit::Copied(uuid))) = &written {
         snap.borrow_mut().uuid = uuid.clone();
@@ -916,7 +916,7 @@ fn push_edit_page(
         dialog.connect_response(None, move |_, id| {
             if id != "delete" { return; }
             let uuid = snap.borrow().uuid.clone();
-            let deleted = app.with_db_mut(|db| db.delete_interval_bell(uuid.as_str()));
+            let deleted = app.with_db(|db| db.delete_interval_bell(uuid.as_str()));
             if !write_ok(&prefs_for_failure, "bell.delete", deleted, Failed::Delete) {
                 return;
             }

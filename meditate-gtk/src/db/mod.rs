@@ -1060,81 +1060,30 @@ mod tests {
         );
     }
 
-    // ── #52: no write result is thrown away ───────────────────────────────────
-
-    /// The places in `src` where a write's result is dropped: a
-    /// `let _ =` on a database call, a `with_db_mut(..)` statement, or
-    /// one read as nothing. Test modules are not scanned.
-    fn dropped_writes(file: &str) -> Vec<String> {
-        let path = format!("{}/src/{file}", env!("CARGO_MANIFEST_DIR"));
-        let full = std::fs::read_to_string(&path).unwrap();
-        let src = full.split("#[cfg(test)]\nmod").next().unwrap();
-        let mut found = Vec::new();
-        for (n, line) in src.lines().enumerate() {
-            // Says nothing unless the name clashed; write_ok covers both.
-            if line.contains("surface_duplicate_toast(") {
-                found.push(format!("{file}:{}: {}", n + 1, line.trim()));
-            }
-            let t = line.trim_start();
-            // #191: a setting write whose error only reaches the log.
-            let settings = ["set_setting(", "bell_volume::write(", "set_box_breath_phase(", "edit_box_breath_phase(", "settings_keys::set_", "labels::set_", "labels::persist_"];
-            if t.starts_with("if let Err(") && settings.iter().any(|s| t.contains(s)) {
-                found.push(format!("{file}:{}: {t}", n + 1));
-            }
-            let dropped = t.split("let _ =").skip(1).any(|rest| rest.contains("db.") || rest.contains("with_db"));
-            if dropped {
-                found.push(format!("{file}:{}: {t}", n + 1));
-            }
-        }
-        let mut from = 0;
-        while let Some(i) = src[from..].find(".with_db_mut(") {
-            let at = from + i;
-            from = at + 1;
-            let line_start = src[..at].rfind('\n').map_or(0, |p| p + 1);
-            let head = src[line_start..at].trim_start();
-            let open = at + ".with_db_mut".len();
-            let mut depth = 0;
-            let mut close = open;
-            for (j, c) in src[open..].char_indices() {
-                match c {
-                    '(' | '{' | '[' => depth += 1,
-                    ')' | '}' | ']' => {
-                        depth -= 1;
-                        if depth == 0 { close = open + j; break; }
-                    }
-                    _ => {}
-                }
-            }
-            let after = src[close + 1..].trim_start();
-            if after.starts_with(".and_then(") || after.starts_with(".ok()") || after.starts_with(".unwrap_or") {
-                let n = src[..at].lines().count();
-                found.push(format!("{file}:{n}: a failed write read as nothing"));
-                continue;
-            }
-            if !head.chars().all(|c| c.is_alphanumeric() || "_.()".contains(c)) {
-                continue; // the value is used: `let x =`, `if`, `match`, an argument
-            }
-            if !after.starts_with(';') {
-                continue; // a tail expression: the caller gets the result
-            }
-            // Even a closure that handles its own error drops the `None`
-            // of no database at all.
-            let n = src[..at].lines().count();
-            found.push(format!("{file}:{n}: {}", src[line_start..].lines().next().unwrap().trim()));
-        }
-        found
-    }
-
+    /// #52, #191: a failed write must reach the user. `#[must_use]` on
+    /// `with_db` catches a bare statement; this catches the rest.
     #[test]
     fn no_write_result_is_dropped() {
-        // #52, #191: a failed write must reach the user, never a success
-        // toast or only the log.
-        let files = [
-            "presets.rs", "labels.rs", "log/imp.rs", "vibrations.rs",
-            "bells.rs", "sounds.rs", "guided.rs", "preferences.rs",
-            "vibration_editor.rs", "timer/imp.rs",
-        ];
-        let found: Vec<String> = files.iter().flat_map(|f| dropped_writes(f)).collect();
+        let setting_writes = ["set_setting(", "bell_volume::write(", "set_box_breath_phase(", "edit_box_breath_phase(", "settings_keys::set_", "labels::set_", "labels::persist_"];
+        let mut found = Vec::new();
+        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for path in std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+                if path.is_dir() { dirs.push(path); continue; }
+                if path.extension().is_none_or(|e| e != "rs") { continue; }
+                let full = std::fs::read_to_string(&path).unwrap();
+                let src = full.split("#[cfg(test)]\nmod").next().unwrap();
+                for (n, line) in src.lines().enumerate() {
+                    let dropped = line.contains("let _ =") && (line.contains("with_db") || line.contains("db."));
+                    // #191: a setting write whose error only reaches the log.
+                    let logged = line.trim_start().starts_with("if let ") && line.contains("Err(")
+                        && setting_writes.iter().any(|w| line.contains(w));
+                    if dropped || logged {
+                        found.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                    }
+                }
+            }
+        }
         assert!(found.is_empty(), "dropped write results:\n{}", found.join("\n"));
     }
 

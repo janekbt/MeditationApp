@@ -20,29 +20,10 @@ impl LogView {
         }
     }
 
-    /// Incremental append of a just-saved session to the top of the feed —
-    /// skips the full rebuild that plain `refresh()` does. Called after a
-    /// timer-view session save; keeps the log view in sync without tearing
-    /// down and re-querying 15 cards. Skips work if the view hasn't been
-    /// populated yet (first log-tab entry will pull fresh from DB).
     /// Delete the rows still waiting for Undo, for a window close: the
     /// toast's own dismiss then finds no app and would drop them.
     pub fn commit_all_pending(&self) {
         self.imp().commit_all_pending();
-    }
-
-    pub fn prepend_session(&self, session: crate::db::Session) {
-        // If log is dirty, the next public refresh() will re-query the DB
-        // and our prepend would be discarded. Skip it.
-        if let Some(app) = self.imp().get_app() {
-            if app.log_dirty() { return; }
-            // Whether the session matches a filter is the query's call.
-            if self.imp().filter_notes_only.get() || self.imp().filter_label_id.get().is_some() {
-                app.mark_stale(Refresh::LOG);
-                return;
-            }
-        }
-        self.imp().prepend_session(session);
     }
 
     pub fn show_add_dialog(&self) {
@@ -115,20 +96,6 @@ mod tests {
         });
         provider.load_from_string(&css);
         assert_eq!(*errors.borrow(), Vec::<String>::new());
-    }
-
-    /// Filtered to "Yoga", a saved "Zen" session showed up and Load
-    /// more skipped a Yoga session.
-    #[test]
-    fn a_save_under_a_filter_reloads_instead_of_adding() {
-        let src = production("log/mod.rs");
-        let b = body(&src, "pub fn prepend_session(");
-        let filter = b.find("filter_label_id.get().is_some()").expect("checks the label filter");
-        assert!(b[..filter].contains("filter_notes_only.get()"), "and the notes filter");
-        let invalidate = b.find("Refresh::LOG").expect("marks the Log stale");
-        let add = b.find("self.imp().prepend_session(").unwrap();
-        assert!(filter < invalidate && invalidate < add);
-        assert!(b[invalidate..add].contains("return;"), "no card is added");
     }
 
     /// A label created from the edit dialog's chooser only marks the
@@ -219,9 +186,7 @@ mod tests {
         let found = b.find("let Some(card) = self.cards_by_id.borrow_mut().remove(&session_id) else { return; };")
             .expect("only a card on screen is taken off");
         assert!(found < b.find("sec.count.set(").unwrap(), "before any count changes");
-        for sig in ["fn append_session_to_feed(", "pub fn prepend_session("] {
-            assert!(body(&imp, sig).contains("card.set_visible(!self.is_pending_delete(session.id));"), "{sig}");
-        }
+        assert!(body(&imp, "fn append_session_to_feed(").contains("card.set_visible(!self.is_pending_delete(session.id));"));
     }
 
     #[test]

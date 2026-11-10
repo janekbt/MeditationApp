@@ -490,7 +490,8 @@ pub fn bells_summary(db: &Database, mode: SessionMode) -> Vec<BellsSummaryPart> 
 /// as stored: the ones Setup shows as active. Only what Setup shows
 /// for the mode counts (a Timer preset's saved Box Breath cues don't).
 /// Derived, never stored, so it follows every change, local or synced.
-pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::HashSet<String> {
+/// `starred` is the caller's list of the mode's starred presets.
+pub fn active_presets(db: &Database, mode: SessionMode, starred: &[crate::db::Preset]) -> std::collections::HashSet<String> {
     use crate::settings_keys::{breathing_from_db, read_bool, stopwatch_key_for_mode, timer_session_secs_from_db};
     let stopwatch = read_bool(db, stopwatch_key_for_mode(mode), false);
     let timing = if mode == SessionMode::BoxBreath {
@@ -547,9 +548,8 @@ pub fn active_presets(db: &Database, mode: SessionMode) -> std::collections::Has
         c
     };
     let current_shown = shown(current.clone());
-    crate::db::list_starred_presets_for_mode_from_db(db, mode)
-        .unwrap_or_default()
-        .into_iter()
+    starred
+        .iter()
         .filter(|p| PresetConfig::from_json(&p.config_json).is_ok_and(|c| shown(c) == current_shown))
         .map(|p| p.uuid.to_string())
         .collect()
@@ -1509,17 +1509,21 @@ mod tests {
         let mut saved = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         saved.interval_bells.bells.reverse();
         db.insert_preset("Two bells", SessionMode::Timer, true, &saved.to_json()).unwrap();
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "saved in another order");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "saved in another order");
         db.insert_interval_bell(IntervalBellKind::Interval, BellTime::new(3, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, "s", "p", SignalMode::Sound).unwrap();
         let extra = db.list_interval_bells().unwrap().into_iter().find(|b| b.time == BellTime::new(3, TimeUnit::Min)).unwrap();
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 0, "a third bell rings");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 0, "a third bell rings");
         db.set_interval_bell_enabled(extra.uuid.as_str(), false).unwrap();
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "switched off, it doesn't count");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "switched off, it doesn't count");
+    }
+
+    fn active(db: &Database, mode: SessionMode) -> std::collections::HashSet<String> {
+        active_presets(db, mode, &crate::db::list_starred_presets_for_mode_from_db(db, mode).unwrap())
     }
 
     /// The names of the presets that show their check, sorted.
     fn active_names(db: &Database, mode: SessionMode) -> Vec<String> {
-        let uuids = active_presets(db, mode);
+        let uuids = active(db, mode);
         let mut names: Vec<String> = crate::db::list_presets_for_mode_from_db(db, mode)
             .unwrap()
             .into_iter()
@@ -1593,11 +1597,11 @@ mod tests {
         db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "false" } else { "true" }).unwrap();
         db.set_setting("breathing_session_secs", "300").unwrap();
 
-        assert!(active_presets(&db, SessionMode::Timer).is_empty(), "the interval bells show in Timer");
+        assert!(active(&db, SessionMode::Timer).is_empty(), "the interval bells show in Timer");
         db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "true" } else { "false" }).unwrap();
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "changed Box Breath cues don't count in Timer");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "changed Box Breath cues don't count in Timer");
         db.set_setting("interval_bells_active", if timer.interval_bells.enabled { "false" } else { "true" }).unwrap();
-        assert_eq!(active_presets(&db, SessionMode::BoxBreath).len(), 1, "hidden bells and unset phase cues don't count");
+        assert_eq!(active(&db, SessionMode::BoxBreath).len(), 1, "hidden bells and unset phase cues don't count");
     }
 
     #[test]
@@ -1821,12 +1825,12 @@ mod tests {
         let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: true, duration_secs: 600 }).unwrap();
         db.insert_preset("Open", SessionMode::Timer, true, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "true").unwrap();
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "hidden while counting up");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "hidden while counting up");
         db.set_setting("timer_stopwatch_active", "false").unwrap();
         let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 }).unwrap();
         db.insert_preset("Countdown", SessionMode::Timer, true, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "false").unwrap();
-        assert!(active_presets(&db, SessionMode::Timer).is_empty(), "shown for a countdown, it counts");
+        assert!(active(&db, SessionMode::Timer).is_empty(), "shown for a countdown, it counts");
     }
 
     #[test]
@@ -2073,7 +2077,7 @@ mod tests {
         db.insert_preset("No label", SessionMode::Timer, true, &cfg.to_json()).unwrap();
         apply(&db, &cfg, SessionMode::Timer).unwrap();
         assert_eq!(crate::labels::label_uuid_from_db(&db, SessionMode::Timer), None, "the mode default");
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
     }
 
     #[test]
@@ -2095,7 +2099,7 @@ mod tests {
         let stored = crate::db::list_presets_from_db(&db).unwrap().remove(0);
         apply(&db, &PresetConfig::from_json(&stored.config_json).unwrap(), SessionMode::Timer).unwrap();
         assert_eq!(crate::labels::resolve_label_for_mode(&db, SessionMode::Timer).map(|l| l.name).as_deref(), Some("Sitting"));
-        assert_eq!(active_presets(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
+        assert_eq!(active(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
     }
 
     #[test]

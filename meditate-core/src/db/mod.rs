@@ -148,9 +148,11 @@ impl StarredState {
 pub struct Database {
     conn: Connection,
     local_changes: LocalChanges,
-    /// A local event was recorded in the open write; counted at its
-    /// commit, when a sync on another connection can see it.
-    changed: std::cell::Cell<bool>,
+    /// The screens the open write's local events touch so far; counted
+    /// at its commit, when a sync on another connection can see it.
+    changed: std::cell::Cell<Refresh>,
+    /// What committed writes touched, until `take_committed`.
+    committed: std::cell::Cell<Refresh>,
     /// Writes open now (`Tx`s alive); 0 means the next is outermost.
     depth: std::cell::Cell<u32>,
     /// A nested write's undo failed, so its writes may still be there:
@@ -163,9 +165,9 @@ pub struct Database {
 pub(crate) struct Tx<'a> {
     db: &'a Database,
     outer: bool,
-    /// Whether a change was marked before this write began, so an
-    /// undone nested write drops only its own.
-    changed_before: bool,
+    /// What was marked before this write began, so an undone nested
+    /// write drops only its own.
+    changed_before: Refresh,
     committed: bool,
 }
 
@@ -182,8 +184,12 @@ impl Tx<'_> {
         }
         self.db.conn.execute_batch(if self.outer { "COMMIT" } else { "RELEASE w" })?;
         self.committed = true;
-        if self.outer && self.db.changed.replace(false) {
-            self.db.local_changes.bump();
+        if self.outer {
+            let changed = self.db.changed.take();
+            if changed.any() {
+                self.db.committed.set(self.db.committed.get() | changed);
+                self.db.local_changes.bump();
+            }
         }
         Ok(())
     }
@@ -207,7 +213,7 @@ impl Drop for Tx<'_> {
         if self.outer {
             self.db.broken.set(false);
         }
-        self.db.changed.set(!self.outer && self.changed_before);
+        self.db.changed.set(if self.outer { Refresh::NONE } else { self.changed_before });
     }
 }
 
@@ -386,7 +392,7 @@ impl Database {
         // the known-remote trackers are cached too; cost is
         // per-statement memory, negligible at this count.
         conn.set_prepared_statement_cache_capacity(64);
-        let db = Self { conn, local_changes: LocalChanges::default(), changed: std::cell::Cell::new(false), depth: std::cell::Cell::new(0), broken: std::cell::Cell::new(false) };
+        let db = Self { conn, local_changes: LocalChanges::default(), changed: std::cell::Cell::default(), committed: std::cell::Cell::default(), depth: std::cell::Cell::new(0), broken: std::cell::Cell::new(false) };
         db.rebuild_events_from_older_builds()?;
         db.rename_unrebuilt_kansho()?;
         Ok(db)

@@ -461,7 +461,7 @@ fn show_undo_edit_toast(
     let app = app.clone();
     let overlay_for_failure = overlay.clone();
     toast.connect_button_clicked(move |t| {
-        let restored = app.with_db_mut(|db| {
+        let restored = app.with_db(|db| {
             db.update_vibration_pattern(
                 before.uuid.as_str(),
                 &before.name,
@@ -502,7 +502,7 @@ fn show_undo_delete_toast(
     let app = app.clone();
     let overlay_for_failure = overlay.clone();
     toast.connect_button_clicked(move |t| {
-        let restored = app.with_db_mut(|db| db.core().restore_vibration_pattern(&snapshot));
+        let restored = app.with_db(|db| db.core().restore_vibration_pattern(&snapshot));
         write_ok(&overlay_for_failure, "pattern.restore", restored, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
@@ -583,7 +583,7 @@ fn present_rename_dialog(
         // Core's `rename_vibration_pattern` handles the read-modify-
         // write and returns false on a no-op rename so the shell can
         // skip the undo toast.
-        let changed = match app.with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed)) {
+        let changed = match app.with_db(|db| db.rename_vibration_pattern(&uuid, trimmed)) {
             Some(Ok(changed)) => changed,
             failed => {
                 write_ok(&toast_overlay, "pattern.rename", failed, Failed::Save);
@@ -641,7 +641,7 @@ fn present_delete_dialog(
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
             .and_then(std::result::Result::ok)
             .flatten();
-        let deleted = app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
+        let deleted = app.with_db(|db| db.delete_vibration_pattern(&uuid));
         if !write_ok(&toast_overlay, "pattern.delete", deleted, Failed::Delete) {
             return;
         }

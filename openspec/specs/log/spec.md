@@ -67,8 +67,8 @@ The Log SHALL show only sessions that match its filters, also right after a sess
 
 #### Scenario: A session with another label is saved while the Log is filtered
 - **WHEN** the Log is filtered to "Yoga" and a "Zen" session is saved
-- **THEN** the Log reloads from the database instead of adding the card, and Load more continues at the next Yoga session
-- **TEST** `meditate-gtk/src/log/mod.rs::a_save_under_a_filter_reloads_instead_of_adding`
+- **THEN** the Log reloads from the database when shown, so it shows no Zen card, and Load more continues at the next Yoga session
+- **MANUAL** on the laptop: filter the Log to one label, save a session with another, open the Log (GTK views can't run in host tests; every save now reloads the Log, the hand-added card that skipped the filter is gone)
 
 ### Requirement: The label filter shows the label it filters by
 The label filter SHALL show the label the Log is filtered by, with its current name, and picking an entry SHALL filter by exactly the label it names.

@@ -712,7 +712,8 @@ impl MeditateWindow {
                     else { return; };
                     match button {
                         StatusButton::SyncNow => {
-                            app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
+                            let cleared = app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
+                            crate::db::write_ok(&obj, "sync.retry", cleared, crate::db::Failed::Save);
                             app.trigger_sync();
                         }
                         StatusButton::Preferences | StatusButton::EnterPassword => {

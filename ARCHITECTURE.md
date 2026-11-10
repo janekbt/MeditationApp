@@ -134,10 +134,15 @@ not multi-user.
   format, so it needs a migration (`DECISIONS.md` rule 3).
 - **Who runs it.** `sync::runner` is the one pass both apps run. It
   runs on a worker thread with its own DB connection, so a long sync
-  never holds the UI's connection. Every local write bumps a
-  `LocalChanges` counter (`db/local_changes.rs`). A shell polls a
-  `LocalChangeWatch` from any thread to learn that something needs
-  pushing. `sync::coordinator` keeps at most one pass in flight and
+  never holds the UI's connection. Every committed local write that
+  recorded an event bumps a `LocalChanges` counter
+  (`db/local_changes.rs`) and adds the screens it touches to
+  `Database::take_committed` (`Refresh::of`, as for a sync). Android
+  polls a `LocalChangeWatch` each tick; GTK's `with_db` takes what the
+  write committed and, when anything, starts a sync, marks Log and
+  Stats stale and queues the starred-preset rebuild. A write that
+  records no event (an unchanged value, a failed write) starts no
+  sync. `sync::coordinator` keeps at most one pass in flight and
   collapses a burst of triggers into one follow-up.
 - **What the screens re-read.** A pass records which screens its
   pulled events and downloaded files change (`db::Refresh`: Log,

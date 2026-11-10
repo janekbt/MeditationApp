@@ -275,75 +275,6 @@ impl LogView {
         );
     }
 
-    /// Incrementally insert a just-saved session at the top of the feed,
-    /// without the `refresh()` full rebuild. If the feed hasn't been
-    /// populated yet (first time the log tab hasn't been opened), the
-    /// next `refresh()` will pull this session from DB anyway, so we
-    /// skip work — the caller guards on `app.log_dirty()` for that.
-    pub fn prepend_session(&self, session: Session) {
-        let key = date_group_key(session.start_time);
-
-        // Re-fetch labels before rendering. If the session was saved with
-        // a label that was *created* moments earlier (e.g. the auto
-        // "Box-breathing" label on first Box Breath save), our cache
-        // doesn't know about it yet and the card would render unlabelled.
-        if let Some(app) = self.get_app() {
-            if let Some(fresh) = app.with_db(super::super::db::Database::list_labels)
-                .and_then(std::result::Result::ok)
-            {
-                *self.labels.borrow_mut() = fresh;
-            }
-            self.reload_label_places(&app);
-            // Same for a guided file imported moments before the session.
-            self.reload_guided_names(&app);
-        }
-
-        let labels_ref = self.labels.borrow();
-        let label_map: std::collections::HashMap<i64, &str> =
-            labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
-        let card = build_card(&session, &label_map, &self.label_places.borrow(), &self.guided_names.borrow());
-        card.set_visible(!self.is_pending_delete(session.id));
-        drop(labels_ref);
-
-        let mut sections = self.sections_by_key.borrow_mut();
-        if let Some(sec) = sections.get(&key) {
-            // Existing section for today (or whatever date) — card goes
-            // on top of its cards_box so the newest is visually first.
-            sec.cards_box.prepend(&card);
-            sec.count.set(sec.count.get() + 1);
-            sec.total_secs.set(sec.total_secs.get() + meditate_core::format::log_card_total_secs(session.duration_secs));
-            sec.caption.set_label(
-                &section_caption_text(sec.count.get(), sec.total_secs.get()),
-            );
-        } else {
-            // Crossed a date boundary since last render — new section
-            // before everything else in the feed_box.
-            let (section_box, caption_label, cards_box) =
-                build_section_frame(session.start_time);
-            cards_box.append(&card);
-            self.feed_box.prepend(&section_box);
-            caption_label.set_label(
-                &section_caption_text(1, meditate_core::format::log_card_total_secs(session.duration_secs)),
-            );
-            let section = DateSection {
-                outer:      section_box,
-                caption:    caption_label,
-                cards_box,
-                count:      Cell::new(1),
-                total_secs: Cell::new(meditate_core::format::log_card_total_secs(session.duration_secs)),
-            };
-            sections.insert(key, section);
-        }
-        drop(sections);
-
-        self.cards_by_id.borrow_mut().insert(session.id, card);
-        self.sessions.borrow_mut().insert(0, session);
-        self.loaded_count.set(self.loaded_count.get() + 1);
-
-        // Flip out of the empty state if this was the first session ever.
-        self.view_stack.set_visible_child_name("list");
-    }
-
     /// Populate the label combo in the filter popover.
     pub fn refresh_filter_labels(&self, combo: &adw::ComboRow) {
         if let Some(fresh) = self.get_app()
@@ -775,16 +706,20 @@ impl LogView {
         if pending.is_empty() { return; }
 
         if let Some(app) = self.get_app() {
+            let was_stale = app.log_dirty();
             let mut failed = false;
             for (id, session) in &pending {
-                let deleted = app.with_db_mut(|db| db.delete_session(*id));
+                let deleted = app.with_db(|db| db.delete_session(*id));
                 if write_ok(&*self.obj(), "log.delete", deleted, Failed::Delete) {
                     self.commit_delete_in_place(*id, session);
                 } else {
                     failed = true;
                 }
             }
-            // A failed delete's hidden card is still a row: reload to show it.
+            // The cards came off in place: keep the Log's pages (#342),
+            // unless a sync marked it before. A failed delete's hidden
+            // card is still a row: reload to show it.
+            if !was_stale { app.take_log_dirty(); }
             app.data_changed(Refresh { stats: true, log: failed, ..Refresh::NONE });
         }
     }
@@ -1258,9 +1193,9 @@ impl LogView {
 
                 if let Some(app) = imp.get_app() {
                     let saved = if let Some(id) = session_id {
-                        app.with_db_mut(|db| db.update_session(id, &data))
+                        app.with_db(|db| db.update_session(id, &data))
                     } else {
-                        app.with_db_mut(|db| db.create_session(&data).map(|_| ()))
+                        app.with_db(|db| db.create_session(&data).map(|_| ()))
                     };
                     match saved {
                         Some(Ok(())) => {}
@@ -1275,9 +1210,6 @@ impl LogView {
                             return;
                         }
                     }
-                    // The dialog's close re-reads the Log; Stats and the
-                    // streak when shown.
-                    app.mark_stale(Refresh::SESSIONS);
                 }
 
                 dialog.close();

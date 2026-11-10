@@ -13,8 +13,8 @@
 //!   a no-op; rename + delete buttons sit as suffixes on each row.
 //!
 //! Star toggle (prefix on every row) works in both modes — it
-//! mutates `is_starred` directly so the home-view chip list refreshes
-//! through the caller's `on_changed` hook.
+//! mutates `is_starred` directly; the write re-marks the home view's
+//! starred list (`MeditateApplication::with_db`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -43,19 +43,25 @@ pub enum ChooserMode {
     Manage,
 }
 
+/// Back to Setup with its starred list already showing the write
+/// (the write only queues the rebuild).
+fn back_to_setup(app: &MeditateApplication, nav_view: &adw::NavigationView) {
+    use gtk::subclass::prelude::ObjectSubclassIsExt;
+    if let Some(win) = app.main_window() {
+        win.imp().timer_view.rebuild_starred_presets_list();
+    }
+    nav_view.pop();
+}
+
 /// Push the preset chooser onto the navigation view. `mode` filters
 /// the listing strictly to one SessionMode (Timer vs BoxBreath); the
 /// chooser never crosses modes — the user has to switch the Setup
-/// view's mode toggle to see the other mode's presets. `on_changed`
-/// fires after any DB write (create / rename / delete / star toggle
-/// / overwrite) so the caller can refresh the home view's starred
-/// list.
+/// view's mode toggle to see the other mode's presets.
 pub fn push_presets_chooser(
     nav_view: &adw::NavigationView,
     app: &MeditateApplication,
     mode: SessionMode,
     chooser_mode: ChooserMode,
-    on_changed: impl Fn() + 'static,
 ) {
     let group = adw::PreferencesGroup::new();
     let prefs_page = adw::PreferencesPage::new();
@@ -88,7 +94,6 @@ pub fn push_presets_chooser(
         .build();
 
     let chooser_mode = Rc::new(chooser_mode);
-    let on_changed: Rc<dyn Fn()> = Rc::new(on_changed);
     let nav_view_clone = nav_view.clone();
     let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
@@ -102,7 +107,6 @@ pub fn push_presets_chooser(
     let nav_view_for_rb = nav_view_clone.clone();
     let toast_overlay_for_rb = toast_overlay.clone();
     let chooser_mode_for_rb = chooser_mode.clone();
-    let on_changed_for_rb = on_changed.clone();
     let toast_slot_for_rb = toast_slot.clone();
     let rebuilder_for_self = rebuilder.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
@@ -114,7 +118,6 @@ pub fn push_presets_chooser(
             &nav_view_for_rb,
             &toast_overlay_for_rb,
             chooser_mode_for_rb.clone(),
-            on_changed_for_rb.clone(),
             toast_slot_for_rb.clone(),
             rebuilder_for_self.clone(),
         );
@@ -135,7 +138,6 @@ fn rebuild_chooser_rows(
     nav_view: &adw::NavigationView,
     toast_overlay: &adw::ToastOverlay,
     chooser_mode: Rc<ChooserMode>,
-    on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     rebuilder: crate::Rebuilder,
 ) {
@@ -167,7 +169,6 @@ fn rebuild_chooser_rows(
         let app_for_create = app.clone();
         let chooser_mode_for_create = chooser_mode.clone();
         let nav_view_for_create = nav_view.clone();
-        let on_changed_for_create = on_changed.clone();
         create_row.connect_activated(move |row| {
             let snapshot = match &*chooser_mode_for_create {
                 ChooserMode::Save { snapshot } => (**snapshot).clone(),
@@ -175,7 +176,6 @@ fn rebuild_chooser_rows(
             };
             let app = app_for_create.clone();
             let nav_view = nav_view_for_create.clone();
-            let on_changed = on_changed_for_create.clone();
             let row_for_toast = row.clone();
             present_create_preset_dialog(
                 row,
@@ -185,12 +185,11 @@ fn rebuild_chooser_rows(
                     // Android shell agrees with the gtk default.
                     let json = snapshot.to_json();
                     let starred = meditate_core::preset_config::default_starred_on_save();
-                    let result = app.with_db_mut(
+                    let result = app.with_db(
                         |db| db.insert_preset(&name, mode, starred, &json),
                     );
                     if write_ok(&row_for_toast, "preset.create", result, Failed::Save) {
-                        on_changed();
-                        nav_view.pop();
+                        back_to_setup(&app, &nav_view);
                     }
                 }),
             );
@@ -206,7 +205,7 @@ fn rebuild_chooser_rows(
     for (index, preset) in presets.iter().enumerate() {
         let row = build_preset_row(
             preset, index, app, &chooser_mode, nav_view, toast_overlay,
-            on_changed.clone(), toast_slot.clone(),
+            toast_slot.clone(),
             &label_names, rows, rebuilder.clone(),
         );
         group.add(&row);
@@ -221,7 +220,6 @@ fn build_preset_row(
     chooser_mode: &Rc<ChooserMode>,
     nav_view: &adw::NavigationView,
     toast_overlay: &adw::ToastOverlay,
-    on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     label_names: &HashMap<String, String>,
     rows: &Rc<RefCell<Vec<gtk::Widget>>>,
@@ -238,15 +236,14 @@ fn build_preset_row(
     // affects how row activation behaves, not whether you can change
     // the pin state.
     let star_btn = build_star_button(
-        preset, app, on_changed.clone(), toast_slot.clone(), rebuilder.clone(),
+        preset, app, toast_slot.clone(), rebuilder.clone(),
     );
     row.add_prefix(&star_btn);
     if matches!(**chooser_mode, ChooserMode::Manage) {
-        let (app, rows, on_changed, rebuilder) = (app.clone(), rows.clone(), on_changed.clone(), rebuilder.clone());
+        let (app, rows, rebuilder) = (app.clone(), rows.clone(), rebuilder.clone());
         let move_to: MoveTo = Rc::new(move |anchor, uuid, to| {
-            let written = app.with_db_mut(|db| db.move_preset(uuid, to));
+            let written = app.with_db(|db| db.move_preset(uuid, to));
             write_ok(anchor, "preset.move", written, Failed::Save);
-            on_changed();
             if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
             let rows = rows.borrow();
             if let Some(row) = rows.get(to).or(rows.last()) { row.grab_focus(); }
@@ -257,9 +254,9 @@ fn build_preset_row(
     // Manage-only suffixes: rename + delete buttons. In Save mode
     // taps on the row body trigger the override dialog instead.
     if matches!(**chooser_mode, ChooserMode::Manage) {
-        add_rename_button(&row, preset, app, rebuilder.clone(), on_changed.clone());
+        add_rename_button(&row, preset, app, rebuilder.clone());
         add_delete_button(
-            &row, preset, app, rebuilder, on_changed.clone(),
+            &row, preset, app, rebuilder,
             toast_slot.clone(), toast_overlay,
         );
     }
@@ -271,7 +268,6 @@ fn build_preset_row(
         let prior_config_json = preset.config_json.clone();
         let app = app.clone();
         let nav_view = nav_view.clone();
-        let on_changed = on_changed.clone();
         let toast_slot = toast_slot.clone();
         row.connect_activated(move |btn| {
             let preset_uuid = preset_uuid.clone();
@@ -280,7 +276,6 @@ fn build_preset_row(
             let prior_config_json = prior_config_json.clone();
             let app = app.clone();
             let nav_view = nav_view.clone();
-            let on_changed = on_changed.clone();
             let toast_slot = toast_slot.clone();
             let dialog_name = preset_name.clone();
             // Resolve the parent window inside the activate handler,
@@ -297,13 +292,12 @@ fn build_preset_row(
                 &dialog_name,
                 Box::new(move || {
                     let json = snapshot.to_json();
-                    let written = app.with_db_mut(|db| db.update_preset_config(&preset_uuid, &json));
+                    let written = app.with_db(|db| db.update_preset_config(&preset_uuid, &json));
                     // Failed: stay on the page, so Override can be pressed again.
                     if !write_ok(&row_for_failure, "preset.override", written, Failed::Save) {
                         return;
                     }
-                    on_changed();
-                    nav_view.pop();
+                    back_to_setup(&app, &nav_view);
 
                     // Undo: restore the prior config_json. The
                     // forward write emitted preset_update; the undo
@@ -312,7 +306,6 @@ fn build_preset_row(
                     let app_undo = app.clone();
                     let prior_undo = prior_config_json.clone();
                     let preset_uuid_undo = preset_uuid.clone();
-                    let on_changed_undo = on_changed.clone();
                     if let Some(window) = window.as_ref() {
                         let title = crate::announcement::title(
                             &meditate_core::announcement::Announcement::PresetOverridden {
@@ -325,11 +318,10 @@ fn build_preset_row(
                             &toast_slot,
                             &title,
                             move || {
-                                let written = app_undo.with_db_mut(|db| {
+                                let written = app_undo.with_db(|db| {
                                     db.update_preset_config(&preset_uuid_undo, &prior_undo)
                                 });
                                 write_ok(&window_undo, "preset.override.undo", written, Failed::Save);
-                                on_changed_undo();
                             },
                         );
                     }
@@ -406,7 +398,6 @@ pub(crate) fn add_reordering(row: &adw::ActionRow, key: String, index: usize, mo
 fn build_star_button(
     preset: &Preset,
     app: &MeditateApplication,
-    on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     rebuilder: crate::Rebuilder,
 ) -> gtk::Button {
@@ -438,9 +429,8 @@ fn build_star_button(
     let preset_uuid = preset.uuid.0.clone();
     let new_starred = meditate_core::db::StarredState::from_flag(!preset.is_starred);
     btn.connect_clicked(move |btn| {
-        let written = app.with_db_mut(|db| db.update_preset_starred(&preset_uuid, new_starred));
+        let written = app.with_db(|db| db.update_preset_starred(&preset_uuid, new_starred));
         write_ok(btn, "preset.star", written, Failed::Save);
-        on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
     });
     btn
@@ -451,7 +441,6 @@ fn add_rename_button(
     preset: &Preset,
     app: &MeditateApplication,
     rebuilder: crate::Rebuilder,
-    on_changed: Rc<dyn Fn()>,
 ) {
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -465,7 +454,7 @@ fn add_rename_button(
     rename_btn.connect_clicked(move |btn| {
         present_rename_preset_dialog(
             btn, &app, &preset_uuid, &preset_name,
-            rebuilder.clone(), on_changed.clone(),
+            rebuilder.clone(),
         );
     });
     row.add_suffix(&rename_btn);
@@ -476,7 +465,6 @@ fn add_delete_button(
     preset: &Preset,
     app: &MeditateApplication,
     rebuilder: crate::Rebuilder,
-    on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     toast_overlay: &adw::ToastOverlay,
 ) {
@@ -492,7 +480,7 @@ fn add_delete_button(
     delete_btn.connect_clicked(move |btn| {
         present_delete_preset_dialog(
             btn, &app, &preset_full,
-            rebuilder.clone(), on_changed.clone(),
+            rebuilder.clone(),
             toast_slot.clone(), &toast_overlay,
         );
     });
@@ -564,7 +552,6 @@ fn present_rename_preset_dialog(
     preset_uuid: &str,
     current_name: &str,
     rebuilder: crate::Rebuilder,
-    on_changed: Rc<dyn Fn()>,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -609,11 +596,10 @@ fn present_rename_preset_dialog(
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        let renamed = app.with_db_mut(|db| db.update_preset_name(&preset_uuid, &new_name));
+        let renamed = app.with_db(|db| db.update_preset_name(&preset_uuid, &new_name));
         if !write_ok(&anchor_for_response, "preset.rename", renamed, Failed::Save) {
             return;
         }
-        on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
     });
 
@@ -630,7 +616,6 @@ fn present_delete_preset_dialog(
     app: &MeditateApplication,
     preset: &Preset,
     rebuilder: crate::Rebuilder,
-    on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     toast_overlay: &adw::ToastOverlay,
 ) {
@@ -651,11 +636,10 @@ fn present_delete_preset_dialog(
     let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        let deleted = app.with_db_mut(|db| db.delete_preset(preset_full.uuid.as_str()));
+        let deleted = app.with_db(|db| db.delete_preset(preset_full.uuid.as_str()));
         if !write_ok(&toast_overlay, "preset.delete", deleted, Failed::Delete) {
             return;
         }
-        on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
 
         // Undo: re-insert with the same uuid + name + mode +
@@ -665,7 +649,6 @@ fn present_delete_preset_dialog(
         // restored row.
         let app_undo = app.clone();
         let preset_undo = preset_full.clone();
-        let on_changed_undo = on_changed.clone();
         let rebuilder_undo = rebuilder.clone();
         let title = crate::announcement::title(
             &meditate_core::announcement::Announcement::PresetDeleted {
@@ -678,9 +661,8 @@ fn present_delete_preset_dialog(
             &toast_slot,
             &title,
             move || {
-                let restored = app_undo.with_db_mut(|db| db.core().restore_preset(&preset_undo));
+                let restored = app_undo.with_db(|db| db.core().restore_preset(&preset_undo));
                 write_ok(&toast_overlay_undo, "preset.restore", restored, Failed::Save);
-                on_changed_undo();
                 if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
             },
         );

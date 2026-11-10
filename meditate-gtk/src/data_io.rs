@@ -136,7 +136,7 @@ fn logged(
 /// Write a read file: all of it, or on an error nothing.
 pub fn import_parsed(app: &MeditateApplication, parsed: &ParsedImport) -> Result<usize, DataIoError> {
     let result: Result<usize, DataIoError> = app
-        .with_db_mut(|db| meditate_core::data_io::import_parsed(db.core(), parsed))
+        .with_db(|db| meditate_core::data_io::import_parsed(db.core(), parsed))
         .ok_or(DataIoError::NoDatabase)?
         .map_err(DataIoError::from);
     match &result {
@@ -149,7 +149,7 @@ pub fn import_parsed(app: &MeditateApplication, parsed: &ParsedImport) -> Result
 // ── Delete all ────────────────────────────────────────────────────────────────
 
 pub fn delete_all(app: &MeditateApplication) -> Result<usize, DataIoError> {
-    app.with_db_mut(super::db::Database::delete_all_sessions)
+    app.with_db(super::db::Database::delete_all_sessions)
         .ok_or(DataIoError::NoDatabase)?
         .map_err(Into::into)
 }

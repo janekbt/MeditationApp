@@ -143,11 +143,7 @@ impl VolumeRow {
                 stop.set_visible(true);
                 return;
             }
-            let Some(app) = gtk::gio::Application::default()
-                .and_then(|a| a.downcast::<MeditateApplication>().ok())
-            else {
-                return;
-            };
+            let Some(app) = MeditateApplication::get() else { return };
             let Some(media) = crate::sound::play_bell_preview(&app, &sound, volume) else {
                 return;
             };

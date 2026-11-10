@@ -53,7 +53,8 @@ mod tests {
         assert!(src.contains("SyncIndicatorState::NotUploaded(files) => {"));
         assert!(src.contains(
             "StatusButton::SyncNow => {\n                            \
-             app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));\n                            \
+             let cleared = app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));\n                            \
+             crate::db::write_ok(&obj, \"sync.retry\", cleared, crate::db::Failed::Save);\n                            \
              app.trigger_sync();"
         ));
     }

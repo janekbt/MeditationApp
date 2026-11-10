@@ -175,6 +175,8 @@ mod imp {
                         Ok(n) => meditate_core::log("files.orphans", &format!("removed {n}")),
                         Err(e) => meditate_core::log("files.orphans", &format!("FAILED: {e:?}")),
                     }
+                    // Activate starts the first sync itself, after the window.
+                    db.core().take_committed();
                     *self.db.lock().unwrap() = Some(db);
                     meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
                 }
@@ -410,7 +412,7 @@ mod imp {
             let session_uuid = finalized.session_uuid.clone();
             let win_for_undo = win.clone();
             toast.connect_button_clicked(move |_| {
-                let deleted = app_for_undo.with_db_mut(|db| db.delete_session_by_uuid(&session_uuid));
+                let deleted = app_for_undo.with_db(|db| db.delete_session_by_uuid(&session_uuid));
                 if crate::db::write_ok(&win_for_undo, "session.recovery", deleted, crate::db::Failed::Delete) {
                     app_for_undo.data_changed(meditate_core::db::Refresh::ALL);
                 }
@@ -473,23 +475,28 @@ impl MeditateApplication {
         self.imp().has_haptic.get()
     }
 
-    /// Run a closure with a reference to the open database, on the current
-    /// thread. Holds the DB mutex for the duration of the closure, so keep
-    /// the work short — SQLite PRAGMAs tune this for single-writer use.
-    /// Returns `None` if the database failed to open at startup.
+    /// Run a closure with the open database, on the current thread,
+    /// holding its lock: keep the work short. `None` if the database
+    /// failed to open at startup. A write that changed something starts
+    /// a sync and marks the views it touches (`wrote`).
+    #[must_use]
     pub fn with_db<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&crate::db::Database) -> R,
     {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        let guard = self.imp().db.lock().unwrap();
-        guard.as_ref().map(f)
+        let (r, changed) = {
+            let guard = self.imp().db.lock().unwrap();
+            let db = guard.as_ref()?;
+            (f(db), db.core().take_committed())
+        };
+        self.wrote(changed);
+        Some(r)
     }
 
-    /// Run a DB operation on the GIO blocking thread pool. Use for writes
-    /// (fsync-heavy on eMMC) so the main thread keeps servicing frames.
-    /// Returns a future that resolves with the closure's return value —
-    /// awaiting this from the main thread never blocks the frame clock.
+    /// `with_db` on the GIO blocking pool, for fsync-heavy writes, so
+    /// the main thread keeps drawing while it waits.
+    #[must_use]
     pub async fn with_db_blocking<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&crate::db::Database) -> R + Send + 'static,
@@ -497,13 +504,31 @@ impl MeditateApplication {
     {
         use glib::subclass::prelude::ObjectSubclassIsExt;
         let db_arc = std::sync::Arc::clone(&self.imp().db);
-        gtk::gio::spawn_blocking(move || {
+        let (r, changed) = gtk::gio::spawn_blocking(move || {
             let guard = db_arc.lock().unwrap();
-            guard.as_ref().map(f)
+            guard.as_ref().map(|db| (f(db), db.core().take_committed()))
         })
         .await
         .ok()
-        .flatten()
+        .flatten()?;
+        self.wrote(changed);
+        Some(r)
+    }
+
+    /// After a local write: push it, mark Log and Stats, re-mark the
+    /// starred presets when Setup changed.
+    fn wrote(&self, changed: Refresh) {
+        if !changed.any() {
+            return;
+        }
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.mark_stale(changed);
+        if changed.setup {
+            if let Some(win) = self.main_window() {
+                win.imp().timer_view.imp().queue_presets_rebuild();
+            }
+        }
+        self.trigger_sync();
     }
 
     /// Data changed: mark the views `refresh` touches stale and re-read
@@ -514,6 +539,11 @@ impl MeditateApplication {
         if let Some(win) = self.main_window() {
             win.imp().refresh_shown(refresh);
         }
+    }
+
+    /// The running app, from code that has no widget to ask.
+    pub fn get() -> Option<Self> {
+        gio::Application::default().and_downcast()
     }
 
     /// The main window, also while a help window has the focus
@@ -555,33 +585,6 @@ impl MeditateApplication {
     pub fn is_syncing(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
         self.imp().sync_coordinator.is_in_flight()
-    }
-
-    /// `with_db` + a follow-up `trigger_sync()`. Use when the closure
-    /// MUTATES the database — the trigger pushes the new event(s) to
-    /// Nextcloud (when configured) without callers having to remember
-    /// the separate trigger call. Read-only closures should keep
-    /// using plain `with_db`.
-    pub fn with_db_mut<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&crate::db::Database) -> R,
-    {
-        let result = self.with_db(f);
-        self.trigger_sync();
-        result
-    }
-
-    /// Async variant of `with_db_mut`. Triggers AFTER the blocking
-    /// write finishes — calling `trigger_sync` before the await would
-    /// race the worker against the writer for the SQLite file.
-    pub async fn with_db_blocking_mut<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&crate::db::Database) -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        let result = self.with_db_blocking(f).await;
-        self.trigger_sync();
-        result
     }
 
     /// Spawn a Nextcloud sync attempt on a worker thread. Returns
@@ -636,9 +639,7 @@ impl MeditateApplication {
             // nothing !Send crosses threads.
             let on_main = |f: Box<dyn FnOnce(&MeditateApplication) + Send>| {
                 glib::MainContext::default().invoke(move || {
-                    if let Some(app) = gio::Application::default()
-                        .and_then(|a| a.downcast::<MeditateApplication>().ok())
-                    {
+                    if let Some(app) = MeditateApplication::get() {
                         f(&app);
                     }
                 });
@@ -712,7 +713,7 @@ mod tests {
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
         assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session: storage error\")));"));
         assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session: storage unavailable\")));"));
-        assert!(!log.contains("app.with_db_mut(|db| db.update_session(id, &data));"));
+        assert!(!log.contains("app.with_db(|db| db.update_session(id, &data));"));
         assert!(!log.contains("Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0)"));
     }
 
@@ -725,7 +726,7 @@ mod tests {
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
         assert!(stats.contains("meditate_core::insights::input_from_db(db.core(), "));
         assert!(stats.contains("meditate_core::goal::today_from_db(db.core(), "));
-        assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 5, "append, prepend (three), delete");
+        assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 2, "append, delete");
         // The trend compares rolling 30-day windows, and says so.
         assert!(stats.contains("gettext(\"{pct}% vs the 30 days before ({this} vs {last})\")"));
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
@@ -785,20 +786,25 @@ mod tests {
 
     /// Nothing showed which preset Setup currently matches. Its row
     /// gets the selection check and the accent title, and every local
-    /// change re-checks it.
+    /// Setup write re-checks it.
     #[test]
     fn the_active_preset_is_marked() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let timer = std::fs::read_to_string(root.join("src/timer/imp.rs")).unwrap();
         let at = timer.find("pub fn rebuild_starred_presets_list(&self) {").unwrap();
         let body = &timer[at..at + timer[at..].find("\n    }\n").unwrap()];
-        assert!(body.contains("meditate_core::preset_config::active_presets(db.core(), session_mode)"));
+        assert!(body.contains("meditate_core::preset_config::active_presets(db.core(), session_mode, &presets)"));
         assert!(body.contains("check.add_css_class(\"selected-check\");"));
         assert!(body.contains("row.add_css_class(\"accent\");"));
         assert!(body.contains("gtk::accessible::State::Selected(Some(true))"));
-        let poll = timer.find("let mut watch: Option<meditate_core::db::LocalChangeWatch> = None;").expect("local changes re-mark");
-        let poll = &timer[poll..poll + 900];
-        assert!(poll.contains("if w.take_new() { imp.rebuild_starred_presets_list(); }"));
+        let app = std::fs::read_to_string(root.join("src/application.rs")).unwrap();
+        let wrote = &app[app.find("fn wrote(&self, changed: Refresh)").unwrap()..];
+        let wrote = &wrote[..wrote.find("\n    }\n").unwrap()];
+        // A write that changed nothing does nothing; one that did syncs,
+        // marks Log and Stats, and re-marks the presets after Setup writes.
+        for step in ["if !changed.any() {", "self.mark_stale(changed);", "timer_view.imp().queue_presets_rebuild()", "self.trigger_sync();"] {
+            assert!(wrote.contains(step), "{step}");
+        }
     }
 
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)

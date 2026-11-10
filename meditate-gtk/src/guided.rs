@@ -26,7 +26,6 @@
 //! Phases 5 + 6 build the timer Setup-view UI + playback engine on
 //! top of these primitives.
 
-use meditate_core::db::Refresh;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -337,7 +336,7 @@ pub fn import_picked_file(
                 Ok(Ok((new_uuid, dest_path))) => {
                     let dest_str = dest_path.to_string_lossy().to_string();
                     let mut insert_err: Option<String> = None;
-                    let wrote = app.with_db_mut(|db| {
+                    let wrote = app.with_db(|db| {
                         if let Err(e) = db.insert_guided_file_with_uuid(
                             &new_uuid,
                             &trimmed_for_done,
@@ -678,7 +677,7 @@ fn rebuild_chooser_rows(
     let move_to: crate::presets::MoveTo = {
         let (app, rows, rebuilder, on_changed) = (app.clone(), rows.clone(), rebuilder.clone(), on_changed.clone());
         Rc::new(move |anchor, uuid, to| {
-            let written = app.with_db_mut(|db| db.move_guided_file(uuid, to));
+            let written = app.with_db(|db| db.move_guided_file(uuid, to));
             write_ok(anchor, "guided.move", written, Failed::Save);
             on_changed();
             if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
@@ -784,7 +783,7 @@ fn build_guided_file_row(
     let rebuilder_for_star = rebuilder.clone();
     let on_changed_for_star = on_changed.clone();
     star_btn.connect_clicked(move |btn| {
-        let written = app_for_star.with_db_mut(|db| {
+        let written = app_for_star.with_db(|db| {
             db.set_guided_file_starred(&uuid_for_star, new_starred)
         });
         write_ok(btn, "guided.star", written, Failed::Save);
@@ -1016,14 +1015,12 @@ fn present_rename_dialog(
         if new_name.is_empty() || new_name == old_name {
             return;
         }
-        let renamed = app_for_response.with_db_mut(|db| {
+        let renamed = app_for_response.with_db(|db| {
             db.rename_guided_file(&uuid_for_response, &new_name)
         });
         if !write_ok(&anchor_for_response, "guided.rename", renamed, Failed::Save) {
             return;
         }
-        // Log cards name the file.
-        app_for_response.mark_stale(Refresh::LOG);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -1044,11 +1041,10 @@ fn present_rename_dialog(
             &toast_slot_for_response,
             &gettext("File renamed"),
             move || {
-                let renamed = app_for_undo.with_db_mut(|db| {
+                let renamed = app_for_undo.with_db(|db| {
                     db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
                 });
                 write_ok(&overlay_for_failure, "guided.rename.undo", renamed, Failed::Save);
-                app_for_undo.mark_stale(Refresh::LOG);
                 if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
                     rb();
                 }
@@ -1114,12 +1110,10 @@ fn present_delete_dialog(
             return;
         };
 
-        let deleted = app.with_db_mut(|db| db.delete_guided_file(&uuid));
+        let deleted = app.with_db(|db| db.delete_guided_file(&uuid));
         if !write_ok(&toast_overlay_for_response, "guided.delete", deleted, Failed::Delete) {
             return;
         }
-        // Log cards name the file.
-        app.mark_stale(Refresh::LOG);
         // The on-disk file is NOT removed here — that's deferred to
         // the toast's natural dismissal so Undo can restore the row
         // without needing to re-transcode. If the toast times out
@@ -1176,7 +1170,7 @@ fn offer_guided_undo(
         slot,
         title,
         move || {
-            let restored = app.with_db_mut(|db| {
+            let restored = app.with_db(|db| {
                 db.core().restore_guided_file(&GuidedFile {
                     file_path: path.to_string_lossy().into_owned(),
                     ..file.clone()
@@ -1184,7 +1178,6 @@ fn offer_guided_undo(
             });
             match restored {
                 Some(Ok(_)) => {
-                    app.mark_stale(Refresh::LOG);
                     if let Some(rb) = rebuilder.borrow().as_ref() {
                         rb();
                     }

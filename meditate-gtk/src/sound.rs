@@ -268,11 +268,7 @@ fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
 }
 
 fn surface_audio_error_toast() {
-    let Some(app) = app() else { return; };
-    let Some(win) = app
-        .active_window()
-        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-    else {
+    let Some(win) = MeditateApplication::get().and_then(|app| app.main_window()) else {
         return;
     };
     win.add_toast(
@@ -384,16 +380,12 @@ fn start(media: &gtk::MediaFile) -> Duration {
     })
 }
 
-fn app() -> Option<MeditateApplication> {
-    gtk::gio::Application::default().and_then(|a| a.downcast::<MeditateApplication>().ok())
-}
-
 /// Hold `media` back for the lead-in when it is on and the default
 /// output is Bluetooth: join the one running, or play core's noise.
 /// The wait; none when it starts at once (off, another output, or the
 /// noise can't play: only logged, the bell rings without it).
 fn lead_in(media: &gtk::MediaFile) -> Option<Duration> {
-    let app = app()?;
+    let app = MeditateApplication::get()?;
     let ms = app.with_db(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(db.core())).flatten()?;
     if !default_output_is_bluetooth() {
         return None;

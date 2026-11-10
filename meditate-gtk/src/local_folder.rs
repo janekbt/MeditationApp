@@ -45,11 +45,7 @@ pub fn on_change(f: impl Fn() -> bool + 'static) {
 fn notify() {
     let refreshed = PROGRESS.with(|p| p.borrow_mut().settle(busy(), UNREACHABLE.with(Cell::get)));
     if refreshed {
-        let window = gtk::gio::Application::default()
-            .and_downcast::<MeditateApplication>()
-            .and_then(|app| app.active_window())
-            .and_downcast::<crate::window::MeditateWindow>();
-        if let Some(window) = window {
+        if let Some(window) = MeditateApplication::get().and_then(|app| app.main_window()) {
             window.add_toast(adw::Toast::new(&gettext("Folder refreshed")));
         }
     }
@@ -68,13 +64,13 @@ pub fn length_failed(id: i64) -> bool {
     FAILED.with(|f| f.borrow().contains(&id))
 }
 
-/// A Local Folder write. These write no event, so they don't start a
-/// sync (`with_db`, not `with_db_mut`); a failure says so.
+/// A Local Folder write. These write no event, so they start no sync;
+/// a failure says so.
 pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Database) -> Result<T, E>) -> Option<T> {
     let done = app.with_db(|db| f(db.core())).and_then(Result::ok);
     if done.is_none() {
         PROGRESS.with(|p| p.borrow_mut().write_failed());
-        if let Some(window) = app.active_window().and_downcast::<crate::window::MeditateWindow>() {
+        if let Some(window) = app.main_window() {
             window.add_toast(adw::Toast::new(&gettext("Save failed")));
         }
     }

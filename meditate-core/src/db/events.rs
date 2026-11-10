@@ -560,7 +560,7 @@ impl Database {
         let id = self.append_event(&event)?;
         self.set_sync_state(LAST_APPLIED_EVENT_ID_KEY, &id.to_string())?;
         // Counted when the outermost write commits (`Tx::commit`).
-        self.changed.set(true);
+        self.changed.set(self.changed.get() | Refresh::of(kind.entity(), target_id));
         Ok(())
     }
 
@@ -580,6 +580,12 @@ impl Database {
         }
         self.emit_event(tx, kind, target_id, payload.to_string())?;
         self.recompute_for(kind.entity(), target_id)
+    }
+
+    /// The screens the local writes committed since the last call
+    /// touch; clears them.
+    pub fn take_committed(&self) -> Refresh {
+        self.committed.take()
     }
 
     /// Handle to this database's local-change count (see
@@ -902,6 +908,45 @@ mod tests {
         IntervalBellKind, Known, Session, SessionMode, SignalMode,
     };
     use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+
+    // ── What a committed local write touches ─────────────────────────────────
+
+    #[test]
+    fn a_write_that_changes_nothing_reports_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "v").unwrap();
+        assert_eq!(db.take_committed(), Refresh::SETUP);
+        db.set_setting("k", "v").unwrap();
+        assert_eq!(db.take_committed(), Refresh::NONE);
+    }
+
+    #[test]
+    fn a_committed_write_reports_the_screens_it_touches() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Yoga").unwrap();
+        db.take_committed();
+        db.update_label(id, "Zen").unwrap();
+        let label = Refresh { log: true, stats: true, setup: true, labels: true, guided: false };
+        assert_eq!(db.take_committed(), label);
+        assert_eq!(db.take_committed(), Refresh::NONE, "taken once");
+    }
+
+    #[test]
+    fn an_undone_write_reports_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let failed = db.tx().unwrap();
+        db.set_setting("k", "v").unwrap();
+        drop(failed);
+        assert_eq!(db.take_committed(), Refresh::NONE);
+        // A nested write undone inside a kept one: only the kept part.
+        let outer = db.tx().unwrap();
+        db.set_setting("k", "w").unwrap();
+        let inner = db.tx().unwrap();
+        db.insert_label("Yoga").unwrap();
+        drop(inner);
+        outer.commit().unwrap();
+        assert_eq!(db.take_committed(), Refresh::SETUP);
+    }
 
     // ── EventKind wire-format round trip ─────────────────────────────────────
     //

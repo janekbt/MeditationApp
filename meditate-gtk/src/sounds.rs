@@ -624,7 +624,7 @@ fn present_import_confirm_dialog(
                 Ok(Ok((new_uuid, dest_path, mime))) => {
                     let dest_str = dest_path.to_string_lossy().to_string();
                     let mut insert_err: Option<String> = None;
-                    let wrote = app.with_db_mut(|db| {
+                    let wrote = app.with_db(|db| {
                         if let Err(e) = db.insert_bell_sound_with_uuid(
                             &new_uuid,
                             &trimmed_for_done,
@@ -958,7 +958,7 @@ fn present_rename_dialog(
         if trimmed.is_empty() {
             return;
         }
-        let renamed = app.with_db_mut(|db| db.rename_bell_sound(&uuid, trimmed));
+        let renamed = app.with_db(|db| db.rename_bell_sound(&uuid, trimmed));
         write_ok(&anchor_for_failure, "sound.rename", renamed, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
@@ -994,7 +994,7 @@ fn present_delete_dialog(
     let anchor_for_failure = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        let deleted = app.with_db_mut(|db| db.delete_bell_sound(&uuid));
+        let deleted = app.with_db(|db| db.delete_bell_sound(&uuid));
         if write_ok(&anchor_for_failure, "sound.delete", deleted, Failed::Delete) {
             meditate_core::audio_files::remove_sound_files(&crate::sync_runner::local_sounds_dir(), &uuid);
         }

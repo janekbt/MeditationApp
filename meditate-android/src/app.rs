@@ -1924,7 +1924,7 @@ mod tests {
         assert!(slint.contains("color: item.selected ? MaterialPalette.on-secondary-container : MaterialPalette.on-surface;"));
         assert!(slint.contains("accessible-checked: item.selected;"));
         let starred = &lib[lib.find("fn list_starred_presets_for_mode(").unwrap()..];
-        assert!(starred[..starred.find("\n}\n").unwrap()].contains("meditate_core::preset_config::active_presets(&db, mode)"));
+        assert!(starred[..starred.find("\n}\n").unwrap()].contains("meditate_core::preset_config::active_presets(&db, mode, &starred)"));
         let watch = lib.find("if local_watch.as_mut().is_some_and(|w| w.take_new()) {").unwrap();
         assert!(lib[watch..watch + 300].contains("refresh_preset_list(&ui, current_mode.get().into());"));
     }

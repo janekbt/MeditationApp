@@ -113,17 +113,16 @@ fn confirm_wipe_local(app: &MeditateApplication) {
     dialog.present(parent.as_ref());
 }
 
-/// Execute the "Wipe Local" action: erase every authored row (the
-/// write starts the sync that pulls everything back), then re-read
-/// every view.
+/// Execute the "Wipe Local" action: erase every authored row, re-read
+/// every view, and sync to pull everything back.
 /// `prepare_wipe_local_recovery` is unit-tested separately.
 fn run_wipe_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db_mut(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
+    let prep = app.with_db(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
-            // with_db_mut already started the sync that pulls everything back.
             meditate_core::log("recovery.wipe_local", "purged, syncing");
             app.data_changed(meditate_core::db::Refresh::ALL);
+            app.trigger_sync();
         }
         Some(Err(e)) => {
             meditate_core::log(

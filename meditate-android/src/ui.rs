@@ -239,9 +239,8 @@ fn trigger_sync(reason: &str) {
 
 
 /// Watch over core's count of local changes that need syncing. The
-/// tick loop asks it each tick and starts a sync when it moved — the
-/// Android counterpart of GTK's `with_db_mut` (write, then sync),
-/// without each write path having to remember it.
+/// tick loop asks it each tick and starts a sync when it moved, so no
+/// write path has to remember it (GTK checks after each `with_db`).
 fn local_change_watch() -> Option<meditate_core::db::LocalChangeWatch> {
     let db = lock_db()?;
     Some(meditate_core::db::LocalChangeWatch::new(db.local_changes()))
@@ -702,9 +701,9 @@ fn list_starred_presets_for_mode(
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
             .collect();
-    let active = meditate_core::preset_config::active_presets(&db, mode);
-    meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode)
-        .unwrap_or_default()
+    let starred = meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode).unwrap_or_default();
+    let active = meditate_core::preset_config::active_presets(&db, mode, &starred);
+    starred
         .into_iter()
         .map(|p| PresetItem {
             selected: active.contains(p.uuid.as_str()),

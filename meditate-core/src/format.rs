@@ -967,14 +967,14 @@ mod tests {
     fn session_save_failure_db_unopened_log_message_format() {
         let msg = session_save_failure_log_message(
             SessionSaveFailureKind::DbUnopened,
-            "with_db_blocking_mut returned None",
+            "with_db_blocking returned None",
         );
         assert!(
             msg.starts_with("session_save_failed:"),
             "log line must use greppable prefix; got {msg:?}"
         );
         assert!(msg.contains("db unopened"));
-        assert!(msg.contains("with_db_blocking_mut returned None"));
+        assert!(msg.contains("with_db_blocking returned None"));
     }
 
     #[test]
