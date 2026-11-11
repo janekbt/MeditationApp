@@ -31,7 +31,7 @@ The whole repo, slice by slice, through the real /simplify and /code-review skil
 
 ## Order of work
 
-Every item gets done; this is only the order. A package is one /spec change, or several when it is large, and goes with the bug batch named in OPEN-ISSUES.md when there is one, so one device test covers both. Within a package, do the general item first: a "Related" or folded-in step is part of it, not a change of its own. Tick a package when its last item is committed.
+Every item gets done; this is only the order. A package is one /spec change, or several when it is large, and goes with the bug batch named in OPEN-ISSUES.md when there is one, so one device test covers both. Within a package, do the general item first: a "Related" or folded-in step is part of it, not a change of its own. Tick a package when its last item is committed. A bug that a package's refactor covers waits for that package (the bugs in its last column; OPEN-ISSUES.md "Bugs that wait for a refactor") and is never fixed before it.
 
 | Done | Package | Items | Do with bug batch |
 |:---:|---|---|---|
@@ -40,16 +40,16 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
-| [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH |
-| [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II |
+| [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
+| [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
-| [ ] | P9. Stats and Log | #294, #295, #296, #297, #329, #330, #332, #334, #335, #398, #456, #457, #220, #236, #496 | T |
+| [ ] | P9. Stats and Log | #294, #295, #296, #297, #329, #330, #332, #334, #335, #398, #456, #457, #220, #236, #496 | T; bug #308 (the Stats page) |
 | [ ] | P10. Typed texts and values | #301, #482, #431, #222 | T |
-| [ ] | P11. Startup | #228, #336, #419, #483 | EE |
+| [ ] | P11. Startup | #228, #336, #419, #483 | bugs #246, #490, #351 |
 | [ ] | P12. Android screens (Slint) | #453, #454, #458, #459, #460, #461, #464, #467, #469, #470, #471, #404, #417 | GG, T, LL |
 | [ ] | P13. Android Rust and Kotlin structure | #396, #399, #401, #405, #416, #420, #421, #433, #438, #441, #442 | FF, KK |
-| [ ] | P14. GTK structure | #312, #315, #318, #319, #321, #337, #338, #352, #359, #360, #368, #369, #376, #377, #379, #287, #333, #302, #298 | MM, II |
-| [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494, #495, #501, #502, #503, #504 |  |
+| [ ] | P14. GTK structure | #312, #315, #318, #319, #321, #337, #338, #352, #359, #360, #368, #369, #376, #377, #379, #287, #333, #302, #298 | MM, II; bugs #307, #382, #323, #340 |
+| [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494, #495, #501, #502, #503, #504 | bugs #498, #499, #308 (the other reads), the daily goal cap |
 | [ ] | P16. Tests | #224, #233, #240, #262, #276, #290, #304, #322, #339, #361, #380, #432 | with each package that touches them |
 | [ ] | P17. Cleanup from the old list | #58, #61, #85, #87, #157, #167, #171, #175, #197, R12 |  |
 

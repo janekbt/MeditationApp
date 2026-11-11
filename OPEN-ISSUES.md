@@ -17,7 +17,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 |:---:|---|---|---|
 | [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
-| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #347, #351, #365, #366, #382, #489, #344 | the user thinks it worked |
+| [ ] | EE. Failures nobody sees: core and Linux | #347, #366, #489, #251, #247, #344, #365 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
@@ -43,7 +43,7 @@ Answer these once; each batch waits only for its own.
 - #434, #452 (T): may a Log card note preview and a widget row be cut after two lines (as GTK does), or must they show in full?
 - #436 (T): should pt-PT get the pt_BR translation, and zh-Hant/zh-TW the zh_CN one, or stay English?
 - #473 (GG): fix the 12-hour AM/PM at Meditate's call site now, or wait for the Slint AM/PM fix upstream (parked)?
-- #490 (EE): a failed seed at startup: open anyway and tell the user, or refuse the database as Linux does?
+- #490 (P11): a failed seed at startup: open anyway and tell the user, or refuse the database as Linux does?
 - #493 (II): normalise imported bells to -16 LUFS on both apps, or on neither?
 - #164 (W): should a newer peer's unknown value keep blocking the pull on purpose, or be skipped and kept for a later build?
 - #445 (KK): fix the rotation during a file pick in the manifest (protected) or in Kotlin only?
@@ -91,47 +91,23 @@ Data the user typed or saved goes missing, moves, or exists twice.
 
 ## K3. Presets and multi-step writes all or nothing
 
-Done 2026-11-10 (change writes-all-or-nothing). Moved on: the session-start half of #291, the load-path defaults the review found, and an unreadable setup in the active-preset check go with #308 (EE); a deleted default label and the general "read before locking" are below in EE.
+Done 2026-11-10 (change writes-all-or-nothing). Moved on: the session-start half of #291, the load-path defaults the review found, and an unreadable setup in the active-preset check go with #308 (P9 and P15); a deleted default label (#498) and the general "read before locking" (#499) wait for P15 below.
 
 ## EE. Failures nobody sees: core and Linux
 
 AGENTS.md: every failure tells the user. One reporting path per app is the class fix; Linux has it since P3 step 1 (`db::show_toast`, `show_in_view`, `write_ok`).
 
-### #246 A failed integrity check is only logged
-- (Related: #100, #228, #258.) `mod.rs:308-313`: `quick_check` failures go to the diagnostics log and the app carries on, so the user keeps writing into a damaged file without knowing. AGENTS.md: a failure that only reaches the log is a bug. Not refusing to open is deliberate; telling the user is missing. Do together with #100 and #228 (where quick_check runs).
+### #347 Closing the window right after a delete hides a failed delete
+- Where: `close_request` (`window/imp.rs:140-144`) commits pending deletes; a failure toast goes to the window being destroyed.
+- Scenario: delete a session and press Ctrl+W within the 5 s undo window; the delete fails, the user never sees it, and the session is back at the next start.
+- Fix: on failure keep the window open (or tell the user before closing).
 
-### #305 One unreadable line stops the whole import
-- Where: `let rec = record?;` in all three importers (`data_io.rs:284, 367, 413`).
-- Scenario: a file with 500 good rows and one row the csv reader rejects (a stray quote, invalid UTF-8). The import fails with "CSV error"; the question "import the readable part?" that `ParsedImport` exists for is never asked.
-- Fix: push the record as unreadable and go on; do with #300.
+### #366 A bell's switch stays flipped when saving it fails
+- Where: `bells.rs:262-275`: a toast, but the switch isn't reverted.
+- Scenario: the toast fades, the switch shows On while the database says Off, and the next session silently doesn't ring that bell. Fix: revert under a guard, or rebuild the row.
 
-### #307 One damaged line in the diagnostics log stops its trimming for good, or drops the newest lines
-- Where: `diag.rs:169` reads with `map_while(Result::ok)`, which stops at the first line that isn't UTF-8.
-- Scenario: a kill mid-write leaves a cut multi-byte character. With fewer than 2000 lines before it, the trim returns early at every start and the log grows without limit; with more, the rewrite keeps only lines from before the bad byte and drops everything newer, the part needed for triage.
-- Fix: #302 (read bytes, split on newlines).
-
-### #308 A failed read shows on the Stats page as "no data"
-- Where: `insights.rs:55-80` turns every read error into 0 or empty (`unwrap_or_default`, `unwrap_or(0)`), not even logged; `goal::today_from_db` the same.
-- Scenario: the database is locked at refresh; Stats shows an empty history or a 0-minute goal ring as if the user had never meditated.
-- Fix: return the error and show it; do with #297. Same class as #291 and #251.
-- From K3 (2026-11-10, maintainer: with #308), the same class at other reads:
-  - Session start (#291's other half): `bells.rs` `session_bells_from_db` reads the interval bells with `unwrap_or_default`, so a failed read starts a session with no interval bells, silently; `SessionSettings::from_db` reads every other setting the same way.
-  - Setup's loaded values: a failed read at a page load puts defaults into the shell's state, and the next write starts from them. Linux: `load_breathing_settings` (4-4-4-4 and the default length into the Cells), then a phase step (`adjust_phase`), a length commit (`set_breathing_duration_secs`) or "Save current setup" (`snapshot_current_setup` takes its Box Breath timing from the Cells) stores and syncs the defaults without a word. Both apps: a failed read of the Timer length leaves 10 minutes in the length cell, which "Save current setup" and a preset tap's Undo snapshot then store. Android's Box Breath step and length commit already start from `try_breathing_from_db` (`breathing_to_change`). A core `edit_breathing(db, |pattern, secs|)` would serve both apps (Related: REFACTORING #500).
-  - The active-preset check: `preset_config::active_presets` logs an unreadable setup (`preset.active`) and shows no preset active, with no message.
-
-
-### #498 A deleted default label leaves a "default" preset unable to pick a label
-- Where: `preset_config::apply_writes`, the `(true, None)` label arm, writes the mode default only while the default label exists.
-- Scenario: the mode's default label was deleted (not merged; a merge now carries such presets along), the user picks "Walking" and applies a preset saved with the label on and none picked: "Walking" stays, and the preset never shows as active. As before K3.
-- Fix: let a label delete do what `merge_labels` does for these presets (pin them, or switch their label off), or store presets with a real label uuid (Related: REFACTORING #504).
-
-### #499 Unchanged writes still wait for the write lock
-- Where: `set_setting`, `edit_bell`, `edit_preset`, `edit_guided_file`, `update_label`, `update_session` open `tx()` (BEGIN IMMEDIATE) before seeing that nothing changes.
-- Scenario: a Setup refresh writes stored values back while a sync holds the lock: the refresh waits out busy_timeout and can say "Save failed" for a write that changes nothing. K3 fixed it for the Box Breath phase edit, the seeds and crash recovery.
-- Fix: one "read first, lock only for a change" helper in core for all of them (Related: REFACTORING #501).
-- Also check: `Database::open` stamps `PRAGMA user_version` at every open; if that takes the write lock, an open during a sync write still waits (unverified, from K3's review).
-### #310 A corrupt database row during export is reported as a "CSV error"
-- Where: `data_io.rs:74` maps `DbError::Decode` to `DataIoError::Csv`. Fix: #300.
+### #489 On Linux, a preset that can't be read does nothing when tapped
+- `timer/imp.rs:3955-3963` returns on a failed read or a `PresetConfig::from_json` error (a preset from a newer version); Android's `apply_preset_json` says it failed. Same class: #382.
 
 ### #251 Plausible: a corrupt vibration pattern plays nothing, silently
 - (Same class as #291.) `vibration_patterns.rs:60` turns unparseable `intensities_json` into an empty envelope (`unwrap_or_default`), while renaming the same row fails with `Decode`. Only a damaged row or a newer peer's format gets there; the user hears no cue and sees no message.
@@ -139,55 +115,118 @@ AGENTS.md: every failure tells the user. One reporting path per app is the class
 ### #247 Plausible: a bundled-pattern seed can fail on a user's own pattern name
 - `seeds.rs:92-101` doesn't ignore a duplicate name, unlike labels and presets (74-78, 127-131). If the seed runs on a database that already has a user pattern called "Pulse" (an upgrade from before the seed existed), the seed fails at startup. Not reproduced.
 
-### #490 A failed seed: Linux refuses the database, Android only logs it
-- GTK's open runs the seeds with `?` (`db/mod.rs:417-418`), so a failed seed shows the database as unavailable; Android logs `seed_all_non_audio FAILED` and carries on (`ui.rs:10512-10517`), so missing defaults go unsaid. Decide one rule in #483.
-
-### #323 A failed crash-recovery snapshot only reaches the log
-- Where: `timer/imp.rs:2863-2870` (`write_in_progress_snapshot`) and `2880-2887` (`clear_in_progress_snapshot`).
-- Scenario: the disk is full or the database locked; the session runs with no crash protection and nothing says so, so a crash loses it. A failed clear leaves a phantom session for the next start (the comment admits it). Android the same (`ui.rs:3101`).
-- Fix: tell the user once per session that recovery is off, and show a failed clear like any failed save.
-
-### #340 "Sync Now" drops a failed write without a word (Android)
-- Same class on Android: #427. GTK fixed in sync-after-real-writes (says "Save failed").
-- Where: Android `ui.rs:9734` (`let _ =`).
-- Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: show "Save failed" as GTK does, or a core `retry_now()` (#338).
-
-### #347 Closing the window right after a delete hides a failed delete
-- Where: `close_request` (`window/imp.rs:140-144`) commits pending deletes; a failure toast goes to the window being destroyed.
-- Scenario: delete a session and press Ctrl+W within the 5 s undo window; the delete fails, the user never sees it, and the session is back at the next start.
-- Fix: on failure keep the window open (or tell the user before closing).
-
-### #351 A crashed session that can't be recovered at startup is only logged
-- `application.rs:161-165`: `finalize FAILED at startup` goes to the log; the session from the crash is silently not saved. Tell the user, and keep the snapshot for a retry.
-
-### #365 A failed read shows an empty bell, preset or sound list
-- Where: `bells.rs:135-137`, `presets.rs:202`, `sounds.rs:173` turn an error into an empty list.
-- Scenario: a locked database shows "No interval bells configured" or an empty chooser; the user may recreate what exists. Same class as #291 and #308. Also a failed sound-library read names every interval bell's sound "Missing" (both apps' bell lists and Setup rows, through `sound_name`/`resolve_sound_name`), so the user may re-pick working sounds.
-- Fix: show the error on the page.
-
-### #366 A bell's switch stays flipped when saving it fails
-- Where: `bells.rs:262-275`: a toast, but the switch isn't reverted.
-- Scenario: the toast fades, the switch shows On while the database says Off, and the next session silently doesn't ring that bell. Fix: revert under a guard, or rebuild the row.
-
-### #382 Recovery and label-conflict failures only reach the log
-- Android side: #426, #427. Same class: #489.
-- Where: `recovery_dialog.rs:66-83` (Push My Data) and `117-140` (Wipe Local) log a failed prepare or a missing DB; `labels.rs:483` logs a failed Keep Both, then marks the conflict decided.
-- Scenario: remote data lost, the user taps Push My Data while the write fails: no toast, no sync, the warning stays and the user thinks recovery ran. Keep Both failing: the same conflict dialog comes back with no word why.
-- Fix: `write_ok` (log and toast) in one `run_recovery` (#379); don't mark the conflict decided on failure.
-
-### #489 On Linux, a preset that can't be read does nothing when tapped
-- `timer/imp.rs:3955-3963` returns on a failed read or a `PresetConfig::from_json` error (a preset from a newer version); Android's `apply_preset_json` says it failed. Same class: #382.
-
 ### #344 The database-open error points to a place the user can't reach
 - Same on Android: #425.
 - Where: `application.rs:258-264` says "Check the diagnostics log in About → Troubleshooting", but the error window has no menu and no way to About.
 - Fix: a button that opens the diagnostics (or the About dialog) on that page.
 
-- Plausible, not checked to the end (sweep): `bell_volume::write` returns `Ok` and saves nothing when a Box Breath phase row is missing (`bell_volume.rs:222`; only a damaged database gets there). The daily goal is never capped at 1440 on write or read (`goal.rs:35-40`).
+### #365 A failed read shows an empty bell, preset or sound list
+- Where: `bells.rs:135-137`, `presets.rs:202`, `sounds.rs:173` turn an error into an empty list.
+- Scenario: a locked database shows "No interval bells configured" or an empty chooser; the user may recreate what exists. Same class as #291 and #308. Also a failed sound-library read names every interval bell's sound "Missing" (both apps' bell lists and Setup rows, through `sound_name`/`resolve_sound_name`), so the user may re-pick working sounds.
+- Fix: show the error on the page. The "Missing" half (a failed sound-library read) goes with REFACTORING #284 (P6), which passes the read error on.
+
+## Bugs that wait for a refactor
+
+Each is fixed in the REFACTORING package that rewrites its code, not before (2026-11-11). Under each package, the refactor item that covers it.
+
+### P6. Bells, presets and breath
+
+- #365, the "Missing" half: with #284 (the list half is in EE above).
+
+### P7. Guided files, Local Folder and imports
+
+With #300:
+
+#### #305 One unreadable line stops the whole import
+- Where: `let rec = record?;` in all three importers (`data_io.rs:284, 367, 413`).
+- Scenario: a file with 500 good rows and one row the csv reader rejects (a stray quote, invalid UTF-8). The import fails with "CSV error"; the question "import the readable part?" that `ParsedImport` exists for is never asked.
+- Fix: push the record as unreadable and go on; do with #300.
+
+#### #310 A corrupt database row during export is reported as a "CSV error"
+- Where: `data_io.rs:74` maps `DbError::Decode` to `DataIoError::Csv`. Fix: #300.
+
+### P9. Stats and Log
+
+With #297:
+
+#### #308 A failed read shows on the Stats page as "no data"
+- Where: `insights.rs:55-80` turns every read error into 0 or empty (`unwrap_or_default`, `unwrap_or(0)`), not even logged; `goal::today_from_db` the same.
+- Scenario: the database is locked at refresh; Stats shows an empty history or a 0-minute goal ring as if the user had never meditated.
+- Fix: return the error and show it; do with #297. Same class as #291 and #251.
+- From K3 (2026-11-10, maintainer: with #308), the same class at other reads:
+  - Session start (#291's other half): `bells.rs` `session_bells_from_db` reads the interval bells with `unwrap_or_default`, so a failed read starts a session with no interval bells, silently; `SessionSettings::from_db` reads every other setting the same way.
+  - Setup's loaded values: a failed read at a page load puts defaults into the shell's state, and the next write starts from them. Linux: `load_breathing_settings` (4-4-4-4 and the default length into the Cells), then a phase step (`adjust_phase`), a length commit (`set_breathing_duration_secs`) or "Save current setup" (`snapshot_current_setup` takes its Box Breath timing from the Cells) stores and syncs the defaults without a word. Both apps: a failed read of the Timer length leaves 10 minutes in the length cell, which "Save current setup" and a preset tap's Undo snapshot then store. Android's Box Breath step and length commit already start from `try_breathing_from_db` (`breathing_to_change`). A core `edit_breathing(db, |pattern, secs|)` would serve both apps (Related: REFACTORING #500).
+  - The active-preset check: `preset_config::active_presets` logs an unreadable setup (`preset.active`) and shows no preset active, with no message.
+- Package split: the Stats page with #297 (P9); the K3 sub-bullets (session start, Setup's loaded values, the active-preset check) with #502, readers that return `Result` (P15), the Box Breath part with #500 (P6).
+
+### P11. Startup
+
+With #228, #100:
+
+#### #246 A failed integrity check is only logged
+- (Related: #100, #228, #258.) `mod.rs:308-313`: `quick_check` failures go to the diagnostics log and the app carries on, so the user keeps writing into a damaged file without knowing. AGENTS.md: a failure that only reaches the log is a bug. Not refusing to open is deliberate; telling the user is missing. Do together with #100 and #228 (where quick_check runs).
+
+With #483:
+
+#### #490 A failed seed: Linux refuses the database, Android only logs it
+- GTK's open runs the seeds with `?` (`db/mod.rs:417-418`), so a failed seed shows the database as unavailable; Android logs `seed_all_non_audio FAILED` and carries on (`ui.rs:10512-10517`), so missing defaults go unsaid. Decide one rule in #483.
+
+#### #351 A crashed session that can't be recovered at startup is only logged
+- `application.rs:161-165`: `finalize FAILED at startup` goes to the log; the session from the crash is silently not saved. Tell the user, and keep the snapshot for a retry.
+
+### P14. GTK structure
+
+With #302:
+
+#### #307 One damaged line in the diagnostics log stops its trimming for good, or drops the newest lines
+- Where: `diag.rs:169` reads with `map_while(Result::ok)`, which stops at the first line that isn't UTF-8.
+- Scenario: a kill mid-write leaves a cut multi-byte character. With fewer than 2000 lines before it, the trim returns early at every start and the log grows without limit; with more, the rewrite keeps only lines from before the bad byte and drops everything newer, the part needed for triage.
+- Fix: #302 (read bytes, split on newlines).
+
+With #379:
+
+#### #382 Recovery and label-conflict failures only reach the log
+- Android side: #426, #427. Same class: #489.
+- Where: `recovery_dialog.rs:66-83` (Push My Data) and `117-140` (Wipe Local) log a failed prepare or a missing DB; `labels.rs:483` logs a failed Keep Both, then marks the conflict decided.
+- Scenario: remote data lost, the user taps Push My Data while the write fails: no toast, no sync, the warning stays and the user thinks recovery ran. Keep Both failing: the same conflict dialog comes back with no word why.
+- Fix: `write_ok` (log and toast) in one `run_recovery` (#379); don't mark the conflict decided on failure.
+
+With #312:
+
+#### #323 A failed crash-recovery snapshot only reaches the log
+- Where: `timer/imp.rs:2863-2870` (`write_in_progress_snapshot`) and `2880-2887` (`clear_in_progress_snapshot`).
+- Scenario: the disk is full or the database locked; the session runs with no crash protection and nothing says so, so a crash loses it. A failed clear leaves a phantom session for the next start (the comment admits it). Android the same (`ui.rs:3101`).
+- Fix: tell the user once per session that recovery is off, and show a failed clear like any failed save.
+
+With #338 (one core `retry_now()` for "Sync Now" in both apps):
+
+#### #340 "Sync Now" drops a failed write without a word (Android)
+- Same class on Android: #427. GTK fixed in sync-after-real-writes (says "Save failed").
+- Where: Android `ui.rs:9734` (`let _ =`).
+- Scenario: the write fails (locked or full database); the sync runs and the popover keeps saying "Some files weren't uploaded" with nothing saying why. Fix: show "Save failed" as GTK does, or a core `retry_now()` (#338).
+
+### P15. Core speed and smaller ones
+
+With #504:
+
+#### #498 A deleted default label leaves a "default" preset unable to pick a label
+- Where: `preset_config::apply_writes`, the `(true, None)` label arm, writes the mode default only while the default label exists.
+- Scenario: the mode's default label was deleted (not merged; a merge now carries such presets along), the user picks "Walking" and applies a preset saved with the label on and none picked: "Walking" stays, and the preset never shows as active. As before K3.
+- Fix: let a label delete do what `merge_labels` does for these presets (pin them, or switch their label off), or store presets with a real label uuid (Related: REFACTORING #504).
+
+With #501:
+
+#### #499 Unchanged writes still wait for the write lock
+- Where: `set_setting`, `edit_bell`, `edit_preset`, `edit_guided_file`, `update_label`, `update_session` open `tx()` (BEGIN IMMEDIATE) before seeing that nothing changes.
+- Scenario: a Setup refresh writes stored values back while a sync holds the lock: the refresh waits out busy_timeout and can say "Save failed" for a write that changes nothing. K3 fixed it for the Box Breath phase edit, the seeds and crash recovery.
+- Fix: one "read first, lock only for a change" helper in core for all of them (Related: REFACTORING #501).
+- Also check: `Database::open` stamps `PRAGMA user_version` at every open; if that takes the write lock, an open during a sync write still waits (from K3's review; on 2026-11-11 the code shows `init` stamps it at every open with no check, `db/mod.rs:381`, and a header write needs the write lock).
+
+With #299: the daily goal is never capped at 1440 on write or read (`goal.rs:38-48`; `DAILY_GOAL_MAX` is unused there). From the sweep, not checked to the end.
 
 ## FF. Failures nobody sees: Android
 
-The Android half of EE; #340's Android part goes here too.
+The Android half of EE.
 
 ### #409 A widget tap that can't start says nothing
 - Where: a deleted or not-yet-synced preset only logs "deep-link preset gone" (979), a mode mismatch logs "deep-link ignored"; a starred Local Folder file whose length isn't read yet selects the file and never starts (1058-1066: `ready` is false, and `poll_local_folder` 1571-1586 doesn't start when the length arrives).
