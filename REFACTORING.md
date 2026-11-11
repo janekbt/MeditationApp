@@ -37,7 +37,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 |:---:|---|---|---|
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
-| [ ] | P3. Failure reporting and toasts | #320, #357, #373, #328 | EE, FF |
+| [ ] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373); left: #328 | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH |
@@ -422,8 +422,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `seeds.rs`: the same `PresetEndBell` twice (153-159, 173-179), `"sound"`/`"both"` literals instead of `SignalMode`.
 - `audio_files.rs:59-67` vs 86-98: two walkers over `<uuid>.*` with different id rules (`file_stem` vs `split('.')`).
 - `db_open_failure_key` is dead and repeated in GTK: already #85.
-- `format::ellipsize` (203) exists to cut text with "…", against the UI rule; its one user is #311.
-- Docs on the wrong item: `format.rs:619-624` (`parse_prep_secs` on `prep_plan_from_db`), `661-663`, `416-419`; `announcement.rs` says both apps agree, only GTK uses it; `contrib.rs` still mentions the weekly goal.
+- Docs on the wrong item: `format.rs:619-624` (`parse_prep_secs` on `prep_plan_from_db`), `661-663`, `416-419`; `contrib.rs` still mentions the weekly goal.
 - Could be private or merged: `labels::persist_active_for_mode` (an Android test already asserts nobody calls it), `contrib::CONTRIB_COLS/ROWS`, `lead_in::is_bluetooth_sink`, `format::prep_target_duration`; `idle_hero_label` into `idle_hero_label_from_modes`; the two `parse_hms_duration` arms; `format_time` and `format_duration_brief` share their split; the empty-uuid check in `labels::resolve_label_for_mode` (266-268) can't fire.
 
 #### #304 Tests
@@ -478,12 +477,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - 53 `*_loading` guards (fields 246, 258, 264) suppress writes core already skips when unchanged (`db/settings.rs:20-30`); one missed guard caused the Cues bug. Caveat: the first save of a default value still records an event.
 - Fix: read the switch; the session's mode; `SessionMode` directly; a `bind_per_mode_switch(row, key_fn)`; a core `stopwatch_from_db`; drop guards whose only job is the write, after checking the first-save case.
 
-#### #320 One toast helper
-- Related: #373.
-- Related: #357 (the same in preferences, presets and sounds, plus an undo button).
-- Where: `timer/imp.rs:4031-4035` (`toast`), 2664-2671, 2682-2689, 3634-3636, 3802-3804 use `adw::Toast::new` and `add_toast` directly; `db::show_toast` (`db/mod.rs:144`) wraps the title, replaces the last toast and finds the overlay of a pushed page. The two `on_save` error arms (2656-2691) differ only in kind, detail and text.
-- Fix: `show_toast` everywhere; one error arm. Fixes #326.
-
 #### #321 Smaller ones
 - The Import File callback (654-663) builds what `library_pick(&row)` (4453) returns.
 - `lookup_sound_name_for_setting`/`lookup_pattern_name_for_setting` (4426-4447) repeat `bells.rs:440-453` and turn a read error into "" instead of the default uuid. Related: #284.
@@ -528,8 +521,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Fix: keep the last `SyncIndicatorState` (it is `PartialEq`) and return early; refresh from the sync worker's main-loop hop and when a sync starts; a separate day watch. Related: #254 (one read in core).
 
 #### #334 Editing a session rebuilds the Log
-- Where: `log/imp.rs:1262-1285`: Save calls `refresh()` (labels, places, guided names, page 1, every card), losing "Load more" pages and the scroll, though `cards_by_id` (54-56) exists for in-place edits; its failure path builds its own plain toasts (1272, 1277) instead of `db::write_ok`; the dialog title is built twice (1145, 1152) and 912 re-parses `init_dt`.
-- Fix: replace the one card in place; `write_ok(.., Failed::Save)` (fixes #349). A save now reloads the Log from page 1 (sync-after-real-writes, maintainer accepted 2026-11-10). Related: #320.
+- Where: `log/imp.rs:1262-1285`: Save calls `refresh()` (labels, places, guided names, page 1, every card), losing "Load more" pages and the scroll, though `cards_by_id` (54-56) exists for in-place edits; its failure path posts its own `show_toast`s instead of `db::write_ok`; the dialog title is built twice (1145, 1152) and 912 re-parses `init_dt`.
+- Fix: replace the one card in place; `write_ok(.., Failed::Save)`. A save now reloads the Log from page 1 (sync-after-real-writes, maintainer accepted 2026-11-10).
 
 #### #335 Pending Log deletes: one transaction per row
 - Where: `log/imp.rs:776-786`: N deletes are N transactions and N `trigger_sync` calls on the main thread.
@@ -589,13 +582,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: `sounds.rs:260-334` (`add_play_button`, `PreviewState` 30-37) is a near copy of `guided.rs:871-930`, and `vibrations.rs:286-331` is a third; the "revert to Play" pair twice (296-299, 322-326). The transcode copy (`sounds.rs:742-846` vs `guided.rs:461-556`) is already #61; the busy spinner (597-606) copies `guided.rs:302`.
 - Fix: one preview-button helper with a play closure and a tooltip. Related: #61.
 
-#### #357 Toasts and dialogs
-- Related: #373 (guided, Local Folder and sound toasts; the undo toast three ways).
-- `sounds.rs:451-463, 671-682` post to the main window's overlay, hidden behind the chooser (#362); `preferences.rs:792-795` (`data_toast`, used inline at 371-372) uses a plain title; presets keep their own one-at-a-time `ToastSlot` and two undo-toast variants (`presets.rs:30-35, 726-797`) next to `db::show_toast`'s own, and `guided.rs:1214-1287` has a superset of `build_undo_toast`.
-- `if let Some(root) = anchor.root() { if let Ok(window) = root.downcast::<gtk::Window>() { dialog.present(..) } }` about 17 times (presets 553, 620, 689, 719; sounds 663, 968, 1006; bells 360, 928; more in other files): `dialog.present(Some(anchor))` does it and never silently skips.
-- The "Delete Bell?" dialog and its delete flow twice (`bells.rs:328-365`, 899-933).
-- Fix: `show_toast` with an optional undo button; `present(Some(anchor))`; one `confirm_and_delete(.., after)`. Related: #320, #337.
-
 #### #358 One name dialog
 - Related: #486 (the name rule inside the write).
 - Related: #415 (Android's six name dialogs).
@@ -646,10 +632,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: "insert, remove the orphan if the insert fails, read the row back" (`guided.rs:312-345`) and "delete the row, remove the file when the Undo toast ends" (1094-1210) are written again in Android (`ui.rs:1166-1185, 5840, 10179`), with different error formatting; #355 moves the same into core for bell sounds only. `transcode_to_ogg_preserve_channels` (461-556) and `do_import_io` (400) copy `sounds.rs:742, 691` (#61). The `AudioFileError` to toast text is written three times (`guided.rs:155-163, 351-361`, `sounds.rs:649-653`; Android has one `audio_file_error_text`, `ui.rs:1123`), and cancel travels as `AudioFileError::Other("cancelled")` (450). The display name is built by hand (141-145) where `sounds.rs:472` uses `display_name_from_path`; `format!("{new_uuid}.ogg")` (413) copies `guided_file_path`, which 1166 uses.
 - Fix: widen #355 to one core library-file helper for both kinds (`import_* -> Row`, and a delete that names the file to drop when Undo expires); one `transcode_to_ogg(src, dest, normalise, cancel)`; one `audio_error_text`; an `AudioFileError::Cancelled` variant. Related: #355, #61, #356.
 
-#### #373 Toasts, undo toasts and the Announcement type
-- Where: `guided.rs:1283-1294` (`window_from`, `add_toast_to_window`, about 10 calls; `window_from` again in `presets.rs:794`), `local_folder.rs:47-54, 77-79` and `sound.rs:270-290` post plain toasts past `db::show_toast`, which wraps the text; the undo toast is built three ways (`guided.rs:1214-1280`, `presets.rs:737-790`, `vibrations.rs:457-525`, the last two near copies of each other). `Announcement` (`announcement.rs`) is built and rendered only in GTK, Android doesn't use it, and guided builds the same toasts by hand ("File renamed" 1036, "Deleted"+name 1131); `PatternUpdated`/`PatternDeleted` and guided concatenate `"{} {}"`, so translators can't reorder (the others use `{name}`).
-- Fix: `show_toast` with an optional undo button for all of them (#357's fix, widened); delete `Announcement` and write `gettext("… {name}")` at each call site, or make it the only path. Related: #320, #357, #392.
-
 #### #374 Name checks through core's `validate`
 - Where: the vibration editor's Save gate (`vibration_editor.rs:453-470`), the guided import dialog (`guided.rs:213-245`) and rename (980-1013) check empty and taken by hand (`!trimmed.is_empty() && collision`, where `collision` already implies non-empty); labels, sounds and the vibrations rename use `meditate_core::validate`.
 - Fix: fold into #358's one name dialog with `validate`; #358 named `guided.rs:942` but not these two. Related: #358, #288.
@@ -686,8 +668,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `time.rs:22-28`: a hand-written `YYYY-MM-DD` parser where chrono is a dependency.
 - `shortcuts.ui:25-43` repeats the accelerators of `application.rs:434-439`; `GtkShortcutsShortcut` with `action-name` shows the bound one.
 - `vibration_editor.rs`: `edit_uuid` is never changed after construction (no `RefCell`); `name` mirrors `name_row.text()` on every change; the name, shape and banner clamps built three times; `draw_chart` allocates and formats every label on each drag motion (659-660, 725-747); the module doc says "snap to 5%", the step is 10 %.
-- `guided.rs`: `push_undo_toast` is a one-call wrapper (1214-1223); `DuplicateGuidedFile(name)` taken apart and rebuilt for `write_ok` (1176-1191); `insert_err` mutated inside a closure (327-347); dead `_nav_view_for_create` and an unused `nav_view` parameter (715, 720); the playbin wrapped in a new Pipeline (1338-1345); stale docs (24-27, `_watch`, the `ellipsize` doc on a `pub use` 1278-1281).
-- `vibrations.rs`: stale module doc ("lands in the next phasing step", 9-13); `show_undo_edit_toast` and `show_undo_delete_toast` differ in two lines (456-523, see #373); `rebuilder` cloned twice (363, 369); rename reads the row for Undo and core reads it again (575-579).
+- `guided.rs`: `DuplicateGuidedFile(name)` taken apart and rebuilt for `write_ok` (1176-1191); `insert_err` mutated inside a closure (327-347); the playbin wrapped in a new Pipeline (1338-1345); stale docs (24-27, `_watch`).
+- `vibrations.rs`: stale module doc ("lands in the next phasing step", 9-13); `rebuilder` cloned twice (363, 369); rename reads the row for Undo and core reads it again (575-579).
 - `local_folder.rs:73-82` `save` drops the error without logging it; `write_ok` logs and toasts.
 
 #### #380 Tests
@@ -840,7 +822,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Fix: lift each guarded decision (end steps, failure reporting, snapshot order) into a function in app.rs or core and test its behaviour; move the remaining real structure rules (JNI table 5934, no long dash, translations) into their own `source_rules.rs` with one `source(rel)` helper and one language list; slice on char boundaries. Related: #322, #339, #361, #380.
 
 #### #433 Smaller ones
-- `truncate_note_for_card` (1113-1122) is core's `format::ellipsize` written out, and appends "…" (#434); Slint 1.18 has `max-lines` with `overflow: elide`, matching GTK's `lines: 2; ellipsize: end`.
+- `truncate_note_for_card` (1113-1122) is a hand-written cut that appends "…" (#434); Slint 1.18 has `max-lines` with `overflow: elide`, matching GTK's `lines: 2; ellipsize: end`.
 - `group_log_sessions` (1040-1104) converts each row to local time three times and formats a `String` day key nobody reads outside the loop, the section total in both branches; `day_header` (229-238) converts "now" per section; `local_date` uses `.earliest()` where core uses `.single()`. Day grouping is also GTK's (`log/imp.rs:244-332`): #329.
 - `tree_folder_name` (929-950) is a third percent-decoder (core `sync/webdav.rs:440`) guessing a name Kotlin could write from `DocumentFile.fromTreeUri(..).name`.
 - `remove_stale_import_files` (955-964) hard-codes the three prefixes of `guided.rs:37-44` and Kotlin; a subfolder per run wiped at startup would need none (#435).

@@ -411,7 +411,7 @@ fn present_file_picker(
             // Size cap.
             let size = std::fs::metadata(&path).map_or(0, |m| m.len());
             if !meditate_core::sound::is_within_size_limit(size) {
-                present_toast(&anchor, &gettext("File is larger than 10 MB"));
+                crate::db::show_toast(&anchor, gettext("File is larger than 10 MB"));
                 return;
             }
             // Refuse a file without an audio stream (e.g. a video-only
@@ -420,7 +420,7 @@ fn present_file_picker(
             if crate::guided::probe_duration_secs(&path)
                 == Err(AudioFileError::NoAudioTrack)
             {
-                present_toast(&anchor, &gettext("This file has no audio track"));
+                crate::db::show_toast(&anchor, gettext("This file has no audio track"));
                 return;
             }
 
@@ -446,20 +446,6 @@ pub(crate) fn audio_file_filter() -> gtk::FileFilter {
         filter.add_suffix(ext);
     }
     filter
-}
-
-fn present_toast(anchor: &adw::ActionRow, title: &str) {
-    // Surface via the main window's toast overlay.
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
-            window.add_toast(
-                adw::Toast::builder()
-                    .title(title)
-                    .timeout(4)
-                    .build(),
-            );
-        }
-    }
 }
 
 fn present_import_confirm_dialog(
@@ -525,7 +511,7 @@ fn present_import_confirm_dialog(
 
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Import Sound"))
-        .body(format!("{} {}", gettext("Importing:"), filename))
+        .body(gettext("Importing: {name}").replace("{name}", &filename))
         .extra_child(&extra_box)
         .close_response("cancel")
         .default_response("cancel")
@@ -641,44 +627,24 @@ fn present_import_confirm_dialog(
                     }
                     if let Some(msg) = insert_err {
                         let _ = std::fs::remove_file(&dest_path);
-                        present_import_error_toast(&anchor, &msg);
+                        crate::db::show_toast(&anchor, gettext("Import failed: {error}").replace("{error}", &msg));
                     } else {
                         on_imported();
                     }
                 }
                 Ok(Err(AudioFileError::NoAudioTrack)) => {
-                    present_toast(&anchor, &gettext("This file has no audio track"));
+                    crate::db::show_toast(&anchor, gettext("This file has no audio track"));
                 }
-                Ok(Err(AudioFileError::TooLargeToSync)) => present_toast(&anchor, &crate::guided::too_large_to_sync()),
-                Ok(Err(AudioFileError::Other(e))) => present_import_error_toast(&anchor, &e),
-                Err(_) => present_import_error_toast(
-                    &anchor,
-                    &gettext("import worker died"),
-                ),
+                Ok(Err(AudioFileError::TooLargeToSync)) => crate::db::show_toast(&anchor, crate::guided::too_large_to_sync()),
+                Ok(Err(AudioFileError::Other(e))) => crate::db::show_toast(&anchor, gettext("Import failed: {error}").replace("{error}", &e)),
+                Err(_) => crate::db::show_toast(&anchor, gettext("Import worker died")),
             }
             dialog.force_close();
         });
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-        }
-    }
-}
-
-fn present_import_error_toast(anchor: &adw::ActionRow, msg: &str) {
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
-            window.add_toast(
-                adw::Toast::builder()
-                    .title(format!("{} {}", gettext("Import failed:"), msg))
-                    .timeout(4)
-                    .build(),
-            );
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
 }
 
 /// Worker-thread half of the custom-sound import. Copies or
@@ -965,12 +931,8 @@ fn present_rename_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
 }
 
 fn present_delete_dialog(
@@ -1003,11 +965,7 @@ fn present_delete_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-        }
-    }
+    dialog.present(Some(anchor));
 }
 
 #[cfg(test)]

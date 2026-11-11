@@ -17,7 +17,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 |:---:|---|---|---|
 | [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
-| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #347, #351, #362, #365, #366, #382, #489, #344 | the user thinks it worked |
+| [ ] | EE. Failures nobody sees: core and Linux | #246, #305, #307, #308, #498, #499, #310, #251, #247, #490, #323, #340, #347, #351, #365, #366, #382, #489, #344 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
@@ -26,7 +26,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
-| [ ] | T. Text that doesn't fit | #159, #311, #326, #349, #392, #434, #452, #462, #463, #474, #436 | information the user can't see |
+| [ ] | T. Text that doesn't fit | #159, #434, #452, #462, #463, #474, #436 | information the user can't see |
 | [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #477, #147 | controls some users can't reach |
 | [ ] | MM. Linux small ones | #348, #391, #492, #350, #393 | stale screens, leaks, warnings |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
@@ -95,7 +95,7 @@ Done 2026-11-10 (change writes-all-or-nothing). Moved on: the session-start half
 
 ## EE. Failures nobody sees: core and Linux
 
-AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING #320, #373) is the class fix.
+AGENTS.md: every failure tells the user. One reporting path per app is the class fix; Linux has it since P3 step 1 (`db::show_toast`, `show_in_view`, `write_ok`).
 
 ### #246 A failed integrity check is only logged
 - (Related: #100, #228, #258.) `mod.rs:308-313`: `quick_check` failures go to the diagnostics log and the app carries on, so the user keeps writing into a damaged file without knowing. AGENTS.md: a failure that only reaches the log is a bug. Not refusing to open is deliberate; telling the user is missing. Do together with #100 and #228 (where quick_check runs).
@@ -159,11 +159,6 @@ AGENTS.md: every failure tells the user. One reporting path per app (REFACTORING
 
 ### #351 A crashed session that can't be recovered at startup is only logged
 - `application.rs:161-165`: `finalize FAILED at startup` goes to the log; the session from the crash is silently not saved. Tell the user, and keep the snapshot for a retry.
-
-### #362 Import errors in the sound chooser never show
-- Where: `sounds.rs:451-463` (`present_toast`) and `671-682` post to the main window's overlay, which sits on the root page hidden behind the chooser; the chooser has its own overlay for this (60-63).
-- Scenario: pick an 11 MB file, a video-only mp4, or a file whose transcode or insert fails: nothing visible happens.
-- Fix: `db::show_toast(anchor, ..)` (#357).
 
 ### #365 A failed read shows an empty bell, preset or sound list
 - Where: `bells.rs:135-137`, `presets.rs:202`, `sounds.rs:173` turn an error into an empty list.
@@ -397,7 +392,7 @@ GStreamer work on the main thread, previews and errors that are lost.
 ### #388 The "Couldn't play bell sound" notice can be used up unseen
 - Where: `sound.rs:260-268` sets the once-per-run latch before `surface_audio_error_toast` (270-290), which returns silently without an active MeditateWindow.
 - Scenario: the first bell fails while another app has focus: no toast, latch set; every later bell failure that run only reaches the log.
-- Fix: set the latch only when the toast was shown (and use `show_toast`, #373).
+- Fix: set the latch only when the toast was shown. Since P3 step 1 the latch is once per session or preview (Start and each preview re-arm it), and the toast goes through `show_in_view`, which still skips without a main window.
 
 ### #389 With the Bluetooth lead-in on, every bell queries the sound devices on the main thread
 - Where: `sound.rs:395-399` calls `default_output_is_bluetooth` (487-527) for each bell: starts and stops the pulse device provider, or falls back to a full `DeviceMonitor`, which the code itself says can take 2 s for a sleeping card; the first use of a length also writes the noise WAV on the main thread (415-420).
@@ -475,22 +470,6 @@ What breaks when Android rebuilds the screen, and the home-screen widget. #445 n
 - Android: Slint clips a Text that neither wraps nor elides, silently. 142 Text elements, 31 wrap, 10 elide. Check 1, a test: every Text showing translated words wraps (`wrap: word-wrap`) and has room to grow; `overflow: elide` is not allowed for them either. An explicit short list is exempt (numbers, the big timer, single symbols).
 - Both apps, check 2, a test: slots that can't wrap (buttons, toasts, toggle and tab labels, dialog buttons, header titles, GTK row titles that ellipsize) have every translation measured with the real font at its real size against the slot's width at 360 px, and the test lists each one that doesn't fit. The work is the list of fixed slots and their widths; measuring needs nothing new (Pango in the GTK tests, the same font files for Android).
 - Fix what the first run lists: wrap, give the slot room, or shorten the translation; never "…". Changing how buttons are arranged (stacking them, moving them) is the last resort and needs Janek's yes each time (2026-10-18).
-
-### #311 The GTK "Deleted" toast cuts a guided file's name with "…"
-- Where: gtk `guided.rs:1133` uses `format::ellipsize(.., 28)`, against "no cut-off text and no ellipsis". Fix: show the full name (the toast wraps) and delete `ellipsize`.
-
-### #326 Five timer toasts can be cut with "…"
-- Same class: #392.
-- Where: `timer/imp.rs:2664-2671, 2682-2689, 3634-3636, 3802-3804, 4031-4035` use a plain toast title, which is one line; "Couldn't save session: storage error" is cut on a narrow window.
-- Fix: #320.
-
-### #349 The Log edit dialog's save-failure toasts can be cut with "…"
-- `log/imp.rs:1272, 1277` use plain toasts; fix #334. Same class: #392.
-
-### #392 "Deleted …" cuts a guided file's name with "…"
-- Where: `guided.rs:1133`: `format!("{} {}", gettext("Deleted"), ellipsize(name, 28))`, also not reorderable for translators.
-- Scenario: a file named "Body scan with long pauses, morning": the toast reads "Deleted Body scan with long pauses, mor…". Same class as #326, #349.
-- Fix: a `"Deleted {name}"` msgid in full, shown through `show_toast` (#373).
 
 ### #434 Long Log notes end in "…", a glyph the phone's font lacks
 - `truncate_note_for_card` (1113-1122) cuts notes over 120 characters and appends "…"; the test (1280-1284) pins it. On the FP5 the card ends in a box. Against both Android text rules. GTK cuts the same notes with `lines: 2; ellipsize: end`. Decide whether a card preview may be cut (then elide in Slint, #433) or must show in full. Same class: #452 (widget), #462 (Setup and Stats). The comment at main.slint 4402-4411 describes a clip wrapper that does not exist (#461).
@@ -657,6 +636,11 @@ Ideas and larger improvements, not bugs; the maintainer decides if and when.
 ### #179 Bundled Box Breath voice cues
 - Where: `meditate-gtk/data/sounds/` + gresource, `meditate-android/assets/sounds/` + `src/sounds.rs`, `meditate-core/src/db/seeds.rs`.
 - Idea: four short CC0/CC-BY cues ("Inhale", "Hold", "Exhale", "Hold") as box-breath seeds, so the phase chooser isn't empty. The seed is one-shot (`seeds.rs:27-29`), so existing installs need a seed-version step.
+
+### #509 Renaming or deleting a bell sound says nothing and can't be undone
+- Where: GTK `sounds.rs` (`present_rename_dialog`, `present_delete_dialog`), Android `ui.rs` (`on_bell_delete_confirm`, the rename). Core has `restore_vibration_pattern` and `restore_guided_file`, but no `restore_bell_sound`.
+- Want (maintainer, 2026-11-11, after P3 step 1's laptop test): as for patterns and guided files, "'{name}' deleted" and "'{name}' updated" with Undo, in both apps. The delete keeps the sound file until the offer ends untaken, as guided files do.
+- Its own change: a core restore, both apps, nine languages on Android.
 
 ### #180 Warn about a missing bell sound before Start
 - Where: rows already say "Missing" (`meditate-core/src/bells.rs:304`, gtk `bells.rs:384`, android `ui.rs:3224`).

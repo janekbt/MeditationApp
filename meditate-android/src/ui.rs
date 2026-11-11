@@ -8353,9 +8353,9 @@ fn build_ui() -> MainWindow {
                 let Some(session) = session else { return; };
                 pending_deletes.borrow_mut().push((id, session));
 
-                // Same string keys as GTK's announcement
-                // renderer (`meditate-gtk/src/announcement.rs`),
-                // rendered through the Tr catalogue.
+                // Same strings as GTK's Log delete toast
+                // (`meditate-gtk/src/log/imp.rs`), through the Tr
+                // catalogue.
                 let count = pending_deletes.borrow().len();
                 show_notice(
                     &ui,

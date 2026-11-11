@@ -448,19 +448,15 @@ fn show_undo_edit_toast(
     before: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
-    let title = crate::announcement::title(
-        &meditate_core::announcement::Announcement::PatternUpdated {
-            name: before.name.clone(),
-        },
-    );
-    let toast = adw::Toast::builder()
-        .title(&title)
-        .button_label(gettext("Undo"))
-        .timeout(5)
-        .build();
+    // The name it has now: a rename says the new one.
+    let name = app
+        .with_db(|db| db.find_vibration_pattern_by_uuid(before.uuid.as_str()))
+        .and_then(std::result::Result::ok)
+        .flatten()
+        .map_or_else(|| before.name.clone(), |p| p.name);
     let app = app.clone();
     let overlay_for_failure = overlay.clone();
-    toast.connect_button_clicked(move |t| {
+    let toast = crate::db::undo_toast(gettext("'{name}' updated").replace("{name}", &name), move || {
         let restored = app.with_db(|db| {
             db.update_vibration_pattern(
                 before.uuid.as_str(),
@@ -474,9 +470,9 @@ fn show_undo_edit_toast(
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
-        t.dismiss();
-    });
-    overlay.add_toast(toast);
+    }, || {});
+    // No slot: pattern offers queue, so each stays undoable.
+    crate::db::post_toast(overlay, None, toast);
 }
 
 /// Show an Undo toast for a delete. Clicking Undo re-inserts the
@@ -489,27 +485,18 @@ fn show_undo_delete_toast(
     snapshot: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
-    let title = crate::announcement::title(
-        &meditate_core::announcement::Announcement::PatternDeleted {
-            name: snapshot.name.clone(),
-        },
-    );
-    let toast = adw::Toast::builder()
-        .title(&title)
-        .button_label(gettext("Undo"))
-        .timeout(5)
-        .build();
+    let title = gettext("'{name}' deleted").replace("{name}", &snapshot.name);
     let app = app.clone();
     let overlay_for_failure = overlay.clone();
-    toast.connect_button_clicked(move |t| {
+    let toast = crate::db::undo_toast(title, move || {
         let restored = app.with_db(|db| db.core().restore_vibration_pattern(&snapshot));
         write_ok(&overlay_for_failure, "pattern.restore", restored, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
-        t.dismiss();
-    });
-    overlay.add_toast(toast);
+    }, || {});
+    // No slot: pattern offers queue, so each stays undoable.
+    crate::db::post_toast(overlay, None, toast);
 }
 
 fn present_rename_dialog(
@@ -601,12 +588,8 @@ fn present_rename_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
 }
 
 fn present_delete_dialog(
@@ -653,9 +636,5 @@ fn present_delete_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-        }
-    }
+    dialog.present(Some(anchor));
 }

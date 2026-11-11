@@ -1,4 +1,3 @@
-mod announcement;
 mod application;
 pub mod bells;
 mod config;

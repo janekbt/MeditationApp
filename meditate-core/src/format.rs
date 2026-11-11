@@ -197,20 +197,6 @@ pub fn format_duration_brief(secs: u32) -> String {
     }
 }
 
-/// Unicode-safe truncate-with-ellipsis. `max_chars` counts
-/// `char`s, not bytes — Latin-1 accented forms and CJK input all
-/// behave consistently. Returns `s` unchanged when it fits.
-pub fn ellipsize(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        out.push('…');
-        out
-    }
-}
-
 /// Pre-rendered hero label for the Setup view's idle state. When
 /// stopwatch mode is on the hero shows "00:00" (the upcoming
 /// count-up baseline); otherwise it shows the configured target
@@ -775,22 +761,6 @@ mod tests {
         assert_eq!(format_duration_brief(3600), "1:00:00");
         assert_eq!(format_duration_brief(3661), "1:01:01");
         assert_eq!(format_duration_brief(2 * 3600 + 5 * 60 + 9), "2:05:09");
-    }
-
-    #[test]
-    fn ellipsize_passes_through_when_within_limit() {
-        assert_eq!(ellipsize("hi", 28), "hi");
-        assert_eq!(ellipsize("exactly-five", 12), "exactly-five");
-    }
-
-    #[test]
-    fn ellipsize_truncates_with_ellipsis_at_max_char_boundary() {
-        assert_eq!(ellipsize("héllo world", 6), "héllo…");
-    }
-
-    #[test]
-    fn ellipsize_counts_chars_not_bytes() {
-        assert_eq!(ellipsize("éééééé", 4), "ééé…");
     }
 
     #[test]

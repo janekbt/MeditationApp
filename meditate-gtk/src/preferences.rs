@@ -306,21 +306,21 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                 Ok(c) => c,
                 Err(SyncSettingsError::EmptyUrl)
                 | Err(SyncSettingsError::EmptyUsername) => {
-                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    crate::db::show_toast(&dialog, gettext("Enter URL and username"));
                     return;
                 }
                 Err(SyncSettingsError::NoPassword) => {
-                    data_toast(&dialog, &gettext("Enter a password"));
+                    crate::db::show_toast(&dialog, gettext("Enter a password"));
                     return;
                 }
                 Err(SyncSettingsError::KeyringFailed) => {
-                    data_toast(&dialog, &gettext("Keyring read failed"));
+                    crate::db::show_toast(&dialog, gettext("Keyring read failed"));
                     return;
                 }
                 // Before sending anything: http would carry the
                 // password in the clear.
                 Err(SyncSettingsError::InsecureUrl) => {
-                    data_toast(&dialog, &gettext("URL must start with https://"));
+                    crate::db::show_toast(&dialog, gettext("URL must start with https://"));
                     return;
                 }
             };
@@ -368,8 +368,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                         }
                     };
                     meditate_core::log("test_connection", &detail);
-                    dialog.add_toast(adw::Toast::builder()
-                        .title(&toast).timeout(4).build());
+                    crate::db::show_toast(&dialog, toast);
                 }
             ));
         }
@@ -417,19 +416,19 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                 Ok(p) => p,
                 Err(SyncSettingsError::EmptyUrl)
                 | Err(SyncSettingsError::EmptyUsername) => {
-                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    crate::db::show_toast(&dialog, gettext("Enter URL and username"));
                     return;
                 }
                 Err(SyncSettingsError::InsecureUrl) => {
-                    data_toast(&dialog, &gettext("URL must start with https://"));
+                    crate::db::show_toast(&dialog, gettext("URL must start with https://"));
                     return;
                 }
                 Err(SyncSettingsError::NoPassword) => {
-                    data_toast(&dialog, &gettext("Enter a password"));
+                    crate::db::show_toast(&dialog, gettext("Enter a password"));
                     return;
                 }
                 Err(SyncSettingsError::KeyringFailed) => {
-                    data_toast(&dialog, &gettext("Keyring read failed"));
+                    crate::db::show_toast(&dialog, gettext("Keyring read failed"));
                     return;
                 }
             };
@@ -455,7 +454,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                         // GNOME Shell), but the diagnostics file is
                         // uncapped and visible via About → Troubleshooting.
                         meditate_core::log("keychain", &format!("store failed: {e:?}"));
-                        data_toast(&dialog, &gettext("Keyring write failed"));
+                        crate::db::show_toast(&dialog, gettext("Keyring write failed"));
                         return;
                     }
                 }
@@ -473,16 +472,16 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
                         "sync.settings",
                         &format!("save failed: {e:?}"),
                     );
-                    data_toast(&dialog, &gettext("Save failed"));
+                    crate::db::show_toast(&dialog, gettext("Save failed"));
                     return;
                 }
                 None => {
-                    data_toast(&dialog, &gettext("Database unavailable"));
+                    crate::db::show_toast(&dialog, gettext("Database unavailable"));
                     return;
                 }
             }
 
-            data_toast(&dialog, &gettext("Sync settings saved"));
+            crate::db::show_toast(&dialog, gettext("Sync settings saved"));
             // Now both pieces are persisted — kick off the first sync.
             app.trigger_sync();
         }
@@ -604,12 +603,12 @@ fn wire_data_actions(
                         let Ok(file) = result else { return; };
                         let Some(path) = file.path() else { return; };
                         match data_io::export_csv(&app, &path) {
-                            Ok(n) => data_toast(&dialog, &ngettext(
+                            Ok(n) => crate::db::show_toast(&dialog, ngettext(
                                 "Exported 1 session",
                                 "Exported {n} sessions",
                                 n as u32,
                             ).replace("{n}", &n.to_string())),
-                            Err(e) => data_toast(&dialog, &gettext("Export failed: {error}")
+                            Err(e) => crate::db::show_toast(&dialog, gettext("Export failed: {error}")
                                 .replace("{error}", &e.to_string())),
                         }
                     }
@@ -666,14 +665,14 @@ fn wire_data_actions(
                     move |_, _| {
                         match data_io::delete_all(&app) {
                             Ok(n) => {
-                                data_toast(&dialog, &ngettext(
+                                crate::db::show_toast(&dialog, ngettext(
                                     "Deleted 1 session",
                                     "Deleted {n} sessions",
                                     n as u32,
                                 ).replace("{n}", &n.to_string()));
                                 app.data_changed(Refresh::ALL);
                             }
-                            Err(e) => data_toast(&dialog, &gettext("Delete failed: {error}")
+                            Err(e) => crate::db::show_toast(&dialog, gettext("Delete failed: {error}")
                                 .replace("{error}", &e.to_string())),
                         }
                     }
@@ -713,7 +712,7 @@ where F: FnOnce(&std::path::Path) -> Result<meditate_core::data_io::ParsedImport
             let parsed = match parse(&path) {
                 Ok(parsed) => parsed,
                 Err(e) => {
-                    data_toast(&dialog, &gettext("Import failed: {error}").replace("{error}", &e.to_string()));
+                    crate::db::show_toast(&dialog, gettext("Import failed: {error}").replace("{error}", &e.to_string()));
                     return;
                 }
             };
@@ -767,25 +766,17 @@ fn import_question_text(question: &meditate_core::data_io::ImportQuestion) -> St
 fn write_import(app: &MeditateApplication, dialog: &adw::PreferencesDialog, parsed: &meditate_core::data_io::ParsedImport) {
     match crate::data_io::import_parsed(app, parsed) {
         Ok(n) => {
-            data_toast(dialog, &ngettext(
+            crate::db::show_toast(dialog, ngettext(
                 "Imported 1 session",
                 "Imported {n} sessions",
                 n as u32,
             ).replace("{n}", &n.to_string()));
             app.data_changed(Refresh::ALL);
         }
-        Err(e) => data_toast(dialog, &gettext("Import failed: {error}")
+        Err(e) => crate::db::show_toast(dialog, gettext("Import failed: {error}")
             .replace("{error}", &e.to_string())),
     }
 }
-
-fn data_toast(dialog: &adw::PreferencesDialog, title: &str) {
-    let toast = adw::Toast::builder().title(title).timeout(4).build();
-    dialog.add_toast(toast);
-}
-
-
-
 
 #[cfg(test)]
 mod tests {

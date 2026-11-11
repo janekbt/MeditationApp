@@ -7,7 +7,7 @@ mod imp {
 
     use crate::config;
     use crate::db::Database;
-    use crate::i18n::gettext;
+    use crate::i18n::{gettext, ngettext};
     use crate::window::MeditateWindow;
     use glib::clone;
 
@@ -398,26 +398,19 @@ mod imp {
             // Log and Stats start stale; the map handler re-reads them.
 
             let minutes = finalized.duration_secs / 60;
-            let title = crate::announcement::title(
-                &meditate_core::announcement::Announcement::SessionRecovered { minutes },
-            );
-
-            let toast = adw::Toast::builder()
-                .title(&title)
-                .button_label(gettext("Undo"))
-                .timeout(8)
-                .build();
-
+            let title = ngettext("Recovered 1 min session", "Recovered {n} min session", minutes)
+                .replace("{n}", &minutes.to_string());
             let app_for_undo = app.clone();
             let session_uuid = finalized.session_uuid.clone();
             let win_for_undo = win.clone();
-            toast.connect_button_clicked(move |_| {
+            let toast = crate::db::undo_toast(title, move || {
                 let deleted = app_for_undo.with_db(|db| db.delete_session_by_uuid(&session_uuid));
                 if crate::db::write_ok(&win_for_undo, "session.recovery", deleted, crate::db::Failed::Delete) {
                     app_for_undo.data_changed(meditate_core::db::Refresh::ALL);
                 }
-            });
-            win.add_toast(toast);
+            }, || {});
+            toast.set_timeout(8);
+            crate::db::post_toast(&win, Some("session.recovered"), toast);
         }
 
         fn setup_accels(&self) {
@@ -711,8 +704,8 @@ mod tests {
     fn log_edit_keeps_failed_saves_and_long_sessions() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
-        assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session: storage error\")));"));
-        assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session: storage unavailable\")));"));
+        assert!(log.contains("show_toast(&toast_overlay, gettext(\"Couldn't save session: storage error\"));"));
+        assert!(log.contains("show_toast(&toast_overlay, gettext(\"Couldn't save session: storage unavailable\"));"));
         assert!(!log.contains("app.with_db(|db| db.update_session(id, &data));"));
         assert!(!log.contains("Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0)"));
     }

@@ -3330,9 +3330,8 @@ export component MainWindow inherits Window {
     // Undo snackbar — the Material 3 analogue of GTK's coalescing
     // `adw::Toast` ("N sessions deleted · Undo"). Rust drives both
     // properties: `snackbar-visible` toggles the overlay, and
-    // `snackbar-text` is the localised "N sessions deleted" copy
-    // (`meditate_core::announcement::Announcement::SessionDeleted`
-    // rendered Rust-side). Tapping the Undo action raises the
+    // `snackbar-text` is the localised "N sessions deleted" copy,
+    // rendered Rust-side. Tapping the Undo action raises the
     // callback; auto-dismiss is a 5 s `slint::Timer` armed in Rust
     // alongside the toggle.
     in property <string> snackbar-text: "";
@@ -5466,9 +5465,8 @@ export component MainWindow inherits Window {
     // `snackbar-visible` true on delete-tap, sets a 5 s timer,
     // and toggles back to false from either the timer firing
     // (commit deletes) or the Undo tap (restore hidden cards).
-    // The text is the rendered "N sessions deleted" string —
-    // Rust formats it via `meditate_core::announcement::
-    // Announcement::SessionDeleted { count }`.
+    // The text is the rendered "N sessions deleted" string,
+    // formatted in Rust.
     //
     // Visual recipe matches `material-1.0/ui/components/
     // snack_bar.slint`: inverse-surface background, 4 px radius,

@@ -637,24 +637,13 @@ impl LogView {
         self.pending_deletes.borrow_mut().push((session_id, session));
 
         let count = self.pending_deletes.borrow().len();
-        let title = crate::announcement::title(
-            &meditate_core::announcement::Announcement::SessionDeleted {
-                count: count as u32,
-            },
-        );
+        let title = ngettext("Session deleted", "{n} sessions deleted", count as u32)
+            .replace("{n}", &count.to_string());
 
-        let new_toast = adw::Toast::builder()
-            .title(&title)
-            .button_label(gettext("Undo"))
-            .timeout(5)
-            .build();
-
-        // Undo: restore every hidden card and clear pending state. The
-        // toast's auto-dismiss after this fires the dismissed handler too,
-        // but the identity check there sees `active_delete_toast = None`
-        // and skips the commit.
+        // Undo: restore every hidden card and clear pending state, so
+        // the dismissed handler below skips the commit.
         let obj_undo = self.obj().clone();
-        new_toast.connect_button_clicked(move |_| {
+        let new_toast = crate::db::undo_toast(title, move || {
             let imp = obj_undo.imp();
             let pending = std::mem::take(&mut *imp.pending_deletes.borrow_mut());
             let cards = imp.cards_by_id.borrow();
@@ -662,7 +651,7 @@ impl LogView {
                 if let Some(c) = cards.get(id) { c.set_visible(true); }
             }
             *imp.active_delete_toast.borrow_mut() = None;
-        });
+        }, || {});
 
         // Dismissed: commit pending deletes only if we're still the active
         // toast. If `active_delete_toast` points elsewhere we got replaced
@@ -677,17 +666,10 @@ impl LogView {
             imp.commit_all_pending();
         });
 
-        // Swap in the new toast BEFORE dismissing the old one — that way
-        // the old toast's dismissed handler (which fires synchronously
-        // from `dismiss()`) sees the new toast in `active_delete_toast`,
-        // identity check fails, no commit. Borrow scope ends at the
-        // semicolon so the dismiss call below can reborrow safely.
-        let prev = self.active_delete_toast.borrow_mut().replace(new_toast.clone());
-        if let Some(old) = prev { old.dismiss(); }
-
-        if let Some(win) = self.get_window() {
-            win.add_toast(new_toast);
-        }
+        // Swap in the new toast BEFORE `post_toast` dismisses the old one,
+        // so the old one's handler sees it replaced and skips the commit.
+        self.active_delete_toast.replace(Some(new_toast.clone()));
+        crate::db::post_toast(&*self.obj(), Some("log.delete"), new_toast);
     }
 
     /// A rebuild during the Undo time must keep the card hidden.
@@ -707,9 +689,12 @@ impl LogView {
         if let Some(app) = self.get_app() {
             let was_stale = app.log_dirty();
             let mut failed = false;
+            // A toast's end runs this, whatever the user looks at now:
+            // the window means the page in view.
+            let anchor: gtk::Widget = self.obj().root().map_or_else(|| self.obj().clone().upcast(), |r| r.upcast());
             for (id, session) in &pending {
                 let deleted = app.with_db(|db| db.delete_session(*id));
-                if write_ok(&*self.obj(), "log.delete", deleted, Failed::Delete) {
+                if write_ok(&anchor, "log.delete", deleted, Failed::Delete) {
                     self.commit_delete_in_place(*id, session);
                 } else {
                     failed = true;
@@ -1200,12 +1185,12 @@ impl LogView {
                         Some(Ok(())) => {}
                         Some(Err(e)) => {
                             meditate_core::log("log.edit.save.failed", &e.to_string());
-                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session: storage error")));
+                            crate::db::show_toast(&toast_overlay, gettext("Couldn't save session: storage error"));
                             return;
                         }
                         None => {
                             meditate_core::log("log.edit.save.failed", "database unavailable");
-                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session: storage unavailable")));
+                            crate::db::show_toast(&toast_overlay, gettext("Couldn't save session: storage unavailable"));
                             return;
                         }
                     }
@@ -1215,9 +1200,7 @@ impl LogView {
             }
         ));
 
-        if let Some(win) = self.get_window() {
-            dialog.present(Some(&win));
-        }
+        dialog.present(Some(&*self.obj()));
     }
 }
 
@@ -1230,12 +1213,6 @@ impl LogView {
             .and_then(|r| r.downcast::<gtk::Window>().ok())
             .and_then(|w| w.application())
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-    }
-
-    fn get_window(&self) -> Option<crate::window::MeditateWindow> {
-        self.obj()
-            .root()
-            .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
     }
 }
 

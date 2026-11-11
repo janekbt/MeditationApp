@@ -273,15 +273,6 @@ pub struct TimerView {
     /// rebuilt cleanly on mode switch / sync update without leaking
     /// rows from the previous mode.
     starred_preset_rows: RefCell<Vec<(adw::ActionRow, String)>>,
-    /// The most-recently-shown apply toast. Tapping a second preset
-    /// dismisses the prior toast immediately so the new one renders
-    /// without waiting for the queue — otherwise the user has to
-    /// wait through the full timeout before seeing the next "applied"
-    /// confirmation. The Undo affordance on the dismissed toast is
-    /// lost, but that's the right trade: the user has just chosen
-    /// to apply a different preset, so undoing the previous one no
-    /// longer makes sense.
-    current_apply_toast: RefCell<Option<adw::Toast>>,
     /// A Save write is in flight; a second tap must not insert twice.
     saving: Cell<bool>,
     /// The open "Discard Session?" question, closed when the session
@@ -590,11 +581,8 @@ impl TimerView {
         self.open_file_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
-                let Some(window) = this.root()
-                    .and_then(|r| r.downcast::<gtk::Window>().ok())
-                else { return; };
                 let this_for_pick = this.clone();
-                crate::guided::pick_file_for_open(&window, move |pick| {
+                crate::guided::pick_file_for_open(this.upcast_ref(), move |pick| {
                     let imp = this_for_pick.imp();
                     *imp.guided_pick.borrow_mut() = Some(pick);
                     // Transient pick — clear any prior starred-row uuid
@@ -616,13 +604,10 @@ impl TimerView {
             move |_| {
                 let imp = this.imp();
                 let Some(app) = imp.get_app() else { return; };
-                let Some(window) = this.root()
-                    .and_then(|r| r.downcast::<gtk::Window>().ok())
-                else { return; };
                 let Some(pick) = imp.guided_pick.borrow().clone() else { return; };
                 let this_for_done = this.clone();
                 crate::guided::import_picked_file(
-                    &window,
+                    this.upcast_ref(),
                     &app,
                     pick,
                     move |row| {
@@ -1201,7 +1186,7 @@ impl TimerView {
             Some(&gettext("Meditation session running")),
         );
         if cookie == 0 {
-            self.toast(&gettext("Couldn't keep the computer awake for the bells"));
+            crate::db::show_in_view(gettext("Couldn't keep the computer awake for the bells"));
         }
         self.screen_awake_cookie.set(cookie);
     }
@@ -2129,6 +2114,7 @@ impl TimerView {
         // A Volume-row preview doesn't ring into the session, and a
         // level still settling is what the session's bells read.
         crate::sound::stop_preview();
+        crate::sound::rearm_audio_error_toast();
         self.flush_volume_rows();
         // Nor can an Undo change its settings: every toast goes.
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
@@ -2224,10 +2210,7 @@ impl TimerView {
                         *self.guided_playback.borrow_mut() = Some(playback);
                     }
                     Err(e) => {
-                        self.toast(&format!(
-                            "{}: {e}",
-                            gettext("Couldn't start playback"),
-                        ));
+                        crate::db::show_in_view(gettext("Couldn't start playback: {error}").replace("{error}", &e.to_string()));
                         return;
                     }
                 }
@@ -2610,13 +2593,7 @@ impl TimerView {
                                 &e.to_string(),
                             ),
                         );
-                        if let Some(win) = app
-                            .main_window()
-                        {
-                            win.add_toast(adw::Toast::new(&gettext(
-                                "Couldn't save session: storage error",
-                            )));
-                        }
+                        crate::db::show_in_view(gettext("Couldn't save session: storage error"));
                         return;
                     }
                     None => {
@@ -2627,13 +2604,7 @@ impl TimerView {
                                 "with_db_blocking returned None",
                             ),
                         );
-                        if let Some(win) = app
-                            .main_window()
-                        {
-                            win.add_toast(adw::Toast::new(&gettext(
-                                "Couldn't save session: storage unavailable",
-                            )));
-                        }
+                        crate::db::show_in_view(gettext("Couldn't save session: storage unavailable"));
                         return;
                     }
                 };
@@ -2646,20 +2617,16 @@ impl TimerView {
                 let win = app.main_window();
                 if let Some(win) = win {
                     if auto && win.is_active() {
-                        let toast = adw::Toast::builder()
-                            .title(gettext("Session saved"))
-                            .button_label(gettext("Undo"))
-                            .timeout(8)
-                            .build();
                         let app_for_undo = app.clone();
                         let win_for_undo = win.clone();
-                        toast.connect_button_clicked(move |_| {
+                        let toast = crate::db::undo_toast(gettext("Session saved"), move || {
                             // The play it counted goes with it (#324).
                             let deleted = app_for_undo.with_db(|db| db.undo_session_save(&uuid, local_file_id));
                             crate::db::write_ok(&win_for_undo, "session.auto_finish.undo", deleted, crate::db::Failed::Delete);
                             app_for_undo.data_changed(Refresh::ALL);
-                        });
-                        win.add_toast(toast);
+                        }, || {});
+                        toast.set_timeout(8);
+                        crate::db::post_toast(&win, Some("session.saved"), toast);
                     }
                 }
             });
@@ -2702,11 +2669,7 @@ impl TimerView {
             });
             self.discard_dialog.replace(Some(dialog.clone()));
 
-            if let Some(win) = self.obj().root()
-                .and_then(|r| r.downcast::<gtk::Window>().ok())
-            {
-                dialog.present(Some(&win));
-            }
+            dialog.present(Some(&*self.obj()));
         } else {
             self.stop_active_signals();
             self.reset_mode(self.current_mode(), true);
@@ -3597,9 +3560,7 @@ impl TimerView {
         row.add_suffix(&unstar);
         let obj = self.obj().clone();
         row.connect_activated(move |_| {
-            if let Some(window) = obj.root().and_downcast::<crate::window::MeditateWindow>() {
-                window.add_toast(adw::Toast::new(&gettext("File not found in the local folder")));
-            }
+            crate::db::show_toast(&obj, gettext("File not found in the local folder"));
         });
         row
     }
@@ -3765,9 +3726,7 @@ impl TimerView {
             *self.guided_pick.borrow_mut() = None;
             self.refresh_guided_selected_row();
             self.refresh_hero_for_idle();
-            if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
-                window.add_toast(adw::Toast::new(&gettext("Couldn't read audio file")));
-            }
+            crate::db::show_in_view(gettext("Couldn't read audio file"));
             return;
         }
         let secs = app
@@ -3890,55 +3849,15 @@ impl TimerView {
         // round-trip — same DB cost as the forward apply, accepted
         // for what's already a low-frequency action).
         //
-        // Dismiss any previous apply toast first so a quick second
-        // tap shows the new "applied" message without waiting through
-        // the queue — see `current_apply_toast` for the rationale.
-        // Bind the previous toast into a local *before* calling
-        // dismiss(): GTK fires the dismissed signal synchronously,
-        // so a `take()` on the borrow_mut would still hold the
-        // RefCell guard across the callback's own borrow_mut and
-        // panic with "already borrowed".
-        let prev_toast = self.current_apply_toast.replace(None);
-        if let Some(prev) = prev_toast {
-            prev.dismiss();
-        }
-        let toast = adw::Toast::builder()
-            .title(gettext("'{name}' applied")
-                .replace("{name}", &preset.name))
-            .button_label(gettext("Undo"))
-            .build();
+        // A second tap replaces this offer: undoing the previous preset
+        // no longer makes sense.
         let obj = self.obj().clone();
-        toast.connect_button_clicked(move |_| {
-            obj.imp().apply_config(&snapshot);
-        });
-        // Clear the cached handle when the toast finishes (queue exit
-        // / explicit dismiss / button click) — otherwise a long-lived
-        // strong reference would outlive the toast on the overlay.
-        // Two-step borrow (read then write) so the read-only borrow
-        // doesn't span the assignment, matching the dismiss-during-
-        // callback rule.
-        let obj_for_dismiss = self.obj().clone();
-        toast.connect_dismissed(move |t| {
-            let imp = obj_for_dismiss.imp();
-            let should_clear = imp.current_apply_toast
-                .borrow()
-                .as_ref()
-                .is_some_and(|cur| cur == t);
-            if should_clear {
-                imp.current_apply_toast.replace(None);
-            }
-        });
-        self.current_apply_toast.replace(Some(toast.clone()));
-        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
-            window.add_toast(toast);
-        }
-    }
-
-    /// Push a plain (no-action) toast onto the window's overlay.
-    fn toast(&self, message: &str) {
-        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
-            window.add_toast(adw::Toast::new(message));
-        }
+        let toast = crate::db::undo_toast(
+            gettext("'{name}' applied").replace("{name}", &preset.name),
+            move || { obj.imp().apply_config(&snapshot); },
+            || {},
+        );
+        crate::db::post_toast(&*self.obj(), Some("preset.apply"), toast);
     }
 
     /// False when the length could not be saved (the user was told).
@@ -4057,9 +3976,7 @@ impl TimerView {
             }
         });
 
-        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
-            dialog.present(Some(&win));
-        }
+        dialog.present(Some(&*self.obj()));
     }
 
     fn resolve_label_for_mode(&self, mode: TimerMode) -> Option<Label> {
@@ -4828,7 +4745,7 @@ mod tests {
         assert!(save[ok..].contains("if auto && win.is_active() {"), "only after the write landed");
         // Undo also puts the streak chip under it back, and an open Log follows at once.
         let undo = &save[save.find("undo_session_save(&uuid, local_file_id)").unwrap()..];
-        assert!(undo[..undo.find("win.add_toast").unwrap()].contains("data_changed(Refresh::ALL)"));
+        assert!(undo[..undo.find("post_toast(&win, Some(\"session.saved\"), toast)").unwrap()].contains("data_changed(Refresh::ALL)"));
         // The switch: per mode, written like every other setting.
         let row = body(&code, "fn refresh_auto_finish_state(&self)");
         assert!(row.contains("auto_finish_from_db("));

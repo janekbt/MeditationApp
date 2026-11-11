@@ -2,7 +2,6 @@
 # source files are added / moved. The leading-comment lines are ignored.
 
 # Rust sources (every gettext(...) call site)
-src/announcement.rs
 src/application.rs
 src/bells.rs
 src/data_io.rs

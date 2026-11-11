@@ -30,11 +30,10 @@ thread_local! {
     /// in-session slots so a preview in Settings can't fight with a
     /// running session's audio.
     static PREVIEW_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
-    /// Process-lifetime latch: once an audio error has been surfaced
-    /// to the user via toast, subsequent errors only hit the
-    /// diagnostics log. Headphones unplugging then re-plugging
-    /// shouldn't spam toasts; one notification per process tells the
-    /// user "something's wrong with audio" without repeated yells.
+    /// Once a session: after one audio error toast the next errors only
+    /// reach the diagnostics log, so unplugging headphones doesn't
+    /// spam. Each Start re-arms it, so a toast lost with a closing page
+    /// comes back next session.
     static AUDIO_ERROR_TOASTED: Cell<bool> = const { Cell::new(false) };
     /// The Bluetooth wake-up lead-in playing now, with the bells waiting
     /// for its end.
@@ -133,6 +132,8 @@ pub fn stop_all() {
 /// via user stop, end of file, or a different row's Play taking
 /// over the slot).
 pub fn play_preview(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
+    // Each preview is one tap: it may tell of its own failure.
+    rearm_audio_error_toast();
     let media = media_for_bell_sound(sound, volume);
     PREVIEW_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
@@ -163,6 +164,7 @@ pub fn play_preview(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
 /// transitions through the shared `PreviewToggle` and revert the
 /// row's icon.
 pub fn play_preview_for_guided_file(file: &crate::db::GuidedFile) -> gtk::MediaFile {
+    rearm_audio_error_toast();
     let local_path = meditate_core::audio_files::guided_file_path(
         &crate::sync_runner::local_guided_dir(),
         file.uuid.as_str(),
@@ -246,7 +248,7 @@ fn media_for_bell_sound(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile
 /// Hook a notify::error listener on the MediaFile so a broken audio
 /// pipeline (output device disappeared mid-session, file format the
 /// pipeline can't decode, etc.) reaches the diagnostics log and —
-/// once per process — surfaces a toast to the user. Without this,
+/// once per session or preview, surfaces a toast to the user. Without this,
 /// gtk::MediaFile errors are completely silent: the bell just doesn't
 /// ring and the session continues as if nothing happened.
 fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
@@ -268,15 +270,12 @@ fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
 }
 
 fn surface_audio_error_toast() {
-    let Some(win) = MeditateApplication::get().and_then(|app| app.main_window()) else {
-        return;
-    };
-    win.add_toast(
-        adw::Toast::builder()
-            .title(gettext("Couldn't play bell sound"))
-            .timeout(6)
-            .build(),
-    );
+    crate::db::show_in_view(gettext("Couldn't play bell sound"));
+}
+
+/// A new session may tell of a failing bell again.
+pub fn rearm_audio_error_toast() {
+    AUDIO_ERROR_TOASTED.with(|c| c.set(false));
 }
 
 /// Construct the MediaFile for the configured end bell and cache

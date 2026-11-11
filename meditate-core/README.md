@@ -65,7 +65,6 @@ cargo run -p meditate-core --example sync_pipeline_smoke  # not run in CI
 | `vibration` | Vibration pattern math: envelopes, chunking, binarize. |
 | `preview` | Single-slot preview state machine (toggle, supersede, auto-revert). |
 | `audio_files` | Where a synced sound or guided file lives on this device. |
-| `announcement` | Typed completion announcements (toast + screen reader). |
 | `format` | Translatable typed keys + plain formatters (durations, counters, mini-stats). |
 | `goal` | Daily-goal progress math + status partition. |
 | `insights` | Derived stats (week-over-week, milestones). |

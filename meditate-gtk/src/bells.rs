@@ -285,13 +285,11 @@ fn build_bell_row(
     let on_changed_for_del = on_changed.clone();
     let row_for_del = row.clone();
     delete_btn.connect_clicked(move |_| {
-        confirm_and_delete(
-            &row_for_del,
-            &app_for_del,
-            &bell_uuid_for_del,
-            rebuilder_for_del.clone(),
-            on_changed_for_del.clone(),
-        );
+        let (rebuilder, on_changed) = (rebuilder_for_del.clone(), on_changed_for_del.clone());
+        confirm_and_delete(&row_for_del, &app_for_del, &bell_uuid_for_del, move || {
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+            on_changed();
+        });
     });
     row.add_suffix(&delete_btn);
     // No set_activatable_widget — we want a tap on the row body to
@@ -313,15 +311,13 @@ fn build_bell_row(
     row
 }
 
-/// Shared deletion dialog used by the inline trash button on each
-/// list row. Mirrors the edit-page delete flow but lives at the list
-/// level so the confirmation can present against the list-page root.
+/// The delete confirmation, from a list row or the edit page; `after` runs
+/// once the delete is written.
 fn confirm_and_delete(
-    anchor: &adw::ActionRow,
+    anchor: &impl IsA<gtk::Widget>,
     app: &MeditateApplication,
     bell_uuid: &str,
-    rebuilder: Rebuilder,
-    on_changed: impl Fn() + Clone + 'static,
+    after: impl Fn() + 'static,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Bell?"))
@@ -335,24 +331,15 @@ fn confirm_and_delete(
 
     let app = app.clone();
     let uuid = bell_uuid.to_string();
-    let rebuilder = rebuilder.clone();
-    let on_changed = on_changed.clone();
-    let anchor_for_failure = anchor.clone();
+    let anchor_for_failure = anchor.as_ref().clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
         let deleted = app.with_db(|db| db.delete_interval_bell(&uuid));
-        if !write_ok(&anchor_for_failure, "bell.delete", deleted, Failed::Delete) {
-            return;
+        if write_ok(&anchor_for_failure, "bell.delete", deleted, Failed::Delete) {
+            after();
         }
-        if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
-        on_changed();
     });
-
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-        }
-    }
+    dialog.present(Some(anchor));
 }
 
 fn empty_state_row() -> adw::ActionRow {
@@ -871,40 +858,14 @@ fn push_edit_page(
     let snap_for_delete = snapshot.clone();
     let nav_view_for_delete = nav_view.clone();
     let on_changed_for_delete = on_changed.clone();
-    let page_for_delete = page.clone();
-    delete_btn.connect_clicked(move |_| {
-        let dialog = adw::AlertDialog::builder()
-            .heading(gettext("Delete Bell?"))
-            .body(gettext("This bell will no longer ring during sessions."))
-            .close_response("cancel")
-            .default_response("cancel")
-            .build();
-        dialog.add_response("cancel", &gettext("Cancel"));
-        dialog.add_response("delete", &gettext("Delete"));
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-
-        let app = app_for_delete.clone();
-        let snap = snap_for_delete.clone();
-        let nav_view = nav_view_for_delete.clone();
-        let on_changed = on_changed_for_delete.clone();
-        let prefs_for_failure = prefs_page.clone();
-        dialog.connect_response(None, move |_, id| {
-            if id != "delete" { return; }
-            let uuid = snap.borrow().uuid.clone();
-            let deleted = app.with_db(|db| db.delete_interval_bell(uuid.as_str()));
-            if !write_ok(&prefs_for_failure, "bell.delete", deleted, Failed::Delete) {
-                return;
-            }
+    delete_btn.connect_clicked(move |btn| {
+        let uuid = snap_for_delete.borrow().uuid.clone();
+        let (nav_view, on_changed) = (nav_view_for_delete.clone(), on_changed_for_delete.clone());
+        confirm_and_delete(btn, &app_for_delete, uuid.as_str(), move || {
             on_changed();
             // The list rebuilds as it shows again.
             nav_view.pop();
         });
-
-        if let Some(root) = page_for_delete.root() {
-            if let Ok(window) = root.downcast::<gtk::Window>() {
-                dialog.present(Some(&window));
-            }
-        }
     });
 
     // No need for actual populating-guard flips here because we set the

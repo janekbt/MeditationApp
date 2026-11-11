@@ -632,12 +632,15 @@ impl MeditateWindow {
         // stays the user's normal theme.
         toolbar_view.add_css_class("running-view-dark");
 
+        // Its own overlay: a failed save or bell shows during the session.
+        let overlay = adw::ToastOverlay::new();
+        overlay.set_child(Some(&toolbar_view));
         let page = adw::NavigationPage::builder()
             .tag("running").title(title)
             // Back gestures and Alt+Left led to Setup, where Start
             // replaced the running session; code can still pop it.
             .can_pop(false)
-            .child(&toolbar_view)
+            .child(&overlay)
             .build();
 
         // Esc on the running page pauses (not stop, not dismiss — stop
@@ -1049,10 +1052,6 @@ impl MeditateWindow {
                 }
             ),
         );
-    }
-
-    pub fn add_toast(&self, toast: adw::Toast) {
-        self.toast_overlay.add_toast(toast);
     }
 }
 

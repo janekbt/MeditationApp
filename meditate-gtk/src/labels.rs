@@ -291,12 +291,8 @@ fn present_create_label_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
 }
 
 fn present_rename_label_dialog(
@@ -358,12 +354,8 @@ fn present_rename_label_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
 }
 
 fn present_delete_label_dialog(
@@ -417,11 +409,7 @@ fn present_delete_label_dialog(
         }
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-        }
-    }
+    dialog.present(Some(anchor));
 }
 
 /// After a sync: two devices named a label alike before they synced,
@@ -468,7 +456,7 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
                 let merged = app.with_db(|db| db.core().merge_labels(conflict.suffixed_id, conflict.base_id));
                 if !matches!(merged, Some(Ok(_))) {
                     meditate_core::log("label.merge", &format!("failed: {merged:?}"));
-                    win_for_response.add_toast(adw::Toast::new(&gettext("Save failed")));
+                    crate::db::show_toast(&win_for_response, gettext("Save failed"));
                     return;
                 }
                 // Also the Setup label row, shown now or when it shows.

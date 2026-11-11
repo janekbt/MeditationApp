@@ -45,9 +45,7 @@ pub fn on_change(f: impl Fn() -> bool + 'static) {
 fn notify() {
     let refreshed = PROGRESS.with(|p| p.borrow_mut().settle(busy(), UNREACHABLE.with(Cell::get)));
     if refreshed {
-        if let Some(window) = MeditateApplication::get().and_then(|app| app.main_window()) {
-            window.add_toast(adw::Toast::new(&gettext("Folder refreshed")));
-        }
+        crate::db::show_in_view(gettext("Folder refreshed"));
     }
     let listeners = LISTENERS.with(|l| std::mem::take(&mut *l.borrow_mut()));
     let kept: Vec<_> = listeners.into_iter().filter(|f| f()).collect();
@@ -70,9 +68,7 @@ pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Data
     let done = app.with_db(|db| f(db.core())).and_then(Result::ok);
     if done.is_none() {
         PROGRESS.with(|p| p.borrow_mut().write_failed());
-        if let Some(window) = app.main_window() {
-            window.add_toast(adw::Toast::new(&gettext("Save failed")));
-        }
+        crate::db::show_in_view(gettext("Save failed"));
     }
     done
 }
@@ -346,10 +342,13 @@ fn build_page(
         .child(&clamp)
         .build();
     let parts = Page { toolbar: toolbar.clone(), banner: banner.clone(), scroller, clamp };
+    // Its own overlay: "Folder refreshed" and a failed save show here.
+    let overlay = adw::ToastOverlay::new();
+    overlay.set_child(Some(&toolbar));
     let page = adw::NavigationPage::builder()
         .tag(if top { "local-folder".to_string() } else { format!("local-folder/{dir}") })
         .title(if top { gettext("Local Folder") } else { title })
-        .child(&toolbar)
+        .child(&overlay)
         .build();
 
     let alive = Rc::new(Cell::new(true));
@@ -413,10 +412,10 @@ fn build_page(
 }
 
 fn choose_folder(anchor: &impl IsA<gtk::Widget>, app: &MeditateApplication) {
-    let Some(window) = anchor.root().and_downcast::<gtk::Window>() else { return };
+    let window = anchor.root().and_downcast::<gtk::Window>();
     let dialog = gtk::FileDialog::builder().title(gettext("Choose Folder")).modal(true).build();
     let app = app.clone();
-    dialog.select_folder(Some(&window), gtk::gio::Cancellable::NONE, move |result| {
+    dialog.select_folder(window.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
         let Ok(folder) = result else { return };
         let Some(path) = folder.path() else { return };
         let root = path.to_string_lossy().to_string();

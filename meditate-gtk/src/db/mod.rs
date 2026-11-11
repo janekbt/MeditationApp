@@ -140,25 +140,116 @@ fn show_write_failure(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: O
     show_toast(anchor, text);
 }
 
-/// A four-second toast on `anchor`'s page, replacing the last one.
-pub fn show_toast(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: String) {
-    // A plain toast title is one line, cut with "…" on a narrow window.
-    let title = gtk::Label::builder().label(text).wrap(true).xalign(0.0).css_classes(["heading"]).build();
-    let toast = adw::Toast::builder().custom_title(&title).timeout(4).build();
-    // One at a time: a slider step that fails again replaces the last
-    // one instead of queueing four seconds each.
-    thread_local! {
-        static LAST: std::cell::RefCell<Option<adw::Toast>> = const { std::cell::RefCell::new(None) };
+/// A toast on `anchor`'s page (see `post_toast`). Only the same
+/// message replaces it, so a slider step that fails again doesn't
+/// queue, and one failure never hides another.
+pub fn show_toast(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, text: impl Into<gtk::glib::GString>) {
+    let text = text.into();
+    post_toast(anchor, Some(&format!("plain:{text}")), plain_toast(text));
+}
+
+/// A message with no page of its own (a bell error, a background save
+/// or scan): on the page in view.
+pub fn show_in_view(text: impl Into<gtk::glib::GString>) {
+    let text = text.into();
+    post_in_view(Some(&format!("plain:{text}")), plain_toast(text));
+}
+
+/// A toast whose title wraps: a plain title is one line,
+/// cut with "…" on a narrow window.
+pub fn plain_toast(text: impl Into<gtk::glib::GString>) -> adw::Toast {
+    // WordChar: a name with no space breaks too, instead of widening the page.
+    let label = gtk::Label::builder().label(text.into()).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar)
+        // A little off the pill's round left edge, as a one-line title is.
+        .xalign(0.0).margin_start(6).css_classes(["heading"]).build();
+    adw::Toast::builder().custom_title(&label).build()
+}
+
+/// An Undo offer. `on_untaken` runs when it goes without Undo: timed
+/// out, closed, or replaced by a newer offer.
+pub fn undo_toast(
+    text: impl Into<gtk::glib::GString>,
+    on_undo: impl Fn() + 'static,
+    on_untaken: impl Fn() + 'static,
+) -> adw::Toast {
+    let toast = plain_toast(text);
+    // The title takes its one-line width first: capped, it wraps and
+    // leaves Undo its room at phone width.
+    if let Some(label) = toast.custom_title().and_downcast::<gtk::Label>() {
+        label.set_max_width_chars(20);
     }
-    if let Some(last) = LAST.replace(Some(toast.clone())) {
-        last.dismiss();
+    toast.set_timeout(5);
+    toast.set_button_label(Some(&gettext("Undo")));
+    let undone = std::rc::Rc::new(std::cell::Cell::new(false));
+    let undone_btn = undone.clone();
+    toast.connect_button_clicked(move |_| {
+        undone_btn.set(true);
+        on_undo();
+    });
+    toast.connect_dismissed(move |_| {
+        if !undone.get() { on_untaken(); }
+    });
+    toast
+}
+
+thread_local! {
+    // The last toast per slot and overlay. Weak: the overlay owns it, and
+    // a popped page must not stay alive through it.
+    static LAST: std::cell::RefCell<std::collections::HashMap<String, gtk::glib::WeakRef<adw::Toast>>> = std::cell::RefCell::default();
+}
+
+/// Show `toast` on `anchor`'s page, replacing the last toast posted
+/// there to the same `slot` (`None` queues). That page shows it also
+/// when the user only comes back to it, as when an editor pops. An
+/// anchor already gone from the window goes to the page in view.
+pub fn post_toast(anchor: &impl gtk::glib::object::IsA<gtk::Widget>, slot: Option<&str>, toast: adw::Toast) {
+    let anchor = anchor.as_ref();
+    // A popped page keeps its overlay, out of the window. A dialog's own
+    // overlay (Preferences has one) sits below the dialog itself.
+    let own = anchor.root().and_then(|_| {
+        anchor.ancestor(adw::ToastOverlay::static_type()).and_downcast::<adw::ToastOverlay>()
+            .or_else(|| first_overlay(&anchor.ancestor(adw::Dialog::static_type())?))
+    });
+    match own {
+        Some(overlay) => show_on(&overlay, slot, toast),
+        None => post_in_view(slot, toast),
     }
-    // A pushed page has its own overlay; the window's sits on the root page.
-    if let Some(overlay) = anchor.ancestor(adw::ToastOverlay::static_type()).and_downcast::<adw::ToastOverlay>() {
-        overlay.add_toast(toast);
-    } else if let Some(window) = anchor.root().and_downcast::<crate::window::MeditateWindow>() {
-        window.add_toast(toast);
+}
+
+/// `post_toast` for a toast with no page of its own.
+pub fn post_in_view(slot: Option<&str>, toast: adw::Toast) {
+    let Some(window) = crate::application::MeditateApplication::get().and_then(|app| app.main_window()) else { return };
+    let slot = slot.map(str::to_owned);
+    // Picked once the running handler is done: Start pushes the running
+    // page only after its own messages.
+    gtk::glib::idle_add_local_once(move || show_on(&window.overlay_in_view(), slot.as_deref(), toast));
+}
+
+/// The first toast overlay inside `w`; of a navigation view, only in
+/// the page it shows.
+pub(crate) fn first_overlay(w: &gtk::Widget) -> Option<adw::ToastOverlay> {
+    if let Some(nav) = w.downcast_ref::<adw::NavigationView>() {
+        return nav.visible_page().and_then(|p| first_overlay(p.upcast_ref()));
     }
+    std::iter::successors(w.first_child(), |c| c.next_sibling())
+        .find_map(|c| c.clone().downcast().ok().or_else(|| first_overlay(&c)))
+}
+
+fn show_on(overlay: &adw::ToastOverlay, slot: Option<&str>, toast: adw::Toast) {
+    let old = slot.and_then(|slot| {
+        // Per overlay: the same message on another page is another toast.
+        let key = format!("{:p}/{slot}", overlay.as_ptr());
+        // Recorded first: the old one's dismiss handler may post a toast
+        // of its own, which must not replace this one.
+        let old = LAST.with(|l| l.borrow_mut().insert(key.clone(), toast.downgrade()));
+        toast.connect_dismissed(move |t| LAST.with(|l| {
+            let mut l = l.borrow_mut();
+            if l.get(&key).and_then(|w| w.upgrade()).as_ref() == Some(t) { l.remove(&key); }
+        }));
+        old?.upgrade()
+    });
+    overlay.add_toast(toast);
+    if let Some(old) = old { old.dismiss(); }
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
@@ -1095,5 +1186,122 @@ mod tests {
         assert!(clash_text(&core).is_some_and(|t| t.contains("Calm")));
         assert!(clash_text(&DbError::DuplicateLabel("Zen".into())).is_some_and(|t| t.contains("Zen")));
         assert_eq!(clash_text(&meditate_core::db::DbError::DateOutOfRange), None);
+    }
+
+    /// Every production file under `src/`, cut at its test module.
+    fn production_sources() -> Vec<(String, String)> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let src = std::fs::read_to_string(&p).unwrap();
+                    // The test module ends at the first `}` in column 0;
+                    // some files keep production code after it.
+                    let cut = match src.find("#[cfg(test)]\nmod tests {") {
+                        Some(at) => {
+                            let end = src[at..].find("\n}\n").map_or(src.len(), |e| at + e + 3);
+                            format!("{}{}", &src[..at], &src[end..])
+                        }
+                        None => src,
+                    };
+                    let name = p.strip_prefix(concat!(env!("CARGO_MANIFEST_DIR"), "/src/")).unwrap();
+                    out.push((name.to_string_lossy().into_owned(), cut));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")), &mut out);
+        out
+    }
+
+    /// A toast built or posted past the shared path was cut with "…"
+    /// or landed on an overlay a pushed page hid.
+    #[test]
+    fn every_toast_goes_through_the_shared_path() {
+        let sources = production_sources();
+        let mut stray = Vec::new();
+        for (file, src) in &sources {
+            if file == "db/mod.rs" { continue; }
+            for pat in ["Toast::new(", "Toast::builder(", "add_toast("] {
+                if src.contains(pat) { stray.push(format!("{file}: {pat}")); }
+            }
+        }
+        assert_eq!(stray, Vec::<String>::new());
+        // ...and that path wraps its title instead of cutting it.
+        let db = file(&sources, "db/mod.rs");
+        let plain = &db[db.find("pub fn plain_toast(").unwrap()..];
+        let plain = &plain[..plain.find("\n}\n").unwrap()];
+        assert!(plain.contains(".wrap(true)") && plain.contains(".custom_title(&label)"));
+        // A name with no space broke no line and widened the page, and a
+        // one-line title left the Undo button "Rüc…" (laptop, 2026-11-11).
+        assert!(plain.contains("wrap_mode(gtk::pango::WrapMode::WordChar)"), "breaks inside a long word");
+        let undo = &db[db.find("pub fn undo_toast(").unwrap()..];
+        assert!(undo[..undo.find("\n}\n").unwrap()].contains("set_max_width_chars("), "wraps before it takes Undo's room");
+        // The running and Local Folder pages, where a failure also comes
+        // while they are in view, have an overlay of their own.
+        for name in ["window/imp.rs", "local_folder.rs"] {
+            let src = file(&sources, name);
+            assert!(src.contains("let overlay = adw::ToastOverlay::new();\n") && src.contains("overlay.set_child(Some(&toolbar"), "{name}");
+            assert!(src.contains(".child(&overlay)"), "{name}: the page shows the overlay");
+        }
+    }
+
+    /// The root-downcast guard skipped a dialog without a word.
+    #[test]
+    fn dialogs_open_on_their_anchor() {
+        let sources = production_sources();
+        let guard: Vec<_> = sources.iter()
+            .filter(|(_, src)| [".present(Some(&win))", ".present(Some(&window))"].iter().any(|p| src.contains(p)))
+            .map(|(f, _)| f.clone()).collect();
+        assert_eq!(guard, Vec::<String>::new());
+        let bells = file(&sources, "bells.rs");
+        assert_eq!(bells.matches("\"Delete Bell?\"").count(), 1, "one delete dialog");
+        let edit = &bells[bells.find("fn push_edit_page(").unwrap()..];
+        assert!(edit.contains("confirm_and_delete(btn, "), "the edit page uses it too");
+    }
+
+    /// "Deleted Body scan with long pa…": a cut name, glued to a word
+    /// translators could not move.
+    #[test]
+    fn no_message_cuts_or_glues_a_name() {
+        let sources = production_sources();
+        let mut found = Vec::new();
+        for (file, src) in &sources {
+            for pat in [" ellipsize(", "format!(\"{} {}\", gettext(", "format!(\"{}: {", "format!(\"{} {} ({})\""] {
+                if src.contains(pat) { found.push(format!("{file}: {pat}")); }
+            }
+        }
+        assert_eq!(found, Vec::<String>::new());
+        assert!(file(&sources, "vibrations.rs").contains("gettext(\"'{name}' updated\")"));
+        assert!(file(&sources, "guided.rs").contains("gettext(\"'{name}' deleted\")"));
+    }
+
+    /// A message with no page of its own (the window as anchor) went
+    /// under the running page Start pushes next, under a nested page,
+    /// or replaced the same text on another page; a lost bell error
+    /// never came back.
+    #[test]
+    fn messages_with_no_page_go_to_the_page_in_view() {
+        let sources = production_sources();
+        let db = file(&sources, "db/mod.rs");
+        let post = &db[db.find("pub fn post_toast(").unwrap()..];
+        assert!(post.contains("None => post_in_view(slot, toast)"), "no page of its own");
+        assert!(db.contains("idle_add_local_once(move || show_on(&window.overlay_in_view()"), "picked after the handler");
+        assert!(db.contains("format!(\"{:p}/{slot}\", overlay.as_ptr())"), "slots per overlay");
+        let first = &db[db.find("fn first_overlay(").unwrap()..];
+        assert!(first[..first.find("\n}\n").unwrap()].contains("nav.visible_page()"), "only the shown page");
+        assert!(file(&sources, "window/mod.rs").contains("self.dialogs()"), "every open dialog, top first");
+        let timer = file(&sources, "timer/imp.rs");
+        let start = &timer[timer.find("fn on_start(&self)").unwrap()..];
+        assert!(start[..start.find("emit_by_name::<()>(\"timer-started\"").unwrap()].contains("crate::sound::rearm_audio_error_toast();"));
+        let log = file(&sources, "log/imp.rs");
+        let commit = &log[log.find("fn commit_all_pending(").unwrap()..];
+        assert!(commit.contains("self.obj().root()") && commit.contains("write_ok(&anchor, \"log.delete\""));
+    }
+
+    fn file<'a>(sources: &'a [(String, String)], name: &str) -> &'a str {
+        &sources.iter().find(|(f, _)| f == name).unwrap_or_else(|| panic!("{name}")).1
     }
 }

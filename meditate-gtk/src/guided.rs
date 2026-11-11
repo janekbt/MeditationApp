@@ -26,7 +26,7 @@
 //! Phases 5 + 6 build the timer Setup-view UI + playback engine on
 //! top of these primitives.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,14 +38,6 @@ use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, GuidedFile};
 use crate::i18n::gettext;
 use meditate_core::sound::AudioFileError;
-
-/// Single slot for the chooser's most-recently-shown undo toast.
-/// Tapping a second mutating action (rename + rename, delete + delete,
-/// rename + delete in either order) dismisses the prior toast so the
-/// new one renders without queue delay. The Undo affordance on the
-/// dismissed toast is lost, but that's the right trade — the user has
-/// just done a NEW action, undoing the previous one would conflict.
-type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
 /// Shared preview state for the guided-files chooser. Mirrors the
 /// equivalent struct in `vibrations.rs` and `sounds.rs` so all three
@@ -94,12 +86,13 @@ impl GuidedFilePick {
 /// Show a `gtk::FileDialog` with audio-file filters, probe the
 /// duration of the chosen file, and hand the resulting transient pick
 /// to `on_picked`. Errors (user cancelled, probe failed, file moved
-/// between pick and probe) surface as a window toast and skip the
+/// between pick and probe) surface as a toast on the anchor's page and skip the
 /// callback — the Setup view's Selected row simply stays where it was.
 pub fn pick_file_for_open(
-    parent_window: &gtk::Window,
+    anchor: &gtk::Widget,
     on_picked: impl Fn(GuidedFilePick) + 'static,
 ) {
+    let parent_window = anchor.root().and_downcast::<gtk::Window>();
     let dialog = gtk::FileDialog::builder()
         .title(gettext("Choose Guided Meditation"))
         .modal(true)
@@ -114,9 +107,9 @@ pub fn pick_file_for_open(
     dialog.set_filters(Some(&filters));
     dialog.set_default_filter(Some(&filter));
 
-    let parent_for_toast = parent_window.clone();
+    let anchor_for_toast = anchor.clone();
     let on_picked = Rc::new(on_picked);
-    dialog.open(Some(parent_window), gtk::gio::Cancellable::NONE, move |result| {
+    dialog.open(parent_window.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
         let file = match result {
             Ok(f) => f,
             Err(e) => {
@@ -124,19 +117,13 @@ pub fn pick_file_for_open(
                 // variant — we swallow it silently. Other errors
                 // (permission denied, etc.) get a toast.
                 if !e.matches(gtk::DialogError::Dismissed) {
-                    add_toast_to_window(
-                        &parent_for_toast,
-                        &format!("{}: {e}", gettext("File picker error")),
-                    );
+                    crate::db::show_toast(&anchor_for_toast, gettext("File picker error: {error}").replace("{error}", &e.to_string()));
                 }
                 return;
             }
         };
         let Some(path) = file.path() else {
-            add_toast_to_window(
-                &parent_for_toast,
-                &gettext("Picked file has no local path"),
-            );
+            crate::db::show_toast(&anchor_for_toast, gettext("Picked file has no local path"));
             return;
         };
         let display_name = path
@@ -154,15 +141,9 @@ pub fn pick_file_for_open(
                     folder: None,
                 });
             }
-            Err(AudioFileError::NoAudioTrack) => add_toast_to_window(
-                &parent_for_toast,
-                &gettext("This file has no audio track"),
-            ),
-            Err(AudioFileError::TooLargeToSync) => add_toast_to_window(&parent_for_toast, &too_large_to_sync()),
-            Err(AudioFileError::Other(e)) => add_toast_to_window(
-                &parent_for_toast,
-                &format!("{}: {e}", gettext("Couldn't read audio file")),
-            ),
+            Err(AudioFileError::NoAudioTrack) => crate::db::show_toast(&anchor_for_toast, gettext("This file has no audio track")),
+            Err(AudioFileError::TooLargeToSync) => crate::db::show_toast(&anchor_for_toast, too_large_to_sync()),
+            Err(AudioFileError::Other(e)) => crate::db::show_toast(&anchor_for_toast, gettext("Couldn't read audio file: {error}").replace("{error}", &e.to_string())),
         }
     });
 }
@@ -174,10 +155,10 @@ pub fn pick_file_for_open(
 /// source file, then insert a `guided_files` row and call `on_done`.
 /// `progress_btn` is the host-page button whose label gets swapped
 /// for a "Converting…" spinner during the worker — typically the
-/// Setup view's Import File button. Errors surface as a window toast
+/// Setup view's Import File button. Errors surface as a toast on the anchor's page
 /// and leave the library unchanged.
 pub fn import_picked_file(
-    parent_window: &gtk::Window,
+    anchor: &gtk::Widget,
     app: &MeditateApplication,
     pick: GuidedFilePick,
     on_done: impl Fn(GuidedFile) + 'static,
@@ -218,11 +199,9 @@ pub fn import_picked_file(
 
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Import Guided File"))
-        .body(format!(
-            "{} {} ({})",
-            gettext("Importing:"),
-            pick.display_name,
-            format_duration_brief(pick.duration_secs),
+        .body(gettext("Importing: {name}").replace(
+            "{name}",
+            &format!("{} ({})", pick.display_name, format_duration_brief(pick.duration_secs)),
         ))
         .extra_child(&extra_box)
         .close_response("cancel")
@@ -271,7 +250,7 @@ pub fn import_picked_file(
     let pick_for_click = pick.clone();
     let entry_for_click = entry.clone();
     let dialog_for_click = dialog.clone();
-    let parent_for_click = parent_window.clone();
+    let anchor_for_click = anchor.clone();
     let on_done = Rc::new(on_done);
     let on_done_for_click = on_done.clone();
     // Set up the cancel flag once at dialog scope so the response
@@ -311,7 +290,7 @@ pub fn import_picked_file(
 
         let app = app_for_click.clone();
         let dialog = dialog_for_click.clone();
-        let parent = parent_for_click.clone();
+        let parent = anchor_for_click.clone();
         let pick = pick_for_click.clone();
         let trimmed_for_done = trimmed.clone();
         let on_done = on_done_for_click.clone();
@@ -352,10 +331,7 @@ pub fn import_picked_file(
                     }
                     if let Some(msg) = insert_err {
                         let _ = std::fs::remove_file(&dest_path);
-                        add_toast_to_window(
-                            &parent,
-                            &format!("{}: {msg}", gettext("Import failed")),
-                        );
+                        crate::db::show_toast(&parent, gettext("Import failed: {error}").replace("{error}", &msg));
                     } else if let Some(row) = app
                         .with_db(|db| db.find_guided_file_by_uuid(&new_uuid))
                         .and_then(std::result::Result::ok)
@@ -364,25 +340,16 @@ pub fn import_picked_file(
                         on_done(row);
                     }
                 }
-                Ok(Err(AudioFileError::NoAudioTrack)) => add_toast_to_window(
-                    &parent,
-                    &gettext("This file has no audio track"),
-                ),
-                Ok(Err(AudioFileError::TooLargeToSync)) => add_toast_to_window(&parent, &too_large_to_sync()),
-                Ok(Err(AudioFileError::Other(e))) => add_toast_to_window(
-                    &parent,
-                    &format!("{}: {e}", gettext("Import failed")),
-                ),
-                Err(_) => add_toast_to_window(
-                    &parent,
-                    &gettext("Import worker died"),
-                ),
+                Ok(Err(AudioFileError::NoAudioTrack)) => crate::db::show_toast(&parent, gettext("This file has no audio track")),
+                Ok(Err(AudioFileError::TooLargeToSync)) => crate::db::show_toast(&parent, too_large_to_sync()),
+                Ok(Err(AudioFileError::Other(e))) => crate::db::show_toast(&parent, gettext("Import failed: {error}").replace("{error}", &e.to_string())),
+                Err(_) => crate::db::show_toast(&parent, gettext("Import worker died")),
             }
             dialog.force_close();
         });
     });
 
-    dialog.present(Some(parent_window));
+    dialog.present(Some(anchor));
     entry.grab_focus();
     entry.select_region(0, -1);
 }
@@ -592,11 +559,6 @@ pub fn push_guided_files_chooser<F>(
     // wrapped Box<dyn Fn()> matches the bells.rs / labels.rs idiom.
     let rebuilder: crate::Rebuilder = Rc::new(RefCell::new(None));
 
-    // One slot for the chooser's most-recently-shown undo toast.
-    // Subsequent rename/delete actions dismiss whichever toast is in
-    // the slot before showing their own — see ToastSlot's docs.
-    let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
-
     // One shared preview slot across every row. Rebuilt-as-empty on
     // each `rebuilder()` call indirectly: the chooser is a single
     // NavigationPage instance, so a rebuild only swaps rows in/out;
@@ -612,7 +574,6 @@ pub fn push_guided_files_chooser<F>(
     let on_changed_for_init = on_changed.clone();
     let rebuilder_for_init = rebuilder.clone();
     let toast_overlay_for_rb = toast_overlay.clone();
-    let toast_slot_for_rb = toast_slot.clone();
     let preview_for_rb = preview.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
@@ -623,7 +584,6 @@ pub fn push_guided_files_chooser<F>(
             rebuilder_for_init.clone(),
             on_changed_for_init.clone(),
             &toast_overlay_for_rb,
-            toast_slot_for_rb.clone(),
             preview_for_rb.clone(),
         );
         on_changed_for_init();
@@ -649,7 +609,6 @@ fn rebuild_chooser_rows(
     rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
-    toast_slot: ToastSlot,
     preview: Rc<RefCell<PreviewState>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
@@ -689,7 +648,7 @@ fn rebuild_chooser_rows(
     for (index, file) in files.into_iter().enumerate() {
         let row = build_guided_file_row(
             &file, app, rebuilder.clone(), on_changed.clone(),
-            toast_overlay, toast_slot.clone(), preview.clone(),
+            toast_overlay, preview.clone(),
         );
         crate::presets::add_reordering(&row, file.uuid.0.clone(), index, move_to.clone());
         group.add(&row);
@@ -712,21 +671,22 @@ fn build_create_row(
     row.add_suffix(&plus);
 
     let app_for_create = app.clone();
-    let _nav_view_for_create = nav_view.clone();
+    // The import's dialog and messages hang on the navigation view:
+    // a rebuild can remove this row meanwhile.
+    let nav_view_for_create = nav_view.clone();
     let rebuilder_for_create = rebuilder.clone();
     let on_changed_for_create = on_changed.clone();
-    row.connect_activated(move |row| {
-        let Some(window) = window_from(row) else { return; };
-        let win_for_pick = window.clone();
+    row.connect_activated(move |_| {
+        let anchor = nav_view_for_create.clone().upcast::<gtk::Widget>();
         let app_for_pick = app_for_create.clone();
         let rebuilder_for_pick = rebuilder_for_create.clone();
         let on_changed_for_pick = on_changed_for_create.clone();
-        pick_file_for_open(window.upcast_ref::<gtk::Window>(), move |pick| {
+        pick_file_for_open(&anchor.clone(), move |pick| {
             let app = app_for_pick.clone();
             let rebuilder = rebuilder_for_pick.clone();
             let on_changed = on_changed_for_pick.clone();
             import_picked_file(
-                win_for_pick.upcast_ref::<gtk::Window>(),
+                &anchor,
                 &app,
                 pick,
                 move |_row| {
@@ -748,7 +708,6 @@ fn build_guided_file_row(
     rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
-    toast_slot: ToastSlot,
     preview: Rc<RefCell<PreviewState>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -810,7 +769,6 @@ fn build_guided_file_row(
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
         let toast_overlay = toast_overlay.clone();
-        let toast_slot = toast_slot.clone();
         rename_btn.connect_clicked(move |btn| {
             present_rename_dialog(
                 btn,
@@ -820,7 +778,6 @@ fn build_guided_file_row(
                 rebuilder.clone(),
                 on_changed.clone(),
                 &toast_overlay,
-                toast_slot.clone(),
             );
         });
     }
@@ -840,7 +797,6 @@ fn build_guided_file_row(
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
         let toast_overlay = toast_overlay.clone();
-        let toast_slot = toast_slot.clone();
         delete_btn.connect_clicked(move |btn| {
             present_delete_dialog(
                 btn,
@@ -850,7 +806,6 @@ fn build_guided_file_row(
                 rebuilder.clone(),
                 on_changed.clone(),
                 &toast_overlay,
-                toast_slot.clone(),
             );
         });
     }
@@ -947,7 +902,6 @@ fn present_rename_dialog(
     rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
-    toast_slot: ToastSlot,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -1005,7 +959,6 @@ fn present_rename_dialog(
     let old_name = current_name.to_string();
     let entry_for_response = entry.clone();
     let toast_overlay_for_response = toast_overlay.clone();
-    let toast_slot_for_response = toast_slot.clone();
     let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" {
@@ -1036,33 +989,22 @@ fn present_rename_dialog(
         let on_changed_for_undo = on_changed.clone();
         let rebuilder_for_undo = rebuilder.clone();
         let overlay_for_failure = toast_overlay_for_response.clone();
-        push_undo_toast(
-            &toast_overlay_for_response,
-            &toast_slot_for_response,
-            &gettext("File renamed"),
-            move || {
-                let renamed = app_for_undo.with_db(|db| {
-                    db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
-                });
-                write_ok(&overlay_for_failure, "guided.rename.undo", renamed, Failed::Save);
-                if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
-                    rb();
-                }
-                on_changed_for_undo();
-            },
-            // Rename undo has no on-natural-dismiss work — no on-disk
-            // file to clean up like the delete case does.
-            || {},
-        );
+        let toast = crate::db::undo_toast(gettext("File renamed"), move || {
+            let renamed = app_for_undo.with_db(|db| {
+                db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
+            });
+            write_ok(&overlay_for_failure, "guided.rename.undo", renamed, Failed::Save);
+            if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
+                rb();
+            }
+            on_changed_for_undo();
+        }, || {});
+        crate::db::post_toast(&toast_overlay_for_response, Some("guided"), toast);
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-            entry.grab_focus();
-            entry.select_region(0, -1);
-        }
-    }
+    dialog.present(Some(anchor));
+    entry.grab_focus();
+    entry.select_region(0, -1);
 }
 
 fn present_delete_dialog(
@@ -1073,7 +1015,6 @@ fn present_delete_dialog(
     rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
-    toast_slot: ToastSlot,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Guided File?"))
@@ -1094,7 +1035,6 @@ fn present_delete_dialog(
     let uuid = uuid.to_string();
     let display_name_for_response = display_name.to_string();
     let toast_overlay_for_response = toast_overlay.clone();
-    let toast_slot_for_response = toast_slot.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" {
             return;
@@ -1126,8 +1066,7 @@ fn present_delete_dialog(
 
         offer_guided_undo(
             &toast_overlay_for_response,
-            &toast_slot_for_response,
-            &format!("{} {}", gettext("Deleted"), ellipsize(&display_name_for_response, 28)),
+            &gettext("'{name}' deleted").replace("{name}", &display_name_for_response),
             &app,
             file,
             rebuilder.clone(),
@@ -1135,11 +1074,7 @@ fn present_delete_dialog(
         );
     });
 
-    if let Some(root) = anchor.root() {
-        if let Ok(window) = root.downcast::<gtk::Window>() {
-            dialog.present(Some(&window));
-        }
-    }
+    dialog.present(Some(anchor));
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1152,7 +1087,6 @@ fn present_delete_dialog(
 /// path (another device's after a sync).
 fn offer_guided_undo(
     overlay: &adw::ToastOverlay,
-    slot: &ToastSlot,
     title: &str,
     app: &MeditateApplication,
     file: GuidedFile,
@@ -1164,10 +1098,8 @@ fn offer_guided_undo(
         file.uuid.as_str(),
     );
     let path_for_dismiss = path.clone();
-    let (overlay_again, slot_again, app) = (overlay.clone(), slot.clone(), app.clone());
-    push_undo_toast(
-        overlay,
-        slot,
+    let (overlay_again, app) = (overlay.clone(), app.clone());
+    let toast = crate::db::undo_toast(
         title,
         move || {
             let restored = app.with_db(|db| {
@@ -1193,7 +1125,7 @@ fn offer_guided_undo(
                 Some(Err(_)) | None => {
                     meditate_core::log("guided.restore", &format!("failed: {restored:?}"));
                     let title = gettext("Save failed");
-                    offer_guided_undo(&overlay_again, &slot_again, &title, &app, file.clone(), rebuilder.clone(), on_changed.clone());
+                    offer_guided_undo(&overlay_again, &title, &app, file.clone(), rebuilder.clone(), on_changed.clone());
                 }
             }
         },
@@ -1201,93 +1133,10 @@ fn offer_guided_undo(
             let _ = std::fs::remove_file(&path_for_dismiss);
         },
     );
+    crate::db::post_toast(overlay, Some("guided"), toast);
 }
 
-/// Push an undo toast onto the chooser-local overlay. `on_undo` fires
-/// when the user taps the Undo button. `on_dismiss_natural` fires on
-/// any other dismissal (timeout, programmatic replacement by a newer
-/// toast, manual close) — used by the delete path to clean up the
-/// on-disk file once it's clear the user isn't going to undo.
-fn push_undo_toast(
-    toast_overlay: &adw::ToastOverlay,
-    toast_slot: &ToastSlot,
-    title: &str,
-    on_undo: impl Fn() + 'static,
-    on_dismiss_natural: impl Fn() + 'static,
-) {
-    let toast = build_undo_toast(toast_slot, title, on_undo, on_dismiss_natural);
-    toast_overlay.add_toast(toast);
-}
-
-fn build_undo_toast(
-    toast_slot: &ToastSlot,
-    title: &str,
-    on_undo: impl Fn() + 'static,
-    on_dismiss_natural: impl Fn() + 'static,
-) -> adw::Toast {
-    // Replace any in-flight toast — its dismiss handler picks up the
-    // change-of-slot and clears itself. The two-step (replace, then
-    // dismiss) ordering avoids re-entering the dismiss callback
-    // before the new toast has been installed.
-    let prev = toast_slot.replace(None);
-    if let Some(prev) = prev {
-        prev.dismiss();
-    }
-
-    let toast = adw::Toast::builder()
-        .title(title)
-        .button_label(gettext("Undo"))
-        .build();
-
-    // Track whether Undo was invoked so connect_dismissed can decide
-    // whether to fire the on-dismiss-natural cleanup. Without this
-    // flag, dismissing the toast post-undo would re-run the cleanup
-    // path (e.g. delete the file we just restored).
-    let undone: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let undone_for_btn = undone.clone();
-    let on_undo = Rc::new(on_undo);
-    toast.connect_button_clicked(move |_| {
-        undone_for_btn.set(true);
-        on_undo();
-    });
-
-    let toast_slot_dismiss = toast_slot.clone();
-    let on_dismiss_natural = Rc::new(on_dismiss_natural);
-    toast.connect_dismissed(move |t| {
-        if !undone.get() {
-            on_dismiss_natural();
-        }
-        // Clear the slot iff the toast that's dismissing IS the one
-        // currently in the slot. A newer toast that replaced this
-        // one has already taken the slot — don't clobber it.
-        let should_clear = toast_slot_dismiss
-            .borrow()
-            .as_ref()
-            .is_some_and(|cur| cur == t);
-        if should_clear {
-            toast_slot_dismiss.replace(None);
-        }
-    });
-    toast_slot.replace(Some(toast.clone()));
-    toast
-}
-
-/// Truncate a string to `max_chars` Unicode scalar values, appending
-/// "…" if truncation happened. Used by the toast titles so a long
-/// guided-file name doesn't push the Undo button off-screen on phone.
-pub use meditate_core::format::{ellipsize, format_duration_brief};
-
-fn window_from(widget: &impl glib::object::IsA<gtk::Widget>) -> Option<crate::window::MeditateWindow> {
-    widget
-        .root()
-        .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
-}
-
-fn add_toast_to_window(window: &gtk::Window, msg: &str) {
-    if let Ok(mw) = window.clone().downcast::<crate::window::MeditateWindow>() {
-        mw.add_toast(adw::Toast::builder().title(msg).timeout(4).build());
-    }
-}
+pub use meditate_core::format::format_duration_brief;
 
 // ── Playback (phase 6) ───────────────────────────────────────────────
 
@@ -1629,7 +1478,7 @@ mod tests {
         // A file still over the cap is refused, with its own message.
         let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/guided.rs")).unwrap();
         assert!(src.contains("meditate_core::sound::keep_if_syncable(&dest_path)?;"));
-        assert!(src.contains("Ok(Err(AudioFileError::TooLargeToSync)) => add_toast_to_window("));
+        assert!(src.contains("Ok(Err(AudioFileError::TooLargeToSync)) => crate::db::show_toast(&parent, too_large_to_sync()),"));
     }
 
     #[test]

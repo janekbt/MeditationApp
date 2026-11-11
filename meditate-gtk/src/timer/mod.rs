@@ -412,7 +412,7 @@ mod tests {
         let imp = read("src/timer/imp.rs");
         let lock = body_of(&imp, "    pub(crate) fn acquire_screen_awake_lock(");
         assert!(lock.contains("if cookie == 0 {"));
-        assert!(lock.contains("self.toast(&gettext(\"Couldn't keep the computer awake for the bells\"))"));
+        assert!(lock.contains("show_in_view(gettext(\"Couldn't keep the computer awake for the bells\"))"));
     }
 
     /// One method of an impl block, up to its own closing brace

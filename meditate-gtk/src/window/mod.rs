@@ -17,9 +17,19 @@ impl MeditateWindow {
             .build()
     }
 
-    pub fn add_toast(&self, toast: adw::Toast) {
+    /// Where a toast with no page of its own goes: the topmost open
+    /// dialog with an overlay (Preferences, the Log editor), else the
+    /// visible page's, else the main page's.
+    pub fn overlay_in_view(&self) -> adw::ToastOverlay {
+        use adw::prelude::*;
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        self.imp().add_toast(toast);
+        let dialogs = self.dialogs();
+        let from_dialog = (0..dialogs.n_items()).rev()
+            .filter_map(|i| dialogs.item(i).and_downcast::<gtk::Widget>())
+            .find_map(|d| crate::db::first_overlay(&d));
+        from_dialog
+            .or_else(|| crate::db::first_overlay(self.imp().nav_view.upcast_ref()))
+            .unwrap_or_else(|| self.imp().toast_overlay.get())
     }
 
     pub fn dismiss_toasts(&self) {
