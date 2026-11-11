@@ -390,9 +390,9 @@ static APP_IN_FOREGROUND: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 
 /// Post "Meditation complete" when a session reached its planned end
 /// while the app is in the background (`app::completion_notice_secs`).
-fn notify_if_complete(state: &app::AppState, effects: &[meditate_core::session::Effect]) {
+fn notify_if_complete(effects: &[meditate_core::session::Effect]) {
     let in_foreground = APP_IN_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed);
-    let Some(secs) = app::completion_notice_secs(state, effects, in_foreground) else { return; };
+    let Some(secs) = app::completion_notice_secs(effects, in_foreground) else { return; };
     let Some(app) = android_app() else { return; };
     service::notify_complete(app, &meditate_core::format::format_time(Duration::from_secs(secs)));
 }
@@ -412,9 +412,8 @@ thread_local! {
 /// already-effective `signal_mode` (Session has AND'd per-cue
 /// with the per-mode override), so the shell just plays the sound
 /// when it `includes_sound()` and the vibration pattern when it
-/// `includes_vibration()` — no extra gating. Every other effect
-/// (UpdateDisplay / EndSession / EnterOvertime / …) is consumed
-/// at its tick callsite, not here.
+/// `includes_vibration()` — no extra gating. The end and "complete"
+/// are taken at the call sites.
 ///
 /// This is why Stop is silent but a natural countdown finish
 /// rings: `stop` emits only `StopActiveSignals`, while `tick`
@@ -558,24 +557,10 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_end_right(end.second.map_or(-1, app::end_button_code));
     ui.set_end_note(end.note);
     ui.set_running_page(state.is_running_page());
-}
-
-/// Pull the latest `UpdateOvertimeLabel { overtime }` out of a
-/// tick's effects as an `MM:SS` string; the caller wraps it in
-/// `Tr::add-overtime` for the button text (ASCII "?" in the
-/// English msgid — the FP5 font lacks fancier glyphs). Returns
-/// `None` when this tick had no overtime update (so the caller
-/// leaves the label as-is).
-fn overtime_add_time(
-    effects: &[meditate_core::session::Effect],
-) -> Option<String> {
-    use meditate_core::session::Effect;
-    effects.iter().rev().find_map(|e| match e {
-        Effect::UpdateOvertimeLabel { overtime } => {
-            Some(meditate_core::format::format_time(*overtime))
-        }
-        _ => None,
-    })
+    // The Add button counts the overtime, like GTK's.
+    if let Some(over) = state.overtime(now) {
+        ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime(meditate_core::format::format_time(over).into()));
+    }
 }
 
 /// Snapshot of an in-flight session that the persistence layer needs
@@ -3123,7 +3108,7 @@ fn end_session(
 /// Auto-Finish ended the session: save it once the caller has let go
 /// of the state, and let the save say "Session saved" with Undo.
 fn on_auto_finish(ui: &MainWindow, effects: &[meditate_core::session::Effect], auto_finished: &Rc<Cell<bool>>) {
-    if !effects.iter().any(|e| matches!(e, meditate_core::session::Effect::AutoFinish { .. })) {
+    if !meditate_core::session::Effect::saves_now(effects) {
         return;
     }
     auto_finished.set(true);
@@ -3174,7 +3159,8 @@ fn start_snapshot_heartbeat(
             let s = state.borrow();
             let AppState::Active(session) = &*s else { return; };
             let Some(unix_start) = session_start_unix.get() else { return; };
-            let elapsed = session.elapsed(now).as_secs() as u32;
+            // Preparation is never meditation, also after a crash.
+            let elapsed = session.saved_secs(now) as u32;
             let mode: meditate_core::SessionMode = current_mode.get().into();
             write_session_in_progress_snapshot(unix_start, elapsed, mode);
         },
@@ -4448,9 +4434,9 @@ fn build_ui() -> MainWindow {
     }
 
     // Stop, Finish and Add end the session the same way; only the
-    // core transition differs. Core's EndSession carries the duration
-    // to save: the elapsed time for Stop, the planned length for
-    // Finish, the full elapsed incl. overtime for Add.
+    // core transition differs. Core's end carries the length to save:
+    // the elapsed time for Stop, the planned length for Finish, the
+    // full elapsed incl. overtime for Add.
     let end_tap = |end: fn(AppState, Duration) -> app::Transition| {
         let weak = ui.as_weak();
         let state = state.clone();
@@ -4464,7 +4450,7 @@ fn build_ui() -> MainWindow {
             let was_active = s.is_active();
             let transition = end(std::mem::replace(&mut *s, AppState::idle()), now);
             dispatch_effects(&transition.effects);
-            let secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
+            let secs = meditate_core::session::Effect::ended_secs(&transition.effects).unwrap_or(0) as i64;
             *s = transition.state;
             let is_active = s.is_active();
             let mode = current_mode.get().into();
@@ -4847,15 +4833,15 @@ fn build_ui() -> MainWindow {
                             AppState::idle(),
                         );
                         let was_active = prev.is_active();
-                        let t = prev.enter_overtime();
+                        let t = prev.enter_overtime(now_since_epoch());
                         dispatch_effects(&t.effects);
-                        notify_if_complete(&t.state, &t.effects);
+                        notify_if_complete(&t.effects);
                         let ended = was_active && t.state.is_finished();
                         *state.borrow_mut() = t.state;
                         if ended {
                             // Auto-Finish at the file's end.
                             if let Some(ui) = weak.upgrade() {
-                                let secs = app::ended_duration_secs(&t.effects).unwrap_or(0) as i64;
+                                let secs = meditate_core::session::Effect::ended_secs(&t.effects).unwrap_or(0) as i64;
                                 end_session(&ui, secs, current_mode.get().into(), &session_start_unix, &pending_done, snapshot_timer_ref);
                                 on_auto_finish(&ui, &t.effects, &auto_finished);
                                 on_state_changed(true, false, current_mode.get().into());
@@ -4919,20 +4905,10 @@ fn build_ui() -> MainWindow {
             // so the equality check is the cheap path.
             let was_active = s.is_active();
             let transition = std::mem::replace(&mut *s, AppState::idle()).tick(now);
-            // A Box Breath end carries its saved duration (EndBoxBreath).
-            let elapsed_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
+            // An end (Box Breath, Auto-Finish) carries the length to save.
+            let elapsed_secs = meditate_core::session::Effect::ended_secs(&transition.effects).unwrap_or(0) as i64;
             dispatch_effects(&transition.effects);
-            notify_if_complete(&transition.state, &transition.effects);
-            // Overtime Add-button label tracks the running
-            // overtime delta (core's UpdateOvertimeLabel each
-            // tick), exactly like GTK's per-tick relabel.
-            if let Some(t) = overtime_add_time(&transition.effects) {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_overtime_add_label(
-                        ui.global::<Tr>().invoke_add_overtime(t.into()),
-                    );
-                }
-            }
+            notify_if_complete(&transition.effects);
             *s = transition.state;
             let is_active = s.is_active();
             if was_active && !is_active {

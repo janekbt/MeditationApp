@@ -819,10 +819,6 @@ mod tests {
         let dispatch = &src[dispatch..dispatch + src[dispatch..].find("\n    }\n").unwrap()];
         let arm = dispatch.find("CoreSessionEffect::StopGuidedAudio").expect("dispatcher handles it");
         assert!(dispatch[arm..].contains("guided_playback.borrow_mut() = None"), "and drops the track");
-
-        let ceremony = src.find("fn transition_running_to_overtime(").unwrap();
-        let ceremony = &src[ceremony..ceremony + src[ceremony..].find("\n    }\n").unwrap()];
-        assert!(!ceremony.contains("guided_playback"), "the ceremony no longer stops it (too late)");
     }
 
     /// The Overtime hero shows core's planned length (the file length
@@ -833,10 +829,12 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
         )
         .unwrap();
-        let ceremony = src.find("fn transition_running_to_overtime(").unwrap();
-        let ceremony = &src[ceremony..ceremony + src[ceremony..].find("\n    }\n").unwrap()];
-        assert!(!ceremony.contains("countdown_target_secs"), "the Timer target is wrong for guided");
-        assert!(ceremony.contains("completion_duration_secs"));
+        // The time is redrawn from core's `display_secs`, which freezes at
+        // the planned length in overtime (meditate-core session tests).
+        let react = src.find("fn react(").unwrap();
+        let react = &src[react..react + src[react..].find("\n    }\n").unwrap()];
+        assert!(!react.contains("countdown_target_secs"), "the Timer target is wrong for guided");
+        assert!(react.contains("label.set_label(&format_time(Duration::from_secs(self.current_display_secs())))"));
     }
 
     /// The label toggle goes through core's set_active_for_mode, which

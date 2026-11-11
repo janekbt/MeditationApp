@@ -39,7 +39,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [x] | P4. Names and dialogs | done: one-name-dialog (#358, #374, #415, #486), one-dialog-frame (#465) | DD, FF |
-| [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
+| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430); open: #429, #394, #395, #272, #430 (P5-b), #269 (P5-c), #274 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
@@ -254,44 +254,16 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: a new cue field (as `volume` was) means about ten edits. The uuids lose their `BellSoundUuid`/`VibrationPatternUuid` types on the way. Both apps only read these through `fire_route()` (gtk `timer/imp.rs:4349`, android `ui.rs:437`); the variant names appear only in tests and two `matches!` in android `app.rs` (2481, 4511).
 - Fix: one `Effect::Fire { channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: BellCue }`, the log tag derived from channel and phase, built by one `fn fire(channel, &BellCue, override) -> Option<Effect>`; `FireRoute` and `fire_route` go. About -80 lines; touches about 15 test asserts in core and two in android.
 
-#### #270 One way to end a session
-- Related: #430 (Android's `completion_notice_secs`, GTK keyed by hand).
-- Where:
-  - Core: five paths set `phase = Stopped` and `final_duration_secs = Some(..)` by hand (`mod.rs:451, 483, 500, 535, 694`); `stop` and `add_overtime_and_finish` are the same body. The end is signalled as `EndSession`, `EndBoxBreath` or `AutoFinish`, all with the same `duration_secs`, and stored again in `final_duration_secs`. Box Breath's end (`691-705`) repeats `reach_end`'s Auto-Finish and end-bell rule (`528-544`). `finish_overtime` (`476-482`) re-derives `shape.target_secs()` by hand.
-  - Android: `ended_duration_secs` and `completion_notice_secs` scan the effects (`app.rs:189-215`); the "was active, now finished: save and notify" block is in the tick handler and again in the guided-track-end handler (`ui.rs:5137-5165`, `5064-5080`); `finish_overtime`/`add_overtime` re-check `ui_state() == Overtime` (`app.rs:708-735`) although core already ignores them outside Overtime.
-  - GTK: reads `final_duration_secs()` (`timer/imp.rs:2579`), `core_session_end` scans only `EndSession` (3137-3142), and it branches on `AutoFinish` / `EndBoxBreath` / `EnterOvertime` in three places (2262/2268, 3007/3011, 3044/3047). Both apps call `completion_duration_secs()` at the end for the notification (gtk 2557, 3089; android `app.rs:213`, `ui.rs:5183`), so "notify only when it ended by itself" is decided in each app.
-- Fix: one private `fn end(&mut self, secs, how)` in core; one `Effect::Ended { duration_secs, how: Hand | Natural | AutoFinish }` (`EndBoxBreath` keeps its meaning as `Natural` in Box Breath: GTK keeps that page up with Save); `phase: Stopped { duration_secs }` instead of the second field; the notification decision as a core field of the end. Both apps then go to "ended" when the phase is `Stopped` after any call. Also fixes #277 and #278.
-- Related: #273 (do together), #271.
-
-#### #271 Effects that only repeat state
-- Where: `effect.rs:20, 24, 84, 96` (`UpdateDisplay`, `EndPrep`, `UpdateOvertimeLabel`, `EnterOvertime`); `mod.rs:62-80, 798-810` (`TickOutcome`, `tick_summary`).
-- Problem: all four can be read from `display_secs(now)`, `ui_state()` and `end_buttons()`, which core already offers. `tick_summary` exists to fold three of them back into state and has one caller (gtk `timer/imp.rs:3034`); gtk `tick_prep` (2986) and `tick_overtime` (3104-3114) fold them by hand, Android draws from `display_secs` (`app.rs:833`). So the display rule is kept twice in core: in `display_secs` and in the `UpdateDisplay` built by `tick_prep`, `tick_running` and `tick_box_breath` (which pushes `elapsed.as_secs()` itself, 729). "Seconds left, rounded up" is written inline four times (573-603, 872-879, 1059-1063, 970-984). `TickOutcome::overtime_delta` is never read; the free fn `ui_state(Option<&Session>)` (58-60) is test-only.
-- Fix: effects carry only what an app must do (bells, stop signals, stop guided audio, the end, #270); after each call the apps redraw from the pull API. Delete `TickOutcome`, `tick_summary`, the four variants and the effect-scanning loops in both apps; one `secs_left(target, elapsed)` next to `ceil_secs`. `EndPrep` is never consumed; with it go its asserts (old numbers 1132, 1144, 1705, 1989, 2312), ARCHITECTURE.md:241 and the gtk comments (`timer/imp.rs:2243, 2845, 2863, 4113`) (folded in from #85).
-
 #### #272 The session shape is built in each app
 - Related: #312 (the other decisions the GTK timer page makes).
 - Where: gtk `timer/imp.rs:2191-2292`, android `ui.rs:4463-4510` (its comment: "Mirrors GTK's SessionShape::Guided build"); core `settings.rs:28-72` has `mode()`, `stopwatch_on()` and `target_secs()` but no constructor.
 - Problem: both apps repeat the decision tree, including `pattern.cycle_aligned_target_secs(..)` for a Box Breath countdown and "Guided: the stopwatch flag means count-up display". They already differ: GTK returns early on a 0 target, Android reads Guided's stopwatch flag from the db and the other modes' from the UI. Against "decisions go in core".
 - Fix: `SessionShape::new(mode, stopwatch_on, target_secs, pattern)` next to `from_db`, used by both apps. Related: slice 18.
 
-#### #273 Pause in one place
-- Related: #429, #437 (Android's `toggle` decides pause itself).
-- Where: `mod.rs:218-220` (`SessionPhase::Paused`, never set; arms at 563, 856, 981, 1019), `253` (`is_paused`), `timer.rs:18` (`Stopwatch::Paused`); `pause`/`resume` swap in a dummy clock (`mod.rs:400-403, 416-418`) because `paused_at`/`resumed_at` take `self`.
-- Problem: three representations of one fact, two of which can disagree with the phase (#277).
-- Fix: delete `SessionPhase::Paused`; derive `Copy` on `Stopwatch` (only `Duration`s) and write `self.phase_clock = self.phase_clock.paused_at(now)`; derive `is_paused` from the clock. Also the comment at `mod.rs:486-487` (old numbers) and ARCHITECTURE.md:207 (folded in from #58). Related: #85 (`Stopwatch` serde), #270.
-
 #### #274 The ring is rebuilt every frame
 - Where: `mod.rs:883-960` (`bell_ring`), `bells.rs:210` (`rings_before` allocates a `Vec` of every planned ring from 0); called each frame by gtk `window/imp.rs:250` and at least 5 times a second on Android (`ui.rs:535`).
 - Problem: a 5 s bell over an hour builds and drops two vectors of about 720 elements per frame, plus the counters the frame callback ignores. Already marked as a known `ponytail:` shortcut (gtk `window/imp.rs:246-248`).
 - Fix, only if the Librem 5 janks (the iterator half is also in #289): `rings_before` as an iterator, and a cheap `ring_filled(now)` for the frame path; beads only when a bell rings or the phase changes.
-
-#### #275 Smaller ones
-- `mod.rs:613`: `self.settings.shape.clone()` on every tick just to branch; match by value (the fields are `Copy`).
-- `display_secs_for_running` (`mod.rs:1059-1077`): two arms return `elapsed.as_secs()`; Guided's count-up can be a guard.
-- `tick_prep` (573) and `prep_remaining_secs` (872-880) compute the same rounding; the `Prep` part of the `display_secs` arm at 1019 is unreachable (early return at 1015). Goes with #271.
-- `settings.bell_rng_seed.max(1)` (358) repeats `bells::xorshift64`'s guard (`bells.rs:997`); the docs at `settings.rs:92-94`, `mod.rs:264-266` name the wrong owner.
-- `Session::toggle_action(ui_state)` takes a value both callers get from the session (gtk `timer/imp.rs:2383, 4245`, `mpris.rs:97`): make it `&self`.
-- Stale docs: `effect.rs:5` ("future Android"); `effect.rs:148-151` leaves `AutoFinish` and `StopGuidedAudio` out of the non-bell list; `mod.rs:213-214` ("Stage 0a"); `mod.rs:426` (`stop` returns two effects, not one); `TickOutcome` "three values" vs `tick_summary` "two pieces"; `mod.rs:275-282`, eight lines on `u64` vs `u32`.
 
 #### #276 Tests
 - `settings.rs:177-197`: `by_hand` copies `from_db` line for line, so `from_db_builds_what_the_shells_built` compares the function with itself. Delete `by_hand`, `same` and that test; `from_db_gates_prep_starting_bell_and_cues_by_mode` (239-252) checks the real rules; add one assert on `stopwatch_on()` per shape.
@@ -438,15 +410,9 @@ Every item gets done; this is only the order. A package is one /spec change, or 
   - The saved session and the crash-recovery snapshot are built separately from the same facts: `on_save` (2609) and `write_in_progress_snapshot` (2835), each with the "guided uuid only in Guided" rule and a hand-written `TimerMode` to `SessionMode` match; Android has both again (`ui.rs:3072`, `app.rs:320`). The 60 s heartbeat re-reads the Setup label each time.
   - What the Save button does (`end_button_clicked` 2521-2527: Overtime finishes, Done does nothing, else stop), again in Android `AppState::save_end`.
   - Which ending gets a completion notice (`notify_complete` 2547, called from 2534, 3015, 3073), again in Android `completion_notice_secs`.
-- Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision with the end (#270). Related: #270, #272, slice 18.
+- Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision is core's `Completed` (done, one-session-end). Related: #272, slice 18.
 
 - Also (from #505, /simplify 2026-11-10): `refresh_shown` (`window/imp.rs`) follows the `Refresh` argument for the Timer page but the dirty flags for Log and Stats, which is why the session save must add its card before `data_changed` (a source test pins the order). Fix: a Setup mark beside the two, and `refresh_shown` re-reads only what is marked; with the one `load_setup()`.
-
-#### #313 One reaction to a tick
-- Related: #394 (Android writes the transition tail seven times).
-- Where: `tick_prep` (2971), `tick_breathing` (3004), `tick_running` (3023), `tick_overtime` (3099) and the Guided end-of-stream closure in `on_start` (~2244) each call `tick` or `tick_summary`, dispatch, and check their own subset of `AutoFinish`, `EndBoxBreath`, `EnterOvertime`, `EndPrep`, `UpdateOvertimeLabel`; the tick call itself is written three times (2979-2984, 3108, and `box_breath_session_tick` 3181, which has nothing Box Breath about it).
-- Problem: a new effect has to be wired five times; the source-grep test `save_joins_pause_when_preparation_ends` exists because of it.
-- Fix: one `session_tick()` and one `react(effects)` for every lifecycle effect; end-of-stream calls the same `react`. Do after #271 and #270 (fewer effects to react to).
 
 #### #314 One bell block instead of six
 - Where: `timer_view.blp:516-890`: six copies of signal toggle host, sound, volume and pattern revealers (starting bell, end bell, four phases; about 42 template children, 28 of them for the phases, 157-186); the matching wiring in `timer/imp.rs:762-949` (start and end bell choosers) and `1390-1506` (phases, with redundant `let phase_for_sound = phase;` copies); three Sound/Vibration/Both toggle builders (1632, 1708, 1806, plus `bells.rs:632-650`) and two apply variants (1684, 1787; the first re-implements `settings_keys::read_signal_mode`); the "loading writes nothing" `get_app` closure four times (1050, 1092, 1127, 1516); the phase widgets listed by hand four times (1255, 1340-1375, 1542-1573, 1616).
@@ -668,7 +634,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Related: #429 (the `AppState` API the seven swaps come from).
 - Where: "swap the state out, run the transition, write back, dispatch effects, react to active to inactive (`end_session`, `on_auto_finish`, `on_state_changed`), refresh" is written seven times (4546, 4648, 5064, 5095, 5140, 5324 and around): Stop, natural end, guided end of track, focus loss and the tick; the end-of-track path already calls `on_state_changed(true, false)` directly instead of the was/is pair. Pause and resume add `wake_follows_pause` and `guided_follows_pause` in two blocks under the same condition (4612-4628, 5106-5107).
 - Also: `AppState::toggle(shape, now)` (`app.rs:610`) takes a shape only for its Idle branch, which its comment calls a test convenience; so focus loss passes a made-up `TimerStopwatch` (5100-5103) and the action tap reads every Setup property to build a shape on each pause (4463).
-- Fix: one `apply(ui, &state, |s| s.tick(now))` that owns the edges; `AppState::pause_or_resume(now)`, with `start_session` the only start. Related: #313, #270.
+- Fix: one `apply(ui, &state, |s| s.tick(now))` that owns the edges; `AppState::pause_or_resume(now)`, with `start_session` the only start. Linux has its one reaction already (`react`, one-session-end).
 
 #### #395 The running session in one place
 - Where: three statics `SESSION_GUIDED_FILE`, `_NAME`, `_LOCAL_FILE` (3023-3065), always set together (4575-4584), in Mutexes on the UI thread; Save recomputes the guided uuid from the live selection with its own Guided gate (5285-5294) instead of the value fixed at start by `app::snapshot_guided_file` (#407); "the label if the mode's switch is on" four times (2507-2511, 2538, 3077-3081, 5274-5278), each locking twice, and GTK has it as `setup_selected_label_id` (`timer/imp.rs:4167`).
@@ -780,12 +746,14 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/app.rs` unless named. About 1350 of its 6195 lines are production code; the rest are tests. Ordered by gain.
 
 #### #429 The state machine API
+- Also (one-session-end, 2026-11-11): `AppState::Finished(u64)` keeps only the saved length, so the phone's ended page has no ring and bell counter while Linux keeps core's ring at the saved length. Keeping the ended `Session` in the state (as GTK does) brings them back.
 - Where: `Transition::{toggle, tick, stop, finish_overtime, enter_overtime, add_overtime, dismiss}` and `prepend` (478-544) exist so tests can chain ("The shell never chains", 495); the consuming `self -> Transition` API makes ui.rs swap the state out with `std::mem::replace(&mut *s, AppState::idle())` seven times (4546, 4648, 5066, 5097, 5140, 5324, 8470). `toggle(shape, now)` (606-640) has an Idle start branch only tests use, so production passes a shape it ignores (ui.rs 5101 makes one up); its Active branch decides pause or resume itself instead of core's `Session::toggle_action`, which treats Overtime as no-op (#430). `remaining()` (765-771) has no production caller, with four tests. `media_tap`/`void_tap` are `pub` with one internal caller (114, 133); `is_running_page` is `!is_idle()`, `finish_overtime` is `pub` for `save_end` only (710-777).
 - Fix: transitions as `&mut self -> Vec<Effect>` (drops `Transition`, `Deref`, `prepend`, the forwarders and every `mem::replace`), or at least `#[derive(Default)]` and `mem::take`; `pause_or_resume(now)` through `toggle_action`; tests start through `start_session`; delete `remaining`. Related: #394.
 
-#### #430 Effects read the same way in both apps
-- Where: `ended_duration_secs` (189-198) reads the saved length from `EndSession | EndBoxBreath | AutoFinish`, GTK's `core_session_end` (`timer/imp.rs:3139-3142`) from `EndSession` only; `completion_notice_secs` (199-216) decides the "Meditation complete" notice while GTK keys `notify_complete` by hand on three effects (2538, 3017, 3076); `snapshot_guided_file` (320-325) is the gate GTK writes inline twice (2618, 2849); the Idle `hero_label` (819-837) re-derives core's `idle_hero_label_from_modes`, whose doc names Android as its caller; the headphone button (116-120) rebuilds Pause/Resume where core's `toggle_action` decides it (GTK's MPRIS uses it).
-- Fix: `Effect::ended_duration_secs(&[Effect])` and one natural-end marker in core; the guided gate in core; call `idle_hero_label_from_modes` and `toggle_action`. Related: #270, #312.
+#### #430 Android reads Setup and the play key the way GTK does
+- Done (2026-11-11, one-session-end): the ended length and the "complete" notice come from core in both apps.
+- Where: `snapshot_guided_file` (`app.rs`) is the gate GTK writes inline twice (`on_save`, `write_in_progress_snapshot`); the Idle `hero_label` re-derives core's `idle_hero_label_from_modes`, whose doc names Android as its caller; the headphone button (`media_tap`) rebuilds Pause/Resume where core's `toggle_action` decides it (GTK's MPRIS uses it).
+- Fix: the guided gate in core; call `idle_hero_label_from_modes` and `toggle_action`. Related: #312, #429.
 
 #### #431 Typed values instead of index and string codes
 - Related: #456 (insight icon id), #459 (`setup-mode` codes).
@@ -999,7 +967,7 @@ Related: #356 (the preview button is copied the same way) and #318 and #315 (mor
 
 ### #85 Dead code, duplicates and a test that cannot fail
 - Related: #375 (`preload_end_bell`), #399, #401, #405.
-- Core: `tick_box_breath` (`mod.rs:604-667`) calls `fire_due_bells` at 658-665 though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (related: #273 touches `Stopwatch`). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
+- Core: `tick_running` rings `ring_due_bells` for Box Breath too, though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (`Stopwatch` is `Copy` since one-session-end). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
 - GTK: `preload_end_bell` (`sound.rs:294`; calls `timer/imp.rs:745, 792, 1284`, `window/imp.rs:126`) builds media that `play_end_bell_uuid` (322) never uses; its only effect is stopping a ringing end bell when its settings change (decide). Stale preload docs: `sound.rs:10-15, 289-290, 331-332`, `timer/imp.rs:677-679, 1218`.
 - Android: `read_signal_mode_for_mode` (`ui.rs:542-550`) repeats core `bells::signal_mode_override_from_db`.
 - Test: `bell_rng_state_advances_deterministically_from_seed` (`mod.rs:1553-1584`) uses `jitter_secs: 0` (helper at 1090), so the RNG never moves a ring time; set a jitter and assert a different seed differs, or delete it.

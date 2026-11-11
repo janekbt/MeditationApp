@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Stopwatch {
     Running {
         running_since: Duration,

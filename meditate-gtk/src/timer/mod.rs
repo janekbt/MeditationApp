@@ -329,10 +329,10 @@ mod tests {
     /// without a Done page that would save at once.
     #[test]
     fn space_never_ends_a_session() {
-        use meditate_core::session::{Session, ToggleAction, UiState};
-        assert_eq!(Session::toggle_action(UiState::Overtime), ToggleAction::NoOp);
-        assert_eq!(Session::toggle_action(UiState::Done), ToggleAction::NoOp);
         let imp = read("src/timer/imp.rs");
+        // Core's `toggle_action` makes overtime and an ended session a
+        // no-op (meditate-core session tests); the key goes through it.
+        assert!(method(&imp, "    pub fn toggle_playback(&self) {").contains("match self.toggle_action() {"));
         assert!(!imp.contains("FinishOvertime"));
     }
 
@@ -378,7 +378,7 @@ mod tests {
         let imp = read("src/timer/imp.rs");
         let tick = body_of(&imp, "    fn start_tick(&self) {");
         assert!(tick.contains("Duration::from_millis(200)"), "Box Breath ticks every 200 ms");
-        assert!(tick.contains("imp.tick_breathing()"));
+        assert!(tick.contains("imp.session_tick()"));
         for sig in ["    fn on_start(&self) {", "    fn on_resume(&self) {"] {
             assert!(!body_of(&imp, sig).contains("if mode != TimerMode::Breathing"), "{sig}");
         }
@@ -440,7 +440,7 @@ mod tests {
         let imp = read("src/timer/imp.rs");
         let pause = method(&imp, "    pub fn on_pause(&self) {");
         let guard = pause
-            .find("if meditate_core::session::Session::toggle_action(self.ui_state()) != meditate_core::session::ToggleAction::Pause {")
+            .find("if self.toggle_action() != meditate_core::session::ToggleAction::Pause {")
             .expect("on_pause asks core whether this state pauses");
         assert!(guard < pause.find("self.cancel_tick()").unwrap(), "before anything is stopped");
     }
@@ -450,9 +450,11 @@ mod tests {
     #[test]
     fn save_joins_pause_when_preparation_ends() {
         let imp = read("src/timer/imp.rs");
-        let prep = method(&imp, "    fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {");
-        let end = prep.find("CoreSessionEffect::EndPrep").expect("the end of preparation is noticed");
-        assert!(prep[end..].contains("self.refresh_end_buttons()"));
+        // Every tick redraws the buttons from core, the one after the
+        // preparation too.
+        assert!(method(&imp, "    fn session_tick(&self) -> glib::ControlFlow {").contains("self.react(&effects);"));
+        let react = method(&imp, "    pub(crate) fn react(&self, effects: &[CoreSessionEffect]) {");
+        assert!(react.contains("\n        self.refresh_end_buttons();\n"), "unconditionally");
     }
 
     /// A mode switch within 0.4 s of an End Bell drag saved the level

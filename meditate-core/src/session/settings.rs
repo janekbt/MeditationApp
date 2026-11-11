@@ -89,9 +89,8 @@ pub struct SessionSettings {
     pub bells: Vec<ActiveBell>,
     /// Seed for the xorshift64 used by interval bells' jitter draws.
     /// Caller picks: production usually seeds from wall-clock nanos,
-    /// tests pass a fixed value for determinism. Zero is replaced
-    /// with 1 internally (xorshift64 outputs 0 forever from a 0
-    /// seed).
+    /// tests pass a fixed value for determinism. `bells::xorshift64`
+    /// guards a 0.
     pub bell_rng_seed: u64,
     /// Per-mode signal-mode override the user picked on the Setup
     /// view's "Cues" ToggleGroup. AND'd with each bell / phase-cue's
@@ -103,9 +102,9 @@ pub struct SessionSettings {
     /// `None` means starting bell is off — no FireStartingBell
     /// effect emitted.
     pub starting_bell: Option<BellCue>,
-    /// End-bell cue, if the user enabled it. Fired at the natural
-    /// end of the session — Running→Overtime for Timer/Guided
-    /// countdown, EndBoxBreath for Box-Breath cycle-aligned target.
+    /// End-bell cue, if the user enabled it. Fired when a countdown
+    /// reaches its end (overtime, Auto-Finish, Box Breath's
+    /// cycle-aligned end).
     /// Stopwatch-only sessions never reach those boundaries so the
     /// end bell stays silent without an explicit `None` check.
     pub end_bell: Option<BellCue>,
@@ -113,7 +112,7 @@ pub struct SessionSettings {
     /// sessions; ignored otherwise.
     pub box_breath_cues: Option<BoxBreathCueConfig>,
     /// Auto-Finish: a countdown saves itself at its end instead of
-    /// going into overtime (`Effect::AutoFinish`).
+    /// going into overtime (`Effect::Ended` with `save_now`).
     pub auto_finish: bool,
 }
 

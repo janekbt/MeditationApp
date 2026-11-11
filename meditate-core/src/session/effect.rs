@@ -1,27 +1,17 @@
 //! Effects emitted by `Session::tick` and lifecycle calls.
 //!
-//! `Effect` is the dispatch ISA between core and shell — every value
-//! here represents something the shell does (update a label, fire a
-//! bell, end the session). Both shells (gtk, future Android) consume
-//! the same enum.
+//! An `Effect` is something an app must do that it can't read from
+//! the session afterwards: ring a bell, cut the signals, stop the
+//! track, say "complete", take the end. Time, buttons and the
+//! overtime are read from the session after every call. Both apps
+//! consume the same enum.
 
 use crate::bell_volume::BellVolume;
 use crate::db::{BoxBreathPhaseId, SignalMode};
-use std::time::Duration;
 
-/// Side effect the shell should dispatch this tick. The shell
-/// matches on each variant and routes to its native layer.
+/// Side effect the app should dispatch now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Update the running-page big time display. `secs` is the
-    /// already-rounded display value (ceiling for prep/countdown,
-    /// floor for stopwatch / box-breath elapsed). Shell formats via
-    /// `format::format_time`.
-    UpdateDisplay { secs: u64 },
-    /// Prep silence elapsed; transition to Running. Shell:
-    /// constructs the countdown core for Timer mode, plays the
-    /// starting bell, refreshes the running button row.
-    EndPrep,
     /// Box Breath: a phase boundary was just crossed AND a cue is
     /// configured for the new phase (master toggle on + per-phase
     /// row enabled). Carries the resolved sound + vibration + the
@@ -44,25 +34,14 @@ pub enum Effect {
         signal_mode: SignalMode,
         volume: BellVolume,
     },
-    /// End bell — fired at Running→Overtime (Timer/Guided countdown
-    /// crosses zero) or at the cycle-aligned end of a Box-Breath
-    /// session. Stopwatch-only sessions never reach those
-    /// boundaries so this effect simply never emits for them.
+    /// End bell: the countdown reached its end (overtime, Auto-Finish,
+    /// a Box Breath end). Stopwatch sessions never get there.
     FireEndBell {
         sound_uuid: String,
         vibration_pattern_uuid: String,
         signal_mode: SignalMode,
         volume: BellVolume,
     },
-    /// Box Breath: the cycle-aligned target was reached, ending the
-    /// session naturally. Shell drops the session and shows the
-    /// done view with this duration. Never fired in stopwatch-only
-    /// box-breath mode (no target; user must press Stop).
-    EndBoxBreath { duration_secs: u64 },
-    /// Auto-Finish: a countdown reached its end and the session
-    /// stopped there. Shell saves it at once (note included) and
-    /// returns to Setup with "Session saved" and Undo.
-    AutoFinish { duration_secs: u64 },
     /// Interval / fixed bell crossed its ring boundary this tick.
     /// `signal_mode` is the *effective* mode (per-bell AND per-mode
     /// override already applied by Session); the shell dispatches
@@ -74,44 +53,23 @@ pub enum Effect {
         signal_mode: SignalMode,
         volume: BellVolume,
     },
-    /// Timer/Guided countdown crossed zero. Shell: morphs Pause →
-    /// Finish, hides Stop, reveals the Add button, freezes the
-    /// hero at the planned duration, fires the end bell, and sends
-    /// a system notification when the app isn't focused. The
-    /// session continues ticking in Overtime — interval bells keep
-    /// firing on the original session timeline; the Add button's
-    /// label counts up via subsequent `UpdateOvertimeLabel`.
-    EnterOvertime,
     /// Guided: the planned length is reached, so the track stops now,
-    /// ahead of the end bell. Emitted first in the Running→Overtime
-    /// transition (tick crossing or `enter_overtime` from the track's
-    /// own end). The timer can reach the probed length a moment before
-    /// the audio ends (length rounded down at import, player start
-    /// latency), which would otherwise leave the tail playing under
-    /// the end bell.
+    /// ahead of the end bell. The timer can reach the probed length a
+    /// moment before the audio ends (length rounded down at import,
+    /// player start latency), which would otherwise leave the tail
+    /// playing under the end bell.
     StopGuidedAudio,
-    /// Overtime tick: how much past the target the session has
-    /// gone. Shell renders the Add button as
-    /// `<localized prefix> <MM:SS> ?`.
-    UpdateOvertimeLabel { overtime: Duration },
-    /// Session terminated via `stop` / `finish_overtime` /
-    /// `add_overtime_and_finish`. `duration_secs` is what the saved
-    /// row should record — prep elapsed when stopped during prep,
-    /// running elapsed mid-session, target_secs for Finish-overtime,
-    /// running+overtime elapsed for Add-overtime. Shell: stops
-    /// playback, releases screen-awake, transitions to the Done UI
-    /// with this duration.
-    EndSession { duration_secs: u64 },
-    /// Any in-flight bell sound / vibration / phase cue should be
-    /// cut immediately. Emitted by Session lifecycle calls that
-    /// represent a user-driven boundary — pause (the user wants
-    /// everything to stop), stop (session ends), finish_overtime /
-    /// add_overtime_and_finish (user acknowledges the session is
-    /// over). Mechanics are shell-specific (gtk: MediaFile +
-    /// feedbackd DBus cancel; Android: equivalent native calls)
-    /// but the *rule* — that these lifecycle moments cut the user's
-    /// in-flight feedback — lives in core.
+    /// Cut any bell sound, vibration or phase cue in flight: a pause or
+    /// an end by hand. The mechanics are each app's; the rule that these
+    /// moments cut the signals is core's.
     StopActiveSignals,
+    /// The session reached its planned end by itself (overtime, a Box
+    /// Breath end, Auto-Finish): "Meditation complete" while the app
+    /// is not in front. Never for an end by hand.
+    Completed { planned_secs: u64 },
+    /// The session ended with this length to save. `save_now`:
+    /// Auto-Finish, saved at once; otherwise the page shows Save.
+    Ended { duration_secs: u64, save_now: bool },
 }
 
 /// Which "fire channel" a `Fire*` effect belongs to — the abstract
@@ -145,13 +103,30 @@ pub struct FireRoute<'a> {
 }
 
 impl Effect {
-    /// Resolve a Fire effect to its routing info. `None` for every
-    /// non-`Fire*` variant (UpdateDisplay, EndPrep, EndSession,
-    /// EnterOvertime, UpdateOvertimeLabel, EndBoxBreath,
-    /// StopActiveSignals — those are consumed at their tick
-    /// callsites). The shell's dispatch loop becomes
-    /// `for r in effects.iter().filter_map(Effect::fire_route) {
-    /// play(r.channel, r.sound_uuid); ... }`.
+    /// Whether these effects end the session to be saved at once
+    /// (Auto-Finish).
+    pub fn saves_now(effects: &[Effect]) -> bool {
+        effects.iter().any(|e| matches!(e, Effect::Ended { save_now: true, .. }))
+    }
+
+    /// The planned length, when these effects say "complete".
+    pub fn completed_secs(effects: &[Effect]) -> Option<u64> {
+        effects.iter().find_map(|e| match e {
+            Effect::Completed { planned_secs } => Some(*planned_secs),
+            _ => None,
+        })
+    }
+
+    /// The length to save, when these effects end the session.
+    pub fn ended_secs(effects: &[Effect]) -> Option<u64> {
+        effects.iter().find_map(|e| match e {
+            Effect::Ended { duration_secs, .. } => Some(*duration_secs),
+            _ => None,
+        })
+    }
+
+    /// Resolve a Fire effect to its routing info; `None` for every
+    /// other variant.
     pub fn fire_route(&self) -> Option<FireRoute<'_>> {
         match self {
             Effect::FireBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {

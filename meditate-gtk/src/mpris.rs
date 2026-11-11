@@ -94,7 +94,7 @@ pub fn shown(session: &Session, now: Duration, guided_name: Option<&str>) -> Opt
         bar: status.bar,
         standing: status.standing,
         anchor: status.bar.map(|b| if status.standing { b.elapsed } else { now.saturating_sub(b.elapsed) }),
-        toggle: Session::toggle_action(session.ui_state()),
+        toggle: session.toggle_action(),
     })
 }
 

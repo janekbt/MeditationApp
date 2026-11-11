@@ -22,7 +22,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | GG. Android Edit Session | #472, #473, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
-| [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309 | bells and lengths that are off |
+| [ ] | HH. Timer engine and bells | #279, #280, #437, #293, #309, #518 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
@@ -349,16 +349,6 @@ Decided 2026-11-03: each skipped item stays visible in the sync status that the 
 
 Mostly core, host-testable.
 
-### #277 A session stopped while paused reports "Paused", not "Done"
-- Where: `mod.rs:849-852`. `ui_state()` checks `is_paused` before the phase, and `stop()` (446) leaves `is_paused` set; `end_buttons()` (834) checks `Stopped` first, so the two disagree.
-- Scenario: pause, then Save. If the ended page stays (a failed save), GTK's MPRIS shows a resumable session and its play key calls resume on an ended session, and the Box Breath frame callback (`window/imp.rs:499`, runs while Running or Paused) keeps drawing.
-- Fix: #273 with #270; at least match `Stopped` first.
-
-### #278 When a guided track ends early, a bell due before the planned end rings just after the end bell
-- Where: `enter_overtime` (`mod.rs:517-523`) goes to `reach_end` without the `skip_due` loop that only `tick_running` runs (`627-633`).
-- Scenario: a guided file probed at 900 s with an interval ring due at 899 s; the audio ends at 899.4 s, the end bell rings, and the next overtime tick rings the interval bell a second later.
-- Fix: move the `skip_due` loop into `reach_end` (with `max(elapsed, target)`); do with #270.
-
 ### #279 After a suspend, every missed fixed bell rings at once
 - Where: `fire_due_bells` (`mod.rs:1151-1174`) with `ActiveBell::advance` (`bells.rs:267`): an interval bell rings once for its latest due time after a jump, but each fixed bell flips and fires on its own.
 - Scenario: a 60 min Timer with fixed bells at 10, 20 and 30 min; the phone sleeps from minute 5 to 35. The first tick fires three bells (plus any interval bell) on the stacking channel.
@@ -377,11 +367,14 @@ Mostly core, host-testable.
 - Scenario: a 10 min countdown with one bell "at 30 min": the row says "1 interval bell", nothing rings.
 - Fix: count what `build_active_bells` would build for the current target.
 
+### #518 After a guided track ends well before its probed length, Add saves less than Save
+- Where: `session/mod.rs`: `finish_overtime` saves the planned (probed) length; `add_overtime_and_finish` and the crash-recovery heartbeat save the time so far.
+- Scenario: a VBR file probed at 15:00 ends at 10:00. The page shows 15:00, the Add button "+ 00:00" for five minutes; Save saves 15:00, Add ("with the overtime") 10:00. The same before one-session-end.
+- Decide: what an early-ended guided session saves (the probed length or the time so far), then make Save, Add and the heartbeat agree. Found 2026-11-11 (one-session-end review).
+
 ### #309 The lead-in length rounds twice
 - Where: `settings_keys.rs:287`: rounds to whole ms, then half up to 10 ms.
 - Scenario: a typed 0.1049 s becomes 105 ms, then 110 ms; rounding once gives 100 ms. Do with the lead-in bullet of #303.
-
-- Plausible, not yet checked to the end (sweep, slice 5): `stop()` during Prep records the prep seconds as the session length (`session/mod.rs:446-457`), against `end_buttons`' rule "Preparation seconds are never saved as meditation"; the apps show no Save during prep, but GTK's `session_ended` writes the value into the in-progress snapshot. Fix in core: `stop` from Prep ends with 0.
 
 ## II. Linux audio and guided playback
 

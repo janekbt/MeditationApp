@@ -238,8 +238,9 @@ pub struct TimerView {
     /// The running page's buttons and note, set from core's button
     /// set by `refresh_end_buttons`. Dropped when the page pops.
     running_controls: RefCell<Option<RunningControls>>,
-    /// Overtime so far, for the Add button's label.
-    overtime_delta: Cell<Duration>,
+    /// What the row last showed (buttons, overtime seconds), so a tick
+    /// that changes nothing doesn't restyle them.
+    drawn_buttons: Cell<Option<(meditate_core::session::EndButtons, u64)>>,
     /// True while a label-row update is being applied programmatically
     /// (mode switch, show_done refresh) — suppresses the
     /// enable_expansion_notify / activated callbacks so they don't
@@ -2181,29 +2182,15 @@ impl TimerView {
                 match crate::guided::GuidedPlayback::start(
                     &pick.source_path,
                     move |/* on_eos */| {
-                        // EOS arrives on the GTK main thread thanks
-                        // to the bus signal watch + glib's default
-                        // MainContext. Ask Session to force-transition
-                        // into Overtime; idempotent if we already
-                        // crossed the boundary via tick_running.
-                        // Session emits [EnterOvertime, FireEndBell]
-                        // on the transition — dispatcher routes the
-                        // bell; EnterOvertime triggers the button-
-                        // morph + notification ceremony here.
+                        // Nothing once the tick already reached the end.
+                        // The track drops itself here, from its own
+                        // callback, as StopGuidedAudio always did.
                         let imp = obj_for_eos.imp();
+                        let now = imp.elapsed_since_start();
                         let effects = imp.core_session.borrow_mut().as_mut()
-                            .map(meditate_core::session::Session::enter_overtime)
+                            .map(|s| s.enter_overtime(now))
                             .unwrap_or_default();
-                        imp.dispatch_session_effects(&effects);
-                        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
-                            imp.cancel_tick();
-                            // Not from inside the track's own callback:
-                            // the end drops the track.
-                            let obj = obj_for_eos.clone();
-                            glib::idle_add_local_once(move || obj.imp().auto_finish_session());
-                        } else if effects.iter().any(|e| matches!(e, CoreSessionEffect::EnterOvertime)) {
-                            imp.transition_running_to_overtime();
-                        }
+                        imp.react(&effects);
                     },
                 ) {
                     Ok(playback) => {
@@ -2258,8 +2245,8 @@ impl TimerView {
         // Starting bell fires via Session's FireStartingBell effect:
         // - No-prep Timer: returned by CoreSession::start and
         //   dispatched above.
-        // - With-prep Timer: dispatched alongside EndPrep at the prep
-        //   boundary tick (see Session::tick_prep).
+        // - With-prep Timer: dispatched by the tick that ends the
+        //   preparation.
         // - Box Breath / Guided: starting_bell is None in their
         //   SessionSettings, so no effect ever emits — matches the
         //   prior Timer-only behaviour.
@@ -2296,24 +2283,17 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             self.acquire_screen_awake_lock(&app);
         }
-        self.refresh_end_buttons();
+        // Redraw now, not up to a second later with the first tick, so
+        // no second looks skipped.
+        self.react(&[]);
         self.refresh_media();
-        // Refresh the hero label NOW instead of waiting up to ~1s for
-        // the first post-resume tick. The cores' elapsed reading is
-        // correct the moment resumed_at fires — without this push,
-        // tick-scheduling jitter occasionally makes the first visible
-        // update land >1s after the click and the user perceives a
-        // skipped second.
-        if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(Duration::from_secs(self.current_display_secs())));
-        }
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
     /// Called by the window when the running page's Pause button is pressed.
     pub fn on_pause(&self) {
         // Esc reaches here in any state; overtime can't pause (#126).
-        if meditate_core::session::Session::toggle_action(self.ui_state()) != meditate_core::session::ToggleAction::Pause {
+        if self.toggle_action() != meditate_core::session::ToggleAction::Pause {
             return;
         }
         self.cancel_tick();
@@ -2330,7 +2310,7 @@ impl TimerView {
             .as_mut()
             .map(|s| s.pause(now))
             .unwrap_or_default();
-        self.dispatch_session_effects(&effects);
+        self.react(&effects);
         if self.tick_mode.get() == TimerMode::Guided {
             if let Some(p) = self.guided_playback.borrow().as_ref() {
                 p.pause();
@@ -2341,7 +2321,6 @@ impl TimerView {
             self.release_screen_awake_lock(&app);
         }
 
-        self.refresh_end_buttons();
         self.refresh_media();
 
         self.show_paused_ui(self.current_display_secs());
@@ -2350,15 +2329,13 @@ impl TimerView {
 
     /// End the in-flight session with `f` (stop, finish or add) and
     /// leave the running page showing the ended session's buttons.
-    /// Returns the duration core recorded.
-    fn end_in_flight<F>(&self, f: F) -> Option<u64>
+    fn end_in_flight<F>(&self, f: F)
     where
         F: FnOnce(&mut CoreSession, Duration) -> Vec<CoreSessionEffect>,
     {
-        self.cancel_tick();
-        let elapsed = self.core_session_end(f);
-        self.session_ended();
-        elapsed
+        let now = self.elapsed_since_start();
+        let effects = self.core_session.borrow_mut().as_mut().map(|s| f(s, now)).unwrap_or_default();
+        self.react(&effects);
     }
 
     /// Shell side of any end: the track stops, the inhibit goes, the
@@ -2370,10 +2347,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             self.release_screen_awake_lock(&app);
         }
-        if let Some(secs) = self.session_final_duration_secs() {
-            self.write_in_progress_snapshot(secs.try_into().unwrap_or(u32::MAX));
-        }
-        self.refresh_end_buttons();
+        self.write_in_progress_snapshot(self.saved_secs().try_into().unwrap_or(u32::MAX));
         self.refresh_media();
     }
 
@@ -2419,6 +2393,11 @@ impl TimerView {
         let Some(buttons) = self.core_session.borrow().as_ref().map(CoreSession::end_buttons) else { return; };
         let controls = self.running_controls.borrow();
         let Some(c) = controls.as_ref() else { return; };
+        let overtime = self.overtime();
+        let drawn = Some((buttons, overtime.as_secs()));
+        if self.drawn_buttons.replace(drawn) == drawn {
+            return;
+        }
         c.second.set_visible(buttons.second.is_some());
         for (btn, which) in [&c.first, &c.second].into_iter().zip(buttons.row()) {
             let Some(which) = which else { continue; };
@@ -2426,7 +2405,7 @@ impl TimerView {
                 EndButton::Pause => (gettext("Pause"), &["pill"]),
                 EndButton::Resume => (gettext("Resume"), &["pill", "suggested-action"]),
                 EndButton::Save => (gettext("Save"), &["pill", "suggested-action"]),
-                EndButton::Add => (overtime_add_button_label(self.overtime_delta.get()), &["pill", "tabular-nums"]),
+                EndButton::Add => (overtime_add_button_label(overtime), &["pill", "tabular-nums"]),
             };
             btn.set_label(&label);
             btn.set_css_classes(classes);
@@ -2462,58 +2441,23 @@ impl TimerView {
         }
     }
 
-    /// The countdown reached its end with Auto-Finish on: core already
-    /// stopped the session at its planned length.
-    fn auto_finish_session(&self) {
-        // The tick source ends itself; forget its id.
-        self.tick_source.borrow_mut().take();
-        self.session_ended();
-        self.notify_complete();
-        if let Some(dialog) = self.discard_dialog.take() {
-            dialog.close();
-        }
-        self.on_save(true);
-    }
-
     /// "Meditation Complete" when the window isn't focused; the page
     /// itself shows the end otherwise.
-    fn notify_complete(&self) {
+    fn notify_complete(&self, planned_secs: u64) {
         let Some(app) = self.get_app() else { return; };
         if app.active_window().is_some_and(|w| w.is_active()) {
             return;
         }
         let n = gtk::gio::Notification::new(&gettext("Meditation Complete"));
-        let target = self
-            .core_session
-            .borrow()
-            .as_ref()
-            .map_or(0, meditate_core::session::Session::completion_duration_secs);
-        n.set_body(Some(&gettext("Session: {duration}").replace("{duration}", &format_time(Duration::from_secs(target)))));
+        n.set_body(Some(&gettext("Session: {duration}").replace("{duration}", &format_time(Duration::from_secs(planned_secs)))));
         app.send_notification(Some("timer-done"), &n);
     }
 
-    /// Elapsed seconds for the active session. Used by on_stop /
-    /// on_save (both produce a session row whose `duration_secs` is
-    /// what we return here). Once the session has Stopped, Session
-    /// holds the canonical saved duration (target_secs for Finish-
-    /// overtime, running+overtime elapsed for Add, etc.); during in-
-    /// flight Prep / Running / Overtime the running phase_clock is
-    /// the source.
-    fn elapsed_secs_for_mode(&self) -> u64 {
-        if let Some(secs) = self.session_final_duration_secs() {
-            return secs;
-        }
-        self.session_elapsed().as_secs()
-    }
-
-    /// Saved-duration accessor wrapping `Session::final_duration_secs()`.
-    /// Returns `None` when there is no Session or when the active
-    /// Session is still in flight.
-    fn session_final_duration_secs(&self) -> Option<u64> {
-        self.core_session
-            .borrow()
-            .as_ref()
-            .and_then(meditate_core::session::Session::final_duration_secs)
+    /// The meditation seconds to record now (core's `saved_secs`): what
+    /// Save and the crash-recovery snapshot write. 0 in preparation.
+    fn saved_secs(&self) -> u64 {
+        let now = self.elapsed_since_start();
+        self.core_session.borrow().as_ref().map_or(0, |s| s.saved_secs(now))
     }
 
     fn on_save(&self, auto: bool) {
@@ -2526,7 +2470,7 @@ impl TimerView {
         }
         let mode = self.current_mode();
 
-        let elapsed = self.elapsed_secs_for_mode();
+        let elapsed = self.saved_secs();
         let start_time = self.session_start_time.get();
 
         if elapsed == 0 {
@@ -2716,7 +2660,6 @@ impl TimerView {
         // The running page pops; its widgets go with it.
         *self.running_label.borrow_mut() = None;
         *self.running_controls.borrow_mut() = None;
-        self.overtime_delta.set(Duration::ZERO);
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
 
         // Only update the visible UI if this mode is the one currently shown.
@@ -2785,7 +2728,7 @@ impl TimerView {
     }
 
     /// Schedule a slow heartbeat that rewrites the in-progress
-    /// snapshot every 60 s with the current `elapsed_secs_for_mode`.
+    /// snapshot every 60 s with the current `saved_secs`.
     /// The snapshot's accumulated_secs is the only timing fact the
     /// next-launch recovery needs; capturing it once a minute keeps
     /// the worst-case loss bounded to ~60 s of meditation if the
@@ -2798,7 +2741,7 @@ impl TimerView {
     /// the 60 s heartbeat alone would lose up to 59 s.
     pub(super) fn save_snapshot_now(&self) {
         if self.core_session.borrow().is_some() {
-            let secs = self.elapsed_secs_for_mode().try_into().unwrap_or(u32::MAX);
+            let secs = self.saved_secs().try_into().unwrap_or(u32::MAX);
             self.write_in_progress_snapshot(secs);
         }
     }
@@ -2814,7 +2757,7 @@ impl TimerView {
             if imp.core_session.borrow().is_none() {
                 return glib::ControlFlow::Break;
             }
-            let elapsed = imp.elapsed_secs_for_mode();
+            let elapsed = imp.saved_secs();
             let secs_u32: u32 = elapsed.try_into().unwrap_or(u32::MAX);
             imp.write_in_progress_snapshot(secs_u32);
             glib::ControlFlow::Continue
@@ -2846,13 +2789,7 @@ impl TimerView {
             interval,
             move || {
                 let imp = obj.imp();
-                let flow = match imp.ui_state() {
-                    UiState::Preparing => imp.tick_prep(&obj),
-                    UiState::Running if breathing => imp.tick_breathing(),
-                    UiState::Running => imp.tick_running(&obj),
-                    UiState::Overtime => imp.tick_overtime(&obj),
-                    _ => glib::ControlFlow::Break,
-                };
+                let flow = imp.session_tick();
                 imp.refresh_media();
                 flow
             },
@@ -2860,192 +2797,64 @@ impl TimerView {
         *self.tick_source.borrow_mut() = Some(source_id);
     }
 
-    /// Prep tick: count down the silent preparation interval. When
-    /// elapsed crosses the target, transition to Running — that
-    /// flips the cores in, plays the starting bell, and the same
-    /// tick keeps firing on the next iteration but takes the Running
-    /// branch.
-    fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let now = self.elapsed_since_start();
-        // Prep ticking is owned by the portable state machine —
-        // Session emits EndPrep + flips its own phase to Running at
-        // the boundary, with starting-bell FireStartingBell on the
-        // same tick. The shell only renders display updates and
-        // routes fire cues; the next tick lands in `tick_running`
-        // automatically via `ui_state()`.
-        let effects: Vec<CoreSessionEffect> = self
-            .core_session
-            .borrow_mut()
-            .as_mut()
-            .map(|s| s.tick(now))
-            .unwrap_or_default();
-        for effect in &effects {
-            if let CoreSessionEffect::UpdateDisplay { secs } = effect {
-                if let Some(label) = self.running_label.borrow().as_ref() {
-                    label.set_label(&format_time(Duration::from_secs(*secs)));
-                }
-            }
-        }
-        // FireStartingBell (emitted by Session alongside EndPrep at
-        // the boundary tick) flows through the shared dispatcher.
-        self.dispatch_session_effects(&effects);
-        // Save joins Pause once the session runs.
-        if effects.contains(&CoreSessionEffect::EndPrep) {
-            self.refresh_end_buttons();
-        }
-        glib::ControlFlow::Continue
-    }
-
-    /// Box Breath tick: phase cues, the end bell and the cycle-aligned
-    /// end all come from the Session's effects.
-    fn tick_breathing(&self) -> glib::ControlFlow {
-        let effects = self.box_breath_session_tick();
-        self.dispatch_session_effects(&effects);
-        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
-            self.auto_finish_session();
-            return glib::ControlFlow::Break;
-        }
-        if effects.iter().any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. })) {
-            // The source ends with Break; forget its id so a later
-            // cancel_tick doesn't remove it a second time. The page
-            // stays up with Save and Discard.
+    /// One tick: core moves the session on, the page follows.
+    fn session_tick(&self) -> glib::ControlFlow {
+        // Nothing left to tick (ended, paused, gone): the source ends
+        // itself; forget its id so no cancel_tick removes it again.
+        if !matches!(self.ui_state(), UiState::Preparing | UiState::Running | UiState::Overtime) {
             self.tick_source.borrow_mut().take();
-            self.session_ended();
-            self.notify_complete();
             return glib::ControlFlow::Break;
         }
-        glib::ControlFlow::Continue
-    }
-
-    fn tick_running(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        // Every Timer/Guided running tick flows through the portable
-        // Session. Session's UpdateDisplay already encodes the
-        // ceiling-vs-floor rounding for both countdown and
-        // stopwatch_display modes — the gtk shell just renders.
-        let (effects, new_secs, done) = {
-            let now = self.elapsed_since_start();
-            let mut session = self.core_session.borrow_mut();
-            let Some(s) = session.as_mut() else {
-                return glib::ControlFlow::Break;
-            };
-            let (outcome, effects) = s.tick_summary(now);
-            (effects, outcome.display_secs.unwrap_or(0), outcome.entered_overtime)
-        };
-
-        // Bell sounds + vibrations flow through the portable
-        // dispatcher: FireBell during Running, FireEndBell at the
-        // EnterOvertime crossing (Session emits both alongside the
-        // transition).
-        self.dispatch_session_effects(&effects);
-
-        if effects.iter().any(|e| matches!(e, CoreSessionEffect::AutoFinish { .. })) {
-            self.auto_finish_session();
-            return glib::ControlFlow::Break;
-        }
-        if done {
-            // Countdown crossed zero. Don't auto-finish — slide
-            // into Overtime so the user can either commit the
-            // extra time (Add) or stop at the planned duration
-            // (Finish). The end bell already fired above via
-            // FireEndBell dispatch; transition_running_to_overtime
-            // handles the button-morph + system-notification side.
-            self.transition_running_to_overtime();
-            return glib::ControlFlow::Continue;
-        }
-
-        if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(Duration::from_secs(new_secs)));
-        }
-
-        glib::ControlFlow::Continue
-    }
-
-    /// One-shot at zero-crossing: ring the end bell + vibrate +
-    /// notify, morph the running buttons into the Finish/Add
-    /// layout. Session.phase is already Overtime by the time we're
-    /// called (either tick_running transitioned internally before
-    /// dispatching EnterOvertime, or the gst EOS callback forced
-    /// the transition via Session.enter_overtime); the 1 Hz tick
-    /// itself keeps running and now dispatches tick_overtime.
-    fn transition_running_to_overtime(&self) {
-        // The guided track already stopped on core's StopGuidedAudio,
-        // dispatched ahead of the end bell, which core also fired.
-        self.notify_complete();
-        self.overtime_delta.set(Duration::ZERO);
-        self.refresh_end_buttons();
-        // Hero stays frozen at the planned countdown duration —
-        // the user chose that target, so the static reading is
-        // their accomplishment. Only the Add button counts up,
-        // surfacing how much extra time they've accumulated.
-        // Core knows the planned length — the guided file's, not the
-        // Timer setup's target.
-        let planned = self
-            .core_session
-            .borrow()
-            .as_ref()
-            .map_or(0, meditate_core::session::Session::completion_duration_secs);
-        if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(Duration::from_secs(planned)));
-        }
-    }
-
-    /// 1 Hz update for the Overtime state — refreshes only the
-    /// dynamic Add button label, and keeps interval bells firing
-    /// on the original session timeline. The hero readout stays
-    /// frozen at the planned duration.
-    fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        // Overtime ticks read the overtime delta from Session and
-        // dispatch bell effects through the portable dispatcher.
-        let (effects, overtime) = {
-            let now = self.elapsed_since_start();
-            let mut session = self.core_session.borrow_mut();
-            let Some(s) = session.as_mut() else {
-                return glib::ControlFlow::Break;
-            };
-            let effects = s.tick(now);
-            let mut delta = Duration::ZERO;
-            for effect in &effects {
-                if let CoreSessionEffect::UpdateOvertimeLabel { overtime } = effect {
-                    delta = *overtime;
-                }
-            }
-            (effects, delta)
-        };
-        self.dispatch_session_effects(&effects);
-
-        self.overtime_delta.set(overtime);
-        self.refresh_end_buttons();
-        glib::ControlFlow::Continue
-    }
-
-    /// Run a terminating call against the in-flight Session,
-    /// dispatch any portable side effects (StopActiveSignals etc.)
-    /// to their shell handlers, and extract the
-    /// EndSession.duration_secs for callers that need to pin the
-    /// saved duration. Returns `None` when no Session is alive.
-    fn core_session_end<F>(&self, f: F) -> Option<u64>
-    where
-        F: FnOnce(&mut CoreSession, Duration) -> Vec<CoreSessionEffect>,
-    {
         let now = self.elapsed_since_start();
-        let effects = {
-            let mut slot = self.core_session.borrow_mut();
-            let s = slot.as_mut()?;
-            f(s, now)
-        };
-        let duration = effects.iter().find_map(|e| match e {
-            CoreSessionEffect::EndSession { duration_secs } => Some(*duration_secs),
-            _ => None,
-        });
-        self.dispatch_session_effects(&effects);
-        duration
+        let effects = self.core_session.borrow_mut().as_mut().map(|s| s.tick(now)).unwrap_or_default();
+        // An end stops this source by returning Break; forget its id so
+        // the end's cancel_tick doesn't remove it a second time.
+        let ended = CoreSessionEffect::ended_secs(&effects).is_some();
+        if ended {
+            self.tick_source.borrow_mut().take();
+        }
+        self.react(&effects);
+        if ended { glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
     }
 
-    /// Countdown remaining seconds (ceiling), 0 if no session running.
-    /// Wall-clock-anchored, pause-frozen elapsed of the in-flight
-    /// session. Returns ZERO if no session is running. Sole gtk-side
-    /// reader of session elapsed post Stage 6 — every per-mode
-    /// helper that used to dispatch into a Cell now collapses here.
+    /// Carry out a session call's effects, then redraw the running page
+    /// from core. Every tick, the guided track's end and the end
+    /// buttons come through here.
+    pub(crate) fn react(&self, effects: &[CoreSessionEffect]) {
+        self.dispatch_session_effects(effects);
+        if let Some(planned) = CoreSessionEffect::completed_secs(effects) {
+            self.notify_complete(planned);
+        }
+        if CoreSessionEffect::ended_secs(effects).is_some() {
+            self.cancel_tick();
+            self.session_ended();
+        }
+        if let Some(label) = self.running_label.borrow().as_ref() {
+            label.set_label(&format_time(Duration::from_secs(self.current_display_secs())));
+        }
+        self.refresh_end_buttons();
+        if CoreSessionEffect::saves_now(effects) {
+            // Auto-Finish: a pending "Discard Session?" has no session
+            // left to discard.
+            if let Some(dialog) = self.discard_dialog.take() {
+                dialog.close();
+            }
+            self.on_save(true);
+        }
+    }
+
+    /// How far into overtime the session is; zero outside it.
+    fn overtime(&self) -> Duration {
+        let now = self.elapsed_since_start();
+        self.core_session.borrow().as_ref().and_then(|s| s.overtime(now)).unwrap_or_default()
+    }
+
+    /// What the play/pause key does now: Start without a session.
+    fn toggle_action(&self) -> meditate_core::session::ToggleAction {
+        self.core_session.borrow().as_ref().map_or(meditate_core::session::ToggleAction::Start, CoreSession::toggle_action)
+    }
+
+    /// Pause-frozen elapsed of the in-flight session; ZERO without one.
     fn session_elapsed(&self) -> Duration {
         let now = self.elapsed_since_start();
         self.core_session
@@ -3059,7 +2868,7 @@ impl TimerView {
     /// `None` (no in-flight session) → `UiState::Idle`. Cheap: one
     /// RefCell borrow + a couple of comparisons inside core.
     pub(crate) fn ui_state(&self) -> UiState {
-        meditate_core::session::ui_state(self.core_session.borrow().as_ref())
+        self.core_session.borrow().as_ref().map_or(UiState::Idle, CoreSession::ui_state)
     }
 
     /// Wall-clock-anchored elapsed time of the active breath session.
@@ -3069,19 +2878,6 @@ impl TimerView {
     /// callers go through `Session::display_secs`.
     pub(super) fn breath_elapsed(&self) -> std::time::Duration {
         self.session_elapsed()
-    }
-
-    /// Tick the portable Session against the current boot-anchored
-    /// elapsed; used by `tick_breathing`. Returns the effects
-    /// (FireBoxBreathCue + the cycle-aligned EndBoxBreath). Empty Vec
-    /// when no session is in flight or the session is paused.
-    fn box_breath_session_tick(&self) -> Vec<CoreSessionEffect> {
-        let now = self.elapsed_since_start();
-        self.core_session
-            .borrow_mut()
-            .as_mut()
-            .map(|s| s.tick(now))
-            .unwrap_or_default()
     }
 
     /// Suspend-resilient monotonic time since on_start set the anchor.
@@ -4008,12 +3804,13 @@ impl TimerView {
     /// Both running pages hand over their buttons and note.
     pub fn set_running_controls(&self, controls: RunningControls) {
         *self.running_controls.borrow_mut() = Some(controls);
+        self.drawn_buttons.set(None);
         self.refresh_end_buttons();
     }
 
     pub fn toggle_playback(&self) {
         use meditate_core::session::ToggleAction;
-        match meditate_core::session::Session::toggle_action(self.ui_state()) {
+        match self.toggle_action() {
             ToggleAction::Start => self.on_start(),
             ToggleAction::Pause => self.on_pause(),
             ToggleAction::Resume => self.on_resume(),
@@ -4100,9 +3897,7 @@ impl TimerView {
     /// `FireBoxBreathCue`). All four carry an *effective*
     /// `signal_mode` (Session already AND'd per-cue with per-mode
     /// override) so the shell just plays / vibrates per that
-    /// variant. Other effects (UpdateDisplay / EnterOvertime /
-    /// EndSession / EndPrep / UpdateOvertimeLabel / EndBoxBreath)
-    /// are consumed at their tick callsites.
+    /// variant. "Complete" and the end are taken by `react`.
     pub(crate) fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
         let mut app = None;
         for effect in effects {
@@ -4793,11 +4588,14 @@ mod tests {
         // included, same path as Save), then "Session saved" offers
         // Undo; a failed Undo says "Delete failed".
         let code = production();
-        assert!(code.contains("CoreSessionEffect::AutoFinish { .. }"), "every tick and the track end look for it");
-        assert_eq!(code.matches(".auto_finish_session()").count(), 3, "Timer and Guided ticks, Box Breath, the track end");
-        let auto = body(&code, "fn auto_finish_session(&self)");
-        assert!(auto.contains("self.on_save(true)"));
-        assert!(auto.contains("self.notify_complete()"), "the notification still goes out");
+        // Every tick and the track end go through one reaction, which
+        // saves at once when core's end says so.
+        assert!(body(&code, "fn session_tick(&self)").contains("self.react(&effects)"));
+        assert!(code.contains("                        imp.react(&effects);\n"), "the track end too");
+        let auto = body(&code, "pub(crate) fn react(&self, effects: &[CoreSessionEffect])");
+        let now = auto.find("if CoreSessionEffect::saves_now(effects) {").expect("Auto-Finish saves at once");
+        assert!(auto[now..].contains("self.on_save(true)"));
+        assert!(auto.contains("CoreSessionEffect::completed_secs(effects)") && auto.contains("self.notify_complete(planned)"), "the notification still goes out");
         let save = &code[code.find("fn on_save(&self, auto: bool)").unwrap()..];
         let save = &save[..save.find("\n    fn ").unwrap()];
         let ok = save.find("reset_mode(mode, false)").unwrap();
@@ -4841,7 +4639,8 @@ mod tests {
         // #6 review: Discard asked, the time ran out, the session saved
         // itself behind the dialog, and the later "Discard" did nothing.
         let code = production();
-        let auto = body(&code, "fn auto_finish_session(&self)");
+        let auto = body(&code, "pub(crate) fn react(&self, effects: &[CoreSessionEffect])");
+        let auto = &auto[auto.find("if CoreSessionEffect::saves_now(effects) {").unwrap()..];
         assert!(auto.contains("self.discard_dialog.take()") && auto.contains(".close()"));
         // Asking silences nothing: Cancel leaves a ringing bell ringing.
         let discard = body(&code, "pub(crate) fn on_discard(&self)");

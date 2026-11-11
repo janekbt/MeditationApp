@@ -182,37 +182,15 @@ pub fn media_header(title: &str, line: &str, status: meditate_core::session::Med
     format!("{title}\t{line}\t{total}\t{bar}")
 }
 
-/// The duration core says to save for the session that just ended:
-/// `EndSession` (Stop, Finish, Add) or `EndBoxBreath` (a Box Breath
-/// session reaching its cycle-aligned end). `None` when the effects
-/// end nothing.
-pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
-    effects.iter().rev().find_map(|e| match e {
-        Effect::EndSession { duration_secs }
-        | Effect::EndBoxBreath { duration_secs }
-        | Effect::AutoFinish { duration_secs } => {
-            Some(*duration_secs)
-        }
-        _ => None,
-    })
-}
-
 /// Length for the "Meditation complete" notification, or None when
-/// none is due. A session reaching its planned end on its own (core's
-/// `EnterOvertime` at the countdown / guided-track end, `EndBoxBreath`
-/// at a Box Breath cycle-aligned end) while the app is in the
-/// background posts one, mirroring GTK's unfocused-window notification.
-/// Hand-ended sessions (Stop / Finish / Add) never do: the user is
-/// in the app.
-pub fn completion_notice_secs(state: &AppState, effects: &[Effect], in_foreground: bool) -> Option<u64> {
+/// none is due: core says when a session reached its end by itself;
+/// the phone posts it only while the app is in the background,
+/// mirroring GTK's unfocused-window notification.
+pub fn completion_notice_secs(effects: &[Effect], in_foreground: bool) -> Option<u64> {
     if in_foreground {
         return None;
     }
-    effects.iter().find_map(|e| match (e, state) {
-        (Effect::EndBoxBreath { duration_secs } | Effect::AutoFinish { duration_secs }, _) => Some(*duration_secs),
-        (Effect::EnterOvertime, AppState::Active(s)) => Some(s.completion_duration_secs()),
-        _ => None,
-    })
+    Effect::completed_secs(effects)
 }
 
 /// A Log day section's header: core's Today / Yesterday, else the
@@ -460,7 +438,8 @@ pub enum AppState {
     /// store (Session carries a few hundred bytes; Idle / Finished
     /// are unit variants).
     Active(Box<Session>),
-    Finished,
+    /// Ended, not yet saved or discarded: the length it saves.
+    Finished(u64),
 }
 
 /// An `AppState` transition plus the core `Session` effects it
@@ -517,8 +496,8 @@ impl Transition {
         prepend(&mut t.effects, self.effects);
         t
     }
-    pub fn enter_overtime(self) -> Transition {
-        let mut t = self.state.enter_overtime();
+    pub fn enter_overtime(self, now: Duration) -> Transition {
+        let mut t = self.state.enter_overtime(now);
         prepend(&mut t.effects, self.effects);
         t
     }
@@ -548,6 +527,11 @@ impl AppState {
         Self::Idle
     }
 
+    /// The ended session, keeping the length it saves.
+    fn finished(s: &Session) -> Self {
+        Self::Finished(s.final_duration_secs().unwrap_or(0))
+    }
+
     pub fn is_idle(&self) -> bool {
         matches!(self, Self::Idle)
     }
@@ -565,7 +549,7 @@ impl AppState {
         matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Overtime))
     }
     pub fn is_finished(&self) -> bool {
-        matches!(self, Self::Finished)
+        matches!(self, Self::Finished(_))
     }
     /// Whether the timer is in flight (Running OR Paused). Distinct
     /// from `is_running` because Paused is also "active": the
@@ -576,11 +560,19 @@ impl AppState {
         matches!(self, Self::Active(_))
     }
 
+    /// How far into overtime the session is; `None` outside it.
+    pub fn overtime(&self, now: Duration) -> Option<Duration> {
+        match self {
+            Self::Active(s) => s.overtime(now),
+            Self::Idle | Self::Finished(_) => None,
+        }
+    }
+
     /// The media control's line and bar; `None` without a live session.
     pub fn media_status(&self, now: Duration) -> Option<meditate_core::session::MediaStatus> {
         match self {
             Self::Active(s) => s.media_status(now),
-            Self::Idle | Self::Finished => None,
+            Self::Idle | Self::Finished(_) => None,
         }
     }
 
@@ -609,7 +601,7 @@ impl AppState {
     /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
     pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
         match self {
-            Self::Idle | Self::Finished => {
+            Self::Idle | Self::Finished(_) => {
                 // Test / host convenience: a bare default session
                 // with no cues. The Android shell does NOT take
                 // this path to start — it calls `start_session`
@@ -646,18 +638,17 @@ impl AppState {
     /// double-tap or stale callback is cheap. The actual persistence
     /// decision happens later on the Done screen via `dismiss` (the
     /// Android shell stores the in-flight unix_start + elapsed in
-    /// `ui.rs` cells; Finished is just a UI marker here).
+    /// `ui.rs` cells; Finished keeps only the length for the time).
     pub fn stop(self, now: Duration) -> Transition {
         match self {
             // Core's `Session::stop` emits `StopActiveSignals` (cut
-            // any in-flight bell / vibration) and `EndSession` with
-            // the duration to save — read via `ended_duration_secs`,
-            // like GTK. No `FireEndBell`: Stop is silent, while a
+            // any in-flight bell / vibration) and `Ended` with the
+            // length to save. No `FireEndBell`: Stop is silent, while a
             // natural countdown finish (FireEndBell from `tick`)
             // still rings.
             Self::Active(mut s) => {
                 let effects = s.stop(now);
-                Transition::new(Self::Finished, effects)
+                Transition::new(Self::finished(&s), effects)
             }
             other => Transition::new(other, Vec::new()),
         }
@@ -669,7 +660,7 @@ impl AppState {
     /// UI screen transition.
     pub fn dismiss(self) -> Self {
         match self {
-            Self::Finished => Self::Idle,
+            Self::Finished(_) => Self::Idle,
             other => other,
         }
     }
@@ -677,21 +668,16 @@ impl AppState {
     /// Called by the tick loop. Drives Session's internal phase
     /// transitions and surfaces the effects it emits.
     ///
-    /// At the Running→Overtime zero-crossing core emits
-    /// `EnterOvertime` + `FireEndBell`; we stay `Active` (now
-    /// reporting `UiState::Overtime`) so the end bell rings and
-    /// the session keeps ticking — the user ends it explicitly
-    /// via Finish / Add (`finish_overtime` / `add_overtime`),
-    /// mirroring GTK. Subsequent overtime ticks emit
-    /// `UpdateOvertimeLabel { overtime }` (the Add-button text)
-    /// plus any interval `FireBell`. `UiState::Done` (Box-Breath
-    /// cycle-aligned end) still finalises directly.
+    /// At the countdown's end core emits `Completed` + `FireEndBell`;
+    /// we stay `Active` (now in Overtime) so the session keeps ticking
+    /// until the user taps Save or Add, mirroring GTK. An end by itself
+    /// (Box Breath, Auto-Finish) goes to `Finished`.
     pub fn tick(self, now: Duration) -> Transition {
         match self {
             Self::Active(mut s) => {
                 let effects = s.tick(now);
                 match s.ui_state() {
-                    UiState::Done => Transition::new(Self::Finished, effects),
+                    UiState::Done => Transition::new(Self::finished(&s), effects),
                     // Running, Paused, AND Overtime all stay
                     // Active — overtime is no longer auto-finished.
                     _ => Transition::new(Self::Active(s), effects),
@@ -703,9 +689,8 @@ impl AppState {
 
     /// Overtime "Finish" tap — record exactly the planned
     /// countdown duration (the overtime delta is discarded).
-    /// `finish_overtime` emits `StopActiveSignals` + `EndSession
-    /// { duration_secs: target }`; the shell reads the latter for
-    /// the saved-row duration. No-op (passes through) outside
+    /// `finish_overtime` emits `StopActiveSignals` + `Ended` with the
+    /// planned length. No-op (passes through) outside
     /// Overtime — defends a stale tap.
     pub fn finish_overtime(self) -> Transition {
         match self {
@@ -713,7 +698,7 @@ impl AppState {
                 if matches!(s.ui_state(), UiState::Overtime) =>
             {
                 let effects = s.finish_overtime();
-                Transition::new(Self::Finished, effects)
+                Transition::new(Self::finished(&s), effects)
             }
             other => Transition::new(other, Vec::new()),
         }
@@ -721,36 +706,33 @@ impl AppState {
 
     /// Overtime "Add" tap — record the full elapsed time
     /// including the overtime the user let run. `add_overtime_
-    /// and_finish` emits `StopActiveSignals` + `EndSession {
-    /// duration_secs: total }`.
+    /// and_finish` emits `StopActiveSignals` + `Ended` with the total.
     pub fn add_overtime(self, now: Duration) -> Transition {
         match self {
             Self::Active(mut s)
                 if matches!(s.ui_state(), UiState::Overtime) =>
             {
                 let effects = s.add_overtime_and_finish(now);
-                Transition::new(Self::Finished, effects)
+                Transition::new(Self::finished(&s), effects)
             }
             other => Transition::new(other, Vec::new()),
         }
     }
 
     /// Guided audio reached EOS — force the session into Overtime
-    /// now (core emits `EnterOvertime` + `FireEndBell`), instead
+    /// now (core emits `Completed` + `FireEndBell`), instead
     /// of waiting for the countdown tick to cross the *probed*
-    /// duration (which can be off by a beat). Idempotent: a no-op
-    /// passthrough if the tick already entered Overtime, or if
-    /// not Running — exactly GTK's EOS → `Session::enter_overtime`
-    /// (`meditate-core/src/session/mod.rs:401`).
-    pub fn enter_overtime(self) -> Transition {
+    /// duration (which can be off by a beat). Idempotent once the
+    /// tick reached the end; while paused, core keeps the end for the
+    /// first tick after Resume. Same as GTK's track end.
+    pub fn enter_overtime(self, now: Duration) -> Transition {
         match self {
-            Self::Active(mut s)
-                if matches!(s.ui_state(), UiState::Running) =>
-            {
-                let effects = s.enter_overtime();
+            // Core decides: a paused session keeps the end for Resume.
+            Self::Active(mut s) => {
+                let effects = s.enter_overtime(now);
                 // Auto-Finish stops the session at the file's end.
                 if matches!(s.ui_state(), UiState::Done) {
-                    return Transition::new(Self::Finished, effects);
+                    return Transition::new(Self::finished(&s), effects);
                 }
                 Transition::new(Self::Active(s), effects)
             }
@@ -766,7 +748,7 @@ impl AppState {
         match self {
             Self::Idle => total,
             Self::Active(s) => total.saturating_sub(s.elapsed(now)),
-            Self::Finished => Duration::ZERO,
+            Self::Finished(_) => Duration::ZERO,
         }
     }
 
@@ -781,7 +763,7 @@ impl AppState {
     pub fn end_buttons(&self) -> meditate_core::session::EndButtons {
         match self {
             Self::Active(s) => s.end_buttons(),
-            Self::Idle | Self::Finished => meditate_core::session::EndButtons::ENDED,
+            Self::Idle | Self::Finished(_) => meditate_core::session::EndButtons::ENDED,
         }
     }
 
@@ -800,7 +782,7 @@ impl AppState {
     pub fn bell_ring(&self, now: Duration) -> meditate_core::session::BellRing {
         match self {
             Self::Active(s) => s.bell_ring(now),
-            Self::Idle | Self::Finished => Default::default(),
+            Self::Idle | Self::Finished(_) => Default::default(),
         }
     }
 
@@ -832,7 +814,7 @@ impl AppState {
                 // GTK shell renders.
                 format_time(Duration::from_secs(s.display_secs(now)))
             }
-            Self::Finished => format_time(Duration::ZERO),
+            Self::Finished(secs) => format_time(Duration::from_secs(*secs)),
         }
     }
 }
@@ -4416,12 +4398,9 @@ mod tests {
     }
 
     #[test]
-    fn hero_label_finished_is_double_zero() {
-        let s = AppState::Finished;
-        assert_eq!(
-            s.hero_label(Duration::from_secs(600), Duration::ZERO, false),
-            "00:00",
-        );
+    fn hero_label_finished_shows_the_saved_length() {
+        let s = AppState::Finished(420);
+        assert_eq!(s.hero_label(Duration::from_secs(600), Duration::ZERO, false), "07:00");
     }
 
     #[test]
@@ -4507,6 +4486,20 @@ mod tests {
     }
 
     #[test]
+    fn an_ended_session_shows_its_length() {
+        let t0 = Duration::from_secs(100);
+        let at = |secs| t0 + Duration::from_secs(secs);
+        let target = Duration::from_secs(45 * 60);
+        // Into overtime, then Save: the planned length.
+        let t = AppState::Idle.toggle(timer_countdown(target), t0).tick(at(2700)).tick(at(2760)).finish_overtime();
+        assert!(t.is_finished());
+        assert_eq!(t.hero_label(target, at(2800), false), "45:00");
+        // Save after 7 minutes.
+        let t = AppState::Idle.toggle(timer_countdown(target), t0).stop(at(420));
+        assert_eq!(t.hero_label(target, at(500), false), "07:00");
+    }
+
+    #[test]
     fn fresh_state_is_idle() {
         assert!(AppState::idle().is_idle());
     }
@@ -4536,7 +4529,7 @@ mod tests {
 
     #[test]
     fn toggle_from_finished_starts_a_fresh_countdown() {
-        let s = AppState::Finished.toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
+        let s = AppState::Finished(0).toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
         assert!(s.is_running());
         // And the countdown is brand new — full duration remaining.
         assert_eq!(s.remaining(ten_minutes(), Duration::from_secs(100)), ten_minutes());
@@ -4571,7 +4564,7 @@ mod tests {
         // Stop button isn't reachable from Finished (Done screen has
         // Save / Discard instead), but defending against a stale
         // callback is cheap.
-        let t = AppState::Finished.stop(Duration::from_secs(100));
+        let t = AppState::Finished(0).stop(Duration::from_secs(100));
         assert!(t.is_finished());
         assert!(t.effects.is_empty());
     }
@@ -4584,7 +4577,7 @@ mod tests {
             .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .stop(Duration::from_secs(190));
         assert_eq!(t.effects.first(), Some(&Effect::StopActiveSignals));
-        assert_eq!(ended_duration_secs(&t.effects), Some(90));
+        assert_eq!(Effect::ended_secs(&t.effects), Some(90));
         assert!(
             !t.effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })),
             "Stop is silent",
@@ -4599,7 +4592,7 @@ mod tests {
             .toggle(shape(), Duration::from_secs(130)) // pause after 30 s
             .toggle(shape(), Duration::from_secs(400)) // resume
             .stop(Duration::from_secs(420));
-        assert_eq!(ended_duration_secs(&t.effects), Some(50));
+        assert_eq!(Effect::ended_secs(&t.effects), Some(50));
     }
 
     #[test]
@@ -4610,7 +4603,7 @@ mod tests {
             .tick(Duration::from_secs(175));
         assert!(t.is_active(), "still in Overtime");
         let t = t.stop(Duration::from_secs(180));
-        assert_eq!(ended_duration_secs(&t.effects), Some(80));
+        assert_eq!(Effect::ended_secs(&t.effects), Some(80));
     }
 
     #[test]
@@ -4627,7 +4620,7 @@ mod tests {
             }
         }
         assert!(t.is_finished());
-        assert_eq!(ended_duration_secs(&t.effects), Some(16));
+        assert_eq!(Effect::ended_secs(&t.effects), Some(16));
     }
 
     // ── "Meditation complete" notification ─────────────────────
@@ -4638,7 +4631,7 @@ mod tests {
             .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(t.is_overtime());
-        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(60));
+        assert_eq!(completion_notice_secs(&t.effects, false), Some(60));
     }
 
     #[test]
@@ -4648,7 +4641,7 @@ mod tests {
         let t = AppState::idle()
             .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
-        assert_eq!(completion_notice_secs(&t.state, &t.effects, true), None);
+        assert_eq!(completion_notice_secs(&t.effects, true), None);
     }
 
     #[test]
@@ -4656,10 +4649,10 @@ mod tests {
         let running = AppState::idle()
             .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100));
         let mid = running.state.tick(Duration::from_secs(130));
-        assert_eq!(completion_notice_secs(&mid.state, &mid.effects, false), None);
+        assert_eq!(completion_notice_secs(&mid.effects, false), None);
         let over = mid.state.tick(Duration::from_secs(160));
         let later = over.state.tick(Duration::from_secs(175));
-        assert_eq!(completion_notice_secs(&later.state, &later.effects, false), None, "once, at the crossing");
+        assert_eq!(completion_notice_secs(&later.effects, false), None, "once, at the crossing");
     }
 
     #[test]
@@ -4667,8 +4660,8 @@ mod tests {
         let t = AppState::idle()
             .toggle(guided(Duration::from_secs(300), false), Duration::from_secs(0))
             .state
-            .enter_overtime();
-        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(300));
+            .enter_overtime(Duration::ZERO);
+        assert_eq!(completion_notice_secs(&t.effects, false), Some(300));
     }
 
     #[test]
@@ -4685,7 +4678,7 @@ mod tests {
             }
         }
         assert!(t.is_finished());
-        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(16));
+        assert_eq!(completion_notice_secs(&t.effects, false), Some(16));
     }
 
     #[test]
@@ -4701,11 +4694,11 @@ mod tests {
             .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .state
             .stop(Duration::from_secs(120));
-        assert_eq!(completion_notice_secs(&stop.state, &stop.effects, false), None);
+        assert_eq!(completion_notice_secs(&stop.effects, false), None);
         let finish = over().finish_overtime();
-        assert_eq!(completion_notice_secs(&finish.state, &finish.effects, false), None);
+        assert_eq!(completion_notice_secs(&finish.effects, false), None);
         let add = over().add_overtime(Duration::from_secs(170));
-        assert_eq!(completion_notice_secs(&add.state, &add.effects, false), None);
+        assert_eq!(completion_notice_secs(&add.effects, false), None);
     }
 
     #[test]
@@ -4714,8 +4707,8 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         // Both natural ends: the tick crossing and the guided track's EOS.
-        assert_eq!(code.matches("notify_if_complete(&t.state, &t.effects);").count()
-            + code.matches("notify_if_complete(&transition.state, &transition.effects);").count(), 2);
+        assert_eq!(code.matches("notify_if_complete(&t.effects);").count()
+            + code.matches("notify_if_complete(&transition.effects);").count(), 2);
         // Foreground tracking from the activity lifecycle; coming back
         // (or starting the next session) clears a stale notice.
         let listener = code.find("init_with_event_listener").unwrap();
@@ -4766,7 +4759,7 @@ mod tests {
         let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
         assert_eq!(media_buttons(&over, true), vec![2, 3, 4], "Save, Add, Discard");
         assert!(media_buttons(&AppState::idle(), true).is_empty());
-        assert!(media_buttons(&AppState::Finished, true).is_empty(), "the service is gone");
+        assert!(media_buttons(&AppState::Finished(0), true).is_empty(), "the service is gone");
     }
 
     #[test]
@@ -5015,11 +5008,11 @@ mod tests {
         assert_eq!((paused.end_buttons().first, paused.end_buttons().second), (EndButton::Resume, Some(EndButton::Save)));
         // Save while paused keeps the time so far; in overtime the planned length.
         let saved = paused.save_end(t0 + Duration::from_secs(9));
-        assert_eq!(ended_duration_secs(&saved.effects), Some(5));
+        assert_eq!(Effect::ended_secs(&saved.effects), Some(5));
         assert!(saved.is_finished() && saved.is_running_page(), "an ended session stays on the running page");
         assert_eq!(saved.end_buttons(), EndButtons::ENDED);
         let over = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).tick(t0 + Duration::from_secs(90)).state;
-        assert_eq!(ended_duration_secs(&over.save_end(t0 + Duration::from_secs(95)).effects), Some(60));
+        assert_eq!(Effect::ended_secs(&over.save_end(t0 + Duration::from_secs(95)).effects), Some(60));
         for b in [EndButton::Pause, EndButton::Resume, EndButton::Save, EndButton::Add] {
             assert_eq!(end_button_from_code(end_button_code(b)), Some(b), "Slint hands back the button it was given");
         }
@@ -5057,7 +5050,7 @@ mod tests {
         let paused = running.toggle(shape.clone(), min(3)).state;
         let resumed = paused.toggle(shape, min(4)).state;
         let saved = resumed.save_end(min(8));
-        assert_eq!(ended_duration_secs(&saved.effects), Some(7 * 60));
+        assert_eq!(Effect::ended_secs(&saved.effects), Some(7 * 60));
         assert!(saved.is_finished());
         // The note typed in the pause is still there, hidden: not behind an `if`.
         let slint = slint_code();
@@ -5088,15 +5081,15 @@ mod tests {
         let settings = SessionSettings { auto_finish: true, ..SessionSettings { shape: timer_countdown(Duration::from_secs(60)), ..Default::default() } };
         let t = AppState::start_session(settings, t0).state.tick(t0 + Duration::from_secs(61));
         assert!(t.is_finished(), "no overtime");
-        assert_eq!(ended_duration_secs(&t.effects), Some(60));
-        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(60), "the notification still comes");
+        assert_eq!(Effect::ended_secs(&t.effects), Some(60));
+        assert_eq!(completion_notice_secs(&t.effects, false), Some(60), "the notification still comes");
         // A guided file ending first ends the session too.
         let guided = SessionSettings {
             auto_finish: true,
             shape: SessionShape::Guided { duration_secs: 600, count_up_display: false },
             ..Default::default()
         };
-        assert!(AppState::start_session(guided, t0).state.enter_overtime().is_finished());
+        assert!(AppState::start_session(guided, t0).state.enter_overtime(Duration::ZERO).is_finished());
 
         let code = ui_code();
         assert_eq!(code.matches("on_auto_finish(&ui, &t").count(), 2, "the tick and the file's end");
@@ -5238,15 +5231,15 @@ mod tests {
                 .tick(Duration::from_secs(160))
         };
         let finish = start().finish_overtime();
-        assert_eq!(ended_duration_secs(&finish.effects), Some(60), "Finish keeps the planned length");
+        assert_eq!(Effect::ended_secs(&finish.effects), Some(60), "Finish keeps the planned length");
         let add = start().add_overtime(Duration::from_secs(190));
-        assert_eq!(ended_duration_secs(&add.effects), Some(90), "Add keeps the overtime");
+        assert_eq!(Effect::ended_secs(&add.effects), Some(90), "Add keeps the overtime");
     }
 
     #[test]
     fn no_end_effect_means_no_duration() {
-        assert_eq!(ended_duration_secs(&[]), None);
-        assert_eq!(ended_duration_secs(&[Effect::StopActiveSignals]), None);
+        assert_eq!(Effect::ended_secs(&[]), None);
+        assert_eq!(Effect::ended_secs(&[Effect::StopActiveSignals]), None);
     }
 
     /// Every way a session ends takes its saved duration from core's
@@ -5256,11 +5249,11 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
-        assert!(!code.contains("fn end_session_duration("), "one helper, in app.rs");
+        assert!(!code.contains("fn end_session_duration("), "one helper, in core");
         assert!(!code.contains("pre_elapsed"));
         assert!(!code.contains("session.elapsed(now).as_secs() as i64"), "no shell-side duration");
         assert_eq!(
-            code.matches("app::ended_duration_secs(&transition.effects)").count(),
+            code.matches("meditate_core::session::Effect::ended_secs(&transition.effects)").count(),
             2,
             "the end taps (Stop, Finish, Add) and the natural end",
         );
@@ -5270,7 +5263,7 @@ mod tests {
 
     #[test]
     fn dismiss_from_finished_returns_to_idle() {
-        assert!(AppState::Finished.dismiss().is_idle());
+        assert!(AppState::Finished(0).dismiss().is_idle());
     }
 
     #[test]
@@ -5332,6 +5325,18 @@ mod tests {
     }
 
     #[test]
+    fn a_track_ending_during_a_pause_ends_the_session_after_resume() {
+        let t0 = Duration::from_secs(100);
+        let shape = || guided(Duration::from_secs(900), false);
+        let paused = AppState::idle().toggle(shape(), t0).toggle(shape(), t0 + Duration::from_secs(600));
+        assert!(paused.is_paused());
+        let t = paused.state.enter_overtime(Duration::ZERO);
+        assert!(t.is_paused(), "the end waits for Resume");
+        let t = t.state.toggle(shape(), t0 + Duration::from_secs(700)).tick(t0 + Duration::from_secs(701));
+        assert!(t.is_overtime(), "the first tick after Resume ends it");
+    }
+
+    #[test]
     fn guided_lifecycle_start_overtime_finish() {
         // Guided behaves like a countdown of the file length:
         // before the end it's running; when the file's duration
@@ -5361,7 +5366,7 @@ mod tests {
         let s = AppState::idle()
             .toggle(guided(Duration::from_secs(300), false),
                 Duration::from_secs(0))
-            .enter_overtime();
+            .enter_overtime(Duration::ZERO);
         assert!(s.is_overtime() && !s.is_finished());
         assert!(s.finish_overtime().is_finished());
     }
@@ -5370,13 +5375,13 @@ mod tests {
     fn enter_overtime_outside_running_is_a_passthrough() {
         // Idle / already-overtime → no-op (defends a late EOS
         // after the tick already crossed the probed duration).
-        assert!(AppState::idle().enter_overtime().is_idle());
+        assert!(AppState::idle().enter_overtime(Duration::ZERO).is_idle());
         let over = AppState::idle()
             .toggle(timer_countdown(Duration::from_secs(60)),
                 Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(over.is_overtime());
-        assert!(over.enter_overtime().is_overtime()); // still, no double
+        assert!(over.enter_overtime(Duration::ZERO).is_overtime()); // still, no double
     }
 
     #[test]
@@ -5427,7 +5432,7 @@ mod tests {
 
     #[test]
     fn tick_finished_stays_finished() {
-        assert!(AppState::Finished.tick(Duration::from_secs(0)).is_finished());
+        assert!(AppState::Finished(0).tick(Duration::from_secs(0)).is_finished());
     }
 
     // ── remaining ────────────────────────────────────────────────
@@ -5443,7 +5448,7 @@ mod tests {
     #[test]
     fn remaining_finished_is_zero() {
         assert_eq!(
-            AppState::Finished.remaining(ten_minutes(), Duration::from_secs(999)),
+            AppState::Finished(0).remaining(ten_minutes(), Duration::from_secs(999)),
             Duration::ZERO
         );
     }
@@ -5486,7 +5491,7 @@ mod tests {
     #[test]
     fn is_running_page_finished_true() {
         // An ended session waits on the running page for Save or Discard.
-        assert!(AppState::Finished.is_running_page());
+        assert!(AppState::Finished(0).is_running_page());
     }
 
     #[test]

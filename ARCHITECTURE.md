@@ -233,9 +233,8 @@ clonable, with no Database, clock or shell reference.
 ### Session: the in-flight state machine
 
 Exists from Start until Save or Discard on the running page. It owns a `SessionPhase`
-(Prep, Running, Overtime, Stopped; `Paused` is reserved and
-unreached, pause is a separate flag), a pause-aware `Stopwatch` phase
-clock, the bell schedule with its fired state, and for Box Breath
+(Prep, Running, Overtime, Stopped with the length to save), a
+pause-aware `Stopwatch` phase clock (a pause lives only there), the bell schedule with its fired state, and for Box Breath
 the current breath phase.
 
 Each `tick(now)` moves the machine forward and returns a
@@ -246,35 +245,33 @@ inputs always give the same effects, so a 40-minute session can be
 driven through every boundary in a test in microseconds.
 
 Public surface: `Session::start(settings, now)` (returns the session
-plus its start effects, so a starting bell can't be lost), `tick` /
-`tick_summary`, `pause` / `resume`, the terminators `stop`,
+plus its start effects, so a starting bell can't be lost), `tick`,
+`pause` / `resume`, the terminators `stop`,
 `finish_overtime` and `add_overtime_and_finish`, `enter_overtime`
 (a guided track ended on its own), `ui_state()`, `end_buttons()`
 (which buttons the running page shows, and whether the note field
 is shown; there is no separate Done page, and `EndButtons::ENDED` is
-what a stopped but unsaved session shows) and `display_secs(now)`
-for refreshes outside the tick.
+what a stopped but unsaved session shows), `display_secs(now)` (the
+time; once ended, the length saved), `overtime(now)` (the Add
+button) and `toggle_action()` (the play key). The apps redraw from
+these after every call; effects only carry what can't be read back.
+A pause lives in the session's clock, never in its phase.
 
-With `SessionSettings::auto_finish` on, a countdown's end (Timer,
-Guided length or track end, Box Breath target) stops the session at
-its planned length and emits `AutoFinish` in place of
-`EnterOvertime` / `EndBoxBreath`.
+A countdown's end (Timer, Guided length or track end, Box Breath
+target) skips every bell due by the planned length, emits
+`Completed` and the end bell, and then goes to overtime, or ends at
+the planned length: Box Breath always, the others with
+`SessionSettings::auto_finish` on.
 
 ### Effect: the output instruction set
 
 Each variant is one thing the shell should do this tick. All in
 `session/effect.rs`:
 
-- `UpdateDisplay { secs }`: refresh the big time label; Session has
-  already rounded.
-- `EndPrep`: prep silence over, now Running.
-- `EnterOvertime`: target crossed; the buttons become Save and Add
-  with Discard below, the hero label freezes.
 - `StopGuidedAudio`: Guided reached its planned length; stop the
-  track now, before the end bell. Emitted first in the
-  Running-to-Overtime transition.
-- `UpdateOvertimeLabel { overtime }`: render the Add button's
-  overtime count.
+  track now, before the end bell. Emitted first at the end.
+- `Completed { planned_secs }`: the session reached its planned end
+  by itself; "Meditation complete" while the app is not in front.
 - `FireStartingBell { sound_uuid, vibration_pattern_uuid,
   signal_mode, volume }`: play the starting bell. `signal_mode` is
   already the effective mode (see below); the shell dispatches with
@@ -283,13 +280,10 @@ Each variant is one thing the shell should do this tick. All in
 - `FireBell { … }`: an interval or fixed bell reached its time.
 - `FireBoxBreathCue { phase, … }`: a Box Breath phase boundary was
   crossed and a cue is set for the new phase.
-- `EndBoxBreath { duration_secs }`: Box Breath reached its
-  cycle-aligned target.
-- `AutoFinish { duration_secs }`: Auto-Finish ended the countdown;
-  save at once (with the note) and offer Undo. The end bell follows
-  in the same list and is not cut.
-- `EndSession { duration_secs }`: the session is over (any path);
-  `duration_secs` is what the saved row records.
+- `Ended { duration_secs, save_now }`: the session is over (any
+  path); `duration_secs` is what the saved row records. `save_now`
+  is Auto-Finish: save at once (with the note) and offer Undo; the
+  end bell follows in the same list and is not cut.
 - `StopActiveSignals`: cut any bell or vibration in flight. Emitted
   on Pause, Stop, Finish and Add.
 
@@ -399,7 +393,7 @@ meditate-core/src/
 │   ├── indicator.rs           sync-indicator state
 │   └── fake.rs                in-memory WebDav for tests
 └── session/         the session state machine
-    ├── mod.rs                 Session, SessionPhase, UiState, TickOutcome
+    ├── mod.rs                 Session, SessionPhase, UiState
     ├── effect.rs              Effect, FireRoute, FireChannel
     └── settings.rs            SessionShape, SessionSettings::from_db
 ```

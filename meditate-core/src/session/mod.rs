@@ -7,17 +7,13 @@
 //! Pause/Resume layered on top via `Stopwatch`. Bells (starting,
 //! interval, end) and Box-Breath phase cues fire as `Effect`s.
 //!
-//! Ownership pattern: the shell holds `Cell<Option<Session>>` —
-//! `None` when no session is in flight (the setup view is showing),
-//! `Some(session)` while a session is running. Each tick the shell
-//! calls `session.tick(now)`, gets a `Vec<Effect>`, and dispatches
-//! each effect through its native side-effect layer (gtk widget
-//! updates / D-Bus haptics / gstreamer audio / Android Vibrator+
-//! MediaPlayer / etc.). The gtk-side reactive plumbing collapses to
-//! a thin pump.
+//! Ownership pattern: the app holds `Option<Session>`, `None` while
+//! Setup shows. Each tick it calls `session.tick(now)`, dispatches the
+//! returned effects (bells, signals, the end) and then redraws the
+//! time, the buttons and the overtime from the session.
 
 use crate::bells::ActiveBell;
-use crate::breath::{BreathPattern, Phase, PhaseInfo};
+use crate::breath::{Phase, PhaseInfo};
 use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
 use std::time::Duration;
@@ -27,15 +23,8 @@ mod settings;
 pub use effect::{Effect, FireChannel, FireRoute};
 pub use settings::{SessionSettings, SessionShape};
 
-/// What the running-page view should reflect right now. Strict
-/// superset of `SessionPhase` plus `Idle` (no in-flight session)
-/// and an explicit `Paused` that captures the orthogonal pause flag
-/// (`Session::is_paused`) rather than the rarely-set `SessionPhase::
-/// Paused` variant. The shell branches on this enum to drive the
-/// view-stack page transitions and the running-page button row.
-///
-/// Resolved through `Session::ui_state()` (for in-flight sessions)
-/// or the free fn `ui_state(session)` which handles `None → Idle`.
+/// What the running page should reflect right now: the phase, with
+/// a pause on top, and `Idle` for no session (the app's `None`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiState {
     /// No session in flight — the Setup view is showing.
@@ -48,41 +37,13 @@ pub enum UiState {
     Overtime,
     /// Session paused; tick produces no effects.
     Paused,
-    /// Session ended (any terminal path) — Done view is showing.
+    /// Session ended (any terminal path); the running page shows Save.
     Done,
 }
 
-/// Resolve the running-page `UiState` from the shell's
-/// `Option<Session>` slot. `None` → `Idle`; `Some(s)` delegates to
-/// `s.ui_state()`.
-pub fn ui_state(session: Option<&Session>) -> UiState {
-    session.map_or(UiState::Idle, Session::ui_state)
-}
-
-/// Fold of the side-effect inspection every tick callsite does
-/// after `Session::tick`. The shell uses these three values to
-/// update its hero label, transition into Overtime UI, and update
-/// the Add-overtime button label. Returned alongside the raw
-/// effects vec from `Session::tick_summary` so fire-cue dispatch
-/// (sound + vibration) still happens in the same loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct TickOutcome {
-    /// The latest `Effect::UpdateDisplay` value observed this tick,
-    /// or `None` when no display update was emitted (e.g., a quiet
-    /// box-breath tick between phase boundaries).
-    pub display_secs: Option<u64>,
-    /// `true` when the tick crossed the Running → Overtime
-    /// boundary (Session emitted `Effect::EnterOvertime`).
-    pub entered_overtime: bool,
-    /// The latest `Effect::UpdateOvertimeLabel` overtime delta
-    /// observed this tick. `None` outside Overtime ticks.
-    pub overtime_delta: Option<Duration>,
-}
-
-/// What the play/pause-key tap should do given the current `UiState`.
-/// Returned by `Session::toggle_action`. Shell maps each variant to
-/// its `on_start` / `on_pause` / `on_resume` calls; `NoOp` covers
-/// overtime and an ended session, where only the page's buttons end it.
+/// What the play/pause-key tap should do. `Session::toggle_action`
+/// for a session, `Start` without one; `NoOp` covers overtime and an
+/// ended session, where only the page's buttons end it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleAction {
     Start,
@@ -203,54 +164,35 @@ pub const TIMER_DEFAULT_SECS: u32 = 10 * 60;
 /// `TIMER_DEFAULT_SECS`.
 pub const BREATHING_DEFAULT_SECS: u32 = 5 * 60;
 
-/// Which lifecycle phase the in-flight session is currently in.
-/// "Idle" is not a phase — it corresponds to no session being in
-/// flight at all (the shell holds `Option<Session>::None`).
+/// Which lifecycle phase the in-flight session is in. A pause is
+/// not a phase: it lives in the session's clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPhase {
-    /// Silent preparation interval before the starting bell fires
-    /// and the actual session timing begins. Timer-mode only;
-    /// Box Breath skips this entirely. Stage 0a only implements
-    /// this phase; the others arrive in subsequent stages.
+    /// Silent preparation before the starting bell.
     Prep,
     /// Active session: countdown, stopwatch, or box-breath cycling.
     Running,
-    /// User-paused. Stopwatch and breath-cycle are frozen; tick
-    /// produces no effects until resumed.
-    Paused,
-    /// Countdown Timer/Guided crossed zero but the user hasn't
-    /// chosen Finish or Add yet. Hero is frozen at the planned
-    /// duration; the Add-button label counts up as overtime
-    /// accumulates; interval bells keep firing on the original
-    /// session timeline.
+    /// A Timer or Guided countdown reached its end; the user hasn't
+    /// chosen Save or Add yet. Bells keep ringing on the session's
+    /// timeline.
     Overtime,
-    /// Terminal phase reached via `stop` / `finish_overtime` /
-    /// `add_overtime_and_finish`. Subsequent `tick()` calls return
-    /// no effects; calling stop again is a no-op. The shell typically
-    /// drops the `Session` right after seeing `Effect::EndSession`.
-    Stopped,
+    /// Ended, with the length to save, and whether the countdown had
+    /// reached its planned end (the ring and the end bell's count show
+    /// it, whatever length is saved). Ticks do nothing from here.
+    Stopped { duration_secs: u64, reached_end: bool },
 }
 
-
 /// In-flight session. Created by `start` (in Prep when prep silence
-/// is enabled, else in Running); driven by `tick(now)`
-/// thereafter; transitioned to `SessionPhase::Stopped` by `stop` /
-/// `finish_overtime` / `add_overtime_and_finish`, after which the
-/// shell drops it.
+/// is enabled, else in Running); driven by `tick(now)` thereafter;
+/// ended by `stop`, `finish_overtime`, `add_overtime_and_finish` or
+/// its own end.
 #[derive(Debug)]
 pub struct Session {
     settings: SessionSettings,
     phase: SessionPhase,
-    /// Per-phase elapsed-tracker. Re-anchored on phase transitions
-    /// (Prep→Running, eventually Running→Overtime) so the new
-    /// phase's elapsed counts from that moment. Pause/resume mutate
-    /// this in place so paused time doesn't leak into elapsed.
+    /// Per-phase elapsed-tracker, re-anchored when prep ends. Paused
+    /// while the session is paused, so paused time doesn't count.
     phase_clock: Stopwatch,
-    /// True when the session is paused (`pause()` was called more
-    /// recently than `resume()`). Tick is a no-op while paused;
-    /// `phase_clock` is in its `Paused` variant so elapsed reads
-    /// stay frozen at the pause moment.
-    is_paused: bool,
     /// Box-Breath phase boundary tracking. `None` until the first
     /// Running tick, which seeds it silently because `Session::start`
     /// already cued the first inhale. `Some(p)` thereafter; a tick observes
@@ -261,26 +203,12 @@ pub struct Session {
     /// bells reroll their `next_ring_secs`; Fixed bells flip their
     /// `fired` flag.
     bells: Vec<ActiveBell>,
-    /// Xorshift64 state for bell-jitter rolls. Initialized from
-    /// `SessionSettings::bell_rng_seed` (zero → 1 to avoid the
-    /// degenerate xorshift seed).
+    /// Xorshift64 state for bell-jitter rolls, from
+    /// `SessionSettings::bell_rng_seed` (`bells::xorshift64` guards a 0).
     bell_rng_state: u64,
-    /// Set when the session transitions to `Stopped` — the duration
-    /// the shell should persist in the saved session row. `None`
-    /// while in flight (Prep/Running/Overtime/Paused). Survives the
-    /// `Stopped` phase until the shell drops the Session at reset
-    /// time, so the Done view can render the saved length without
-    /// the shell having to shadow the value itself.
-    ///
-    /// Type: `u64`, not the `u32` the rest of `Session` uses for
-    /// session-duration seconds. The dominant write path is
-    /// `phase_clock.elapsed(now).as_secs()` (Duration's API is u64),
-    /// and the Effect-bus consumers (`EndSession { duration_secs: u64 }`,
-    /// `EndBoxBreath { duration_secs: u64 }`, the shell's `show_done`
-    /// / `end_overtime_session` u64 chain) inherit that width. Per
-    /// the crate-level convention (lib.rs): "u64 where Duration::as_secs()
-    /// feeds the value."
-    final_duration_secs: Option<u64>,
+    /// The guided track ended while paused: the first tick after Resume
+    /// ends the countdown.
+    track_ended: bool,
 }
 
 impl Session {
@@ -294,14 +222,14 @@ impl Session {
     /// 1. **Construct** via this fn and dispatch the effects it
     ///    returns. The `Session` is in `Prep` when
     ///    `settings.prep_secs` is set, otherwise in `Running`;
-    ///    paused = false, clock anchored at `now`. The effects are
+    ///    clock running from `now`. The effects are
     ///    what plays at the start: the starting bell when there is
     ///    no prep (with prep it comes from the tick that ends prep).
     /// 2. **Tick** once per second from the caller's clock, passing
     ///    a monotonic `now: Duration` (typically `boot_time_now()` so
     ///    suspend doesn't freeze the clock). Each tick returns
-    ///    `Vec<Effect>` — fire bells / haptics / box-breath cues /
-    ///    UpdateOvertimeLabel from these on the shell side. The
+    ///    `Vec<Effect>`: bells, haptics, box-breath cues, the end.
+    ///    Redraw the time and buttons from the session after it. The
     ///    session's internal phase transitions (Prep → Running →
     ///    Overtime, etc.) happen inside `tick`.
     /// 3. **Optional pause/resume** via `pause(now)` / `resume(now)`.
@@ -310,11 +238,11 @@ impl Session {
     ///    of session.
     /// 4. **Terminate** via one of: `stop(now)` (user-initiated;
     ///    persist the elapsed duration), `finish_overtime()` (user
-    ///    tapped Finish during overtime; persist the planned target),
+    ///    tapped Save during overtime; persist the planned target),
     ///    `add_overtime_and_finish(now)` (user tapped Add; persist
-    ///    elapsed-including-overtime). Each terminator returns the
-    ///    final `Effect::EndSession { duration_secs }` plus a
-    ///    `StopActiveSignals` to cut in-flight bells.
+    ///    elapsed-including-overtime). Each returns `StopActiveSignals`
+    ///    and `Effect::Ended` with the length to save. A countdown can
+    ///    also end by itself (Auto-Finish, a Box Breath end).
     /// 5. **Drop** the session on the Done-view dismissal. The
     ///    persisted DB row is the source of truth past that point.
     ///
@@ -333,8 +261,8 @@ impl Session {
     /// // Shell drives by calling `tick(now)` once per second.
     /// let _effects = s.tick(Duration::from_secs(101));
     /// // Terminate via `stop`, `finish_overtime`, or
-    /// // `add_overtime_and_finish` — observe `Effect::EndSession`
-    /// // to know the user-visible duration to persist.
+    /// // `add_overtime_and_finish` — `Effect::Ended` carries the
+    /// // length to persist.
     /// let end_effects = s.stop(Duration::from_secs(110));
     /// assert!(!end_effects.is_empty());
     /// ```
@@ -355,16 +283,15 @@ impl Session {
 
     fn new(mut settings: SessionSettings, phase: SessionPhase, now: Duration) -> Self {
         let bells = std::mem::take(&mut settings.bells);
-        let bell_rng_state = settings.bell_rng_seed.max(1);
+        let bell_rng_state = settings.bell_rng_seed;
         Self {
             settings,
             phase,
             phase_clock: Stopwatch::started_at(now),
-            is_paused: false,
             last_breath_phase: None,
             bells,
             bell_rng_state,
-            final_duration_secs: None,
+            track_ended: false,
         }
     }
 
@@ -394,14 +321,10 @@ impl Session {
     /// Idempotent: calling pause on an already-paused session is a
     /// no-op (won't double-count paused time, returns empty Vec).
     pub fn pause(&mut self, now: Duration) -> Vec<Effect> {
-        if self.is_paused {
+        if self.is_paused() || self.final_duration_secs().is_some() {
             return Vec::new();
         }
-        // Stopwatch::paused_at consumes self; swap-and-replace.
-        let dummy = Stopwatch::started_at(Duration::ZERO);
-        let s = std::mem::replace(&mut self.phase_clock, dummy);
-        self.phase_clock = s.paused_at(now);
-        self.is_paused = true;
+        self.phase_clock = self.phase_clock.paused_at(now);
         vec![Effect::StopActiveSignals]
     }
 
@@ -410,334 +333,158 @@ impl Session {
     /// leak from the pause window). Idempotent: calling resume on
     /// an already-running session is a no-op.
     pub fn resume(&mut self, now: Duration) {
-        if !self.is_paused {
-            return;
+        if self.is_paused() {
+            self.phase_clock = self.phase_clock.resumed_at(now);
         }
-        let dummy = Stopwatch::started_at(Duration::ZERO);
-        let s = std::mem::replace(&mut self.phase_clock, dummy);
-        self.phase_clock = s.resumed_at(now);
-        self.is_paused = false;
     }
 
+    /// Paused and not ended: an ended session never resumes.
     pub fn is_paused(&self) -> bool {
-        self.is_paused
+        matches!(self.phase_clock, Stopwatch::Paused { .. }) && self.final_duration_secs().is_none()
     }
 
-    /// User-initiated stop. Returns a single `EndSession` effect
-    /// whose `duration_secs` is what the shell should persist as
-    /// the saved row's duration:
-    ///
-    /// - From Prep: prep elapsed so far (floor seconds). Lets a
-    ///   "stop during prep" still save a real session row instead
-    ///   of dropping the time the user spent waiting.
-    /// - From Running: running elapsed (floor seconds). Same as
-    ///   `phase_clock.elapsed(now)` — Running's clock anchored at
-    ///   the Prep→Running transition.
-    /// - From Overtime: running+overtime elapsed. The phase_clock
-    ///   was preserved across the Running→Overtime transition, so
-    ///   `elapsed(now)` already includes both.
-    ///
-    /// Phase transitions to `Stopped`; further ticks return no
-    /// effects. Idempotent: calling stop on an already-Stopped
-    /// session returns an empty Vec without re-emitting the effect.
-    /// Pause state is honoured — stop while paused returns the
-    /// duration captured at the pause moment, since the phase_clock
-    /// is frozen there.
+    /// End the session with `duration_secs` to save.
+    fn end(&mut self, duration_secs: u64, save_now: bool) -> Effect {
+        let reached_end = self.phase == SessionPhase::Overtime;
+        self.phase = SessionPhase::Stopped { duration_secs, reached_end };
+        Effect::Ended { duration_secs, save_now }
+    }
+
+    /// User-initiated stop: ends with the meditation time so far (the
+    /// moment of a pause, if paused; 0 during preparation, which is
+    /// never meditation; with the overtime in overtime). Returns
+    /// `StopActiveSignals` and `Ended`; nothing once ended.
     pub fn stop(&mut self, now: Duration) -> Vec<Effect> {
-        if self.phase == SessionPhase::Stopped {
+        if self.final_duration_secs().is_some() {
             return Vec::new();
         }
-        let duration_secs = self.phase_clock.elapsed(now).as_secs();
-        self.phase = SessionPhase::Stopped;
-        self.final_duration_secs = Some(duration_secs);
-        vec![
-            Effect::StopActiveSignals,
-            Effect::EndSession { duration_secs },
-        ]
+        let duration_secs = self.saved_secs(now);
+        vec![Effect::StopActiveSignals, self.end(duration_secs, false)]
     }
 
-    /// Overtime "Finish" — record exactly the planned countdown
-    /// duration; the overtime delta is discarded. Returns
-    /// `EndSession { duration_secs: target_secs }`. Only valid in
-    /// Overtime phase; from any other phase returns an empty Vec
-    /// without changing state, so the shell can call this
-    /// unconditionally on the user's Finish tap without first
-    /// checking phase.
+    /// Overtime Save: ends with the planned length; the overtime is
+    /// dropped. Nothing outside Overtime, so a stale tap is harmless.
     pub fn finish_overtime(&mut self) -> Vec<Effect> {
         if self.phase != SessionPhase::Overtime {
             return Vec::new();
         }
-        // Overtime is only reachable from a shape that carries a
-        // target (TimerCountdown / Guided). Box-Breath ends via
-        // EndBoxBreath, never Overtime; stopwatch sessions never
-        // cross a countdown boundary. The exhaustive match makes
-        // that invariant load-bearing on the types instead of a
-        // runtime `.expect()`.
-        let target_secs = match self.settings.shape {
-            SessionShape::TimerCountdown { target_secs } => u64::from(target_secs),
-            SessionShape::Guided { duration_secs, .. } => u64::from(duration_secs),
-            SessionShape::TimerStopwatch
-            | SessionShape::BoxBreathCountdown { .. }
-            | SessionShape::BoxBreathStopwatch { .. } => return Vec::new(),
-        };
-        self.phase = SessionPhase::Stopped;
-        self.final_duration_secs = Some(target_secs);
-        vec![
-            Effect::StopActiveSignals,
-            Effect::EndSession { duration_secs: target_secs },
-        ]
+        let planned = self.completion_duration_secs();
+        vec![Effect::StopActiveSignals, self.end(planned, false)]
     }
 
-    /// Overtime "Add" — record the running+overtime elapsed
-    /// (`phase_clock.elapsed(now)`), keeping the user's bonus
-    /// minutes. Returns `EndSession { duration_secs: elapsed }`.
-    /// Only valid in Overtime; otherwise empty Vec.
+    /// Overtime Add: ends with the overtime included. Nothing outside
+    /// Overtime.
     pub fn add_overtime_and_finish(&mut self, now: Duration) -> Vec<Effect> {
         if self.phase != SessionPhase::Overtime {
             return Vec::new();
         }
-        let duration_secs = self.phase_clock.elapsed(now).as_secs();
-        self.phase = SessionPhase::Stopped;
-        self.final_duration_secs = Some(duration_secs);
-        vec![
-            Effect::StopActiveSignals,
-            Effect::EndSession { duration_secs },
-        ]
+        self.stop(now)
     }
 
-    /// Force the Running→Overtime transition externally. Used when
-    /// the shell observes the countdown crossing zero before the
-    /// next `tick(now)` would — e.g. the gtk shell's gst EOS
-    /// callback in Guided mode, which fires when the audio file
-    /// ends slightly before the probed duration. Returns a single
-    /// `EnterOvertime` effect on the transition; idempotent — no-op
-    /// (empty Vec) from any other phase, so callers can dispatch
-    /// unconditionally. Only a Guided session follows its audio: a
-    /// preview ending under a Timer or Box Breath session is ignored.
-    pub fn enter_overtime(&mut self) -> Vec<Effect> {
-        if self.phase != SessionPhase::Running
-            || !matches!(self.settings.shape, SessionShape::Guided { .. })
-        {
+    /// The guided track ended before the tick reached its length: end
+    /// the countdown now. Only a running Guided session follows its
+    /// audio (a preview ending under a Timer is ignored); nothing
+    /// otherwise, so the app can call it on every track end. Paused,
+    /// the end waits for the tick after Resume.
+    pub fn enter_overtime(&mut self, now: Duration) -> Vec<Effect> {
+        if self.phase != SessionPhase::Running || !matches!(self.settings.shape, SessionShape::Guided { .. }) {
             return Vec::new();
         }
-        self.reach_end()
+        // The tick ends it: now, or after Resume when paused.
+        self.track_ended = true;
+        self.tick(now)
     }
 
-    /// A Timer or Guided countdown reached its end: overtime, or with
-    /// Auto-Finish a stop at the planned length.
-    fn reach_end(&mut self) -> Vec<Effect> {
+    /// The countdown reached its planned end at `elapsed` (by its time,
+    /// or the track's end): every bell due by then or by the planned
+    /// length is skipped, so none rings after the end bell; "complete";
+    /// then overtime, or an end at the planned length (Auto-Finish, and
+    /// Box Breath, which has no overtime).
+    fn reach_end(&mut self, elapsed: Duration) -> Vec<Effect> {
+        let planned = self.completion_duration_secs();
+        let mut rng = bell_rng(&mut self.bell_rng_state);
+        for bell in &mut self.bells {
+            bell.skip_due(elapsed.as_secs().max(planned), &mut rng);
+        }
+        drop(rng);
         let mut effects = Vec::new();
         if matches!(self.settings.shape, SessionShape::Guided { .. }) {
             effects.push(Effect::StopGuidedAudio);
         }
-        if self.settings.auto_finish {
-            let duration_secs = self.completion_duration_secs();
-            self.phase = SessionPhase::Stopped;
-            self.final_duration_secs = Some(duration_secs);
-            effects.push(Effect::AutoFinish { duration_secs });
-        } else {
-            self.phase = SessionPhase::Overtime;
-            effects.push(Effect::EnterOvertime);
+        effects.push(Effect::Completed { planned_secs: planned });
+        self.phase = SessionPhase::Overtime;
+        if self.settings.auto_finish || self.mode() == SessionMode::BoxBreath {
+            effects.push(self.end(planned, self.settings.auto_finish));
         }
         effects.extend(end_bell_effect(&self.settings));
         effects
     }
 
-    /// Drive the session forward by one tick. Returns the effects
-    /// the shell should dispatch this tick. Internal phase
-    /// transitions (Prep→Running, Running→Overtime, etc.) emit
-    /// transition effects (`EndPrep`, `EnterOvertime`, …) so the
-    /// shell can fire bell sounds / morph buttons / etc. exactly
-    /// at the boundary.
+    /// Drive the session forward by one tick: phase changes, bells,
+    /// the end. Nothing while paused or ended.
     pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
-        if self.is_paused {
+        if self.is_paused() {
             return Vec::new();
         }
+        let elapsed = self.phase_clock.elapsed(now);
         match self.phase {
-            SessionPhase::Prep => self.tick_prep(now),
-            SessionPhase::Running => self.tick_running(now),
-            SessionPhase::Overtime => self.tick_overtime(now),
-            // Pause is orthogonal to phase — handled by the
-            // early-return above. SessionPhase::Paused is reserved
-            // and currently unreached.
-            SessionPhase::Paused => Vec::new(),
-            // Terminal phase set by `stop` / `finish_overtime` /
-            // `add_overtime_and_finish`. Any further ticks the shell
-            // happens to dispatch before dropping the Session are
-            // silent.
-            SessionPhase::Stopped => Vec::new(),
+            SessionPhase::Prep => self.tick_prep(now, elapsed),
+            SessionPhase::Running => self.tick_running(elapsed),
+            SessionPhase::Overtime => self.ring_due_bells(elapsed),
+            SessionPhase::Stopped { .. } => Vec::new(),
         }
     }
 
-    fn tick_prep(&mut self, now: Duration) -> Vec<Effect> {
-        let target_secs = u64::from(self.settings.prep_secs.unwrap_or(0));
-        let target = Duration::from_secs(target_secs);
-        let elapsed = self.phase_clock.elapsed(now);
-
-        if elapsed >= target {
-            // Crossed the prep boundary. Running counts from the
-            // moment prep ended, not from this (possibly late) tick.
-            self.phase = SessionPhase::Running;
-            let late = elapsed - target;
-            self.phase_clock = Stopwatch::started_at(now.saturating_sub(late));
-            let mut effects = vec![Effect::EndPrep];
-            // The starting bell rings with the boundary crossing, unless
-            // a suspend already carried the session past its end: then
-            // only the end bell, on the next tick, makes sense.
-            let past_end = self
-                .settings
-                .shape
-                .target_secs()
-                .is_some_and(|t| late >= Duration::from_secs(u64::from(t)));
-            if !past_end {
-                effects.extend(starting_bell_effect(&self.settings));
-            }
-            return effects;
-        }
-
-        // Still in prep — emit the ceiling-rounded display value.
-        // (k-1, k] remaining → display k, matching the existing
-        // gtk shell's tick_prep behaviour.
-        let remaining = target.saturating_sub(elapsed);
-        let display = ceil_secs(remaining);
-        vec![Effect::UpdateDisplay { secs: display }]
-    }
-
-    fn tick_running(&mut self, now: Duration) -> Vec<Effect> {
-        let elapsed = self.phase_clock.elapsed(now);
-
-        // Box Breath running has its own tick shape: phase-boundary
-        // detection + cycle-aligned end + elapsed counter. The
-        // pattern + target are unpacked here so `tick_box_breath`
-        // gets exactly what it needs from the variant.
-        match self.settings.shape.clone() {
-            SessionShape::BoxBreathCountdown { pattern, target_secs } => {
-                return self.tick_box_breath(elapsed, &pattern, Some(target_secs));
-            }
-            SessionShape::BoxBreathStopwatch { pattern } => {
-                return self.tick_box_breath(elapsed, &pattern, None);
-            }
-            _ => {}
-        }
-
-        // Overtime transition is independent of display mode — Guided
-        // with count-up display still has a `target_secs` to cross
-        // (the audio file's natural length).
-        if let Some(target_secs) = self.settings.shape.target_secs() {
-            let target = Duration::from_secs(u64::from(target_secs));
-            if target.saturating_sub(elapsed).is_zero() {
-                // The end bell stands for every bell due by now: advance
-                // them silently so none rings just after it.
-                let mut rng = bell_rng(&mut self.bell_rng_state);
-                for bell in &mut self.bells {
-                    bell.skip_due(elapsed.as_secs(), &mut rng);
-                }
-                drop(rng);
-                return self.reach_end();
-            }
-        }
-
-        let display_secs = display_secs_for_running(&self.settings.shape, elapsed);
-        let mut effects = vec![Effect::UpdateDisplay { secs: display_secs }];
-        effects.extend(fire_due_bells(
-            &mut self.bells,
-            &mut self.bell_rng_state,
-            self.settings.signal_mode_override,
-            elapsed,
-        ));
-        effects
-    }
-
-    fn tick_overtime(&mut self, now: Duration) -> Vec<Effect> {
-        // Overtime keeps the same phase_clock ticking that drove
-        // Running — total elapsed = target + overtime. The shell
-        // freezes the hero label at the planned duration; only the
-        // Add button's label updates each tick. Interval bells
-        // keep firing on the original session timeline because
-        // their `next_ring_secs` was rolled against `elapsed` from
-        // the Running phase, which continues to accumulate.
-        // Reachable only from shapes that carry a target — see
-        // the matching invariant in `finish_overtime`. Stopwatch
-        // arms short-circuit the tick instead of dividing by zero.
-        let Some(target_secs) = self.settings.shape.target_secs() else {
+    fn tick_prep(&mut self, now: Duration, elapsed: Duration) -> Vec<Effect> {
+        let target = Duration::from_secs(u64::from(self.settings.prep_secs.unwrap_or(0)));
+        if elapsed < target {
             return Vec::new();
-        };
-        let target = Duration::from_secs(u64::from(target_secs));
-        let elapsed = self.phase_clock.elapsed(now);
-        let overtime = elapsed.saturating_sub(target);
-        let mut effects = vec![Effect::UpdateOvertimeLabel { overtime }];
-        effects.extend(fire_due_bells(
-            &mut self.bells,
-            &mut self.bell_rng_state,
-            self.settings.signal_mode_override,
-            elapsed,
-        ));
+        }
+        // Running counts from the moment prep ended, not from this
+        // (possibly late) tick.
+        self.phase = SessionPhase::Running;
+        let late = elapsed - target;
+        self.phase_clock = Stopwatch::started_at(now.saturating_sub(late));
+        // The starting bell rings with the boundary crossing, unless
+        // a suspend already carried the session past its end: then
+        // only the end bell, on the next tick, makes sense.
+        let past_end = self
+            .settings
+            .shape
+            .target_secs()
+            .is_some_and(|t| late >= Duration::from_secs(u64::from(t)));
+        if past_end {
+            Vec::new()
+        } else {
+            starting_bell_effect(&self.settings).into_iter().collect()
+        }
+    }
+
+    fn tick_running(&mut self, elapsed: Duration) -> Vec<Effect> {
+        // Guided with count-up display still ends at its length.
+        let end = self.settings.shape.target_secs().map(|t| Duration::from_secs(u64::from(t)));
+        // Box Breath checks its end before the phase change, so the
+        // end doesn't cue another inhale.
+        if self.track_ended || end.is_some_and(|end| elapsed >= end) {
+            return self.reach_end(elapsed);
+        }
+        let mut effects = Vec::new();
+        if let SessionShape::BoxBreathCountdown { pattern, .. } | SessionShape::BoxBreathStopwatch { pattern } = self.settings.shape {
+            effects.extend(self.cue_breath_phase(pattern.phase_at(elapsed).phase));
+        }
+        effects.extend(self.ring_due_bells(elapsed));
         effects
     }
 
-    fn tick_box_breath(
-        &mut self,
-        elapsed: Duration,
-        pattern: &BreathPattern,
-        target_secs: Option<u32>,
-    ) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = Vec::new();
+    /// The Box Breath phase now: a cue when it changed. The first tick
+    /// seeds it silently: `Session::start` already cued the first inhale.
+    fn cue_breath_phase(&mut self, phase: Phase) -> Option<Effect> {
+        let prev = self.last_breath_phase.replace(phase)?;
+        (prev != phase).then(|| box_breath_cue_effect(&self.settings, phase_to_id(phase))).flatten()
+    }
 
-        // Cycle-aligned end: the duration is rounded up to whole cycles
-        // at start, so the target lands on a cycle boundary. Checked
-        // before phase changes so the end doesn't cue another inhale,
-        // and the set length is saved however late this tick is.
-        // BoxBreathStopwatch (target None) never auto-ends.
-        if let Some(target_secs) = target_secs {
-            if elapsed >= Duration::from_secs(u64::from(target_secs)) {
-                let duration_secs = u64::from(target_secs);
-                self.phase = SessionPhase::Stopped;
-                self.final_duration_secs = Some(duration_secs);
-                effects.push(if self.settings.auto_finish {
-                    Effect::AutoFinish { duration_secs }
-                } else {
-                    Effect::EndBoxBreath { duration_secs }
-                });
-                if let Some(eff) = end_bell_effect(&self.settings) {
-                    effects.push(eff);
-                }
-                return effects;
-            }
-        }
-
-        // Phase boundary detection. The first tick seeds
-        // `last_breath_phase` silently: `Session::start` already cued
-        // the first inhale.
-        let info = pattern.phase_at(elapsed);
-        match self.last_breath_phase {
-            None => {
-                self.last_breath_phase = Some(info.phase);
-            }
-            Some(prev) if prev != info.phase => {
-                self.last_breath_phase = Some(info.phase);
-                let phase_id = phase_to_id(info.phase);
-                if let Some(eff) = box_breath_cue_effect(&self.settings, phase_id) {
-                    effects.push(eff);
-                }
-            }
-            _ => {}
-        }
-
-        // Counter readout for the running-page top strip. Floor-
-        // rounded elapsed; the shell composes "elapsed / target" or
-        // just "elapsed" in stopwatch-only mode using settings.
-        effects.push(Effect::UpdateDisplay {
-            secs: elapsed.as_secs(),
-        });
-        // Box Breath sessions can have interval bells too; same
-        // tick semantics as Timer/Guided Running.
-        effects.extend(fire_due_bells(
-            &mut self.bells,
-            &mut self.bell_rng_state,
-            self.settings.signal_mode_override,
-            elapsed,
-        ));
-        effects
+    fn ring_due_bells(&mut self, elapsed: Duration) -> Vec<Effect> {
+        fire_due_bells(&mut self.bells, &mut self.bell_rng_state, self.settings.signal_mode_override, elapsed)
     }
 
     /// Box-breath phase / progress at `now`. Used by the shell's
@@ -749,7 +496,7 @@ impl Session {
         if self.phase != SessionPhase::Running {
             return None;
         }
-        let pattern = match &self.settings.shape {
+        let pattern = match self.settings.shape {
             SessionShape::BoxBreathCountdown { pattern, .. }
             | SessionShape::BoxBreathStopwatch { pattern } => pattern,
             _ => return None,
@@ -766,63 +513,61 @@ impl Session {
         self.phase_clock.elapsed(now)
     }
 
-    /// Saved duration the shell should record for this session.
-    /// `Some(secs)` once the session has stopped (any terminal path —
-    /// user Stop, Overtime Finish, Overtime Add, Box-Breath natural
-    /// end); `None` while in flight (Prep / Running / Overtime /
-    /// Paused). Survives until the shell drops the Session at reset
-    /// time, so the Done view can render the saved length without a
-    /// shell-side Cell shadow.
+    /// The length to save once the session has ended; `None` while
+    /// it runs.
     pub fn final_duration_secs(&self) -> Option<u64> {
-        self.final_duration_secs
+        match self.phase {
+            SessionPhase::Stopped { duration_secs, .. } => Some(duration_secs),
+            _ => None,
+        }
     }
 
-    /// Duration the "session complete" system notification should
-    /// show — the planned target, NOT the elapsed-with-overtime.
-    /// Same value regardless of mode: Timer/Guided countdown's
-    /// `target_secs`, Box-Breath's cycle-aligned target. Stopwatch
-    /// shapes collapse to 0; the shell shouldn't reach this path
-    /// for them since they never auto-complete. Used at the
-    /// Running→Overtime boundary (Timer/Guided) and at Box-Breath's
-    /// natural end.
+    /// The planned length: the countdown's target, the guided file's
+    /// length, Box Breath's cycle-aligned target; 0 for a stopwatch.
+    /// "Meditation complete" and the frozen overtime time show it.
     pub fn completion_duration_secs(&self) -> u64 {
         self.settings.shape.target_secs().map_or(0, u64::from)
     }
 
-    /// Tick + fold: advance the session and inspect the effects
-    /// for the two pieces of state the shell needs immediately
-    /// (the new display number, and whether the session just
-    /// crossed Running → Overtime). The effects vec rides along so
-    /// the shell can still dispatch fire-cues and other side
-    /// effects in the same loop.
-    pub fn tick_summary(&mut self, now: Duration) -> (TickOutcome, Vec<Effect>) {
-        let effects = self.tick(now);
-        let mut outcome = TickOutcome::default();
-        for effect in &effects {
-            match effect {
-                Effect::UpdateDisplay { secs } => outcome.display_secs = Some(*secs),
-                Effect::EnterOvertime => outcome.entered_overtime = true,
-                Effect::UpdateOvertimeLabel { overtime } => outcome.overtime_delta = Some(*overtime),
-                _ => {}
-            }
-        }
-        (outcome, effects)
+    /// `meditated` in whole seconds: what Save and the crash-recovery
+    /// heartbeat record.
+    pub fn saved_secs(&self, now: Duration) -> u64 {
+        self.meditated(now).as_secs()
     }
 
-    /// What the shell's running-page play/pause action should
-    /// resolve to given the current `UiState`. Pure dispatch.
-    /// Replaces the gtk shell's 6-arm `match self.ui_state()` inside
-    /// the hardware-play-key handler; Android can dispatch off the
-    /// same enum.
-    pub fn toggle_action(ui_state: UiState) -> ToggleAction {
-        match ui_state {
-            UiState::Idle => ToggleAction::Start,
-            UiState::Preparing => ToggleAction::Pause,
-            UiState::Running => ToggleAction::Pause,
-            // One key never saves: Save and Add are on the page.
-            UiState::Overtime => ToggleAction::NoOp,
+    /// Meditation time now: none in preparation, the saved length once
+    /// ended, else the clock.
+    fn meditated(&self, now: Duration) -> Duration {
+        match self.phase {
+            SessionPhase::Prep => Duration::ZERO,
+            SessionPhase::Stopped { duration_secs, .. } => Duration::from_secs(duration_secs),
+            SessionPhase::Running | SessionPhase::Overtime => self.phase_clock.elapsed(now),
+        }
+    }
+
+    /// Whether the countdown reached its planned end.
+    fn reached_end(&self) -> bool {
+        match self.phase {
+            SessionPhase::Overtime => true,
+            SessionPhase::Stopped { reached_end, .. } => reached_end,
+            SessionPhase::Prep | SessionPhase::Running => false,
+        }
+    }
+
+    /// How far past its planned end the session is; `None` outside
+    /// overtime. The Add button shows it.
+    pub fn overtime(&self, now: Duration) -> Option<Duration> {
+        (self.phase == SessionPhase::Overtime)
+            .then(|| self.phase_clock.elapsed(now).saturating_sub(Duration::from_secs(self.completion_duration_secs())))
+    }
+
+    /// What the play/pause key does now. One key never saves: Save and
+    /// Add are on the page.
+    pub fn toggle_action(&self) -> ToggleAction {
+        match self.ui_state() {
+            UiState::Preparing | UiState::Running => ToggleAction::Pause,
             UiState::Paused => ToggleAction::Resume,
-            UiState::Done => ToggleAction::NoOp,
+            UiState::Idle | UiState::Overtime | UiState::Done => ToggleAction::NoOp,
         }
     }
 
@@ -830,8 +575,8 @@ impl Session {
     pub fn end_buttons(&self) -> EndButtons {
         use EndButton::{Add, Pause, Resume, Save};
         let buttons = |first, second, note| EndButtons { first, second, note };
-        match (self.phase, self.is_paused) {
-            (SessionPhase::Stopped, _) => EndButtons::ENDED,
+        match (self.phase, self.is_paused()) {
+            (SessionPhase::Stopped { .. }, _) => EndButtons::ENDED,
             // Preparation seconds are never saved as meditation.
             (SessionPhase::Prep, true) => buttons(Resume, None, false),
             (_, true) => buttons(Resume, Some(Save), true),
@@ -841,20 +586,15 @@ impl Session {
         }
     }
 
-    /// What the shell's running-page view should reflect right now.
-    /// Pure dispatch over `phase` + `is_paused`; the free fn
-    /// `session::ui_state(session)` handles the `None` (= Idle) case
-    /// for the shell's top-level `Option<Session>` slot.
+    /// What the running page should reflect right now. An ended
+    /// session is ended, paused or not.
     pub fn ui_state(&self) -> UiState {
-        if self.is_paused {
-            return UiState::Paused;
-        }
         match self.phase {
+            SessionPhase::Stopped { .. } => UiState::Done,
+            _ if self.is_paused() => UiState::Paused,
             SessionPhase::Prep => UiState::Preparing,
             SessionPhase::Running => UiState::Running,
             SessionPhase::Overtime => UiState::Overtime,
-            SessionPhase::Paused => UiState::Paused,
-            SessionPhase::Stopped => UiState::Done,
         }
     }
 
@@ -864,19 +604,13 @@ impl Session {
         self.settings.shape.mode()
     }
 
-    /// Ceiling-rounded remaining seconds of prep silence. `None`
-    /// outside the Prep phase. Used by the gtk shell's hero-label
-    /// readout when re-entering the running page mid-prep (e.g.,
-    /// from the paused screen) — same `(k-1, k] → k` rule as the
-    /// per-tick UpdateDisplay.
+    /// Seconds of preparation left, rounded up; `None` outside it.
     pub fn prep_remaining_secs(&self, now: Duration) -> Option<u64> {
         if self.phase != SessionPhase::Prep {
             return None;
         }
-        let target_secs = self.settings.prep_secs?;
-        let target = Duration::from_secs(u64::from(target_secs));
-        let remaining = target.saturating_sub(self.phase_clock.elapsed(now));
-        Some(ceil_secs(remaining))
+        let prep = self.settings.prep_secs?;
+        Some(secs_left(u64::from(prep), self.phase_clock.elapsed(now)))
     }
 
     /// The ring and the bell counters for the running page right now.
@@ -887,8 +621,9 @@ impl Session {
             ref shape => shape.target_secs().map(u64::from),
         };
         let preparing = self.phase == SessionPhase::Prep;
-        let elapsed = if preparing { 0.0 } else { self.phase_clock.elapsed(now).as_secs_f64() };
-        let past_end = matches!(self.phase, SessionPhase::Overtime | SessionPhase::Stopped);
+        // Ended: the length it saves, as the time shows.
+        let elapsed = self.meditated(now).as_secs_f64();
+        let past_end = self.reached_end();
         let part = |secs: f64| end.map_or(0.0, |end| (secs / end as f64).min(1.0));
         let mut beads = Vec::new();
         // One count for every bell heard; none without bells between start and end.
@@ -939,10 +674,9 @@ impl Session {
                 rung += u32::from(!preparing);
                 total += 1;
             }
-            if let (Some(end), Some(_)) = (end, &self.settings.end_bell) {
-                // Rang at the end of the countdown: overtime, or a stop that reached it.
-                let rang = self.phase == SessionPhase::Overtime || self.final_duration_secs.is_some_and(|d| d >= end);
-                rung += u32::from(rang);
+            if end.is_some() && self.settings.end_bell.is_some() {
+                // Rang when the countdown reached its end.
+                rung += u32::from(past_end);
                 total += 1;
             }
         }
@@ -965,69 +699,58 @@ impl Session {
         let elapsed = self.phase_clock.elapsed(now);
         let total = self.settings.shape.target_secs().map(u64::from);
         let (line, bar) = match self.phase {
-            SessionPhase::Stopped => return None,
+            SessionPhase::Stopped { .. } => return None,
             SessionPhase::Prep => {
                 let prep = u64::from(self.settings.prep_secs?);
-                let end = Duration::from_secs(prep);
-                let bar = MediaBar { elapsed: elapsed.min(end), total_secs: prep };
-                (MediaLine::Preparing(ceil_secs(end.saturating_sub(elapsed))), Some(bar))
+                let bar = MediaBar { elapsed: elapsed.min(Duration::from_secs(prep)), total_secs: prep };
+                (MediaLine::Preparing(secs_left(prep, elapsed)), Some(bar))
             }
             SessionPhase::Overtime => {
                 let total = total.unwrap_or(0);
-                let over = elapsed.as_secs().saturating_sub(total);
+                let over = self.overtime(now).unwrap_or_default().as_secs();
                 let full = MediaBar { elapsed: Duration::from_secs(total), total_secs: total };
                 (MediaLine::Overtime(over), Some(full))
             }
-            SessionPhase::Running | SessionPhase::Paused => match total {
+            SessionPhase::Running => match total {
                 Some(total) => {
-                    let end = Duration::from_secs(total);
-                    let left = MediaLine::Left(ceil_secs(end.saturating_sub(elapsed)));
-                    (left, Some(MediaBar { elapsed: elapsed.min(end), total_secs: total }))
+                    let bar = MediaBar { elapsed: elapsed.min(Duration::from_secs(total)), total_secs: total };
+                    (MediaLine::Left(secs_left(total, elapsed)), Some(bar))
                 }
                 None => (MediaLine::SoFar(elapsed.as_secs()), None),
             },
         };
-        let standing = self.is_paused || self.phase == SessionPhase::Overtime;
+        let standing = self.is_paused() || self.phase == SessionPhase::Overtime;
         Some(MediaStatus { line, bar, standing })
     }
 
-    /// The whole-seconds value the running label should show right
-    /// now, dispatching on phase + display mode:
-    ///
-    /// - Prep: ceiling-rounded prep remaining (same as
-    ///   `prep_remaining_secs`).
-    /// - Running: floor elapsed if `stopwatch_display` is true,
-    ///   else ceiling-remaining (countdown) or floor elapsed
-    ///   (no target).
-    /// - Overtime: frozen at the planned length
-    ///   (`completion_duration_secs` — the guided file's length,
-    ///   the Timer's target), whichever display mode, and also
-    ///   when a guided track ended early. Only the Add button
-    ///   counts the overtime.
-    /// - Stopped: 0 (caller usually reads `final_duration_secs`
-    ///   instead at that point).
-    ///
-    /// Centralises the rounding + dispatch the gtk shell used to
-    /// split across `tick_running`, `elapsed_secs_for_mode`, and
-    /// `current_display_secs`. Pure read — does not advance the
-    /// session.
+    /// The whole seconds the running page's time shows now: the
+    /// preparation left; while running, the countdown left (rounded
+    /// up) or the time so far (rounded down) for stopwatches, Box
+    /// Breath and a count-up Guided; in overtime the planned length,
+    /// frozen (also when a guided track ended early: only the Add
+    /// button counts the overtime); once ended, the length saved.
     pub fn display_secs(&self, now: Duration) -> u64 {
-        if let Some(prep_remaining) = self.prep_remaining_secs(now) {
-            return prep_remaining;
-        }
+        let elapsed = self.phase_clock.elapsed(now);
         match self.phase {
-            SessionPhase::Prep | SessionPhase::Stopped | SessionPhase::Paused => 0,
+            SessionPhase::Prep => self.prep_remaining_secs(now).unwrap_or(0),
+            SessionPhase::Running => match self.settings.shape {
+                SessionShape::TimerCountdown { target_secs }
+                | SessionShape::Guided { duration_secs: target_secs, count_up_display: false } => {
+                    secs_left(u64::from(target_secs), elapsed)
+                }
+                _ => elapsed.as_secs(),
+            },
             SessionPhase::Overtime => self.completion_duration_secs(),
-            SessionPhase::Running => {
-                display_secs_for_running(&self.settings.shape, self.phase_clock.elapsed(now))
-            }
+            SessionPhase::Stopped { duration_secs, .. } => duration_secs,
         }
     }
 }
 
-/// Whole seconds, rounded up: what a countdown shows.
-fn ceil_secs(d: Duration) -> u64 {
-    d.as_secs() + u64::from(d.subsec_nanos() > 0)
+/// Whole seconds left of `target_secs` after `elapsed`, rounded up:
+/// what a countdown shows, so a fresh 10:00 doesn't flicker to 09:59.
+fn secs_left(target_secs: u64, elapsed: Duration) -> u64 {
+    let left = Duration::from_secs(target_secs).saturating_sub(elapsed);
+    left.as_secs() + u64::from(left.subsec_nanos() > 0)
 }
 
 fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
@@ -1036,44 +759,6 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
         Phase::HoldIn => BoxBreathPhaseId::HoldIn,
         Phase::Out => BoxBreathPhaseId::Out,
         Phase::HoldOut => BoxBreathPhaseId::HoldOut,
-    }
-}
-
-/// Display value (in whole seconds) for a Running session at the
-/// given `elapsed`. Dispatches on the shape variant: each variant
-/// already encodes which display rule applies, so there's no
-/// runtime stopwatch-display flag to consult.
-///
-/// - Stopwatch shapes (Timer + Box-Breath): floor-rounded elapsed,
-///   the natural count-up readout.
-/// - Box-Breath countdown: still elapsed (count-up); the
-///   cycle-aligned end fires off `target_secs` independently of
-///   what the running readout shows.
-/// - Timer countdown: ceiling-rounded remaining. `(k-1, k]`
-///   remaining → display `k` so a fresh "10:00" doesn't flicker
-///   to "09:59" on the first sub-1.0 s tick.
-/// - Guided: respects the per-variant `count_up_display` flag —
-///   the only case where countdown vs count-up is a user toggle
-///   rather than an implicit consequence of the variant.
-fn display_secs_for_running(shape: &SessionShape, elapsed: Duration) -> u64 {
-    let ceiling_remaining = |target_secs: u32| -> u64 {
-        let target = Duration::from_secs(u64::from(target_secs));
-        let remaining = target.saturating_sub(elapsed);
-        ceil_secs(remaining)
-    };
-    match shape {
-        SessionShape::TimerStopwatch | SessionShape::BoxBreathStopwatch { .. } => {
-            elapsed.as_secs()
-        }
-        SessionShape::BoxBreathCountdown { .. } => elapsed.as_secs(),
-        SessionShape::TimerCountdown { target_secs } => ceiling_remaining(*target_secs),
-        SessionShape::Guided { duration_secs, count_up_display } => {
-            if *count_up_display {
-                elapsed.as_secs()
-            } else {
-                ceiling_remaining(*duration_secs)
-            }
-        }
     }
 }
 
@@ -1295,11 +980,11 @@ mod tests {
     }
 
     #[test]
-    fn tick_during_prep_emits_ceiling_rounded_display() {
+    fn tick_during_prep_shows_ceiling_rounded_display() {
         let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
         // 5 s in: 25 s remaining; display "25".
-        let effects = s.tick(Duration::from_secs(105));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 25 }]);
+        assert!(s.tick(Duration::from_secs(105)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(105)), 25);
         // Still in Prep (haven't reached target).
         assert_eq!(s.phase(), SessionPhase::Prep);
     }
@@ -1311,35 +996,34 @@ mod tests {
         // a number on the very first tick that fires slightly past
         // the second boundary.
         let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
-        let effects = s.tick(Duration::from_millis(100_000 + 4_001));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 26 }]);
+        assert!(s.tick(Duration::from_millis(100_000 + 4_001)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_millis(100_000 + 4_001)), 26);
     }
 
     #[test]
-    fn tick_at_prep_boundary_emits_end_prep_and_transitions() {
+    fn tick_at_prep_boundary_transitions() {
         let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
         // Exactly at target: 30 s in → end_prep, transition to Running.
         let effects = s.tick(Duration::from_secs(130));
-        assert_eq!(effects, vec![Effect::EndPrep]);
+        assert!(effects.is_empty(), "{effects:?}");
         assert_eq!(s.phase(), SessionPhase::Running);
     }
 
     #[test]
-    fn tick_past_prep_boundary_still_emits_end_prep_once() {
+    fn tick_past_prep_boundary_transitions_once() {
         // App backgrounded for several seconds during prep; the
-        // first tick after wake catches up. We fire EndPrep once
-        // and transition; subsequent ticks are then in Running and
-        // produce running-display updates (Stage 0b onward).
+        // first tick after wake catches up. It transitions once;
+        // subsequent ticks are then in Running.
         let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
         let effects = s.tick(Duration::from_secs(135));
-        assert_eq!(effects, vec![Effect::EndPrep]);
+        assert!(effects.is_empty(), "{effects:?}");
         assert_eq!(s.phase(), SessionPhase::Running);
 
         // Subsequent tick is now in Running. Prep ended at 130 s
         // (not at the late 135 s tick), so at 136 s, 6 s of the
         // 600 s target have run → display 594.
-        let effects = s.tick(Duration::from_secs(136));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 594 }]);
+        assert!(s.tick(Duration::from_secs(136)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(136)), 594);
     }
 
     #[test]
@@ -1380,8 +1064,8 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(100),
         );
-        let effects = s.tick(Duration::from_secs(160));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 540 }]);
+        assert!(s.tick(Duration::from_secs(160)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(160)), 540);
     }
 
     #[test]
@@ -1393,35 +1077,35 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(100),
         );
-        let effects = s.tick(Duration::from_millis(100_000 + 1));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 600 }]);
+        assert!(s.tick(Duration::from_millis(100_000 + 1)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_millis(100_000 + 1)), 600);
     }
 
     #[test]
     fn tick_running_countdown_at_target_enters_overtime() {
         // Exactly at the target — countdown is "complete." Emit
-        // EnterOvertime + transition phase. Shell will fire the end
+        // overtime + transition phase. Shell will fire the end
         // bell + morph buttons + freeze hero in response.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
         let effects = s.tick(Duration::from_secs(160));
-        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert_eq!(effects, vec![Effect::Completed { planned_secs: 60 }]);
         assert_eq!(s.phase(), SessionPhase::Overtime);
     }
 
     #[test]
     fn tick_running_countdown_past_target_enters_overtime_once() {
         // App backgrounded; first tick after wake catches up past
-        // the target. We transition once and produce EnterOvertime
-        // once; the next tick is in Overtime phase.
+        // the target. It transitions once and says "complete" once;
+        // the next tick is in Overtime phase.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
         let effects = s.tick(Duration::from_secs(200));
-        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert_eq!(effects, vec![Effect::Completed { planned_secs: 60 }]);
         assert_eq!(s.phase(), SessionPhase::Overtime);
     }
 
@@ -1433,10 +1117,10 @@ mod tests {
             timer_stopwatch_settings(),
             Duration::from_secs(100),
         );
-        let effects = s.tick(Duration::from_millis(100_000 + 5_999));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 5 }]);
-        let effects = s.tick(Duration::from_millis(100_000 + 6_000));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 6 }]);
+        assert!(s.tick(Duration::from_millis(100_000 + 5_999)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_millis(100_000 + 5_999)), 5);
+        assert!(s.tick(Duration::from_millis(100_000 + 6_000)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_millis(100_000 + 6_000)), 6);
     }
 
     // ── Box Breath running ───────────────────────────────────────────
@@ -1452,8 +1136,8 @@ mod tests {
             !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
             "first tick must not fire a phase cue: {effects:?}"
         );
-        // Should produce a UpdateDisplay though.
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 0 }]);
+        assert!(effects.is_empty(), "{effects:?}");
+        assert_eq!(s.display_secs(Duration::from_millis(100_500)), 0);
     }
 
     #[test]
@@ -1523,13 +1207,10 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed
         let effects = s.tick(Duration::from_secs(116));
         assert!(
-            effects.contains(&Effect::EndBoxBreath { duration_secs: 16 }),
-            "expected EndBoxBreath, got {effects:?}"
+            effects.contains(&Effect::Ended { duration_secs: 16, save_now: false }),
+            "expected the end, got {effects:?}"
         );
-        // EndBoxBreath is a terminal path — Session transitions to
-        // Stopped and stashes the duration so the shell's Done view
-        // can read it without a Cell shadow.
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
         assert_eq!(s.final_duration_secs(), Some(16));
     }
 
@@ -1540,7 +1221,7 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500));
         let effects = s.tick(Duration::from_secs(100 + 16 * 100)); // many cycles
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })),
+            !effects.iter().any(|e| matches!(e, Effect::Ended { .. } | Effect::Completed { .. })),
             "stopwatch box-breath must never auto-end"
         );
     }
@@ -1567,7 +1248,7 @@ mod tests {
     // ── Overtime ─────────────────────────────────────────────────────
 
     #[test]
-    fn overtime_tick_emits_overtime_label_with_delta_past_target() {
+    fn overtime_counts_past_the_target() {
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
@@ -1576,40 +1257,29 @@ mod tests {
         let _ = s.tick(Duration::from_secs(160));
         assert_eq!(s.phase(), SessionPhase::Overtime);
         // 5 s of overtime have accumulated.
-        let effects = s.tick(Duration::from_secs(165));
-        assert_eq!(
-            effects,
-            vec![Effect::UpdateOvertimeLabel {
-                overtime: Duration::from_secs(5)
-            }]
-        );
+        assert!(s.tick(Duration::from_secs(165)).is_empty());
+        assert_eq!(s.overtime(Duration::from_secs(165)), Some(Duration::from_secs(5)));
     }
 
     #[test]
     fn overtime_tick_at_transition_moment_reports_zero_overtime() {
-        // The very first tick that fires AFTER EnterOvertime, at
+        // The very first tick after the crossing, at
         // host time = 60 s in (exactly target), reports overtime=0.
         // Subsequent ticks count up.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
-        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
-        let effects = s.tick(Duration::from_secs(160));
-        assert_eq!(
-            effects,
-            vec![Effect::UpdateOvertimeLabel {
-                overtime: Duration::ZERO
-            }]
-        );
+        let _ = s.tick(Duration::from_secs(160)); // overtime
+        assert!(s.tick(Duration::from_secs(160)).is_empty());
+        assert_eq!(s.overtime(Duration::from_secs(160)), Some(Duration::ZERO));
     }
 
     #[test]
     fn overtime_phase_clock_continues_uninterrupted_from_running() {
         // Running→Overtime transition keeps phase_clock ticking
         // (no reset); total elapsed = target + overtime accumulates
-        // continuously. Interval bells in Stage 0f will rely on
-        // this continuity.
+        // continuously; interval bells rely on this continuity.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
@@ -1629,20 +1299,15 @@ mod tests {
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
-        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(160)); // overtime
         let _ = s.tick(Duration::from_secs(170)); // 10 s of overtime
         let _ = s.pause(Duration::from_secs(170));
         // 100 s of host time pass while paused, then resume.
         s.resume(Duration::from_secs(270));
         // Active elapsed should still report 70 s total (60 target +
         // 10 overtime), and tick should report 10 s overtime.
-        let effects = s.tick(Duration::from_secs(270));
-        assert_eq!(
-            effects,
-            vec![Effect::UpdateOvertimeLabel {
-                overtime: Duration::from_secs(10)
-            }]
-        );
+        assert!(s.tick(Duration::from_secs(270)).is_empty());
+        assert_eq!(s.overtime(Duration::from_secs(270)), Some(Duration::from_secs(10)));
     }
 
     // ── Bells ────────────────────────────────────────────────────────
@@ -1719,7 +1384,7 @@ mod tests {
         let mut settings = timer_countdown_settings(60);
         settings.bells = vec![fixed_bell(300, "later")];
         let mut s = Session::start_running(settings, Duration::from_secs(100));
-        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(160)); // overtime
         let _ = s.tick(Duration::from_secs(200)); // 100 s elapsed, still no fire
         let effects = s.tick(Duration::from_secs(400)); // 300 s elapsed
         assert!(
@@ -1838,10 +1503,8 @@ mod tests {
         // Active prep elapsed is 5 s — first tick after resume
         // should still report 25 s remaining (not the 95 s of host
         // time that elapsed).
-        assert_eq!(
-            s.tick(Duration::from_secs(200)),
-            vec![Effect::UpdateDisplay { secs: 25 }]
-        );
+        assert!(s.tick(Duration::from_secs(200)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(200)), 25);
         assert_eq!(s.phase(), SessionPhase::Prep);
     }
 
@@ -1886,21 +1549,14 @@ mod tests {
             Duration::from_secs(100),
         );
         // Prep tick at 5 s in: display 25 remaining.
-        assert_eq!(
-            s.tick(Duration::from_secs(105)),
-            vec![Effect::UpdateDisplay { secs: 25 }]
-        );
-        // Cross prep target: EndPrep + transition.
-        assert_eq!(
-            s.tick(Duration::from_secs(130)),
-            vec![Effect::EndPrep]
-        );
+        assert!(s.tick(Duration::from_secs(105)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(105)), 25);
+        // Cross prep target: transition, no starting bell configured.
+        assert!(s.tick(Duration::from_secs(130)).is_empty());
         // 60 s into Running phase (which started at 130 s of host
         // time): 540 s remaining of the 600 s target.
-        assert_eq!(
-            s.tick(Duration::from_secs(190)),
-            vec![Effect::UpdateDisplay { secs: 540 }]
-        );
+        assert!(s.tick(Duration::from_secs(190)).is_empty());
+        assert_eq!(s.display_secs(Duration::from_secs(190)), 540);
     }
 
     // ── prep_remaining_secs ──────────────────────────────────────────
@@ -1984,24 +1640,6 @@ mod tests {
     // ── Stop / Finish-overtime / Add-overtime ────────────────────────
 
     #[test]
-    fn stop_during_prep_returns_prep_elapsed() {
-        let mut s = Session::start_prep(
-            timer_settings_with_prep(30),
-            Duration::from_secs(100),
-        );
-        // 12 s into prep: stop returns 12 s.
-        let effects = s.stop(Duration::from_secs(112));
-        assert_eq!(
-            effects,
-            vec![
-                Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 12 },
-            ]
-        );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
-    }
-
-    #[test]
     fn stop_during_running_returns_running_elapsed() {
         let mut s = Session::start_running(
             timer_countdown_settings(600),
@@ -2012,10 +1650,10 @@ mod tests {
             effects,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 145 },
+                Effect::Ended { duration_secs: 145, save_now: false },
             ]
         );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     #[test]
@@ -2033,10 +1671,10 @@ mod tests {
             effects,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 90 },
+                Effect::Ended { duration_secs: 90, save_now: false },
             ]
         );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     #[test]
@@ -2052,10 +1690,10 @@ mod tests {
             effects,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 50 },
+                Effect::Ended { duration_secs: 50, save_now: false },
             ]
         );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     #[test]
@@ -2069,7 +1707,7 @@ mod tests {
             first,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 20 },
+                Effect::Ended { duration_secs: 20, save_now: false },
             ]
         );
         let second = s.stop(Duration::from_secs(140));
@@ -2090,7 +1728,7 @@ mod tests {
         assert_eq!(
             s.final_duration_secs(),
             Some(23),
-            "stash mirrors EndSession.duration_secs",
+            "the length the end carried",
         );
     }
 
@@ -2122,19 +1760,18 @@ mod tests {
 
     #[test]
     fn ui_state_reflects_phase_and_pause() {
-        use crate::session::ui_state;
         let mut s = Session::start_running(
             timer_countdown_settings(600),
             Duration::from_secs(0),
         );
-        assert_eq!(ui_state(Some(&s)), UiState::Running);
+        assert_eq!(s.ui_state(), UiState::Running);
         let _ = s.pause(Duration::from_secs(5));
-        assert_eq!(ui_state(Some(&s)), UiState::Paused);
+        assert_eq!(s.ui_state(), UiState::Paused);
         s.resume(Duration::from_secs(10));
         let _ = s.tick(Duration::from_secs(700));
-        assert_eq!(ui_state(Some(&s)), UiState::Overtime);
+        assert_eq!(s.ui_state(), UiState::Overtime);
         let _ = s.finish_overtime();
-        assert_eq!(ui_state(Some(&s)), UiState::Done);
+        assert_eq!(s.ui_state(), UiState::Done);
     }
 
     #[test]
@@ -2177,27 +1814,19 @@ mod tests {
 
     #[test]
     fn fire_route_returns_none_for_non_fire_effects() {
-        assert!(Effect::EndPrep.fire_route().is_none());
-        assert!(Effect::UpdateDisplay { secs: 5 }.fire_route().is_none());
+        assert!(Effect::StopGuidedAudio.fire_route().is_none());
         assert!(Effect::StopActiveSignals.fire_route().is_none());
-        assert!(Effect::EndSession { duration_secs: 10 }.fire_route().is_none());
-        assert!(Effect::EnterOvertime.fire_route().is_none());
-    }
-
-    #[test]
-    fn ui_state_idle_when_session_is_none() {
-        use crate::session::ui_state;
-        assert_eq!(ui_state(None), UiState::Idle);
+        assert!(Effect::Ended { duration_secs: 10, save_now: false }.fire_route().is_none());
+        assert!(Effect::Completed { planned_secs: 10 }.fire_route().is_none());
     }
 
     #[test]
     fn ui_state_preparing_during_prep() {
-        use crate::session::ui_state;
         let s = Session::start_prep(
             timer_prep_settings(10, 600),
             Duration::from_secs(0),
         );
-        assert_eq!(ui_state(Some(&s)), UiState::Preparing);
+        assert_eq!(s.ui_state(), UiState::Preparing);
     }
 
     #[test]
@@ -2226,10 +1855,10 @@ mod tests {
             effects,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 60 },
+                Effect::Ended { duration_secs: 60, save_now: false },
             ]
         );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     #[test]
@@ -2250,7 +1879,7 @@ mod tests {
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
-        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(160)); // overtime
         let _ = s.tick(Duration::from_secs(195)); // 35 s of overtime
         let effects = s.add_overtime_and_finish(Duration::from_secs(195));
         // 60 s target + 35 s overtime = 95 s saved.
@@ -2258,10 +1887,10 @@ mod tests {
             effects,
             vec![
                 Effect::StopActiveSignals,
-                Effect::EndSession { duration_secs: 95 },
+                Effect::Ended { duration_secs: 95, save_now: false },
             ]
         );
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     #[test]
@@ -2318,7 +1947,7 @@ mod tests {
         let effects = s.stop(t0 + Duration::from_secs(9 * 60));
         assert_eq!(
             effects,
-            vec![Effect::StopActiveSignals, Effect::EndSession { duration_secs: 7 * 60 }]
+            vec![Effect::StopActiveSignals, Effect::Ended { duration_secs: 7 * 60, save_now: false }]
         );
     }
 
@@ -2332,11 +1961,11 @@ mod tests {
         };
         let mut s = Session::start_running(settings, t0);
         let effects = s.tick(t0 + Duration::from_secs(605));
-        assert_eq!(effects.first(), Some(&Effect::AutoFinish { duration_secs: 600 }), "{effects:?}");
+        assert_eq!(effects[..2], [Effect::Completed { planned_secs: 600 }, Effect::Ended { duration_secs: 600, save_now: true }], "{effects:?}");
         assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "the end bell rings");
-        assert!(!effects.contains(&Effect::EnterOvertime));
+        assert_ne!(s.phase(), SessionPhase::Overtime);
         assert!(!effects.contains(&Effect::StopActiveSignals), "the end bell is not cut");
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
         assert_eq!(s.final_duration_secs(), Some(600));
     }
 
@@ -2347,14 +1976,14 @@ mod tests {
         // The length is reached first.
         let (mut s, _) = Session::start(settings(), t0);
         let effects = s.tick(t0 + Duration::from_secs(600));
-        assert_eq!(effects[..2], [Effect::StopGuidedAudio, Effect::AutoFinish { duration_secs: 600 }], "{effects:?}");
+        assert_eq!(effects[..3], [Effect::StopGuidedAudio, Effect::Completed { planned_secs: 600 }, Effect::Ended { duration_secs: 600, save_now: true }], "{effects:?}");
         assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
         // The file ends first: the stored length is saved.
         let (mut s, _) = Session::start(settings(), t0);
         let _ = s.tick(t0 + Duration::from_secs(590));
-        let effects = s.enter_overtime();
-        assert_eq!(effects[..2], [Effect::StopGuidedAudio, Effect::AutoFinish { duration_secs: 600 }], "{effects:?}");
+        let effects = s.enter_overtime(Duration::ZERO);
+        assert_eq!(effects[..3], [Effect::StopGuidedAudio, Effect::Completed { planned_secs: 600 }, Effect::Ended { duration_secs: 600, save_now: true }], "{effects:?}");
         assert_eq!(s.final_duration_secs(), Some(600));
     }
 
@@ -2365,9 +1994,9 @@ mod tests {
         let mut s = Session::start_running(settings, t0);
         let _ = s.tick(t0 + Duration::from_millis(500));
         let effects = s.tick(t0 + Duration::from_secs(16));
-        assert_eq!(effects.first(), Some(&Effect::AutoFinish { duration_secs: 16 }), "{effects:?}");
-        assert!(!effects.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })));
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert_eq!(effects[..2], [Effect::Completed { planned_secs: 16 }, Effect::Ended { duration_secs: 16, save_now: true }], "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Ended { save_now: false, .. })));
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     // ── enter_overtime (external force-transition) ───────────────────
@@ -2378,8 +2007,8 @@ mod tests {
             guided_settings(600, false),
             Duration::from_secs(100),
         );
-        let effects = s.enter_overtime();
-        assert!(effects.contains(&Effect::EnterOvertime), "{effects:?}");
+        let effects = s.enter_overtime(Duration::ZERO);
+        assert!(effects.iter().any(|e| matches!(e, Effect::Completed { .. })), "{effects:?}");
         assert_eq!(s.phase(), SessionPhase::Overtime);
     }
 
@@ -2394,7 +2023,7 @@ mod tests {
             box_breath_settings(Some(600)),
         ] {
             let mut s = Session::start_running(settings, Duration::from_secs(100));
-            assert!(s.enter_overtime().is_empty());
+            assert!(s.enter_overtime(Duration::ZERO).is_empty());
             assert_eq!(s.phase(), SessionPhase::Running);
         }
     }
@@ -2407,7 +2036,7 @@ mod tests {
         );
         let _ = s.tick(Duration::from_secs(160)); // transition Running → Overtime
         assert_eq!(s.phase(), SessionPhase::Overtime);
-        let effects = s.enter_overtime();
+        let effects = s.enter_overtime(Duration::ZERO);
         assert!(effects.is_empty());
         assert_eq!(s.phase(), SessionPhase::Overtime);
     }
@@ -2418,7 +2047,7 @@ mod tests {
             timer_settings_with_prep(30),
             Duration::from_secs(100),
         );
-        let effects = s.enter_overtime();
+        let effects = s.enter_overtime(Duration::ZERO);
         assert!(effects.is_empty());
         assert_eq!(s.phase(), SessionPhase::Prep);
     }
@@ -2430,9 +2059,9 @@ mod tests {
             Duration::from_secs(100),
         );
         let _ = s.stop(Duration::from_secs(120));
-        let effects = s.enter_overtime();
+        let effects = s.enter_overtime(Duration::ZERO);
         assert!(effects.is_empty());
-        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
     }
 
     // ── Session::start — what plays at the start ──────────────────
@@ -2504,7 +2133,6 @@ mod tests {
         }
         let effects = s.tick(t0 + Duration::from_secs(10));
         assert_eq!(s.phase(), SessionPhase::Running);
-        assert!(effects.contains(&Effect::EndPrep), "{effects:?}");
         assert_eq!(starting_bells(&effects), 1, "{effects:?}");
     }
 
@@ -2763,7 +2391,7 @@ mod tests {
         let stop = position(&effects, |e| matches!(e, Effect::StopGuidedAudio));
         let bell = position(&effects, |e| matches!(e, Effect::FireEndBell { .. }));
         assert!(stop < bell, "the track goes quiet before the end bell: {effects:?}");
-        assert!(effects.contains(&Effect::EnterOvertime));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Completed { .. })));
     }
 
     #[test]
@@ -2772,7 +2400,7 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let (mut s, _) = Session::start(guided_settings(60, false), t0);
         let _ = s.tick(t0 + Duration::from_secs(30));
-        let effects = s.enter_overtime();
+        let effects = s.enter_overtime(Duration::ZERO);
         assert_eq!(effects.first(), Some(&Effect::StopGuidedAudio), "{effects:?}");
         assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
     }
@@ -2792,7 +2420,7 @@ mod tests {
         let _ = s.tick(t0 + Duration::from_secs(60));
         let later = s.tick(t0 + Duration::from_secs(75));
         assert!(!later.contains(&Effect::StopGuidedAudio));
-        assert!(s.enter_overtime().is_empty(), "already in Overtime");
+        assert!(s.enter_overtime(Duration::ZERO).is_empty(), "already in Overtime");
     }
 
     #[test]
@@ -2811,7 +2439,7 @@ mod tests {
         settings.end_bell = Some(cue_at(70.0));
         let (mut s, _) = Session::start(settings, t0);
         let effects = s.tick(t0 + Duration::from_secs(60));
-        assert!(effects.contains(&Effect::EnterOvertime));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Completed { .. })));
         assert!(!effects.contains(&Effect::StopGuidedAudio));
     }
 
@@ -2823,7 +2451,7 @@ mod tests {
         for secs in 1..=16 {
             all.extend(s.tick(t0 + Duration::from_secs(secs)));
         }
-        assert!(all.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })));
+        assert!(all.iter().any(|e| matches!(e, Effect::Ended { save_now: false, .. })));
         assert!(!all.contains(&Effect::StopGuidedAudio));
     }
 
@@ -2864,7 +2492,7 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let (mut s, _) = Session::start(guided_settings(60, false), t0);
         let _ = s.tick(t0 + Duration::from_secs(58));
-        let _ = s.enter_overtime();
+        let _ = s.enter_overtime(Duration::ZERO);
         assert_eq!(s.display_secs(t0 + Duration::from_secs(59)), 60, "not the 2 s left");
     }
 
@@ -2881,7 +2509,7 @@ mod tests {
     fn a_box_breath_session_ending_late_saves_its_set_length() {
         let mut s = Session::start_running(box_breath_settings(Some(320)), Duration::from_secs(100));
         let effects = s.tick(Duration::from_secs(100 + 2400));
-        assert!(effects.contains(&Effect::EndBoxBreath { duration_secs: 320 }), "{effects:?}");
+        assert!(effects.contains(&Effect::Ended { duration_secs: 320, save_now: false }), "{effects:?}");
         assert_eq!(s.final_duration_secs(), Some(320));
     }
 
@@ -2894,7 +2522,7 @@ mod tests {
         let _ = s.tick(t0 + Duration::from_secs(5));
         let _ = s.tick(t0 + Duration::from_secs(20 * 60)); // wakes: ends prep
         let effects = s.tick(t0 + Duration::from_secs(20 * 60 + 1));
-        assert!(effects.contains(&Effect::EnterOvertime), "{effects:?}");
+        assert!(effects.iter().any(|e| matches!(e, Effect::Completed { .. })), "{effects:?}");
     }
 
     #[test]
@@ -2937,7 +2565,7 @@ mod tests {
         for sec in 1..=320 {
             last = s.tick(t0 + Duration::from_secs(sec));
         }
-        assert!(last.contains(&Effect::EndBoxBreath { duration_secs: 320 }), "{last:?}");
+        assert!(last.contains(&Effect::Ended { duration_secs: 320, save_now: false }), "{last:?}");
         assert!(!last.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })), "{last:?}");
     }
 
@@ -3224,5 +2852,155 @@ mod tests {
         assert_eq!(ring.counters, [BellCounter { rung: 6, total: None }]);
         s.tick(at(next(&s)));
         assert_eq!(s.bell_ring(at(2200)).counters, [BellCounter { rung: 7, total: None }]);
+    }
+
+    // ── one-session-end ─────────────────────────────────────────────
+
+    fn completed(effects: &[Effect]) -> Vec<u64> {
+        effects.iter().filter_map(|e| match e { Effect::Completed { planned_secs } => Some(*planned_secs), _ => None }).collect()
+    }
+
+    #[test]
+    fn only_an_end_reached_by_itself_is_complete() {
+        let t0 = Duration::from_secs(100);
+        let at = |secs| t0 + Duration::from_secs(secs);
+        // A Timer runs into overtime: complete once, at the crossing.
+        let mut s = Session::start_running(timer_countdown_settings(60), t0);
+        assert!(completed(&s.tick(at(59))).is_empty());
+        assert_eq!(completed(&s.tick(at(60))), [60]);
+        assert!(completed(&s.tick(at(61))).is_empty(), "not on the ticks after");
+        assert_eq!(s.toggle_action(), ToggleAction::NoOp, "the play key does nothing in overtime");
+        assert!(completed(&s.finish_overtime()).is_empty(), "Save in overtime says nothing");
+        // A Box Breath countdown reaches its end.
+        let mut s = Session::start_running(box_breath_settings(Some(16)), t0);
+        let _ = s.tick(t0 + Duration::from_millis(500));
+        assert_eq!(completed(&s.tick(at(16))), [16]);
+        // Auto-Finish.
+        let mut s = Session::start_running(SessionSettings { auto_finish: true, ..timer_countdown_settings(60) }, t0);
+        assert_eq!(completed(&s.tick(at(60))), [60]);
+        // A guided track ending early reaches its end too.
+        let (mut s, _) = Session::start(guided_settings(600, false), t0);
+        let _ = s.tick(at(590));
+        assert_eq!(completed(&s.enter_overtime(Duration::ZERO)), [600]);
+        // Hand ends: Save while running, Add in overtime.
+        let mut s = Session::start_running(timer_countdown_settings(60), t0);
+        assert!(completed(&s.stop(at(30))).is_empty());
+        let mut s = Session::start_running(timer_countdown_settings(60), t0);
+        let _ = s.tick(at(60));
+        assert!(completed(&s.add_overtime_and_finish(at(90))).is_empty());
+        // A Box Breath stopwatch never ends by itself.
+        let mut s = Session::start_running(box_breath_settings(None), t0);
+        for secs in 1..=40 {
+            assert!(completed(&s.tick(at(secs))).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_stop_during_preparation_records_no_time() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_prep(timer_prep_settings(30, 600), t0);
+        let _ = s.stop(t0 + Duration::from_secs(20));
+        assert_eq!(s.final_duration_secs(), Some(0));
+        // Paused during preparation, then stopped: the same.
+        let mut s = Session::start_prep(timer_prep_settings(30, 600), t0);
+        let _ = s.pause(t0 + Duration::from_secs(10));
+        let _ = s.stop(t0 + Duration::from_secs(25));
+        assert_eq!(s.final_duration_secs(), Some(0));
+        // The crash-recovery heartbeat during preparation records 0 too.
+        let s = Session::start_prep(timer_prep_settings(300, 600), t0);
+        assert_eq!(s.saved_secs(t0 + Duration::from_secs(150)), 0);
+        let mut s = Session::start_running(timer_countdown_settings(600), t0);
+        assert_eq!(s.saved_secs(t0 + Duration::from_secs(150)), 150);
+        let _ = s.stop(t0 + Duration::from_secs(200));
+        assert_eq!(s.saved_secs(t0 + Duration::from_secs(400)), 200, "once ended, the length it saves");
+    }
+
+    #[test]
+    fn a_session_stopped_while_paused_is_ended() {
+        let t0 = Duration::from_secs(100);
+        let mut s = Session::start_running(timer_countdown_settings(600), t0);
+        let _ = s.pause(t0 + Duration::from_secs(120));
+        let _ = s.stop(t0 + Duration::from_secs(200));
+        assert_eq!(s.ui_state(), UiState::Done);
+        assert_eq!(s.end_buttons(), EndButtons::ENDED);
+        assert_eq!(s.toggle_action(), ToggleAction::NoOp, "the play key does nothing");
+        assert!(s.media_status(t0 + Duration::from_secs(200)).is_none(), "no Resume in the media control");
+        assert_eq!(s.final_duration_secs(), Some(120));
+        assert!(!s.is_paused(), "ended, not paused");
+        assert!(s.pause(t0 + Duration::from_secs(250)).is_empty(), "nothing to pause");
+        s.resume(t0 + Duration::from_secs(300));
+        assert_eq!(s.elapsed(t0 + Duration::from_secs(400)), Duration::from_secs(120), "an ended session's clock stays put");
+    }
+
+    #[test]
+    fn a_guided_track_ending_early_rings_no_bell_after_the_end_bell() {
+        let t0 = Duration::from_secs(100);
+        let mut settings = guided_settings(900, false);
+        settings.bells = vec![fixed_bell(899, "at-899"), fixed_bell(900, "at-900"), fixed_bell(960, "at-960")];
+        let (mut s, _) = Session::start(settings, t0);
+        let _ = s.tick(t0 + Duration::from_millis(898_900));
+        // The track ends at 899.4 s, before the tick reaches 900; the 899 s
+        // bell's tick never came.
+        let end = s.enter_overtime(Duration::ZERO);
+        assert!(end.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{end:?}");
+        let rung = |effects: Vec<Effect>| effects.iter().filter(|e| matches!(e, Effect::FireBell { .. })).count();
+        assert_eq!(rung(s.tick(t0 + Duration::from_secs(901))), 0, "nothing due by 900 s rings after the end bell");
+        assert_eq!(rung(s.tick(t0 + Duration::from_secs(960))), 1, "a bell due in overtime still rings");
+        // A suspend carries the session past its length and the track's
+        // end arrives before the tick: bells due by then are skipped too.
+        let mut settings = guided_settings(900, false);
+        settings.bells = vec![fixed_bell(930, "at-930")];
+        let (mut s, _) = Session::start(settings, t0);
+        let _ = s.tick(t0 + Duration::from_secs(899));
+        let _ = s.enter_overtime(t0 + Duration::from_secs(950));
+        assert_eq!(rung(s.tick(t0 + Duration::from_secs(951))), 0, "the 930 s bell was due before the end was seen");
+        // A track that ends (well early) while paused: the end waits for
+        // the first tick after Resume, not for the planned length.
+        let (mut s, _) = Session::start(guided_settings(900, false), t0);
+        let _ = s.pause(t0 + Duration::from_secs(600));
+        assert!(s.enter_overtime(Duration::ZERO).is_empty());
+        assert_eq!(s.ui_state(), UiState::Paused);
+        s.resume(t0 + Duration::from_secs(700));
+        let end = s.tick(t0 + Duration::from_secs(701));
+        assert!(end.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{end:?}");
+        assert_eq!(s.ui_state(), UiState::Overtime);
+        // Add right after an early end: the ring still says the end was
+        // reached, and the end bell is counted as heard.
+        let mut settings = guided_settings(900, false);
+        settings.bells = vec![fixed_bell(300, "mid")];
+        settings.starting_bell = Some(cue_at(70.0));
+        let (mut s, _) = Session::start(settings, t0);
+        let _ = s.tick(t0 + Duration::from_secs(301));
+        let _ = s.enter_overtime(Duration::ZERO);
+        let _ = s.add_overtime_and_finish(t0 + Duration::from_millis(899_600));
+        let ring = s.bell_ring(t0 + Duration::from_secs(950));
+        assert_eq!(ring.ring.unwrap().filled, 1.0);
+        assert_eq!(ring.counters, [BellCounter { rung: 3, total: None }]);
+    }
+
+    #[test]
+    fn an_ended_session_shows_its_length() {
+        let t0 = Duration::from_secs(100);
+        let at = |secs| t0 + Duration::from_secs(secs);
+        // By itself (Auto-Finish).
+        let mut s = Session::start_running(SessionSettings { auto_finish: true, ..timer_countdown_settings(2700) }, t0);
+        let _ = s.tick(at(2700));
+        assert_eq!(s.display_secs(at(2705)), 2700);
+        // Save in overtime: the planned length; Add: with the overtime.
+        let mut s = Session::start_running(timer_countdown_settings(2700), t0);
+        let _ = s.tick(at(2700));
+        let _ = s.finish_overtime();
+        assert_eq!(s.display_secs(at(2800)), 2700);
+        let mut s = Session::start_running(timer_countdown_settings(2700), t0);
+        let _ = s.tick(at(2700));
+        let _ = s.add_overtime_and_finish(at(2880));
+        assert_eq!(s.display_secs(at(2900)), 2880);
+        // Save after 7 minutes.
+        let mut s = Session::start_running(timer_countdown_settings(2700), t0);
+        let _ = s.stop(at(420));
+        assert_eq!(s.display_secs(at(500)), 420);
+        // The ring shows the same: 7 of 45 minutes, not a full circle.
+        let ring = s.bell_ring(at(900)).ring.unwrap();
+        assert!((ring.filled - 420.0 / 2700.0).abs() < 1e-9, "{}", ring.filled);
     }
 }
