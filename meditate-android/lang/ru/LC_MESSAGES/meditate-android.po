@@ -436,9 +436,6 @@ msgstr "Управление импортом"
 msgid "Manage Presets"
 msgstr "Управлять"
 
-msgid "Minutes ({}–{})"
-msgstr "Минуты ({}–{})"
-
 msgid "Minutes per day"
 msgstr "Минут в день"
 

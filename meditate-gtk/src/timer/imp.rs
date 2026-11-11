@@ -3912,58 +3912,13 @@ impl TimerView {
             TimerMode::Guided => unreachable!("guarded above"),
         };
 
-        // Tooltips double as accessible names — without them screen
-        // readers only announce the raw numeric value.
-        let hours_spin = gtk::SpinButton::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .numeric(true)
-            .width_chars(2)
-            .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
-            .tooltip_text(gettext("Hours"))
-            .build();
-        let minutes_spin = gtk::SpinButton::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .numeric(true)
-            .width_chars(2)
-            .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
-            .tooltip_text(gettext("Minutes"))
-            .build();
-
-        let colon = gtk::Label::builder()
-            .label(":")
-            .css_classes(["title-2"])
-            .valign(gtk::Align::Center)
-            .build();
-        let row = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .halign(gtk::Align::Center)
-            .margin_top(6)
-            .margin_bottom(6)
-            .build();
-        row.append(&hours_spin);
-        row.append(&colon);
-        row.append(&minutes_spin);
-
-        let dialog = adw::AlertDialog::builder()
-            .heading(gettext("Custom Time"))
-            .body(gettext("Hours : Minutes"))
-            .close_response("cancel")
-            .default_response("set")
-            .extra_child(&row)
-            .build();
-        dialog.add_response("cancel", &gettext("Cancel"));
-        dialog.add_response("set", &gettext("Set"));
-        dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
+        let (dialog, hours_spin, minutes_spin) = custom_time_dialog(cur_h, cur_m);
 
         let obj = self.obj().clone();
         let mode_for_response = mode;
         dialog.connect_response(None, move |_, response| {
             if response != "set" { return; }
-            let h = hours_spin.value() as u32;
-            let m = minutes_spin.value() as u32;
-            let total_mins = h * 60 + m;
-            if total_mins == 0 { return; }
+            let Some(total_mins) = custom_time_minutes(&hours_spin, &minutes_spin) else { return; };
             match mode_for_response {
                 TimerMode::Timer => {
                     obj.imp().set_countdown_target(total_mins * 60);
@@ -4609,11 +4564,120 @@ impl TimerView {
     }
 }
 
+/// The Custom Time dialog and its two spins, opened on `h`:`m`.
+fn custom_time_dialog(h: f64, m: f64) -> (adw::AlertDialog, gtk::SpinButton, gtk::SpinButton) {
+    // Tooltips double as accessible names — without them screen
+    // readers only announce the raw numeric value.
+    let hours_spin = gtk::SpinButton::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .numeric(true)
+        .width_chars(2)
+        .adjustment(&gtk::Adjustment::new(h, 0.0, 23.0, 1.0, 1.0, 0.0))
+        .tooltip_text(gettext("Hours"))
+        .build();
+    let minutes_spin = gtk::SpinButton::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .numeric(true)
+        .width_chars(2)
+        .adjustment(&gtk::Adjustment::new(m, 0.0, 59.0, 1.0, 5.0, 0.0))
+        .tooltip_text(gettext("Minutes"))
+        .build();
+
+    let colon = gtk::Label::builder()
+        .label(":")
+        .css_classes(["title-2"])
+        .valign(gtk::Align::Center)
+        .build();
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .halign(gtk::Align::Center)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    row.append(&hours_spin);
+    row.append(&colon);
+    row.append(&minutes_spin);
+
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Custom Time"))
+        .body(gettext("Hours : Minutes"))
+        .close_response("cancel")
+        .default_response("set")
+        .extra_child(&row)
+        .build();
+    dialog.add_response("cancel", &gettext("Cancel"));
+    dialog.add_response("set", &gettext("Set"));
+    dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
+    // Never 0:00 (#475): Set is off while both are zero, as typed
+    // (a spin takes typed text only on Tab or Enter; empty commits as 0).
+    let gate = |dialog: &adw::AlertDialog, h: &gtk::SpinButton, m: &gtk::SpinButton| {
+        let shown = |s: &gtk::SpinButton| s.text().trim().parse::<f64>().unwrap_or(0.0);
+        dialog.set_response_enabled("set", shown(h) > 0.0 || shown(m) > 0.0);
+    };
+    gate(&dialog, &hours_spin, &minutes_spin);
+    for spin in [&hours_spin, &minutes_spin] {
+        spin.connect_changed(clone!(
+            #[weak] dialog, #[weak] hours_spin, #[weak] minutes_spin,
+            move |_| gate(&dialog, &hours_spin, &minutes_spin)
+        ));
+    }
+
+    (dialog, hours_spin, minutes_spin)
+}
+
+/// The minutes Set chose, typed text included; `None` at 0:00.
+fn custom_time_minutes(h: &gtk::SpinButton, m: &gtk::SpinButton) -> Option<u32> {
+    h.update();
+    m.update();
+    let total = h.value() as u32 * 60 + m.value() as u32;
+    (total > 0).then_some(total)
+}
+
 #[cfg(test)]
 mod tests {
     fn production() -> String {
         let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/timer/imp.rs")).unwrap();
         src.split("#[cfg(test)]\nmod tests").next().unwrap().to_string()
+    }
+
+    /// Set at 0:00 closed the dialog and changed nothing, without a
+    /// word (#475): Set is off while the time is zero.
+    #[test]
+    fn custom_time_cannot_be_set_to_zero() {
+        use adw::prelude::*;
+        crate::gtk_test::run(|| {
+            let (dialog, hours, minutes) = super::custom_time_dialog(0.0, 10.0);
+            assert!(dialog.is_response_enabled("set"));
+            minutes.set_value(0.0);
+            assert!(!dialog.is_response_enabled("set"), "0:00");
+            hours.set_value(1.0);
+            assert!(dialog.is_response_enabled("set"), "1:00");
+            // Typed, not yet committed by Tab or Enter.
+            hours.set_text("0");
+            assert!(!dialog.is_response_enabled("set"), "0 typed");
+            minutes.set_text("5");
+            assert!(dialog.is_response_enabled("set"), "5 typed");
+            // An emptied field is 0 to GTK when it commits.
+            minutes.set_value(10.0);
+            minutes.set_text("");
+            assert!(!dialog.is_response_enabled("set"), "0 and empty");
+            // Each field on its own: "-1" commits as 0 hours.
+            hours.set_text("-1");
+            minutes.set_text("1");
+            assert!(dialog.is_response_enabled("set"), "-1 and 1");
+            // Set takes typed text that Tab or Enter never committed.
+            let (_, hours, minutes) = super::custom_time_dialog(0.0, 0.0);
+            minutes.set_text("5");
+            assert_eq!(super::custom_time_minutes(&hours, &minutes), Some(5));
+            hours.set_text("1");
+            minutes.set_text("");
+            assert_eq!(super::custom_time_minutes(&hours, &minutes), Some(60));
+            hours.set_text("0");
+            assert_eq!(super::custom_time_minutes(&hours, &minutes), None);
+            let (dialog, _, _) = super::custom_time_dialog(0.0, 0.0);
+            assert!(!dialog.is_response_enabled("set"), "opened at 0:00");
+        });
     }
 
     fn body(code: &str, sig: &str) -> String {

@@ -19,15 +19,15 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
 | [ ] | EE. Failures nobody sees: core and Linux | #347, #366, #489, #251, #247, #344, #365 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #411, #425, #426, #427, #448 | the user thinks it worked |
-| [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
+| [ ] | GG. Android Edit Session | #472, #473, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
 | [ ] | HH. Timer engine and bells | #277, #278, #279, #280, #437, #293, #309 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
-| [ ] | T. Text that doesn't fit | #159, #434, #452, #462, #463, #474, #436 | information the user can't see |
-| [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #477, #511, #147 | controls some users can't reach |
+| [ ] | T. Text that doesn't fit | #159, #434, #452, #462, #463, #436 | information the user can't see |
+| [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #517, #477, #511, #147 | controls some users can't reach |
 | [ ] | MM. Linux small ones | #348, #391, #492, #350, #393 | stale screens, leaks, warnings |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
@@ -47,7 +47,6 @@ Answer these once; each batch waits only for its own.
 - #493 (II): normalise imported bells to -16 LUFS on both apps, or on neither?
 - #164 (W): should a newer peer's unknown value keep blocking the pull on purpose, or be skipped and kept for a later build?
 - #445 (KK): fix the rotation during a file pick in the manifest (protected) or in Kotlin only?
-- REFACTORING #470: Prep Time and Daily Goal as inline steppers like GTK, instead of dialogs?
 - REFACTORING #85: should a ringing end bell keep ringing when its settings change? #197: plain show/hide without the slide? #171: `synchronous=FULL` around Save and Edit?
 - Protected build files (ask first): REFACTORING #167 and #175, #440 (bells as Gradle assets), #441 (Kotlin tests in Gradle), batches X and AA.
 - REFACTORING "Considered and rejected": now that every refactor gets done eventually, should any of those come back?
@@ -253,16 +252,13 @@ The Android half of EE.
 
 ## GG. Android Edit Session
 
-One screen, one device test. REFACTORING #469 and #465 touch the same code.
+One screen, one device test. REFACTORING #469 touches the same code.
 
 ### #472 The app and navigation bars pop over the sliding Edit Session page
 - The overlay (5146) is declared before the AppBar (5356) and NavigationBar (5499), so both bars are hidden with `visible: !root.running-page && !root.edit-session-page` (5357, 5500), which AGENTS.md forbids. The bool flips at once while the page slides for 300 ms: on open the bars vanish before the page arrives, on Save or Cancel they paint over it while it slides out. Fix: declare the overlay after the NavigationBar (still before the Duration dialog and the label chooser), drop both gates; check Edit then Duration and Edit then Label on the phone.
 
 ### #473 With the 12-hour clock, an edited session time is always saved as AM
 - `time-popup` passes `use_24_hour_format: root.clock-24h` (5336) and reads `get_current_time()`, whose PM conversion runs only in keyboard mode (`material-1.0/ui/components/time_picker.slint:592-603`); a dial pick of 2 with PM saves 02:30, and 12 gives noon. The Material bug of the parked Slint AM/PM work. `material-1.0` is protected: convert at the call site, or fix it upstream and update.
-
-### #475 Set in the Duration dialog closes silently at 0:00
-- The guard at 6609 skips the write but the dialog closes anyway; a new Log session keeps Save disabled with no word why. The Goal dialog disables Set instead. Fix: `enabled: root.dialog-hours > 0 || root.dialog-minutes > 0`.
 
 ### #478 Save in Edit Session can drop the word still being typed (plausible)
 - The Save action calls `edit-save-tap` (5195) without `edit-note.release()`; Rust reads `get_edit_note_text()` at once (`ui.rs` 8791), and the release runs only later in `changed edit-session-page`. The running page's end buttons (6488) and Preferences Save (8586) release first for this reason. Not reproduced on the phone.
@@ -513,13 +509,10 @@ What breaks when Android rebuilds the screen, and the home-screen widget. #445 n
 - Where: `overflow: elide` at 4023 (the Guided current file name), 4177 (the empty-starred hint), 4666 (the daily-goal line, 20px bold), 5023 (chart x-axis labels, 9px) and 5059 (the mini-stat values, 22px bold in a third of the width).
 - Scenario: Guided with no starred file on a 360 px phone shows "Tap Open File then Import File, or st..." in every language, and never says where to star; German Total "123 Std 45 Min" and the goal "1 Std 48 Min / 2 Std 30 Min" are cut; a long file name ends in a box on the FP5. Widths are estimates from font size, not measured.
 - Also without wrap and clipped by BoxedList's `clip: true`: the BY LABEL row name (5115) and the Log section date (4386), so a long label name is cut silently (plausible).
-- Fix: wrap or stack each (the mini-stats could stack value over caption); the current-file row's fixed `height: 64px` (4008) becomes a minimum so a wrapping subtitle fits. Same class: #434, #452, #474.
+- Fix: wrap or stack each (the mini-stats could stack value over caption); the current-file row's fixed `height: 64px` (4008) becomes a minimum so a wrapping subtitle fits. Same class: #434, #452.
 
 ### #463 The bell volume reveal can clip its own content (plausible)
 - RevealVolume opens to a hand-summed `full-height: 105px` (2090) instead of measuring; a translation that wraps "Volume", or a bigger system font, is cut at the bottom. Fixed by #453's measured `Reveal`.
-
-### #474 Six dialog titles are cut instead of wrapped
-- Filter Sessions (5589), Custom Time (6556), Preparation Time (7985), the guided import title (9032), Daily Goal (9239) and the label conflict title (9491) are 22px Texts without `wrap` in a 280-340px card; ConfirmDialog's title wraps (1631). A long translation is cut. Same class: #462. Fixed by #465.
 
 ### #436 A Chinese or Portuguese phone outside zh-CN and pt-BR gets English
 - `translation_candidates` (1344-1357) tries `lang_REGION`, then `lang`; only `zh_CN` and `pt_BR` exist, so zh-Hans, zh-Hans-SG, pt-PT and pt fall to English. Fix: map the script (`Hans`) and the bare language to the bundled one (whether pt-PT should get pt_BR is the maintainer's call).
@@ -544,6 +537,9 @@ Z (#147, small touch targets) is part of this package.
 
 ### #476 TalkBack reads most icon buttons as just "button"
 - `IconButton`'s accessible label is its tooltip (`material-1.0/ui/components/icon_button.slint:25`), and 14 of the 19 in this range set none: AppBar Add, Filter, Menu (5440-5454), label rename and delete (6794, 6810), interval-bell delete (6220), sound edit and delete (7118, 7124), pattern delete (7286), preset rename and delete (7813, 7820), Manage Imports play, rename, delete (8179-8197). The preset and guided stars (7771, 8136) and the accent swatches (8792) are bare TouchAreas with no role. Fixed in one place by #467's LibraryRow.
+
+### #517 TalkBack reads Custom Time's numbers without a name
+- The two number fields of Android's Custom Time dialog (VerticalSpinBox, no `name`) are read as just "00" and "10"; Preparation Time and Daily Goal name theirs ("Seconds", "Minutes per day"). "Hours" and "Minutes" are not Android strings yet (GTK has both): add them in nine languages and set `name`. Found in one-dialog-frame (2026-11-11).
 
 ### #477 A cancelled touch leaves the vibration drag open (plausible)
 - The plot's TouchArea handles `PointerEventKind.down` and `up` only (7570-7580); a back swipe or the notification shade sends `cancel`, so `ve-drag-end` never comes and the Rust drag and preview state stays on until the next touch. Fix: treat `cancel` like `up`.

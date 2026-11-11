@@ -435,9 +435,6 @@ msgstr "Gerenciar importações"
 msgid "Manage Presets"
 msgstr "Gerenciar"
 
-msgid "Minutes ({}–{})"
-msgstr "Minutos ({}–{})"
-
 msgid "Minutes per day"
 msgstr "Minutos por dia"
 

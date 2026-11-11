@@ -758,39 +758,34 @@ component NoteField inherits Rectangle {
 }
 
 // Vertical +/value/− stack mirroring the GTK shell's vertical
-// `gtk::SpinButton`. Used inside the Duration dialog.
+// `gtk::SpinButton`. Custom Time, Preparation Time and Daily Goal.
 component VerticalSpinBox {
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
+    // − / + go to the next multiple of it: 13 gives 15 and 10 in fives.
+    in property <int> step: 1;
+    // What a screen reader calls the number.
+    in property <string> name;
     width: 80px;
 
     // The centre readout is a live TextInput: tapping it summons
     // the numeric IME so a value can be typed instead of clicked
-    // together with +/−. Typed text commits (parse → clamp into
-    // min/max) on Enter or focus loss; the +/− handlers commit
-    // any pending typed text first so "type 45, tap +" lands on
-    // 46, then re-sync the display — the initial `text:` binding
-    // severs on the first user edit, so every value change must
-    // write the text back explicitly.
-    // Public so a dialog's Set button can flush pending typed text
-    // before reading `value`. Tapping a Material button does NOT move
-    // focus — its FocusScope is declared `width: 0px` purely for
-    // keyboard navigation, so it is never hit-tested and
-    // `changed has-focus` never fires. Without this, "type 45, tap Set"
-    // commits the pre-edit value while the field still reads 45.
-    public function commit() {
-        root.commit-text();
-    }
+    // together with +/−. `value` follows the typing (clamped), so a
+    // dialog's Set, which does not take the focus, reads the typed
+    // number; Enter or focus loss also rewrites the text. The text has
+    // no binding to `value`, so every value change writes it back.
+    // The number before the typing, which an emptied field goes back to.
+    property <int> shown;
     function sync-text() {
         input.text = root.value < 10 ? "0" + root.value : "" + root.value;
+        root.shown = root.value;
     }
-    function commit-text() {
-        if (input.text.is-float()) {
-            root.value = Math.max(root.min-value,
-                Math.min(root.max-value, Math.round(input.text.to-float())));
-        }
-        root.sync-text();
+    // The typed number, clamped; the text stays as typed.
+    function take-typed() {
+        root.value = input.text.is-float()
+            ? Math.max(root.min-value, Math.min(root.max-value, Math.round(input.text.to-float())))
+            : root.shown;
     }
 
     VerticalLayout {
@@ -801,28 +796,31 @@ component VerticalSpinBox {
             text: "+";
             enabled: root.value < root.max-value;
             clicked => {
-                root.commit-text();
-                if (root.value < root.max-value) { root.value += 1; }
+                root.value = Math.min(root.max-value, (Math.floor(root.value / root.step) + 1) * root.step);
                 root.sync-text();
             }
         }
         input := TextInput {
-            text: root.value < 10 ? "0" + root.value : "" + root.value;
+            init => { root.sync-text(); }
+            accessible-label: root.name;
             input-type: InputType.number;
             font-size: 32px;
             color: MaterialPalette.on-surface;
             horizontal-alignment: center;
             vertical-alignment: center;
             accepted => { self.clear-focus(); KeyboardArea.hide(); }
+            // Set's on/off follows the typing.
+            edited => { root.take-typed(); }
             changed has-focus => {
                 if (self.has-focus) {
                     // Empty the field on tap so typing replaces the
                     // number (blur restores it if nothing was typed).
                     // Not select-all: on Android a selection summons
                     // the cut/copy/paste popup right over the number.
+                    root.shown = root.value;
                     self.text = "";
                 } else {
-                    root.commit-text();
+                    root.sync-text();
                 }
             }
         }
@@ -830,8 +828,7 @@ component VerticalSpinBox {
             text: "−";
             enabled: root.value > root.min-value;
             clicked => {
-                root.commit-text();
-                if (root.value > root.min-value) { root.value -= 1; }
+                root.value = Math.max(root.min-value, (Math.ceil(root.value / root.step) - 1) * root.step);
                 root.sync-text();
             }
         }
@@ -1570,7 +1567,7 @@ component ConfirmButton {
     accessible-role: button;
     accessible-enabled: root.enabled;
     accessible-label: root.text;
-    accessible-action-default => { base.clicked(); }
+    accessible-action-default => { if (root.enabled) { base.clicked(); } }
 
     base := BaseButton {
         border_radius: root.height / 2;
@@ -1585,17 +1582,12 @@ component ConfirmButton {
     ]
 }
 
-component ConfirmDialog inherits Rectangle {
+// Every dialog's scrim and card: a tap outside cancels, one width, a
+// title that wraps, the content under it. Material's `Dialog` is a
+// PopupWindow, which collapses on Android.
+component DialogFrame inherits Rectangle {
     in property <string> title;
-    in property <string> body;
-    in property <string> confirm-text;
-    in property <bool> confirm-enabled: true;
-    in property <bool> destructive;
-    // One button per line, for a confirm text too long to sit beside
-    // Cancel (Material's stacked dialog buttons).
-    in property <bool> stacked;
     callback cancel();
-    callback confirm();
 
     background: MaterialPalette.scrim.with-alpha(0.32);
     ScrimArea {
@@ -1605,11 +1597,12 @@ component ConfirmDialog inherits Rectangle {
     Rectangle {
         x: (parent.width - self.width) / 2;
         y: KeyboardArea.card-y(self.height);
-        width: min(320px, root.width - 32px);
+        width: min(340px, root.width - 32px);
         height: card.preferred-height;
         background: MaterialPalette.surface-container-high;
         border-radius: 28px;
 
+        // Taps on the card don't reach the scrim.
         TouchArea {}
 
         card := VerticalLayout {
@@ -1623,50 +1616,71 @@ component ConfirmDialog inherits Rectangle {
                 color: MaterialPalette.on-surface;
                 wrap: word-wrap;
             }
-            // Delete Sound's name.
             @children
-            if root.body != "" : Text {
-                text: root.body;
-                font-size: 14px;
-                horizontal-alignment: center;
-                color: MaterialPalette.on-surface-variant;
-                wrap: word-wrap;
+        }
+    }
+}
+
+component ConfirmDialog inherits DialogFrame {
+    // A line above the content (a time dialog's unit).
+    in property <string> subtitle;
+    in property <string> body;
+    in property <string> confirm-text;
+    in property <bool> confirm-enabled: true;
+    in property <bool> destructive;
+    // One button per line, for a confirm text too long to sit beside
+    // Cancel (Material's stacked dialog buttons).
+    in property <bool> stacked;
+    callback confirm();
+
+    if root.subtitle != "" : Text {
+        text: root.subtitle;
+        font-size: 14px;
+        horizontal-alignment: center;
+        color: MaterialPalette.on-surface-variant;
+    }
+    // Delete Sound's name, a time dialog's fields.
+    @children
+    if root.body != "" : Text {
+        text: root.body;
+        font-size: 14px;
+        horizontal-alignment: center;
+        color: MaterialPalette.on-surface-variant;
+        wrap: word-wrap;
+    }
+
+    if !root.stacked : HorizontalLayout {
+        spacing: 8px;
+        alignment: end;
+
+        TextButton {
+            text: @tr("Cancel");
+            clicked => { root.cancel(); }
+        }
+        ConfirmButton {
+            text: root.confirm-text;
+            destructive: root.destructive;
+            enabled: root.confirm-enabled;
+            clicked => { if (root.confirm-enabled) { root.confirm(); } }
+        }
+    }
+    if root.stacked : VerticalLayout {
+        spacing: 8px;
+
+        HorizontalLayout {
+            alignment: end;
+            ConfirmButton {
+                text: root.confirm-text;
+                destructive: root.destructive;
+                enabled: root.confirm-enabled;
+                clicked => { if (root.confirm-enabled) { root.confirm(); } }
             }
-
-            if !root.stacked : HorizontalLayout {
-                spacing: 8px;
-                alignment: end;
-
-                TextButton {
-                    text: @tr("Cancel");
-                    clicked => { root.cancel(); }
-                }
-                ConfirmButton {
-                    text: root.confirm-text;
-                    destructive: root.destructive;
-                    enabled: root.confirm-enabled;
-                    clicked => { root.confirm(); }
-                }
-            }
-            if root.stacked : VerticalLayout {
-                spacing: 8px;
-
-                HorizontalLayout {
-                    alignment: end;
-                    ConfirmButton {
-                        text: root.confirm-text;
-                        destructive: root.destructive;
-                        enabled: root.confirm-enabled;
-                        clicked => { root.confirm(); }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.cancel(); }
-                    }
-                }
+        }
+        HorizontalLayout {
+            alignment: end;
+            TextButton {
+                text: @tr("Cancel");
+                clicked => { root.cancel(); }
             }
         }
     }
@@ -1716,9 +1730,9 @@ component PreviewPill inherits Rectangle {
 // wraps). Used by the interval-bell editor's Time / Jitter / Step
 // rows, which add an s / min switch under the stepper.
 //
-// The value between − and + is a live TextInput, like the Duration
-// dialog's VerticalSpinBox: tapping it summons the numeric IME and
-// empties the field so typing replaces the number. Typed text commits
+// The value between − and + is a live TextInput, like the time
+// dialogs' VerticalSpinBox: tapping it summons the numeric IME and
+// empties the field so typing replaces the number. Unlike there, typed text commits
 // (parse → clamp into min/max) on Enter or focus loss; − / + commit
 // pending text first. `commit()` is public so the editor's Save can
 // flush it — tapping a Material button does not blur the input.
@@ -2464,19 +2478,6 @@ export component MainWindow inherits Window {
             KeyboardArea.hide();
         }
     }
-    pure function goal-valid() -> bool {
-        return root.goal-dialog-text.is-float()
-            && root.goal-dialog-text.to-float() >= root.goal-min-mins
-            && root.goal-dialog-text.to-float() <= root.goal-max-mins;
-    }
-    // The Daily Goal dialog's Set, from its button or Enter.
-    function set-goal() {
-        if (root.goal-valid()) {
-            root.prefs-goal-mins = Math.round(root.goal-dialog-text.to-float());
-            root.goal-committed();
-            root.modal = Modal.none;
-        }
-    }
     in-out property <Modal> modal;
     title: @tr("Meditate");
     background: MaterialPalette.surface;
@@ -2669,7 +2670,7 @@ export component MainWindow inherits Window {
     // only — the defaults here just keep the host preview sane.
     in property <int> goal-min-mins: 1;
     in property <int> goal-max-mins: 1440;
-    in-out property <string> goal-dialog-text: "20";
+    in-out property <int> goal-dialog-mins: 20;
     callback goal-committed();
     // About + diagnostics (AB) — parity with GTK's AboutDialog +
     // its Troubleshooting/debug-info view. Version is the real
@@ -5520,74 +5521,49 @@ export component MainWindow inherits Window {
     // alive (just hidden) preserves the dropdown's display
     // state across opens. `visible: false` elements don't render
     // or receive input, so the scrim still behaves modally.
-    Rectangle {
+    DialogFrame {
         visible: root.filter-sheet-open;
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.filter-sheet-open = false; }
+        title: @tr("Filter Sessions");
+        cancel => { root.filter-sheet-open = false; }
+
+        // Has Notes toggle — mirrors GTK's
+        // `Adw.SwitchRow filter_notes_row { title:
+        // _("Has Notes"); }` at
+        // `meditate-gtk/data/ui/window.blp:102`. Instant
+        // apply: flipping the switch fires
+        // `filter-notes-toggled`, Rust reloads page 0
+        // with the new filter and closes the sheet (the
+        // Label chooser row lands in L-5c).
+        BoxedList {
+            SwitchRow {
+                title: @tr("Has Notes");
+                subtitle: @tr("Only sessions with a note");
+                checked <=> root.filter-notes-only;
+                toggled(on) => { root.filter-notes-toggled(on); }
+            }
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(320px, root.width - 32px);
-            height: filter-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        // Label filter dropdown — Material's ComboRow
+        // analogue. Index 0 is the synthetic "All labels"
+        // entry (clears the filter). Instant-apply: a
+        // pick fires `filter-label-selected`, Rust
+        // reloads + closes the sheet, matching GTK's
+        // `filter_label_row` notify handler at
+        // `meditate-gtk/src/window/imp.rs:799`.
+        DropDownMenu {
+            label: @tr("Label");
+            items: root.filter-label-items;
+            current-index <=> root.filter-label-index;
+            selected(idx) => { root.filter-label-selected(idx); }
+        }
 
-            TouchArea {}
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
 
-            filter-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Filter Sessions");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                // Has Notes toggle — mirrors GTK's
-                // `Adw.SwitchRow filter_notes_row { title:
-                // _("Has Notes"); }` at
-                // `meditate-gtk/data/ui/window.blp:102`. Instant
-                // apply: flipping the switch fires
-                // `filter-notes-toggled`, Rust reloads page 0
-                // with the new filter and closes the sheet (the
-                // Label chooser row lands in L-5c).
-                BoxedList {
-                    SwitchRow {
-                        title: @tr("Has Notes");
-                        subtitle: @tr("Only sessions with a note");
-                        checked <=> root.filter-notes-only;
-                        toggled(on) => { root.filter-notes-toggled(on); }
-                    }
-                }
-
-                // Label filter dropdown — Material's ComboRow
-                // analogue. Index 0 is the synthetic "All labels"
-                // entry (clears the filter). Instant-apply: a
-                // pick fires `filter-label-selected`, Rust
-                // reloads + closes the sheet, matching GTK's
-                // `filter_label_row` notify handler at
-                // `meditate-gtk/src/window/imp.rs:799`.
-                DropDownMenu {
-                    label: @tr("Label");
-                    items: root.filter-label-items;
-                    current-index <=> root.filter-label-index;
-                    selected(idx) => { root.filter-label-selected(idx); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Close");
-                        clicked => { root.filter-sheet-open = false; }
-                    }
-                }
+            TextButton {
+                text: @tr("Close");
+                clicked => { root.filter-sheet-open = false; }
             }
         }
     }
@@ -6482,103 +6458,46 @@ export component MainWindow inherits Window {
     // Declared after the Edit-Session overlay AND the AppBar /
     // NavigationBar so its scrim covers all of them (Slint
     // renders later children above earlier ones).
-    if root.modal == Modal.duration : Rectangle {
-        // Scrim — taps outside the card cancel.
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+    if root.modal == Modal.duration : ConfirmDialog {
+        title: @tr("Custom Time");
+        subtitle: @tr("Hours : Minutes");
+        confirm-text: @tr("Set");
+        // Never 0:00, as on Linux (#475).
+        confirm-enabled: root.dialog-hours > 0 || root.dialog-minutes > 0;
+        cancel => { root.modal = Modal.none; }
+        confirm => {
+            if (root.edit-session-page) {
+                // Edit Session opened it: its Save reads the edit pair.
+                root.edit-duration-hours = root.dialog-hours;
+                root.edit-duration-minutes = root.dialog-minutes;
+            } else {
+                root.setup-hours = root.dialog-hours;
+                root.setup-minutes = root.dialog-minutes;
+                root.duration-committed();
+            }
+            root.modal = Modal.none;
         }
 
-        // Card. Height tracks the inner layout's preferred-height
-        // so the card sizes to its content rather than stretching
-        // to the scrim's full height.
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(320px, root.width - 32px);
-            height: card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
 
-            // Catch clicks on the card itself so they don't reach
-            // the scrim's TouchArea and dismiss the dialog.
-            TouchArea {}
-
-            card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Custom Time");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("Hours : Minutes");
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    hours-spin := VerticalSpinBox {
-                        value <=> root.dialog-hours;
-                        min-value: 0;
-                        // An edited session keeps hours past 23 (#5).
-                        max-value: root.edit-session-page ? max(23, root.edit-duration-hours) : 23;
-                    }
-                    Text {
-                        text: ":";
-                        font-size: 40px;
-                        vertical-alignment: center;
-                        color: MaterialPalette.on-surface;
-                    }
-                    minutes-spin := VerticalSpinBox {
-                        value <=> root.dialog-minutes;
-                        min-value: 0;
-                        max-value: 59;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Set");
-                        clicked => {
-                            // Flush typed text first — tapping this
-                            // button does not blur the spinbox inputs.
-                            hours-spin.commit();
-                            minutes-spin.commit();
-                            // Refuse to commit a zero-duration set,
-                            // mirroring the GTK shell's guard.
-                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
-                                if (root.edit-session-page) {
-                                    // Edit-Session overlay owns this
-                                    // open — write the new value to
-                                    // the edit-duration-* pair so the
-                                    // Save handler picks it up.
-                                    root.edit-duration-hours = root.dialog-hours;
-                                    root.edit-duration-minutes = root.dialog-minutes;
-                                } else {
-                                    root.setup-hours = root.dialog-hours;
-                                    root.setup-minutes = root.dialog-minutes;
-                                    root.duration-committed();
-                                }
-                            }
-                            root.modal = Modal.none;
-                        }
-                    }
-                }
+            VerticalSpinBox {
+                value <=> root.dialog-hours;
+                min-value: 0;
+                // An edited session keeps hours past 23 (#5).
+                max-value: root.edit-session-page ? max(23, root.edit-duration-hours) : 23;
+            }
+            Text {
+                text: ":";
+                font-size: 40px;
+                vertical-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+            VerticalSpinBox {
+                value <=> root.dialog-minutes;
+                min-value: 0;
+                max-value: 59;
             }
         }
     }
@@ -7837,74 +7756,28 @@ export component MainWindow inherits Window {
     }
 
     // ── Preparation-time seconds dialog (modal, B-5b) ────────────
-    // Single-spinbox modal mirroring the duration-dialog scrim +
-    // card. Declared LAST (after the choosers) so it z-stacks
-    // above them and the chrome — per the declare-overlays-last
-    // z-order rule. Range 5..300 (PREP_SECS_MIN..MAX);
-    // VerticalSpinBox steps by 1 (GTK's SpinRow steps 5 — minor
-    // Android deviation, acceptable for a transient picker).
-    if root.modal == Modal.prep : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+    // Declared after the choosers so it z-stacks above them and the
+    // chrome. Range 5..300 (PREP_SECS_MIN..MAX).
+    if root.modal == Modal.prep : ConfirmDialog {
+        title: @tr("Preparation Time");
+        subtitle: @tr("Seconds");
+        confirm-text: @tr("Set");
+        cancel => { root.modal = Modal.none; }
+        confirm => {
+            root.prep-time-secs = root.prep-dialog-secs;
+            root.prep-secs-committed();
+            root.modal = Modal.none;
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(280px, root.width - 32px);
-            height: prep-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            prep-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Preparation Time");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("Seconds");
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                }
-
-                HorizontalLayout {
-                    alignment: center;
-                    prep-spin := VerticalSpinBox {
-                        value <=> root.prep-dialog-secs;
-                        min-value: 5;
-                        max-value: 300;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Set");
-                        clicked => {
-                            // Flush typed text first — see the
-                            // duration dialog's Set handler.
-                            prep-spin.commit();
-                            root.prep-time-secs = root.prep-dialog-secs;
-                            root.prep-secs-committed();
-                            root.modal = Modal.none;
-                        }
-                    }
-                }
+        HorizontalLayout {
+            alignment: center;
+            // In fives, as Linux's SpinRow.
+            VerticalSpinBox {
+                name: @tr("Seconds");
+                value <=> root.prep-dialog-secs;
+                min-value: 5;
+                max-value: 300;
+                step: 5;
             }
         }
     }
@@ -8494,7 +8367,7 @@ export component MainWindow inherits Window {
                     label: @tr("Daily goal");
                     value-text: Tr.n-mins(root.prefs-goal-mins);
                     tapped => {
-                        root.goal-dialog-text = "" + root.prefs-goal-mins;
+                        root.goal-dialog-mins = root.prefs-goal-mins;
                         root.modal = Modal.goal;
                     }
                 }
@@ -8943,206 +8816,144 @@ export component MainWindow inherits Window {
     // failed (the dialog stays open then, with the name). An import
     // freezes the form while it converts; Cancel stays live. Declared
     // after everything it covers (Slint z-order is declaration order).
-    if root.modal == Modal.name : name-dialog := Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
+    if root.modal == Modal.name : name-dialog := DialogFrame {
+        title: root.name-dialog-kind == NameKind.preset-create ? @tr("Create Preset")
+            : root.name-dialog-kind == NameKind.preset-rename ? @tr("Rename Preset")
+            : root.name-dialog-kind == NameKind.label-create ? @tr("Create Label")
+            : root.name-dialog-kind == NameKind.label-rename ? @tr("Rename Label")
+            : root.name-dialog-kind == NameKind.guided-rename ? @tr("Rename Guided File")
+            : root.name-dialog-kind == NameKind.bell-rename ? @tr("Rename Sound")
+            : root.name-dialog-kind == NameKind.bell-import ? Tr.import-bell-title()
+            : Tr.import-guided-title();
+        cancel => {
+            if (!root.name-dialog-busy) {
+                name-dialog.close();
+            }
+        }
         // Enter in the field: what the confirm button does.
         function accept() {
             if (root.name-dialog-valid && !root.name-dialog-busy) {
                 root.name-dialog-confirm();
             }
         }
-        function cancel() {
+        function close() {
             root.name-dialog-cancel();
             root.modal = Modal.none;
         }
-        ScrimArea {
-            tapped => {
-                if (!root.name-dialog-busy) {
-                    name-dialog.cancel();
-                }
+
+        // "Importing: <name> (m:ss)" on an import.
+        if root.name-dialog-subtitle != "" : Text {
+            text: root.name-dialog-subtitle;
+            font-size: 13px;
+            horizontal-alignment: center;
+            color: MaterialPalette.on-surface-variant;
+            wrap: word-wrap;
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+            TextField {
+                accepted => { name-dialog.accept(); }
+                init => { self.select-all(); self.focus(); }
+                label: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.preset-rename ? @tr("Preset name")
+                    : root.name-dialog-kind == NameKind.label-create || root.name-dialog-kind == NameKind.label-rename ? @tr("Label name")
+                    : root.name-dialog-kind == NameKind.guided-rename || root.name-dialog-kind == NameKind.guided-import ? @tr("Track name")
+                    : @tr("Name");
+                text <=> root.name-dialog-text;
+                enabled: !root.name-dialog-busy;
+                edited(text) => { root.name-dialog-changed(text); }
+            }
+            if root.name-dialog-taken || root.name-dialog-failed : Text {
+                text: root.name-dialog-taken ? @tr("This name is already in use") : Tr.save-failed();
+                font-size: 12px;
+                color: MaterialPalette.error;
+                wrap: word-wrap;
             }
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(320px, root.width - 32px);
-            height: name-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
 
-            TouchArea {}
-
-            name-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
+            TextButton {
+                text: @tr("Cancel");
+                clicked => { name-dialog.close(); }
+            }
+            if !root.name-dialog-busy : ConfirmButton {
+                text: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.label-create ? @tr("Create")
+                    : root.name-dialog-kind == NameKind.guided-import || root.name-dialog-kind == NameKind.bell-import ? @tr("Import")
+                    : @tr("Rename");
+                enabled: root.name-dialog-valid;
+                clicked => { root.name-dialog-confirm(); }
+            }
+            // Converting… progress pill: a clipped rounded
+            // track with a primary fill that grows with the
+            // transcode percent (Rust-driven from the Kotlin
+            // worker). The label is drawn twice: on-surface on
+            // the bare track, and an on-primary copy clipped to
+            // the fill so it stays readable as the fill passes.
+            if root.name-dialog-busy : import-pill := Rectangle {
+                width: 156px;
+                height: 40px;
+                border-radius: 20px;
+                clip: true;
+                background: MaterialPalette.surface-container-highest;
 
                 Text {
-                    text: root.name-dialog-kind == NameKind.preset-create ? @tr("Create Preset")
-                        : root.name-dialog-kind == NameKind.preset-rename ? @tr("Rename Preset")
-                        : root.name-dialog-kind == NameKind.label-create ? @tr("Create Label")
-                        : root.name-dialog-kind == NameKind.label-rename ? @tr("Rename Label")
-                        : root.name-dialog-kind == NameKind.guided-rename ? @tr("Rename Guided File")
-                        : root.name-dialog-kind == NameKind.bell-rename ? @tr("Rename Sound")
-                        : root.name-dialog-kind == NameKind.bell-import ? Tr.import-bell-title()
-                        : Tr.import-guided-title();
-                    font-size: 22px;
+                    width: parent.width;
+                    height: parent.height;
+                    text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
                     horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-size: 14px;
                     color: MaterialPalette.on-surface;
-                    wrap: word-wrap;
                 }
-                // "Importing: <name> (m:ss)" on an import.
-                if root.name-dialog-subtitle != "" : Text {
-                    text: root.name-dialog-subtitle;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    height: parent.height;
+                    width: parent.width
+                        * clamp(root.name-dialog-progress, 0.0, 1.0);
+                    background: MaterialPalette.primary;
+                    clip: true;
 
-                VerticalLayout {
-                    spacing: 4px;
-                    TextField {
-                        accepted => { name-dialog.accept(); }
-                        init => { self.select-all(); self.focus(); }
-                        label: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.preset-rename ? @tr("Preset name")
-                            : root.name-dialog-kind == NameKind.label-create || root.name-dialog-kind == NameKind.label-rename ? @tr("Label name")
-                            : root.name-dialog-kind == NameKind.guided-rename || root.name-dialog-kind == NameKind.guided-import ? @tr("Track name")
-                            : @tr("Name");
-                        text <=> root.name-dialog-text;
-                        enabled: !root.name-dialog-busy;
-                        edited(text) => { root.name-dialog-changed(text); }
-                    }
-                    if root.name-dialog-taken || root.name-dialog-failed : Text {
-                        text: root.name-dialog-taken ? @tr("This name is already in use") : Tr.save-failed();
-                        font-size: 12px;
-                        color: MaterialPalette.error;
-                        wrap: word-wrap;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { name-dialog.cancel(); }
-                    }
-                    if !root.name-dialog-busy : ConfirmButton {
-                        text: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.label-create ? @tr("Create")
-                            : root.name-dialog-kind == NameKind.guided-import || root.name-dialog-kind == NameKind.bell-import ? @tr("Import")
-                            : @tr("Rename");
-                        enabled: root.name-dialog-valid;
-                        clicked => { root.name-dialog-confirm(); }
-                    }
-                    // Converting… progress pill: a clipped rounded
-                    // track with a primary fill that grows with the
-                    // transcode percent (Rust-driven from the Kotlin
-                    // worker). The label is drawn twice: on-surface on
-                    // the bare track, and an on-primary copy clipped to
-                    // the fill so it stays readable as the fill passes.
-                    if root.name-dialog-busy : import-pill := Rectangle {
-                        width: 156px;
-                        height: 40px;
-                        border-radius: 20px;
-                        clip: true;
-                        background: MaterialPalette.surface-container-highest;
-
-                        Text {
-                            width: parent.width;
-                            height: parent.height;
-                            text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 14px;
-                            color: MaterialPalette.on-surface;
-                        }
-                        Rectangle {
-                            x: 0;
-                            y: 0;
-                            height: parent.height;
-                            width: parent.width
-                                * clamp(root.name-dialog-progress, 0.0, 1.0);
-                            background: MaterialPalette.primary;
-                            clip: true;
-
-                            Text {
-                                x: 0;
-                                y: 0;
-                                width: import-pill.width;
-                                height: import-pill.height;
-                                text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                font-size: 14px;
-                                color: MaterialPalette.on-primary;
-                            }
-                        }
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: import-pill.width;
+                        height: import-pill.height;
+                        text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: 14px;
+                        color: MaterialPalette.on-primary;
                     }
                 }
             }
         }
     }
     // ── Daily-goal entry dialog (ST) ─────────────────────────────
-    // Free-typed minutes, validated against goal-min/max-mins
-    // (seeded from core DAILY_GOAL_MIN/MAX). Declared with the
+    // Minutes within goal-min/max-mins (seeded from core
+    // DAILY_GOAL_MIN/MAX). Declared with the
     // other dialogs so it tops the Preferences page.
-    if root.modal == Modal.goal : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+    if root.modal == Modal.goal : ConfirmDialog {
+        title: @tr("Daily Goal");
+        subtitle: @tr("Minutes per day");
+        confirm-text: @tr("Set");
+        cancel => { root.modal = Modal.none; }
+        confirm => {
+            root.prefs-goal-mins = root.goal-dialog-mins;
+            root.goal-committed();
+            root.modal = Modal.none;
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(280px, root.width - 32px);
-            height: goal-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            goal-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Daily Goal");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("Minutes per day");
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                }
-
-                TextField {
-                    label: @tr("Minutes ({}–{})", root.goal-min-mins, root.goal-max-mins);
-                    input-type: InputType.number;
-                    text <=> root.goal-dialog-text;
-                    accepted => { root.set-goal(); }
-                    init => { self.select-all(); self.focus(); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Set");
-                        enabled: root.goal-valid();
-                        clicked => { root.set-goal(); }
-                    }
-                }
+        HorizontalLayout {
+            alignment: center;
+            VerticalSpinBox {
+                name: @tr("Minutes per day");
+                value <=> root.goal-dialog-mins;
+                min-value: root.goal-min-mins;
+                max-value: root.goal-max-mins;
             }
         }
     }
@@ -9163,71 +8974,46 @@ export component MainWindow inherits Window {
     // Declared LAST → top the z-stack over everything including
     // Preferences (the indicator tap that opens them lives in the
     // AppBar). Copy mirrors GTK's recovery_dialog.rs verbatim.
-    if root.modal == Modal.recovery : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+    if root.modal == Modal.recovery : DialogFrame {
+        title: @tr("Remote data appears wiped");
+        cancel => { root.modal = Modal.none; }
+
+        Text {
+            text: @tr("The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:");
+            font-size: 14px;
+            color: MaterialPalette.on-surface-variant;
+            wrap: word-wrap;
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(340px, root.width - 32px);
-            height: recovery-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        // Stacked, right-aligned: side by side they ran off the
+        // card ("Meine Daten hochladen").
+        VerticalLayout {
+            spacing: 4px;
 
-            TouchArea {}
-
-            recovery-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Remote data appears wiped");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                    wrap: word-wrap;
+            HorizontalLayout {
+                alignment: end;
+                TextButton {
+                    text: @tr("Push My Data");
+                    clicked => { root.recovery-push-tap(); }
                 }
-                Text {
-                    text: @tr("The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:");
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                ConfirmButton {
+                    text: @tr("Wipe Local");
+                    destructive: true;
+                    clicked => {
+                        root.modal = Modal.none;
+                        root.modal = Modal.recovery-wipe-confirm;
+                    }
                 }
-
-                // Stacked, right-aligned: side by side they ran off the
-                // card ("Meine Daten hochladen").
-                VerticalLayout {
-                    spacing: 4px;
-
-                    HorizontalLayout {
-                        alignment: end;
-                        TextButton {
-                            text: @tr("Push My Data");
-                            clicked => { root.recovery-push-tap(); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        ConfirmButton {
-                            text: @tr("Wipe Local");
-                            destructive: true;
-                            clicked => {
-                                root.modal = Modal.none;
-                                root.modal = Modal.recovery-wipe-confirm;
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        TextButton {
-                            text: @tr("Cancel");
-                            clicked => {
-                                root.modal = Modal.none;
-                            }
-                        }
+            }
+            HorizontalLayout {
+                alignment: end;
+                TextButton {
+                    text: @tr("Cancel");
+                    clicked => {
+                        root.modal = Modal.none;
                     }
                 }
             }
@@ -9235,90 +9021,65 @@ export component MainWindow inherits Window {
     }
 
     // The sync status, opened from the sync symbol.
-    if root.modal == Modal.sync-status : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+    if root.modal == Modal.sync-status : DialogFrame {
+        title: root.sync-indicator-tooltip;
+        cancel => { root.modal = Modal.none; }
+
+        // A full server can refuse many files: the list scrolls.
+        if root.sync-status-body != "" : Flickable {
+            height: min(sync-status-text.preferred-height, 240px);
+            content-height: sync-status-text.preferred-height;
+            sync-status-text := Text {
+                width: parent.width;
+                text: root.sync-status-body;
+                font-size: 14px;
+                color: MaterialPalette.on-surface-variant;
+                wrap: word-wrap;
+            }
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(340px, root.width - 32px);
-            height: sync-status-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        // Three buttons stack, one per line, like the recovery
+        // dialog's; two sit side by side.
+        if root.sync-status-prefs && root.sync-status-sync : VerticalLayout {
+            spacing: 4px;
 
-            TouchArea {}
-
-            sync-status-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: root.sync-indicator-tooltip;
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                    wrap: word-wrap;
+            HorizontalLayout {
+                alignment: end;
+                ConfirmButton {
+                    text: @tr("Sync Now");
+                    clicked => { root.sync-status-sync-tap(); }
                 }
-                // A full server can refuse many files: the list scrolls.
-                if root.sync-status-body != "" : Flickable {
-                    height: min(sync-status-text.preferred-height, 240px);
-                    content-height: sync-status-text.preferred-height;
-                    sync-status-text := Text {
-                        width: parent.width;
-                        text: root.sync-status-body;
-                        font-size: 14px;
-                        color: MaterialPalette.on-surface-variant;
-                        wrap: word-wrap;
-                    }
+            }
+            HorizontalLayout {
+                alignment: end;
+                TextButton {
+                    text: @tr("Preferences");
+                    clicked => { root.sync-status-prefs-tap(); }
                 }
-
-                // Three buttons stack, one per line, like the recovery
-                // dialog's; two sit side by side.
-                if root.sync-status-prefs && root.sync-status-sync : VerticalLayout {
-                    spacing: 4px;
-
-                    HorizontalLayout {
-                        alignment: end;
-                        ConfirmButton {
-                            text: @tr("Sync Now");
-                            clicked => { root.sync-status-sync-tap(); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        TextButton {
-                            text: @tr("Preferences");
-                            clicked => { root.sync-status-prefs-tap(); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        TextButton {
-                            text: @tr("Close");
-                            clicked => { root.modal = Modal.none; }
-                        }
-                    }
+            }
+            HorizontalLayout {
+                alignment: end;
+                TextButton {
+                    text: @tr("Close");
+                    clicked => { root.modal = Modal.none; }
                 }
-                if !(root.sync-status-prefs && root.sync-status-sync) : HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
+            }
+        }
+        if !(root.sync-status-prefs && root.sync-status-sync) : HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
 
-                    TextButton {
-                        text: @tr("Close");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    if root.sync-status-prefs : TextButton {
-                        text: @tr("Preferences");
-                        clicked => { root.sync-status-prefs-tap(); }
-                    }
-                    if root.sync-status-password : ConfirmButton {
-                        text: @tr("Enter Password");
-                        clicked => { root.sync-status-prefs-tap(); }
-                    }
-                }
+            TextButton {
+                text: @tr("Close");
+                clicked => { root.modal = Modal.none; }
+            }
+            if root.sync-status-prefs : TextButton {
+                text: @tr("Preferences");
+                clicked => { root.sync-status-prefs-tap(); }
+            }
+            if root.sync-status-password : ConfirmButton {
+                text: @tr("Enter Password");
+                clicked => { root.sync-status-prefs-tap(); }
             }
         }
     }
@@ -9338,62 +9099,38 @@ export component MainWindow inherits Window {
     // the duplicate's sessions onto the original and deletes it —
     // evented, so every device converges. Keep-both dismisses the
     // prompt on this device; the label stays for manual renaming.
-    if root.modal == Modal.label-conflict : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        // Scrim tap = decide later (no dismissal recorded); the
+    if root.modal == Modal.label-conflict : DialogFrame {
+        title: Tr.conflict-title();
+        // A tap outside = decide later (no dismissal recorded); the
         // prompt returns after the next sync.
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
+        cancel => { root.modal = Modal.none; }
+
+        Text {
+            text: Tr.conflict-body(
+                root.conflict-suffixed-name,
+                root.conflict-base-name);
+            font-size: 14px;
+            color: MaterialPalette.on-surface-variant;
+            wrap: word-wrap;
+        }
+        Text {
+            text: Tr.conflict-count(root.conflict-session-count);
+            font-size: 14px;
+            color: MaterialPalette.on-surface-variant;
+            wrap: word-wrap;
         }
 
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(340px, root.width - 32px);
-            height: conflict-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
 
-            TouchArea {}
-
-            conflict-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: Tr.conflict-title();
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: Tr.conflict-body(
-                        root.conflict-suffixed-name,
-                        root.conflict-base-name);
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-                Text {
-                    text: Tr.conflict-count(root.conflict-session-count);
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: Tr.conflict-keep();
-                        clicked => { root.conflict-keep-tap(); }
-                    }
-                    TextButton {
-                        text: Tr.conflict-merge();
-                        clicked => { root.conflict-merge-tap(); }
-                    }
-                }
+            TextButton {
+                text: Tr.conflict-keep();
+                clicked => { root.conflict-keep-tap(); }
+            }
+            TextButton {
+                text: Tr.conflict-merge();
+                clicked => { root.conflict-merge-tap(); }
             }
         }
     }

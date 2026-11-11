@@ -38,7 +38,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
-| [ ] | P4. Names and dialogs | #465; done: one-name-dialog (#358, #374, #415, #486) | DD, FF |
+| [x] | P4. Names and dialogs | done: one-name-dialog (#358, #374, #415, #486), one-dialog-frame (#465) | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
@@ -46,7 +46,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [ ] | P9. Stats and Log | #294, #295, #296, #297, #329, #330, #332, #334, #335, #398, #456, #457, #220, #236, #496 | T; bug #308 (the Stats page) |
 | [ ] | P10. Typed texts and values | #301, #482, #431, #222 | T |
 | [ ] | P11. Startup | #228, #336, #419, #483 | bugs #246, #490, #351 |
-| [ ] | P12. Android screens (Slint) | #453, #454, #458, #459, #460, #461, #464, #467, #469, #470, #471, #404, #417 | GG, T, LL |
+| [ ] | P12. Android screens (Slint) | #453, #454, #458, #459, #460, #461, #464, #467, #469, #471, #404, #417 | GG, T, LL |
 | [ ] | P13. Android Rust and Kotlin structure | #396, #399, #401, #405, #416, #420, #421, #433, #438, #441, #442 | FF, KK |
 | [ ] | P14. GTK structure | #312, #315, #318, #319, #321, #337, #338, #352, #359, #360, #368, #369, #376, #377, #379, #287, #333, #302, #298 | MM, II; bugs #307, #382, #323, #340 |
 | [ ] | P15. Core speed and smaller ones | #219, #221, #223, #227, #229, #232, #238, #239, #299, #303, #487, #494, #495, #501, #502, #503, #504 | bugs #498, #499, #308 (the other reads), the daily goal cap |
@@ -893,7 +893,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Focus: closing pages let go of a focused field five ways (3683-3762: two `release-*-inputs` helpers, `edit-note.release()`, `running-note.release()`, `root-focus.focus()` for Preferences), and a new page with a field needs its own, or the cut/copy/paste popup floats over the next page. Fix: `root-focus.focus()` on every page close, which works for any field, and drop the `release()` functions of NoteField, StepperRow and RevealStepper. This weakens R15(c)'s "no bug" reason (Considered and rejected).
 
 #### #461 Smaller ones
-- Related: #465 (ConfirmDialog as the frame of all dialogs), #467 (list rows), #471 (more stale comments and dividers).
+- Related: #467 (list rows), #471 (more stale comments and dividers).
 - `MenuItem` is imported from `material-1.0/ui/items/menu_item.slint` (20-23) with a comment saying it isn't exported; `material.slint:59` exports it.
 - `Tr.start-session()` (174) is never called (its comment cites a nonexistent `AppState::primary_action`) while "Start Session" is written at 2401 and 3876; defaults copy Tr wording instead of calling it: 2542 (`import-guided-title`), 3127 (`none-enabled`), 3206 (`ve-new-pattern`), 3359 (`edit-session-title`).
 - Material's `HorizontalDivider` is the 1px outline-variant Rectangle written about 40 times (static ones at 1481, 1941, 2104, 3905, 4068, 4277, 4787, 5098); the library's own, not the rejected new `Divider` component. The 14px/700 section heading (3893, 3999, 4058, 4207 and about 10 after 5135) and the 11px eyebrow (4653, 4692, 4775, 4883, 5086) have no component.
@@ -909,11 +909,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #464 Closed pages are drawn through on every frame
 - Where: 13 page roots have neither `visible` nor `clip` (Session 5644, Bells 5759, Interval Bells 6078, Labels 6642, Interval editor 6830, Bell chooser 6985, Pattern chooser 7146, Vibration editor 7306, Preset chooser 7633, Guided Manage 8035, Local Folder 8218, Preferences 8494, Diagnostics 8897); Edit-Session (5147) and Running (6257) are gated by tab only. A closed page sits at `x = parent.width`, and the renderer still walks every item of an off-screen non-clip item's subtree (`third_party/i-slint-core/item_rendering.rs:216-240`); only `visible` (lowered to a Clip) prunes it. So every frame of a session, a slide or a spinner walks all pages, including every chooser row and the whole Local Folder list, which is kept after the page closes (`on_local_back`, `ui.rs` 5643-5657).
 - Fix: `visible: root.<x>-offset > 0px;` on each page (visible while sliding, pruned when closed). One line per page, no frame rework, so not R15(c). Not measured on the phone. Related: #404, #458.
-
-#### #465 One dialog frame
-- Where: eight dialogs write ConfirmDialog's frame (1588-1680: scrim, ScrimArea, card at `KeyboardArea.card-y`, radius 28, swallow TouchArea, 24px padding, 22px title) by hand: filter sheet 5568, Duration 6530, Prep 7965, guided import 9007, Goal 9219, Recovery 9294, Sync status 9366, Label conflict 9469. They drift: widths 280, 320 and 340; six titles don't wrap (#474); Recovery and Sync status stack their buttons by hand though ConfirmDialog has `stacked` (1596); guided import re-implements `accept()` (9051). Material's `Dialog` is a PopupWindow, which collapses on Android (5307-5313), so a house frame is right.
-- The Duration dialog knows both its callers: Set branches on `edit-session-page` to write `edit-duration-*` or `setup-*` (6609-6621), `max-value` has an edit-only case (6577), and the two callers seed it differently (Slint at 5213, Rust through `duration-tap`).
-- Fix: `DialogFrame { title; width; @children }` split out of ConfirmDialog, used by all eight (about -250 lines; the filter sheet stays `visible`-gated for its DropDownMenu); Duration, Prep and Goal are ConfirmDialog with a "Set" button; one `duration-set(h, m)` routed by Rust, like `LabelTarget`. Related: #415 (one name dialog), #461 (ConfirmDialog's buttons twice), #470.
 
 #### #466 One bell signal body
 - Where: the four rows Type, Sound, Volume, Pattern are PhaseCue (2158-2210) and are written again for the Starting Bell (5812-5851), the End Bell (5899-5934) and the interval editor (6935-6973), each with the same nine volume bindings. The sound row says "Sound" in PhaseCue and "Bell Sound" in the others.
@@ -933,10 +928,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #469 Edit Session decisions in the layout
 - Where: the Save gate `edit-original-secs > 0 || hours > 0 || minutes > 0` (5193) re-derives core's `format::log_edit_duration_secs(..).is_some()`, which GTK uses (`log/imp.rs:1115-1121`) and Save runs anyway (`ui.rs` 8804); they disagree for an edited session set to 0:00, unreachable only because the Duration dialog refuses 0 (6609). The date row builds `yyyy-mm-dd` by hand (5231-5233), the only untranslated date in the app, while the time row beside it goes through Rust (`render-time`, `ui.rs` 4260) and GTK shows `short_date` (`log/imp.rs:1315`).
 - Fix: Rust sets `edit-save-enabled` from the core call; `pure callback render-date(Date)` over `short_date`/`locale_date` (`ui.rs` 2712, 2722).
-
-#### #470 Prep Time and Daily Goal as inline steppers, like GTK
-- Where: GTK has an `Adw.SpinRow` for both (`timer_view.blp:575-584`, `preferences.rs:62`); Android opens a modal: Prep steps by 1 where GTK steps by 5 (7963 admits it), Goal is a free TextField parsed and validated in Slint (`goal-valid`/`set-goal`, 2468-2480; `is-float()` takes "20.5" and rounds it). Rust clamps Prep through a string round trip (`parse_prep_secs(&ui.get_prep_time_secs().to_string())`, `ui.rs` 7868).
-- Fix: Prep as `ExpanderGroup { StepperRow }`, Goal as a StepperRow, as Lead-in already is (8659-8672); drops `Modal.prep`, `Modal.goal`, both dialogs (about 125 lines), four properties and `on_prep_time_tap`'s seeding (`ui.rs` 7850-7858); `n.clamp(PREP_SECS_MIN, PREP_SECS_MAX)`. A UI change: needs the maintainer's yes. Related: #465.
+- Also (left from #465, 2026-11-11): Custom Time's Set (the `if root.modal == Modal.duration : ConfirmDialog`) still branches on `edit-session-page` to write `edit-duration-*` or `setup-*`, its hours `max-value` has an edit-only case, and the two callers seed it differently (Slint for Edit Session, Rust `duration-tap` for Setup). One `duration-set(h, m)` routed by Rust, like `LabelTarget`, would leave the dialog not knowing its callers.
 
 #### #471 Smaller ones
 - Limits typed in Slint that core has: Prep 5..300 (8002-8003, `format::PREP_SECS_MIN/MAX`), lead-in 10..500 hundredths (8668-8669, `lead_in::MIN_MS/MAX_MS`), Points `min-value: 3` (7411, `vibration::EDITOR_POINTS_MIN`, while its max is seeded). Same as #455.
@@ -1062,6 +1054,7 @@ Only together with other work in the same area; none has a bug behind it.
 - **#513, a pending import in core** (2026-11-11, /simplify of change one-name-dialog): "a converted file whose store failed is kept for the next Save and deleted on Cancel" is written in GTK guided, GTK sounds (both through `name_dialog::pending_import`) and Android (`guided_import_converted`). A core `PendingImport { uuid, path, kind, secs/mime }` with `store(db, name)` and `discard()` would make it one rule, and the two GTK import dialogs could become one. Related: #355, #372.
 - **#514, the GTK name dialog's own Save button** (2026-11-11, /simplify of change one-name-dialog): `name_dialog` keeps a failed save open with `can-close` false, a close-attempt idle and two flags (`answered`, `closing`), which depends on libadwaita's signal order (pinned by its two tests). A Save button inside the dialog, as the import dialogs have, would let responses close normally. Open question: Enter and the default-response styling must be rebuilt.
 - **#515, the pattern editors on the shared name field** (2026-11-11, /simplify of change one-name-dialog): GTK `vibration_editor.rs` `gate_name` builds a fresh `NameField` per keystroke and draws its own hint label, because its Name is an `AdwEntryRow`, not `NameRow`'s `gtk::Entry`. Android's `ve_recompute_save` does the same, and its save failure builds a throwaway field. Keeping one `NameField` per editor (GTK: `NameRow` over an existing editable) removes both copies. Also Slint's `name-dialog-taken`/`name-dialog-failed` pair could be one `NameNote` property.
+- **#516, StepperRow follows the typing too** (2026-11-11, /simplify review of change one-dialog-frame): VerticalSpinBox's value now follows each keystroke (an emptied field goes back to its number), so a dialog's Set needs no `commit()`. StepperRow still commits on blur and keeps a public `commit()` that the interval editor's and the vibration editor's Save must call (five call sites); the same `edited`/`shown` approach would drop them and the chance of a Save that forgets one.
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected
@@ -1070,7 +1063,8 @@ So these aren't proposed again:
 - Typed serde structs for every sync event payload: the silent defaults are deliberate compatibility tolerance, and there is wire risk.
 - A change-counter-driven view refresh: `LocalChanges` is per connection, so sync pulls never bump it.
 - A run token on every drop file: only imports needed one (done).
-- Number fields that commit on every keystroke: intermediate values go stale or clamp mid-typing.
+- Number fields that commit on every keystroke: intermediate values go stale or clamp mid-typing. (Since one-dialog-frame, 2026-11-11, the time dialogs' VerticalSpinBox does take the typed number at once, so Set can turn off at 0:00; the text is never rewritten while typing.)
+- #470, Prep Time and Daily Goal as inline steppers in the page like GTK: the maintainer keeps setting a time in a dialog (2026-11-11); the dialogs became − / + number fields instead (one-dialog-frame).
 - Removing the picker's `transient.<ext>` copies: one per extension, overwritten by the next pick, and the guided play-now selection plays the copy in place, so cleanup needs three separate paths for a few MB.
 - R13, small duplicates (`hm_mins_key` into `hm_secs_key`, one `session_payload()`): too little gain for touching the sync payload.
 - R7(b), a session record instead of loose session state: about -30 lines for about 54 rewritten test chains.

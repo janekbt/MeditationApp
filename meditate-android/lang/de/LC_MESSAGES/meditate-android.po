@@ -354,9 +354,6 @@ msgstr "Verwalten"
 msgid "Meditate"
 msgstr "Meditate"
 
-msgid "Minutes ({}–{})"
-msgstr "Minuten ({}–{})"
-
 msgid "Minutes per day"
 msgstr "Minuten pro Tag"
 

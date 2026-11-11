@@ -134,6 +134,6 @@ Both apps SHALL accept any whole daily goal from 1 to 1440 minutes.
 - **MANUAL** Janek on the laptop: the spin row only works in a running app
 
 #### Scenario: Setting one minute on the phone
-- **WHEN** 1 is typed into the Daily Goal dialog on Android
-- **THEN** Set accepts it, the hint reads "Minutes (1–1440)", and 0 is still refused
+- **WHEN** the Daily Goal dialog on Android is stepped down with − or a 0 is typed
+- **THEN** − stops at 1; a typed 0 becomes 1, as Linux's spin row clamps it; Set stores 1
 - **MANUAL** Janek on the FP5: the dialog only runs on the device

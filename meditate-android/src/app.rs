@@ -1498,7 +1498,7 @@ mod tests {
         // Centered above the keyboard, below the status bar; a card too tall
         // keeps its buttons above the keyboard first.
         assert!(slint.contains("return max(0px, min(root.top, root.bottom - h), (root.bottom - h) / 2);"));
-        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 9, "every modal card");
+        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 1, "DialogFrame, every modal card");
         assert_eq!(slint.matches("y: (parent.height - self.height) / 2;").count(), 3, "only the volume slider's bars and thumb");
         // Enter confirms, while the button would.
         assert!(slint.contains("function accept() {\n            if (root.name-dialog-valid && !root.name-dialog-busy) {\n                root.name-dialog-confirm();"));
@@ -1506,21 +1506,12 @@ mod tests {
         assert!(slint.contains("accepted => { name-dialog.accept(); }"));
         // The field is disabled while converting, as the button is gone then.
         assert!(slint.contains("enabled: !root.name-dialog-busy;"));
-        assert!(slint.contains("accepted => { root.set-goal(); }"));
-        // Those two fields take the focus as their dialog opens; a
-        // pre-filled one selects its text, so typing replaces it (as GTK).
-        // The field's own init: the next one after its anchor.
-        let opens = |anchor: &str| {
-            let tail = &slint[slint.find(anchor).unwrap_or_else(|| panic!("{anchor}"))..];
-            &tail[tail.find("init => {").unwrap()..]
-        };
-        // Selected before it takes the focus, so the keyboard gets the
-        // selection with the focus, in one message (empty fields select nothing).
+        // The name field takes the focus as its dialog opens, its text
+        // selected before the focus, so typing replaces it (as GTK) and
+        // the keyboard gets both in one message.
         let line = "init => { self.select-all(); self.focus(); }";
-        for anchor in ["accepted => { name-dialog.accept(); }", "text <=> root.goal-dialog-text;"] {
-            assert!(opens(anchor).starts_with(line), "{anchor}");
-        }
-        assert_eq!(slint.matches(line).count(), 2, "only these two");
+        assert!(slint.contains(&format!("accepted => {{ name-dialog.accept(); }}\n                {line}")));
+        assert_eq!(slint.matches(line).count(), 1, "only the name dialog");
         // Number fields: take the number, close the keyboard.
         assert_eq!(slint.matches("accepted => { self.clear-focus(); KeyboardArea.hide(); }").count(), 2, "spin box and stepper row");
         assert!(slint.contains("changed modal => {\n        if (root.modal == Modal.none) {\n            KeyboardArea.hide();"));
@@ -2076,23 +2067,28 @@ mod tests {
         assert!(slint.contains("tapped(kind) => { running-note.release(); root.end-button-tap(kind); }"), "a running-page button lets go of the note");
     }
 
-    /// Confirm dialogs share one card (320 px, centred), so widths and
-    /// body alignment can't drift apart again; the one name dialog has
-    /// the same width. Only dialogs with more than a body and two
-    /// buttons are built by hand.
+    /// Eight dialogs drew their scrim and card by hand and drifted
+    /// apart: three widths, six titles cut instead of wrapped (#465,
+    /// #474). Every dialog now sits in one frame.
     #[test]
-    fn simple_dialogs_share_one_card() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        let at = slint.find("component ConfirmDialog inherits Rectangle {").unwrap();
-        let card = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
-        assert!(card.contains("width: min(320px, root.width - 32px);"));
-        assert!(card.contains("@children"), "Delete Sound adds its name");
-        assert!(card.contains("enabled: root.confirm-enabled;"), "Import the Rest gates its button");
-        let name = &slint[slint.find("if root.modal == Modal.name : name-dialog := Rectangle {").unwrap()..];
-        assert!(name[..2000].contains("width: min(320px, root.width - 32px);"), "the name dialog's card too");
-        assert_eq!(card.matches("horizontal-alignment: center;").count(), 2, "title and body centred");
-        assert_eq!(slint.matches("min(340px").count(), 3, "only Recovery, the label conflict and the sync status, for their button rows");
+    fn every_dialog_has_one_frame() {
+        let slint = slint_code();
+        let frame = component(&slint, "DialogFrame");
+        assert!(frame.contains("ScrimArea {\n        tapped => { root.cancel(); }"), "a tap outside cancels");
+        assert!(frame.contains("width: min(340px, root.width - 32px);"));
+        assert!(frame.contains("wrap: word-wrap;"), "the title wraps");
+        assert!(frame.contains("@children"));
+        // One scrim, one card, one width in the whole layout.
+        assert_eq!(slint.matches("background: MaterialPalette.scrim.with-alpha(0.32);").count(), 1);
+        assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 1);
+        assert!(!slint.contains("min(320px") && !slint.contains("min(280px"));
+        assert_eq!(slint.matches("min(340px").count(), 1);
+
+        let confirm = component(&slint, "ConfirmDialog");
+        assert!(confirm.contains("DialogFrame {"));
+        assert!(confirm.contains("@children"), "Delete Sound adds its name");
+        assert!(confirm.contains("enabled: root.confirm-enabled;"), "Import the Rest gates its button");
+        assert_eq!(confirm.matches("horizontal-alignment: center;").count(), 2, "subtitle and body centred (the title is the frame's)");
 
         let by_hand: Vec<&str> = slint
             .match_indices("if root.modal == Modal.")
@@ -2101,9 +2097,60 @@ mod tests {
                 line.ends_with(" Rectangle {").then(|| &line["if root.modal == Modal.".len()..line.find(" :").unwrap()])
             })
             .collect();
-        assert_eq!(by_hand, ["duration", "prep", "name", "goal", "recovery", "sync-status", "label-conflict"]);
-        // Every name dialog is the one by hand above (#415).
-        assert_eq!(slint.matches(" ConfirmDialog {").count(), 10);
+        assert!(by_hand.is_empty(), "{by_hand:?}");
+        for own in ["name : name-dialog := DialogFrame {", "recovery : DialogFrame {", "sync-status : DialogFrame {", "label-conflict : DialogFrame {"] {
+            assert!(slint.contains(&format!("if root.modal == Modal.{own}")), "{own}");
+        }
+        // The filter sheet stays alive while closed: its DropDownMenu
+        // shows no text when rebuilt.
+        assert!(slint.contains("DialogFrame {\n        visible: root.filter-sheet-open;"));
+        // Name dialogs (#415), and Custom Time, Preparation Time and Daily Goal.
+        assert_eq!(slint.matches(" ConfirmDialog {").count(), 13);
+    }
+
+    /// Custom Time closed silently at 0:00 (#475); Daily Goal was a
+    /// free text field checked in the layout; Preparation Time stepped
+    /// by 1 where Linux steps by 5.
+    #[test]
+    fn the_time_dialogs_are_number_fields() {
+        let slint = slint_code();
+        let spin = component(&slint, "VerticalSpinBox");
+        // − / + snap to the next multiple of the step: 13 gives 15 and 10.
+        assert!(spin.contains("in property <int> step: 1;"));
+        assert!(spin.contains("root.value = Math.min(root.max-value, (Math.floor(root.value / root.step) + 1) * root.step);"));
+        assert!(spin.contains("root.value = Math.max(root.min-value, (Math.ceil(root.value / root.step) - 1) * root.step);"));
+        // The value follows the typing, so Set knows it at once.
+        assert!(spin.contains("edited => { root.take-typed(); }"));
+        // A field typed into and emptied again goes back to its number,
+        // not to the half-typed one: Prep at 30, "4" typed and deleted.
+        assert!(spin.contains("            : root.shown;"));
+        assert!(spin.contains("root.shown = root.value;\n                    self.text = \"\";"));
+
+        let dialog = |modal: &str| {
+            let at = slint.find(&format!("if root.modal == Modal.{modal} : ConfirmDialog {{")).unwrap_or_else(|| panic!("{modal}"));
+            &slint[at..at + slint[at..].find("\n    }\n").unwrap()]
+        };
+        // A screen reader's tap on the grey Set did set 0:00: the
+        // button's accessible action ignored `enabled`.
+        assert!(component(&slint, "ConfirmButton").contains("accessible-action-default => { if (root.enabled) { base.clicked(); } }"));
+        let custom = dialog("duration");
+        assert!(custom.contains("confirm-enabled: root.dialog-hours > 0 || root.dialog-minutes > 0;"));
+        assert_eq!(component(&slint, "ConfirmDialog").matches("clicked => { if (root.confirm-enabled) { root.confirm(); } }").count(), 2, "a grey Set never confirms");
+        assert!(custom.contains("confirm-text: @tr(\"Set\");"));
+        let prep = dialog("prep");
+        assert!(prep.contains("step: 5;") && prep.contains("min-value: 5;") && prep.contains("max-value: 300;"));
+        let goal = dialog("goal");
+        assert!(goal.contains("value <=> root.goal-dialog-mins;"));
+        // TalkBack named the old Goal field; the number keeps a name.
+        assert!(spin.contains("accessible-label: root.name;"));
+        assert!(goal.contains("name: @tr(\"Minutes per day\");") && prep.contains("name: @tr(\"Seconds\");"));
+        // One place formats the number.
+        assert_eq!(spin.matches("\"0\" + root.value").count(), 1);
+        assert!(spin.contains("init => { root.sync-text(); }"), "the number shows as the dialog opens");
+        assert!(goal.contains("min-value: root.goal-min-mins;") && goal.contains("max-value: root.goal-max-mins;"));
+        assert!(goal.contains("root.prefs-goal-mins = root.goal-dialog-mins;"));
+        assert!(!slint.contains("goal-valid") && !slint.contains("set-goal") && !slint.contains("goal-dialog-text"));
+        assert!(slint.contains("root.goal-dialog-mins = root.prefs-goal-mins;"), "seeded on tap, so Cancel keeps the goal");
     }
 
     #[test]
@@ -2267,7 +2314,7 @@ mod tests {
         let def = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(def.contains("abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px"));
         let scrims: Vec<_> = slint.match_indices("background: MaterialPalette.scrim.with-alpha(0.32);").map(|(i, _)| i).collect();
-        assert_eq!(scrims.len(), 9, "ConfirmDialog holds the scrim of the simple dialogs");
+        assert_eq!(scrims.len(), 1, "DialogFrame holds the scrim of every dialog");
         for at in scrims {
             let next = &slint[at..];
             let area = next.find("TouchArea {").unwrap_or(usize::MAX);
@@ -3579,7 +3626,7 @@ mod tests {
 
         // Dialogs, modal over the chooser (declared after it).
         let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
-        for d in ["if root.modal == Modal.name : name-dialog := Rectangle {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
+        for d in ["if root.modal == Modal.name : name-dialog := DialogFrame {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
             assert!(slint.find(d).expect(d) > chooser, "{d}");
         }
         let del = slint.find("if root.modal == Modal.bell-delete : ConfirmDialog {").unwrap();
@@ -3587,7 +3634,7 @@ mod tests {
         assert!(del.contains("@tr(\"Delete Sound?\")"));
         assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
         assert!(del.contains("root.bell-delete-confirm();"));
-        let ren = slint.find("if root.modal == Modal.name : name-dialog := Rectangle {").unwrap();
+        let ren = slint.find("if root.modal == Modal.name : name-dialog := DialogFrame {").unwrap();
         let ren = &slint[ren..ren + 7000];
         assert!(ren.contains(": root.name-dialog-kind == NameKind.bell-rename ? @tr(\"Rename Sound\")"));
         assert!(ren.contains("enabled: root.name-dialog-valid;"));
@@ -5863,7 +5910,7 @@ mod tests {
         let dialog = component(&layout, "ConfirmDialog");
         assert_eq!(dialog.matches("destructive: root.destructive;").count(), 2, "both confirm buttons follow the dialog");
         assert!(component(&layout, "ConfirmButton").contains("root.destructive ? MaterialPalette.error : MaterialPalette.primary"));
-        let wipe = "ConfirmButton {\n                            text: @tr(\"Wipe Local\");\n                            destructive: true;";
+        let wipe = "ConfirmButton {\n                    text: @tr(\"Wipe Local\");\n                    destructive: true;";
         assert!(layout.contains(wipe), "Wipe Local is not red");
         // Discard on the session screen: the laptop's filled red pill.
         let end = component(&layout, "EndButtonView");
