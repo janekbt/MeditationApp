@@ -66,7 +66,7 @@ pub fn show(app: &MeditateApplication) {
 /// sync trigger; the underlying `prepare_push_local_recovery`
 /// primitive is unit-tested in `meditate_core::sync::settings`.
 fn run_push_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db(|db| meditate_core::sync::settings::prepare_push_local_recovery(db.core()));
+    let prep = app.with_db(meditate_core::sync::settings::prepare_push_local_recovery);
     match prep {
         Some(Ok(())) => {
             meditate_core::log("recovery.push_local", "prepared, triggering sync");
@@ -117,7 +117,7 @@ fn confirm_wipe_local(app: &MeditateApplication) {
 /// every view, and sync to pull everything back.
 /// `prepare_wipe_local_recovery` is unit-tested separately.
 fn run_wipe_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
+    let prep = app.with_db(meditate_core::sync::settings::prepare_wipe_local_recovery);
     match prep {
         Some(Ok(())) => {
             meditate_core::log("recovery.wipe_local", "purged, syncing");

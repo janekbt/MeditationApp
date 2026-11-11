@@ -155,7 +155,7 @@ impl StatsView {
         // ring resets each day (was weekly until 2026-07-17).
         let g = self.get_app()
             .and_then(|app| app.with_db(|db| {
-                meditate_core::goal::today_from_db(db.core(), meditate_core::time::today_local())
+                meditate_core::goal::today_from_db(db, meditate_core::time::today_local())
             }))
             .unwrap_or_else(|| meditate_core::goal::compute(0, meditate_core::goal::DAILY_GOAL_DEFAULT));
         self.goal_pct.set(g.arc_pct);
@@ -193,8 +193,8 @@ impl StatsView {
         // `get_daily_totals` returns NaiveDate keys directly.
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
-                let t = meditate_core::db::get_daily_totals_from_db(db.core()).unwrap_or_default();
-                let g = meditate_core::goal::daily_goal_mins_from_db(db.core());
+                let t = meditate_core::db::get_daily_totals_from_db(db).unwrap_or_default();
+                let g = meditate_core::goal::daily_goal_mins_from_db(db);
                 (t, g)
             }))
             .unwrap_or_else(|| (Vec::new(), meditate_core::goal::DAILY_GOAL_DEFAULT));
@@ -272,7 +272,7 @@ impl StatsView {
 
         let Some(app) = self.get_app() else { return; };
         let data = app.with_db(|db| {
-            meditate_core::insights::input_from_db(db.core(), meditate_core::time::today_local())
+            meditate_core::insights::input_from_db(db, meditate_core::time::today_local())
         }).unwrap_or_default();
 
         let keys = meditate_core::insights::compute(
@@ -415,7 +415,7 @@ impl StatsView {
         let totals = self
             .get_app()
             .and_then(|app| app.with_db(|db| {
-                meditate_core::db::get_daily_totals_since_from_db(db.core(), period.window_start(today))
+                meditate_core::db::get_daily_totals_since_from_db(db, period.window_start(today))
             }))
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
@@ -505,9 +505,9 @@ impl StatsView {
         let Some(app) = self.get_app() else { return; };
         let (streak, total, sessions) = app
             .with_db(|db| {
-                let streak = db.get_best_streak().unwrap_or(0);
-                let total  = db.total_seconds().unwrap_or(0);
-                let count  = db.count_sessions().unwrap_or(0);
+                let streak = meditate_core::db::get_best_streak_from_db(db, meditate_core::time::today_local()).unwrap_or(0);
+                let total  = meditate_core::db::total_seconds_from_db(db).unwrap_or(0);
+                let count  = meditate_core::db::count_sessions_from_db(db).unwrap_or(0);
                 (streak, total, count)
             })
             .unwrap_or((0, 0, 0));
@@ -533,7 +533,7 @@ impl StatsView {
         }
 
         let totals = self.get_app()
-            .and_then(|app| app.with_db(|db| db.get_label_totals().unwrap_or_default()))
+            .and_then(|app| app.with_db(|db| meditate_core::db::label_totals_seconds_from_db(db).unwrap_or_default()))
             .unwrap_or_default();
 
         if totals.is_empty() {

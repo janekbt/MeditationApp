@@ -58,7 +58,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
     // Daily meditation goal — drives the ring on the Stats tab
     // and the heatmap thresholds.
     let current_goal_mins = app
-        .with_db(|db| daily_goal_mins_from_db(db.core()))
+        .with_db(daily_goal_mins_from_db)
         .unwrap_or(DAILY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
         .title(gettext("Daily goal"))
@@ -81,7 +81,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                let written = app.with_db(|db| write_daily_goal_mins(db.core(), val));
+                let written = app.with_db(|db| write_daily_goal_mins(db, val));
                 crate::db::write_ok(row, "goal.write", written, crate::db::Failed::Save);
             }
         ),
@@ -103,8 +103,8 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
     let (lead_on, lead_ms) = app
         .with_db(|db| {
             (
-                meditate_core::settings_keys::bluetooth_wake_lead_in_from_db(db.core()),
-                meditate_core::settings_keys::bluetooth_wake_lead_in_ms_from_db(db.core()),
+                meditate_core::settings_keys::bluetooth_wake_lead_in_from_db(db),
+                meditate_core::settings_keys::bluetooth_wake_lead_in_ms_from_db(db),
             )
         })
         .unwrap_or((false, lead_in::MIN_MS));
@@ -235,7 +235,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
     // Pre-fill from previously-saved values. Password stays blank by
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
-        .with_db(|db| meditate_core::sync::settings::nextcloud_account_from_db(db.core()))
+        .with_db(meditate_core::sync::settings::nextcloud_account_from_db)
         .and_then(std::result::Result::ok)
         .flatten()
     {
@@ -463,7 +463,7 @@ pub fn show_preferences_at(app: &MeditateApplication, sync_field: Option<SyncFie
             // Now save the account. It records no event, so no sync
             // starts before the explicit trigger below.
             let account_result = app.with_db(|db| {
-                meditate_core::sync::settings::set_nextcloud_account(db.core(), url_trimmed, username_trimmed)
+                meditate_core::sync::settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
             });
             match account_result {
                 Some(Ok(())) => {}

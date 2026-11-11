@@ -715,7 +715,7 @@ impl MeditateWindow {
                     else { return; };
                     match button {
                         StatusButton::SyncNow => {
-                            let cleared = app.with_db(|db| meditate_core::sync::settings::clear_refused_uploads(db.core()));
+                            let cleared = app.with_db(meditate_core::sync::settings::clear_refused_uploads);
                             crate::db::write_ok(&obj, "sync.retry", cleared, crate::db::Failed::Save);
                             app.trigger_sync();
                         }
@@ -905,7 +905,7 @@ fn sync_indicator_state_now(
 ) -> meditate_core::sync::indicator::SyncIndicatorState {
     use meditate_core::sync::indicator;
     let is_syncing = app.is_syncing();
-    app.with_db(|db| indicator::state_from_db(db.core(), is_syncing))
+    app.with_db(|db| indicator::state_from_db(db, is_syncing))
         .unwrap_or(indicator::SyncIndicatorState::Hidden)
 }
 

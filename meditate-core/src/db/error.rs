@@ -34,6 +34,24 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
+impl std::fmt::Display for DbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateLabel(name) => write!(f, "duplicate label: {name}"),
+            Self::DuplicatePreset(name) => write!(f, "duplicate preset: {name}"),
+            Self::DuplicateGuidedFile(name) => write!(f, "duplicate guided file: {name}"),
+            Self::DuplicateVibrationPattern(name) => write!(f, "duplicate vibration pattern: {name}"),
+            Self::SchemaVersionTooNew { db, build } =>
+                write!(f, "db schema_version={db} exceeds build schema_version={build}"),
+            Self::DateOutOfRange => write!(f, "date out of range"),
+            Self::Decode(s) => write!(f, "decode error: {s}"),
+            Self::Sqlite(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for DbError {}
+
 pub type Result<T> = std::result::Result<T, DbError>;
 
 /// Compose a name that disambiguates a sync-merge collision between
@@ -125,6 +143,23 @@ pub fn target_id_is_well_formed_for(kind: &str, target_id: &str) -> bool {
 mod tests {
     use super::*;
     use crate::db::{Database, Event};
+
+    #[test]
+    fn db_error_displays_its_cause() {
+        assert_eq!(DbError::DuplicateLabel("Zen".into()).to_string(), "duplicate label: Zen");
+        assert_eq!(
+            DbError::SchemaVersionTooNew { db: 5, build: 2 }.to_string(),
+            "db schema_version=5 exceeds build schema_version=2",
+        );
+        assert_eq!(DbError::Decode("bad".into()).to_string(), "decode error: bad");
+        assert_eq!(DbError::DuplicatePreset("Calm".into()).to_string(), "duplicate preset: Calm");
+        assert_eq!(DbError::DuplicateGuidedFile("Talk".into()).to_string(), "duplicate guided file: Talk");
+        assert_eq!(
+            DbError::DuplicateVibrationPattern("Pulse".into()).to_string(),
+            "duplicate vibration pattern: Pulse",
+        );
+        assert_eq!(DbError::DateOutOfRange.to_string(), "date out of range");
+    }
 
     #[test]
     fn target_id_validator_accepts_uuid_and_short_identifiers() {

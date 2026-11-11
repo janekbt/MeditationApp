@@ -293,7 +293,7 @@ pub fn preload_end_bell(app: &MeditateApplication, mode: meditate_core::SessionM
         .and_then(std::result::Result::ok)
         .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
     let volume = app
-        .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::End(mode)))
+        .with_db(|db| meditate_core::bell_volume::read(db, BellSlot::End(mode)))
         .unwrap_or_default();
     let media_opt = lookup_bell_sound_by_uuid(app, &uuid).map(|s| media_for_bell_sound(&s, volume));
     CURRENT_MEDIA.with(|cell| {
@@ -385,7 +385,7 @@ fn start(media: &gtk::MediaFile) -> Duration {
 /// noise can't play: only logged, the bell rings without it).
 fn lead_in(media: &gtk::MediaFile) -> Option<Duration> {
     let app = MeditateApplication::get()?;
-    let ms = app.with_db(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(db.core())).flatten()?;
+    let ms = app.with_db(meditate_core::settings_keys::bluetooth_wake_lead_in).flatten()?;
     if !default_output_is_bluetooth() {
         return None;
     }
@@ -572,7 +572,7 @@ mod tests {
         // A preview still ringing (restarted by its slider) waits silent too.
         assert!(start.find("media.set_playing(false);").unwrap() < start.find("lead_in(media)").unwrap());
         let lead = fn_body(&src, "lead_in");
-        assert!(lead.contains("let ms = app.with_db(|db| meditate_core::settings_keys::bluetooth_wake_lead_in(db.core())).flatten()?;"));
+        assert!(lead.contains("let ms = app.with_db(meditate_core::settings_keys::bluetooth_wake_lead_in).flatten()?;"));
         assert!(lead.contains("if !default_output_is_bluetooth() {"));
         // Only the current length's file stays in the cache.
         assert!(lead.contains("forget_other_lead_ins(&path);"));
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn every_bundled_bell_has_a_built_in_resource() {
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::Database::open(&dir.path().join("t.db")).unwrap();
+        let db = crate::db::open(&dir.path().join("t.db")).unwrap();
         let bundled: Vec<_> = db
             .list_bell_sounds()
             .unwrap()

@@ -222,7 +222,7 @@ pub fn import_picked_file(
             let trimmed = text.trim();
             let collision = !trimmed.is_empty()
                 && app
-                    .with_db(|db| db.is_guided_file_name_taken(trimmed, ""))
+                    .with_db(|db| meditate_core::db::is_guided_file_name_taken_from_db(db, trimmed, ""))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
@@ -333,7 +333,7 @@ pub fn import_picked_file(
                         let _ = std::fs::remove_file(&dest_path);
                         crate::db::show_toast(&parent, gettext("Import failed: {error}").replace("{error}", &msg));
                     } else if let Some(row) = app
-                        .with_db(|db| db.find_guided_file_by_uuid(&new_uuid))
+                        .with_db(|db| meditate_core::db::find_guided_file_by_uuid_from_db(db, &new_uuid))
                         .and_then(std::result::Result::ok)
                         .flatten()
                     {
@@ -622,7 +622,7 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row);
 
     let files = app
-        .with_db(super::db::Database::list_guided_files)
+        .with_db(meditate_core::db::list_guided_files_from_db)
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
@@ -942,7 +942,7 @@ fn present_rename_dialog(
             let trimmed = text.trim();
             let collision = !trimmed.is_empty()
                 && app
-                    .with_db(|db| db.is_guided_file_name_taken(trimmed, &uuid_for_validate))
+                    .with_db(|db| meditate_core::db::is_guided_file_name_taken_from_db(db, trimmed, &uuid_for_validate))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
@@ -1043,7 +1043,7 @@ fn present_delete_dialog(
         // path can re-insert it. Bail out if the row's already gone
         // (sync race between two devices, say).
         let Some(file) = app
-            .with_db(|db| db.find_guided_file_by_uuid(&uuid))
+            .with_db(|db| meditate_core::db::find_guided_file_by_uuid_from_db(db, &uuid))
             .and_then(std::result::Result::ok)
             .flatten()
         else {
@@ -1103,7 +1103,7 @@ fn offer_guided_undo(
         title,
         move || {
             let restored = app.with_db(|db| {
-                db.core().restore_guided_file(&GuidedFile {
+                db.restore_guided_file(&GuidedFile {
                     file_path: path.to_string_lossy().into_owned(),
                     ..file.clone()
                 })

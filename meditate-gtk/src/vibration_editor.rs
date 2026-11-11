@@ -464,7 +464,7 @@ pub fn push_pattern_editor(
             }
             let except = editor.edit_uuid.borrow().clone().unwrap_or_default();
             let collision = app
-                .with_db(|db| db.is_vibration_pattern_name_taken(&name, &except))
+                .with_db(|db| meditate_core::db::is_vibration_pattern_name_taken_from_db(db, &name, &except))
                 .and_then(std::result::Result::ok)
                 .unwrap_or(false);
             save_btn.set_sensitive(!collision);
@@ -500,7 +500,7 @@ pub fn push_pattern_editor(
         let intensities = editor_for_save.intensities.borrow().clone();
         let chart_kind = editor_for_save.chart_kind.get();
 
-        let result: Option<crate::db::Result<(String, bool)>> = match editor_for_save.edit_uuid.borrow().clone() {
+        let result: Option<meditate_core::db::Result<(String, bool)>> = match editor_for_save.edit_uuid.borrow().clone() {
             None => app_for_save
                 .with_db(|db| {
                     db.insert_vibration_pattern(

@@ -47,7 +47,7 @@ mod imp {
         /// live in core.
         pub sync_coordinator: Arc<meditate_core::sync::coordinator::SyncCoordinator>,
 
-        /// Set by `startup` if `Database::open` failed. `activate`
+        /// Set by `startup` if `db::open` failed. `activate`
         /// reads it to present an error window instead of the main
         /// window — without this, the user lands on an inert UI
         /// whose every action silently no-ops.
@@ -137,7 +137,7 @@ mod imp {
             let db_path = glib::user_data_dir()
                 .join("meditate")
                 .join("meditate.db");
-            match Database::open(&db_path) {
+            match crate::db::open(&db_path) {
                 Ok(db) => {
                     // Crash-recovery finalize. A session-in-progress
                     // row left behind by a kernel OOM / battery-death
@@ -167,7 +167,7 @@ mod imp {
                     }
                     // What an interrupted import or download left behind.
                     match meditate_core::audio_files::remove_orphan_files(
-                        db.core(),
+                        &db,
                         &crate::sync_runner::local_sounds_dir(),
                         &crate::sync_runner::local_guided_dir(),
                     ) {
@@ -176,21 +176,12 @@ mod imp {
                         Err(e) => meditate_core::log("files.orphans", &format!("FAILED: {e:?}")),
                     }
                     // Activate starts the first sync itself, after the window.
-                    db.core().take_committed();
+                    db.take_committed();
                     *self.db.lock().unwrap() = Some(db);
                     meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
                 }
                 Err(e) => {
-                    // Shell DbError → DbOpenFailureKey: only the
-                    // SchemaTooNew variant matters for the recovery
-                    // window's copy; everything else collapses to
-                    // Other.
-                    use meditate_core::format::DbOpenFailureKey;
-                    let key = match &e {
-                        crate::db::DbError::SchemaVersionTooNew { db, build } =>
-                            DbOpenFailureKey::SchemaTooNew { db: *db, build: *build },
-                        _ => DbOpenFailureKey::Other,
-                    };
+                    let key = meditate_core::format::db_open_failure_key(&e);
                     eprintln!("Failed to open database: {e:?}");
                     meditate_core::log(
                         "db.open",
@@ -237,7 +228,7 @@ mod imp {
     impl GtkApplicationImpl for MeditateApplication {}
     impl AdwApplicationImpl for MeditateApplication {}
 
-    /// Present a recovery window for the case where `Database::open`
+    /// Present a recovery window for the case where `db::open`
     /// failed at startup. Renders an AdwStatusPage with mode-specific
     /// copy plus an "Open Data Folder" affordance and a "Quit" button.
     fn present_db_open_error_window(
@@ -481,7 +472,7 @@ impl MeditateApplication {
         let (r, changed) = {
             let guard = self.imp().db.lock().unwrap();
             let db = guard.as_ref()?;
-            (f(db), db.core().take_committed())
+            (f(db), db.take_committed())
         };
         self.wrote(changed);
         Some(r)
@@ -499,7 +490,7 @@ impl MeditateApplication {
         let db_arc = std::sync::Arc::clone(&self.imp().db);
         let (r, changed) = gtk::gio::spawn_blocking(move || {
             let guard = db_arc.lock().unwrap();
-            guard.as_ref().map(|db| (f(db), db.core().take_committed()))
+            guard.as_ref().map(|db| (f(db), db.take_committed()))
         })
         .await
         .ok()
@@ -600,7 +591,7 @@ impl MeditateApplication {
         // Saves spawning a worker (and pulling in the keychain D-Bus
         // round-trip) just to find out we have no account configured.
         let configured = self
-            .with_db(|db| meditate_core::sync::should_attempt(db.core()))
+            .with_db(meditate_core::sync::should_attempt)
             .unwrap_or(false);
         if !configured {
             return;
@@ -684,7 +675,7 @@ mod tests {
         let note = card.find("let note_text").unwrap();
         assert!(chip < guided && guided < note);
         assert!(card[guided..note].contains("\"dimmed\""));
-        assert!(log.contains("meditate_core::db::guided_file_names_from_db("));
+        assert!(log.contains("with_db(meditate_core::db::guided_file_names_from_db)"));
     }
 
     /// A note-only edit turned 20m34s into 20m00s, and Add saved a
@@ -706,7 +697,7 @@ mod tests {
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
         assert!(log.contains("show_toast(&toast_overlay, gettext(\"Couldn't save session: storage error\"));"));
         assert!(log.contains("show_toast(&toast_overlay, gettext(\"Couldn't save session: storage unavailable\"));"));
-        assert!(!log.contains("app.with_db(|db| db.update_session(id, &data));"));
+        assert!(!log.contains("app.with_db(|db| crate::db::update_session(db, id, &data));"));
         assert!(!log.contains("Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0)"));
     }
 
@@ -717,8 +708,8 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let stats = std::fs::read_to_string(root.join("src/stats/imp.rs")).unwrap();
         let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
-        assert!(stats.contains("meditate_core::insights::input_from_db(db.core(), "));
-        assert!(stats.contains("meditate_core::goal::today_from_db(db.core(), "));
+        assert!(stats.contains("meditate_core::insights::input_from_db(db, "));
+        assert!(stats.contains("meditate_core::goal::today_from_db(db, "));
         assert_eq!(log.matches("meditate_core::format::log_card_total_secs(").count(), 2, "append, delete");
         // The trend compares rolling 30-day windows, and says so.
         assert!(stats.contains("gettext(\"{pct}% vs the 30 days before ({this} vs {last})\")"));
@@ -770,7 +761,7 @@ mod tests {
     fn session_settings_come_from_core() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let timer = std::fs::read_to_string(root.join("src/timer/imp.rs")).unwrap();
-        assert_eq!(timer.matches("CoreSessionSettings::from_db(db.core(), ").count(), 1);
+        assert_eq!(timer.matches("CoreSessionSettings::from_db(db, ").count(), 1);
         for gone in ["signal_mode_override:", "fn build_session_bells(", "fn build_starting_bell_cue(",
                      "fn build_end_bell_cue(", "fn build_box_breath_cues(", "fn read_signal_mode_override("] {
             assert!(!timer.contains(gone), "{gone}");
@@ -786,7 +777,7 @@ mod tests {
         let timer = std::fs::read_to_string(root.join("src/timer/imp.rs")).unwrap();
         let at = timer.find("pub fn rebuild_starred_presets_list(&self) {").unwrap();
         let body = &timer[at..at + timer[at..].find("\n    }\n").unwrap()];
-        assert!(body.contains("meditate_core::preset_config::active_presets(db.core(), session_mode, &presets)"));
+        assert!(body.contains("meditate_core::preset_config::active_presets(db, session_mode, &presets)"));
         assert!(body.contains("check.add_css_class(\"selected-check\");"));
         assert!(body.contains("row.add_css_class(\"accent\");"));
         assert!(body.contains("gtk::accessible::State::Selected(Some(true))"));

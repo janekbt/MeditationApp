@@ -16,6 +16,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use meditate_core::db::Refresh;
 use crate::db::{write_ok, Failed, Label};
+use meditate_core::db::DbError;
 use crate::i18n::{gettext, ngettext};
 use meditate_core::labels::DeleteImpactKey;
 
@@ -143,7 +144,7 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row.upcast());
 
     let labels = app
-        .with_db(super::db::Database::list_labels)
+        .with_db(meditate_core::db::list_labels_from_db)
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let selection = SelectionContext {
@@ -260,7 +261,7 @@ fn present_create_label_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| db.is_label_name_taken(name, 0))
+                app.with_db(|db| meditate_core::db::is_label_name_taken_from_db(db, name, 0))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
@@ -278,7 +279,11 @@ fn present_create_label_dialog(
         if id != "create" { return; }
         let name = entry_for_response.text().trim().to_string();
         if name.is_empty() { return; }
-        let outcome = app.with_db(|db| db.create_label(&name));
+        let outcome = app.with_db(|db| {
+            let id = db.insert_label(&name)?;
+            meditate_core::db::list_labels_from_db(db)?.into_iter().find(|l| l.id == id)
+                .ok_or(DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+        });
         match outcome {
             Some(Ok(label)) => {
                 on_created(label);
@@ -325,7 +330,7 @@ fn present_rename_label_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| db.is_label_name_taken(name, label_id))
+                app.with_db(|db| meditate_core::db::is_label_name_taken_from_db(db, name, label_id))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
@@ -370,7 +375,7 @@ fn present_delete_label_dialog(
     // "is anything tagged?" decision lives in core (the dialog body
     // strings stay shell-side at the i18n boundary).
     let session_count = app
-        .with_db(|db| db.label_session_count(label_id))
+        .with_db(|db| meditate_core::db::label_session_count_from_db(db, label_id))
         .and_then(std::result::Result::ok)
         .unwrap_or(0);
     let body = match meditate_core::labels::delete_impact_key(session_count) {
@@ -421,7 +426,7 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
     if win.visible_dialog().is_some() {
         return;
     }
-    let Some(Ok(conflicts)) = app.with_db(|db| db.core().list_label_conflicts()) else { return; };
+    let Some(Ok(conflicts)) = app.with_db(|db| db.list_label_conflicts()) else { return; };
     let Some(conflict) = conflicts.into_iter().next() else { return; };
     let n = u32::try_from(conflict.suffixed_session_count).unwrap_or(u32::MAX);
     let body = format!(
@@ -453,7 +458,7 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
         let app = &app_for_response;
         match response {
             "merge" => {
-                let merged = app.with_db(|db| db.core().merge_labels(conflict.suffixed_id, conflict.base_id));
+                let merged = app.with_db(|db| db.merge_labels(conflict.suffixed_id, conflict.base_id));
                 if !matches!(merged, Some(Ok(_))) {
                     meditate_core::log("label.merge", &format!("failed: {merged:?}"));
                     crate::db::show_toast(&win_for_response, gettext("Save failed"));
@@ -463,7 +468,7 @@ pub(crate) fn ask_about_label_conflict(app: &MeditateApplication, win: &crate::w
                 app.data_changed(Refresh::ALL);
             }
             "keep" => {
-                if let Some(Err(e)) = app.with_db(|db| db.core().dismiss_label_conflict(&conflict.suffixed_uuid)) {
+                if let Some(Err(e)) = app.with_db(|db| db.dismiss_label_conflict(&conflict.suffixed_uuid)) {
                     meditate_core::log("label.conflict", &format!("dismiss failed: {e:?}"));
                 }
             }
@@ -510,8 +515,8 @@ mod tests {
         let src = read("src/labels.rs");
         let ask = body(&src, "pub(crate) fn ask_about_label_conflict(");
         assert!(ask.contains("visible_dialog().is_some()"));
-        assert!(ask.contains("db.core().merge_labels(conflict.suffixed_id, conflict.base_id)"));
-        assert!(ask.contains("db.core().dismiss_label_conflict(&conflict.suffixed_uuid)"));
+        assert!(ask.contains("db.merge_labels(conflict.suffixed_id, conflict.base_id)"));
+        assert!(ask.contains("db.dismiss_label_conflict(&conflict.suffixed_uuid)"));
         assert!(ask.contains("app.data_changed(Refresh::ALL)"), "the merged label leaves Setup, the Log and Stats");
         assert!(ask.contains(".close_response(\"later\")"));
     }
@@ -519,8 +524,8 @@ mod tests {
     /// Undo after a delete put the item at the end of its list.
     #[test]
     fn undo_puts_a_deleted_item_back_in_its_place() {
-        assert!(read("src/presets.rs").contains("db.core().restore_preset(&preset_undo)"));
-        assert!(read("src/guided.rs").contains("db.core().restore_guided_file(&"));
-        assert!(read("src/vibrations.rs").contains("db.core().restore_vibration_pattern(&snapshot)"));
+        assert!(read("src/presets.rs").contains("db.restore_preset(&preset_undo)"));
+        assert!(read("src/guided.rs").contains("db.restore_guided_file(&"));
+        assert!(read("src/vibrations.rs").contains("db.restore_vibration_pattern(&snapshot)"));
     }
 }

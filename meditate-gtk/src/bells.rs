@@ -123,7 +123,7 @@ fn rebuild_list(
         meditate_core::SessionMode::Timer,
     );
     let stopwatch_on = app
-        .with_db(|db| meditate_core::read_bool(db.core(), stopwatch_key, false))
+        .with_db(|db| meditate_core::read_bool(db, stopwatch_key, false))
         .unwrap_or(false);
 
     let bells = app
@@ -417,7 +417,7 @@ pub(crate) fn render_resolved_name(name: meditate_core::bells::ResolvedName) -> 
 /// then renders core's `ResolvedName` to subtitle text.
 fn sound_name(app: &MeditateApplication, uuid: &str) -> String {
     app.with_db(|db| render_resolved_name(
-        meditate_core::bells::resolve_sound_name(db.core(), uuid),
+        meditate_core::bells::resolve_sound_name(db, uuid),
     ))
     .unwrap_or_default()
 }
@@ -425,7 +425,7 @@ fn sound_name(app: &MeditateApplication, uuid: &str) -> String {
 /// Same as sound_name but for vibration_patterns.
 fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
     app.with_db(|db| render_resolved_name(
-        meditate_core::bells::resolve_pattern_name(db.core(), uuid),
+        meditate_core::bells::resolve_pattern_name(db, uuid),
     ))
     .unwrap_or_default()
 }
@@ -515,7 +515,7 @@ fn write_back_bell(
     on_changed: &(impl Fn() + Clone + 'static),
 ) {
     let s = snap.borrow().clone();
-    let written = app.with_db(|db| db.edit_interval_bell(&s));
+    let written = app.with_db(|db| meditate_core::preset_config::edit_interval_bell(db, &s));
     // A preset rings the old bell: the page edits the new one from now on.
     if let Some(Ok(meditate_core::preset_config::BellEdit::Copied(uuid))) = &written {
         snap.borrow_mut().uuid = uuid.clone();

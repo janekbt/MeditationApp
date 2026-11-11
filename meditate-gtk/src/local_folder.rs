@@ -65,7 +65,7 @@ pub fn length_failed(id: i64) -> bool {
 /// A Local Folder write. These write no event, so they start no sync;
 /// a failure says so.
 pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Database) -> Result<T, E>) -> Option<T> {
-    let done = app.with_db(|db| f(db.core())).and_then(Result::ok);
+    let done = app.with_db(f).and_then(Result::ok);
     if done.is_none() {
         PROGRESS.with(|p| p.borrow_mut().write_failed());
         crate::db::show_in_view(gettext("Save failed"));
@@ -74,13 +74,13 @@ pub fn save<T, E>(app: &MeditateApplication, f: impl FnOnce(&meditate_core::Data
 }
 
 pub fn chosen_folder(app: &MeditateApplication) -> Option<String> {
-    app.with_db(|db| meditate_core::db::local_folder_from_db(db.core()))
+    app.with_db(meditate_core::db::local_folder_from_db)
         .and_then(Result::ok)
         .flatten()
 }
 
 fn files_of(app: &MeditateApplication, root: &str) -> Vec<LocalGuidedFile> {
-    app.with_db(|db| meditate_core::db::list_local_files_from_db(db.core(), root))
+    app.with_db(|db| meditate_core::db::list_local_files_from_db(db, root))
         .and_then(Result::ok)
         .unwrap_or_default()
 }
@@ -520,7 +520,7 @@ fn fill_page(
         prefs.append(&folder_group);
 
         let list_on = app
-            .with_db(|db| lf::list_view_on_from_db(db.core()))
+            .with_db(lf::list_view_on_from_db)
             .unwrap_or(false);
         let toggle = adw::ToggleGroup::builder().css_classes(["round"]).build();
         toggle.add(adw::Toggle::builder().name("folders").label(gettext("Folders")).build());
@@ -543,7 +543,7 @@ fn fill_page(
         if list_on {
             let sorts = [ListSort::Name, ListSort::Length, ListSort::MostPlayed, ListSort::LeastPlayed];
             let labels = [gettext("Name"), gettext("Length"), gettext("Most played"), gettext("Least played")];
-            let sort = app.with_db(|db| lf::list_sort_from_db(db.core())).unwrap_or(ListSort::Name);
+            let sort = app.with_db(lf::list_sort_from_db).unwrap_or(ListSort::Name);
             let model = gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>());
             let sort_row = adw::ComboRow::builder().title(gettext("Sort by")).model(&model).build();
             sort_row.set_selected(sorts.iter().position(|s| *s == sort).unwrap_or(0) as u32);

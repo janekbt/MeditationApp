@@ -136,7 +136,7 @@ fn rebuild_chooser_rows(
 
     // Once per rebuild, so each row's subtitle lookup is O(1).
     let label_names: HashMap<String, String> = app
-        .with_db(|db| meditate_core::db::label_names_from_db(db.core()))
+        .with_db(meditate_core::db::label_names_from_db)
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
@@ -184,7 +184,7 @@ fn rebuild_chooser_rows(
     }
 
     let presets = app
-        .with_db(|db| db.list_presets_for_mode(mode))
+        .with_db(|db| meditate_core::db::list_presets_for_mode_from_db(db, mode))
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
     for (index, preset) in presets.iter().enumerate() {
@@ -481,7 +481,7 @@ fn present_create_preset_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| db.is_preset_name_taken(name, ""))
+                app.with_db(|db| meditate_core::db::is_preset_name_taken_from_db(db, name, ""))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
@@ -535,7 +535,7 @@ fn present_rename_preset_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| db.is_preset_name_taken(name, &preset_uuid))
+                app.with_db(|db| meditate_core::db::is_preset_name_taken_from_db(db, name, &preset_uuid))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
@@ -606,7 +606,7 @@ fn present_delete_preset_dialog(
         let title = gettext("'{name}' deleted").replace("{name}", &preset_full.name);
         let toast_overlay_undo = toast_overlay.clone();
         let toast = crate::db::undo_toast(title, move || {
-            let restored = app_undo.with_db(|db| db.core().restore_preset(&preset_undo));
+            let restored = app_undo.with_db(|db| db.restore_preset(&preset_undo));
             write_ok(&toast_overlay_undo, "preset.restore", restored, Failed::Save);
             if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
         }, || {});

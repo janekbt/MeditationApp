@@ -27,7 +27,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
 | [ ] | T. Text that doesn't fit | #159, #434, #452, #462, #463, #474, #436 | information the user can't see |
-| [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #477, #147 | controls some users can't reach |
+| [ ] | LL. Keyboard, touch and screen reader | #343, #345, #363, #476, #477, #511, #147 | controls some users can't reach |
 | [ ] | MM. Linux small ones | #348, #391, #492, #350, #393 | stale screens, leaks, warnings |
 | [ ] | V. Randomised sync test | #162 | sync bugs that only two interleaved devices show |
 | [ ] | X. Release pipeline (ask first) | #168, #169, #201, #209 | builds that aren't what F-Droid or users get |
@@ -131,7 +131,7 @@ AGENTS.md: every failure tells the user. One reporting path per app is the class
 - Fix: one "read first, lock only for a change" helper in core for all of them (Related: REFACTORING #501).
 - Also check: `Database::open` stamps `PRAGMA user_version` at every open; if that takes the write lock, an open during a sync write still waits (unverified, from K3's review).
 ### #310 A corrupt database row during export is reported as a "CSV error"
-- Where: `data_io.rs:84` maps `DbError::Decode` to `DataIoError::Csv`. Fix: #300.
+- Where: `data_io.rs:74` maps `DbError::Decode` to `DataIoError::Csv`. Fix: #300.
 
 ### #251 Plausible: a corrupt vibration pattern plays nothing, silently
 - (Same class as #291.) `vibration_patterns.rs:60` turns unparseable `intensities_json` into an empty envelope (`unwrap_or_default`), while renaming the same row fails with `Decode`. Only a damaged row or a newer peer's format gets there; the user hears no cue and sees no message.
@@ -515,6 +515,10 @@ Z (#147, small touch targets) is part of this package.
 
 ### #477 A cancelled touch leaves the vibration drag open (plausible)
 - The plot's TouchArea handles `PointerEventKind.down` and `up` only (7570-7580); a back swipe or the notification shade sends `cancel`, so `ve-drag-end` never comes and the Rust drag and preview state stays on until the next touch. Fix: treat `cancel` like `up`.
+
+### #511 Linux: a two-finger swipe doesn't close the interval bell's sound chooser
+- Found by the maintainer, 2026-11-11 (laptop test of one-database-type-linux; there before it): a two-finger swipe right on the touchpad closes the sound chooser everywhere except when it was opened from an interval bell's edit page (`bells.rs` `push_edit_page`, chooser via `sounds.rs` `push_sounds_chooser`).
+- Fix: find what takes the swipe on that path (reproduce, then compare the edit page's navigation setup with the Setup page's), fix it there; a test where the code allows.
 
 ### #147 Android: small touch targets
 - Where: `meditate-android/ui/main.slint:641, 701, 1277, 6353, 1782, 1799`.

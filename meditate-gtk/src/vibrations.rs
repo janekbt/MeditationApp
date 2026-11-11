@@ -137,7 +137,7 @@ fn rebuild_chooser_rows(
     };
 
     let patterns = app
-        .with_db(super::db::Database::list_vibration_patterns)
+        .with_db(meditate_core::db::list_vibration_patterns_from_db)
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
     for pattern in patterns {
@@ -450,7 +450,7 @@ fn show_undo_edit_toast(
 ) {
     // The name it has now: a rename says the new one.
     let name = app
-        .with_db(|db| db.find_vibration_pattern_by_uuid(before.uuid.as_str()))
+        .with_db(|db| meditate_core::db::find_vibration_pattern_by_uuid_from_db(db, before.uuid.as_str()))
         .and_then(std::result::Result::ok)
         .flatten()
         .map_or_else(|| before.name.clone(), |p| p.name);
@@ -489,7 +489,7 @@ fn show_undo_delete_toast(
     let app = app.clone();
     let overlay_for_failure = overlay.clone();
     let toast = crate::db::undo_toast(title, move || {
-        let restored = app.with_db(|db| db.core().restore_vibration_pattern(&snapshot));
+        let restored = app.with_db(|db| db.restore_vibration_pattern(&snapshot));
         write_ok(&overlay_for_failure, "pattern.restore", restored, Failed::Save);
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
@@ -536,7 +536,7 @@ fn present_rename_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| db.is_vibration_pattern_name_taken(name, &uuid))
+                app.with_db(|db| meditate_core::db::is_vibration_pattern_name_taken_from_db(db, name, &uuid))
                     .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
@@ -564,7 +564,7 @@ fn present_rename_dialog(
         // chart_kind through the update — those don't change on a
         // rename, but update_vibration_pattern wants every field.
         let before = app
-            .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
+            .with_db(|db| meditate_core::db::find_vibration_pattern_by_uuid_from_db(db, &uuid))
             .and_then(std::result::Result::ok)
             .flatten();
         // Core's `rename_vibration_pattern` handles the read-modify-
@@ -621,7 +621,7 @@ fn present_delete_dialog(
         // Snapshot before deleting so the Undo toast can re-insert
         // with the same UUID.
         let snapshot = app
-            .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
+            .with_db(|db| meditate_core::db::find_vibration_pattern_by_uuid_from_db(db, &uuid))
             .and_then(std::result::Result::ok)
             .flatten();
         let deleted = app.with_db(|db| db.delete_vibration_pattern(&uuid));

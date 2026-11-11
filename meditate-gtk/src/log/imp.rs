@@ -138,7 +138,7 @@ impl LogView {
 
         // Fetch labels first (needed for card rendering)
         let read = app
-            .with_db(super::super::db::Database::list_labels)
+            .with_db(meditate_core::db::list_labels_from_db)
             .and_then(std::result::Result::ok);
         // The filtered label was deleted (a sync, a merge): show everything.
         if let (Some(labels), Some(id)) = (&read, self.filter_label_id.get()) {
@@ -181,7 +181,7 @@ impl LogView {
 
     fn reload_label_places(&self, app: &crate::application::MeditateApplication) {
         let places = app
-            .with_db(|db| meditate_core::db::label_color_places_from_db(db.core()))
+            .with_db(meditate_core::db::label_color_places_from_db)
             .and_then(|r| r.map_err(|e| meditate_core::log("log.label_places", &format!("{e:?}"))).ok())
             .unwrap_or_default();
         *self.label_places.borrow_mut() = places;
@@ -189,7 +189,7 @@ impl LogView {
 
     fn reload_guided_names(&self, app: &crate::application::MeditateApplication) {
         let names = app
-            .with_db(|db| meditate_core::db::guided_file_names_from_db(db.core()))
+            .with_db(meditate_core::db::guided_file_names_from_db)
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
         *self.guided_names.borrow_mut() = names;
@@ -208,7 +208,7 @@ impl LogView {
             offset:          Some(self.loaded_count.get() as u32),
         };
         let page = app
-            .with_db(|db| db.list_sessions(&filter))
+            .with_db(|db| crate::db::list_sessions(db, &filter))
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
 
@@ -278,7 +278,7 @@ impl LogView {
     /// Populate the label combo in the filter popover.
     pub fn refresh_filter_labels(&self, combo: &adw::ComboRow) {
         if let Some(fresh) = self.get_app()
-            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
+            .and_then(|app| app.with_db(meditate_core::db::list_labels_from_db))
             .and_then(std::result::Result::ok)
         {
             *self.labels.borrow_mut() = fresh;
@@ -1082,7 +1082,7 @@ impl LogView {
             label_chooser_row.connect_map(move |row| {
                 let Some(id) = selected_label_id.get() else { return; };
                 let labels = obj.imp().get_app()
-                    .and_then(|app| app.with_db(crate::db::Database::list_labels))
+                    .and_then(|app| app.with_db(meditate_core::db::list_labels_from_db))
                     .and_then(std::result::Result::ok)
                     .unwrap_or_default();
                 row.set_subtitle(&labels.iter().find(|l| l.id == id)
@@ -1177,9 +1177,9 @@ impl LogView {
 
                 if let Some(app) = imp.get_app() {
                     let saved = if let Some(id) = session_id {
-                        app.with_db(|db| db.update_session(id, &data))
+                        app.with_db(|db| crate::db::update_session(db, id, &data))
                     } else {
-                        app.with_db(|db| db.create_session(&data).map(|_| ()))
+                        app.with_db(|db| crate::db::create_session(db, &data).map(|_| ()))
                     };
                     match saved {
                         Some(Ok(())) => {}

@@ -37,7 +37,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 |:---:|---|---|---|
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
-| [ ] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373); left: #328 | EE, FF |
+| [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH |
@@ -397,7 +397,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Fix: the existing readers everywhere; a `prep_secs_from_db`; one key table per suffix; `Database::set_sync_state` skips equal values itself. Related: #281 (key constants for the bell family).
 
 #### #300 The three CSV importers
-- Where: `data_io.rs:280-442`: `parse_csv`, `parse_insighttimer_csv`, `parse_meditation_assistant_csv` each repeat the reader, `line_of`, the field closure, both `unreadable.push` branches and a full `Session { .. }` literal (312-321, 386-395, 429-438; again in tests at `insights.rs:308, 339`, `goal.rs:361`). `parse_insighttimer_csv(path, parse_dt)` takes a test seam as a public parameter (363; both apps pass `insighttimer_started_at`). `DataIoError::Parse` is never built, `From<rusqlite::Error>` has no user, and `From<DbError>` (70-88) restates every variant as English, which GTK mirrors to translate (`meditate-gtk/src/data_io.rs:17-63`). Export sorts with `local_iso_to_unix` inside the comparator and converts each row again (166-176); import lowercases every label name per row (245-255).
+- Where: `data_io.rs:280-442`: `parse_csv`, `parse_insighttimer_csv`, `parse_meditation_assistant_csv` each repeat the reader, `line_of`, the field closure, both `unreadable.push` branches and a full `Session { .. }` literal (312-321, 386-395, 429-438; again in tests at `insights.rs:308, 339`, `goal.rs:361`). `parse_insighttimer_csv(path, parse_dt)` takes a test seam as a public parameter (363; both apps pass `insighttimer_started_at`). `DataIoError::Parse` is never built, `From<rusqlite::Error>` has no user, and GTK mirrors the English variants of core's `DataIoError` to translate them (`meditate-gtk/src/data_io.rs:17-63`). Export sorts with `local_iso_to_unix` inside the comparator and converts each row again (166-176); import lowercases every label name per row (245-255).
 - Fix: one row loop with a per-row closure and a `Session::timer(start_iso, secs, notes)` constructor (fixes #305 on the way); a private `_with` seam; `DataIoError::Db(DbError)` and a typed key instead of English (fixes #310); `sort_by_cached_key`; a lowercase-name map.
 
 #### #301 One decision, a different output per app
@@ -421,7 +421,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `insights.rs:191-208`: the percent change twice; `GoalStatus` (`goal.rs:255-281`) is derivable and its early return repeats the main literal.
 - `seeds.rs`: the same `PresetEndBell` twice (153-159, 173-179), `"sound"`/`"both"` literals instead of `SignalMode`.
 - `audio_files.rs:59-67` vs 86-98: two walkers over `<uuid>.*` with different id rules (`file_stem` vs `split('.')`).
-- `db_open_failure_key` is dead and repeated in GTK: already #85.
 - Docs on the wrong item: `format.rs:619-624` (`parse_prep_secs` on `prep_plan_from_db`), `661-663`, `416-419`; `contrib.rs` still mentions the weekly goal.
 - Could be private or merged: `labels::persist_active_for_mode` (an Android test already asserts nobody calls it), `contrib::CONTRIB_COLS/ROWS`, `lead_in::is_bluetooth_sink`, `format::prep_target_duration`; `idle_hero_label` into `idle_hero_label_from_modes`; the two `parse_hms_duration` arms; `format_time` and `format_duration_brief` share their split; the empty-uuid check in `labels::resolve_label_for_mode` (266-268) can't fire.
 
@@ -495,11 +494,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 ### Slice 9: gtk window, log, stats, application, gtk `db/`, their `.blp` (swept 2026-11-10 at 9c72061)
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-gtk/` unless named. Ordered by gain.
-
-#### #328 The shell's `DbError` and the pass-through `Database`
-- Where: `db/mod.rs:31-133` (a `DbError` that copies core's variants), `359-371` (`map_core_err`), `120-133` (`clash_text` downcasts both types and maps core to shell again), about 60 one-line wrappers (445-944) next to 88 direct `db.core()` calls; guided.rs:1191 already matches core's type.
-- Also: `list_presets`, `active_months`, `active_days_in_month` have no caller (seven more wrappers look unused by grep; confirm with clippy); `let _ = BellSoundCategory::General;` (439); `test_db_in_memory` (952-961) seeds one by one instead of `seed_all_non_audio()`; docs still describe `rusqlite::Result` and the retired "delete the old DB" rule (12-16, 403-406, 661-663, 707-710); the seed-list doc sits on `bundled_bell_resource` (174-178).
-- Fix: core's error with a free `duplicate_toast_text(&core::DbError)`; callers use core; keep only the GTK-specific bits (bundled-bell seed table, the `Session` unix and ISO shim).
 
 #### #329 Log day sections from one grouping
 - Related: #433 (Android's `group_log_sessions`).
@@ -718,7 +712,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #401 Labels and preset rows
 - Related: #85 (the validator and `bell_name_taken` duplicates).
-- Where: ten wrappers around `list_labels_from_db` (700, 807, 845, 2603, 2615, 2670, 3230, 3280, 3294, 3420), each swallowing errors its own way; `lookup_label_uuid`, `lookup_label_name`, `first_label` scan the list for one id, and `create_label_in_db` lists again to read back the uuid (#410), as GTK does (`db/mod.rs:452-463`); the uuid-to-name map built three times (699, 806, 844); `list_starred_presets_for_mode` and `list_presets_for_mode` differ only in the query and `selected` (689-717, 798-823), and `widget_rows` is a third copy (840-871); `validate_label_name` is `validate_rename_label_name(n, 0)` (2632, 3214).
+- Where: ten wrappers around `list_labels_from_db` (700, 807, 845, 2603, 2615, 2670, 3230, 3280, 3294, 3420), each swallowing errors its own way; `lookup_label_uuid`, `lookup_label_name`, `first_label` scan the list for one id, and `create_label_in_db` lists again to read back the uuid (#410), as GTK does (`labels.rs:283-285`); the uuid-to-name map built three times (699, 806, 844); `list_starred_presets_for_mode` and `list_presets_for_mode` differ only in the query and `selected` (689-717, 798-823), and `widget_rows` is a third copy (840-871); `validate_label_name` is `validate_rename_label_name(n, 0)` (2632, 3214).
 - Fix: core `find_label_by_id` and `insert_label -> Label` for both apps; one `preset_items(..)`; one validator. Core's `query_one` / `uuid_by_id` (`db/mod.rs`) make the reader one line.
 
 #### #402 The import flow
@@ -1035,7 +1029,7 @@ Related: #356 (the preview button is copied the same way) and #318 and #315 (mor
 
 ### #85 Dead code, duplicates and a test that cannot fail
 - Related: #375 (`preload_end_bell`), #399, #401, #405.
-- Core: `tick_box_breath` (`mod.rs:604-667`) calls `fire_due_bells` at 658-665 though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `db_open_failure_key` (`format.rs:308-315`, tests 945-961) is unused and repeated in gtk `application.rs:178-187` (which matches gtk's own `DbError`). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (related: #273 touches `Stopwatch`). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
+- Core: `tick_box_breath` (`mod.rs:604-667`) calls `fire_due_bells` at 658-665 though core never gives Box Breath bells (test `box_breath_session_fires_interval_bells` 1541 injects them). `Stopwatch` serde derives (`timer.rs:5-12`) and the restart test (86-113) are unused and assert a false claim (related: #273 touches `Stopwatch`). `list_box_breath_phases` (`box_breath_phases.rs:17-48`) repeats `get_box_breath_phase` (52-76; related: #285, whose callers should all use the list); seed uuids hard-coded at 142, 144 (use `seeds::BUNDLED_BOWL_UUID`, `BUNDLED_PATTERN_PULSE_UUID`). `list_bell_sounds_for_category` (`bell_sounds.rs:240-264`) copies `list_bell_sounds` (206-233) except the WHERE. `count_labels_from_db` (`labels.rs:65`, export `db/mod.rs:80`) is test-only.
 - GTK: `preload_end_bell` (`sound.rs:294`; calls `timer/imp.rs:745, 792, 1284`, `window/imp.rs:126`) builds media that `play_end_bell_uuid` (322) never uses; its only effect is stopping a ringing end bell when its settings change (decide). Stale preload docs: `sound.rs:10-15, 289-290, 331-332`, `timer/imp.rs:677-679, 1218`.
 - Android: `read_signal_mode_for_mode` (`ui.rs:542-550`) repeats core `bells::signal_mode_override_from_db`.
 - Test: `bell_rng_state_advances_deterministically_from_seed` (`mod.rs:1553-1584`) uses `jitter_secs: 0` (helper at 1090), so the RNG never moves a ring time; set a jitter and assert a different seed differs, or delete it.
@@ -1085,6 +1079,7 @@ Only together with other work in the same area; none has a bug behind it.
 - **#503, savepoints through the statement cache** (2026-11-10, /simplify of change writes-all-or-nothing): `tx()`, `commit` and `Drop` send `SAVEPOINT w` / `RELEASE w` / `ROLLBACK TO w` through `execute_batch`, parsed each time; `prepare_cached` would skip the parse. Microseconds per nested write today; matters for a label merge over thousands of sessions.
 - **#504, presets carry a real label uuid** (2026-11-10, /simplify of change writes-all-or-nothing): "label on, none picked" means "the mode's default", a rule now in `apply`, `retarget_label` and `resolve_label_for_mode`. Storing the default's uuid when a preset is saved (and once for stored presets) would leave one rule; changes stored presets, so it needs a migration and is the root fix for OPEN-ISSUES #498.
 - **#508, the widget built once per change** (2026-11-10, /simplify of change one-refresh-per-change): `refresh_guided_files` (android `ui.rs`) rebuilds the widget inside itself, so the pull can't combine `presets_changed` and `guided_files_changed` without building it twice and still writes the preset refresh out by hand (a third copy of what a preset change refreshes). Take `refresh_widget` out of `refresh_guided_files`, let the change helpers refresh lists only, and build the widget once at the end of each change; every `refresh_guided_files` caller (the Local star, the unstar, the moves) then calls it. Gain: one list of what a preset change refreshes.
+- **#510, one seeded opener in core** (2026-11-11, /simplify of change one-database-type-linux): GTK `db::open` (`meditate-gtk/src/db/mod.rs`) and Android `ui.rs` (~10302) each create the folder, call core's `Database::open`, seed the bells from their own path table and then `seed_all_non_audio`; a mkdir failure is squeezed into `DbError::Decode`. A core `Database::open_seeded(path, bells)` that creates the folder (an `Io` variant) and seeds would remove both copies and the GTK source test `the_app_opens_its_database_with_the_bundled_bells`. Related: #410 (a core create-label that returns the `Label`, also from this /simplify).
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected

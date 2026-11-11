@@ -44,8 +44,8 @@ impl From<csv::Error> for DataIoError {
 impl From<rusqlite::Error> for DataIoError {
     fn from(e: rusqlite::Error) -> Self { DataIoError::Db(e.to_string()) }
 }
-impl From<crate::db::DbError> for DataIoError {
-    fn from(e: crate::db::DbError) -> Self { DataIoError::Db(e.to_string()) }
+impl From<meditate_core::db::DbError> for DataIoError {
+    fn from(e: meditate_core::db::DbError) -> Self { DataIoError::Db(e.to_string()) }
 }
 
 /// Bridge from core's English-only error type to the gtk shell's
@@ -76,7 +76,7 @@ pub fn suggested_export_filename() -> String {
 /// were written.
 pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
     let result: Result<usize, DataIoError> = app
-        .with_db(|db| meditate_core::data_io::export_csv(db.core(), path))
+        .with_db(|db| meditate_core::data_io::export_csv(db, path))
         .ok_or(DataIoError::NoDatabase)?
         .map_err(DataIoError::from);
     match &result {
@@ -136,7 +136,7 @@ fn logged(
 /// Write a read file: all of it, or on an error nothing.
 pub fn import_parsed(app: &MeditateApplication, parsed: &ParsedImport) -> Result<usize, DataIoError> {
     let result: Result<usize, DataIoError> = app
-        .with_db(|db| meditate_core::data_io::import_parsed(db.core(), parsed))
+        .with_db(|db| meditate_core::data_io::import_parsed(db, parsed))
         .ok_or(DataIoError::NoDatabase)?
         .map_err(DataIoError::from);
     match &result {

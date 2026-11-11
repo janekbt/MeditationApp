@@ -17,10 +17,11 @@ in `AGENTS.md`; the reasons behind the standing rules are in
 - **`meditate`** (`meditate-gtk/`): the Linux shell, GTK4 +
   libadwaita. Widgets, gettext strings, `gtk::MediaFile` playback,
   a GStreamer pipeline for guided-file import and duration probing,
-  feedbackd haptics over D-Bus, the GLib main loop. The GTK-side
-  `Database` (`meditate-gtk/src/db/`) is a thin wrapper: row types
-  with i64-unix times and a `note` field, plus its own error type.
-  The unix/ISO conversion itself lives in core.
+  feedbackd haptics over D-Bus, the GLib main loop. It uses core's
+  `Database` and `DbError` directly; `meditate-gtk/src/db/` adds only
+  `open` (which seeds the bundled bells from GResource) and a session
+  row type with i64-unix times and a `note` field. The unix/ISO
+  conversion itself lives in core.
 - **`meditate-android`** (`meditate-android/`): the Android shell,
   Slint + Material 3 on the same core. `src/app.rs` holds the
   testable logic, `src/ui.rs` the Android-only glue (callbacks and

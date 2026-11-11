@@ -70,22 +70,9 @@ impl From<rusqlite::Error> for DataIoError {
 
 impl From<crate::db::DbError> for DataIoError {
     fn from(e: crate::db::DbError) -> Self {
-        use crate::db::DbError;
         match e {
-            DbError::Sqlite(err) => DataIoError::Db(err.to_string()),
-            DbError::DuplicateLabel(name) => DataIoError::Db(format!("duplicate label: {name}")),
-            DbError::DuplicatePreset(name) => DataIoError::Db(format!("duplicate preset: {name}")),
-            DbError::DuplicateGuidedFile(name) => {
-                DataIoError::Db(format!("duplicate guided file: {name}"))
-            }
-            DbError::DuplicateVibrationPattern(name) => {
-                DataIoError::Db(format!("duplicate vibration pattern: {name}"))
-            }
-            DbError::Decode(msg) => DataIoError::Csv(csv::Error::from(std::io::Error::other(msg))),
-            DbError::SchemaVersionTooNew { db, build } => DataIoError::Db(format!(
-                "db schema_version={db} exceeds build schema_version={build}"
-            )),
-            DbError::DateOutOfRange => DataIoError::Db("date out of range".to_string()),
+            crate::db::DbError::Decode(msg) => DataIoError::Csv(csv::Error::from(std::io::Error::other(msg))),
+            other => DataIoError::Db(other.to_string()),
         }
     }
 }

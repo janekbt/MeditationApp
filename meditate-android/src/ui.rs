@@ -3358,8 +3358,8 @@ fn rename_label_in_db(id: i64, name: &str) -> bool {
     }
 }
 
-/// Insert a new label row + return `(rowid, uuid)`. Mirrors the
-/// GTK shell's `create_label` wrapper (`meditate-gtk/src/db/mod.rs`):
+/// Insert a new label row + return `(rowid, uuid)`. Mirrors GTK's
+/// create-label dialog (`meditate-gtk/src/labels.rs`):
 /// `insert_label` returns the rowid; the freshly inserted UUID is
 /// then read back via `list_labels_from_db` so the caller can
 /// persist it as the active mode's selection.
@@ -10301,7 +10301,7 @@ fn open_database(android_app: &slint::android::AndroidApp) {
     let db_path = dir.join("meditate.db");
     let opened = match meditate_core::Database::open(&db_path) {
         Ok(db) => {
-            // Mirror the GTK shell's `Database::open` (in
+            // Mirror the GTK shell's `db::open` (in
             // `meditate-gtk/src/db/mod.rs`): seed non-audio rows
             // (default labels, presets, vibration patterns,
             // box-breath phases) on every open. Idempotent —
