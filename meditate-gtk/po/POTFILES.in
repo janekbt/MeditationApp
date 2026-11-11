@@ -13,6 +13,7 @@ src/labels.rs
 src/local_folder.rs
 src/log/imp.rs
 src/log/mod.rs
+src/name_dialog.rs
 src/main.rs
 src/mpris.rs
 src/preferences.rs

@@ -24,7 +24,7 @@ fn main() {
     println!("--- Round 1: each device authors independently ---");
 
     // Phone: insert a label and a session referencing it.
-    let morning_id = phone.insert_label("Morning").unwrap();
+    let morning_id = phone.insert_label("Morning").unwrap().id;
     let phone_morning_uuid = meditate_core::db::list_labels_from_db(&phone).unwrap()[0].uuid.clone();
     phone.insert_session(&Session {
         start_iso: "2026-04-30T07:00:00".into(),
@@ -39,7 +39,7 @@ fn main() {
     println!("Phone authored: 1 label (Morning), 1 session at 07:00 (600s)");
 
     // Laptop: insert a different label and session.
-    let evening_id = laptop.insert_label("Evening").unwrap();
+    let evening_id = laptop.insert_label("Evening").unwrap().id;
     laptop.insert_session(&Session {
         start_iso: "2026-04-30T20:00:00".into(),
         duration_secs: 1200,

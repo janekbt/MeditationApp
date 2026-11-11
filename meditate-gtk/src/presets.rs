@@ -25,6 +25,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, Preset, SessionMode};
 use crate::i18n::gettext;
+use crate::name_dialog::{name_dialog, taken_in};
 use meditate_core::preset_config::PresetConfig;
 
 /// Two-mode chooser parameter. The `Save` variant carries the live
@@ -161,22 +162,22 @@ fn rebuild_chooser_rows(
             };
             let app = app_for_create.clone();
             let nav_view = nav_view_for_create.clone();
-            let row_for_toast = row.clone();
-            present_create_preset_dialog(
+            // Core stars a new preset, as on Android.
+            name_dialog(
                 row,
-                &app_for_create,
-                Box::new(move |name| {
-                    // Default-starred policy lives in core so the
-                    // Android shell agrees with the gtk default.
+                &gettext("Create Preset"),
+                "",
+                &gettext("Preset name"),
+                &gettext("Create"),
+                taken_in(&app, |db, name| meditate_core::db::is_preset_name_taken_from_db(db, name, "")),
+                move |name| {
                     let json = snapshot.to_json();
-                    let starred = meditate_core::preset_config::default_starred_on_save();
-                    let result = app.with_db(
-                        |db| db.insert_preset(&name, mode, starred, &json),
-                    );
-                    if write_ok(&row_for_toast, "preset.create", result, Failed::Save) {
+                    let created = app.with_db(|db| db.insert_preset(name, mode, &json).map(drop));
+                    if matches!(created, Some(Ok(()))) {
                         back_to_setup(&app, &nav_view);
                     }
-                }),
+                    created
+                },
             );
         });
         group.add(&create_row);
@@ -449,61 +450,6 @@ fn add_delete_button(
     row.add_suffix(&delete_btn);
 }
 
-fn present_create_preset_dialog(
-    anchor: &adw::ActionRow,
-    app: &MeditateApplication,
-    on_created: Box<dyn Fn(String)>,
-) {
-    let entry = gtk::Entry::builder()
-        .placeholder_text(gettext("Preset name"))
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Create Preset"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("create")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("create", &gettext("Create"));
-    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-    dialog.set_response_enabled("create", false);
-
-    // Live validation: non-empty + no name collision against any
-    // existing preset (case-insensitive, matches the COLLATE NOCASE
-    // UNIQUE on the column).
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| meditate_core::db::is_preset_name_taken_from_db(db, name, ""))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false)
-            });
-            dialog.set_response_enabled("create", validity.is_savable());
-        })
-    };
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
-    let on_created = Rc::new(on_created);
-    let entry_for_response = entry.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "create" { return; }
-        let name = entry_for_response.text().trim().to_string();
-        if name.is_empty() { return; }
-        on_created(name);
-    });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
-}
-
 fn present_rename_preset_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
@@ -511,58 +457,17 @@ fn present_rename_preset_dialog(
     current_name: &str,
     rebuilder: crate::Rebuilder,
 ) {
-    let entry = gtk::Entry::builder()
-        .text(current_name)
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Rename Preset"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("rename")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("rename", &gettext("Rename"));
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        let preset_uuid = preset_uuid.to_string();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| meditate_core::db::is_preset_name_taken_from_db(db, name, &preset_uuid))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false)
-            });
-            dialog.set_response_enabled("rename", validity.is_savable());
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
+    let uuid = preset_uuid.to_string();
+    let taken = taken_in(app, move |db, name| meditate_core::db::is_preset_name_taken_from_db(db, name, &uuid));
     let app = app.clone();
     let preset_uuid = preset_uuid.to_string();
-    let entry_for_response = entry.clone();
-    let anchor_for_response = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "rename" { return; }
-        let new_name = entry_for_response.text().trim().to_string();
-        if new_name.is_empty() { return; }
-        let renamed = app.with_db(|db| db.update_preset_name(&preset_uuid, &new_name));
-        if !write_ok(&anchor_for_response, "preset.rename", renamed, Failed::Save) {
-            return;
+    name_dialog(anchor, &gettext("Rename Preset"), current_name, "", &gettext("Rename"), taken, move |name| {
+        let renamed = app.with_db(|db| db.update_preset_name(&preset_uuid, name));
+        if matches!(renamed, Some(Ok(()))) {
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
         }
-        if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+        renamed
     });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
 }
 
 fn present_delete_preset_dialog(

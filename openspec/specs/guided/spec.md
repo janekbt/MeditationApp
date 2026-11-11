@@ -177,13 +177,13 @@ A failed guided file write SHALL show "Save failed" or "Delete failed" and leave
 - **THEN** "Delete failed" shows with no Undo, the file stays listed and still plays
 - **TEST** `meditate-gtk/src/guided.rs::a_failed_delete_keeps_the_audio_file`
 
-#### Scenario: Star, rename or Undo fails (laptop)
+#### Scenario: Star or Undo fails (laptop)
 - **WHEN** starring a file or undoing its delete fails
 - **THEN** "Save failed" shows
 - **TEST** `meditate-gtk/src/db/mod.rs::no_write_result_is_dropped`
 
-#### Scenario: Rename or delete fails on the phone
-- **WHEN** a guided rename or delete fails
+#### Scenario: Delete fails on the phone
+- **WHEN** a guided delete fails
 - **THEN** the message shows and the dialog opens normally next time
 - **TEST** `meditate-android/src/app.rs::failed_dialog_writes_say_so_and_close`
 

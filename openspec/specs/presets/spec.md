@@ -20,8 +20,8 @@ A failed preset write SHALL show "Save failed" or "Delete failed" in place of an
 - **THEN** "Delete failed" shows without Undo, the dialog closes and the preset stays listed
 - **TEST** `meditate-android/src/app.rs::failed_dialog_writes_say_so_and_close`
 
-#### Scenario: Override or rename fails on the phone, then the user tries again
-- **WHEN** an override or a rename fails and the user opens the dialog again
+#### Scenario: Override fails on the phone, then the user tries again
+- **WHEN** an override fails and the user opens the dialog again
 - **THEN** "Save failed" showed, and the dialog works on the second try
 - **TEST** `meditate-android/src/app.rs::failed_dialog_writes_say_so_and_close`
 

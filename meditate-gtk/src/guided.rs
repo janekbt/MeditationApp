@@ -37,6 +37,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, GuidedFile};
 use crate::i18n::gettext;
+use crate::name_dialog::{name_dialog, taken_in, NameRow};
 use meditate_core::sound::AudioFileError;
 
 /// Shared preview state for the guided-files chooser. Mirrors the
@@ -163,38 +164,29 @@ pub fn import_picked_file(
     pick: GuidedFilePick,
     on_done: impl Fn(GuidedFile) + 'static,
 ) {
-    // Live-validated entry — same pattern as the bell-sound import
-    // dialog (sounds.rs::present_import_dialog).
-    let entry = gtk::Entry::builder()
-        .text(&pick.display_name)
-        .placeholder_text(gettext("Track name"))
-        .activates_default(false) // Import button drives the dialog
-        .build();
-    let collision_label = gtk::Label::builder()
-        .label(gettext("A guided file with this name already exists."))
-        .css_classes(["error", "caption"])
-        .halign(gtk::Align::Start)
-        .visible(false)
-        .build();
-
     let import_btn = gtk::Button::builder()
         .label(gettext("Import"))
         .css_classes(["suggested-action"])
         .hexpand(true)
         .build();
-
-    let form_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(4)
-        .build();
-    form_box.append(&entry);
-    form_box.append(&collision_label);
+    // The shared name row: its hint says why Import is off.
+    let btn_for_row = import_btn.downgrade();
+    let row = NameRow::new(
+        &pick.display_name,
+        taken_in(app, |db, name| meditate_core::db::is_guided_file_name_taken_from_db(db, name, "")),
+        move |savable| {
+            if let Some(btn) = btn_for_row.upgrade() {
+                btn.set_sensitive(savable);
+            }
+        },
+    );
+    row.entry.set_placeholder_text(Some(&gettext("Track name")));
 
     let extra_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(18)
         .build();
-    extra_box.append(&form_box);
+    extra_box.append(&row.widget);
     extra_box.append(&import_btn);
 
     let dialog = adw::AlertDialog::builder()
@@ -209,72 +201,71 @@ pub fn import_picked_file(
         .build();
     dialog.add_response("cancel", &gettext("Cancel"));
 
-    // Live validation: name not empty + no case-insensitive collision
-    // with another row's name. Same shape as the bell-sound + label
-    // import flows.
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let import_btn = import_btn.clone();
-        let collision_label = collision_label.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let collision = !trimmed.is_empty()
-                && app
-                    .with_db(|db| meditate_core::db::is_guided_file_name_taken_from_db(db, trimmed, ""))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false);
-            let valid = !trimmed.is_empty() && !collision;
-            import_btn.set_sensitive(valid);
-            collision_label.set_visible(!trimmed.is_empty() && collision);
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
     let import_btn_for_enter = import_btn.clone();
-    entry.connect_activate(move |_| {
+    row.entry.connect_activate(move |_| {
         if import_btn_for_enter.is_sensitive() {
             import_btn_for_enter.emit_clicked();
         }
     });
+
+    let converted: crate::name_dialog::PendingImport<String> = crate::name_dialog::pending_import(&dialog);
 
     // The Import click drives the spawn_blocking worker. Cancel
     // remains enabled during the transcode — the user can abort a
     // long import (a 60-min stereo guide can take ~10 s on the
     // Librem) by tapping it. The Cancel response flips a shared
     // AtomicBool the worker checks every ~250 ms in its bus loop.
-    let app_for_click = app.clone();
-    let pick_for_click = pick.clone();
-    let entry_for_click = entry.clone();
-    let dialog_for_click = dialog.clone();
-    let anchor_for_click = anchor.clone();
-    let on_done = Rc::new(on_done);
-    let on_done_for_click = on_done.clone();
-    // Set up the cancel flag once at dialog scope so the response
-    // handler (below) and the Import-button handler (here) share
-    // the same slot. `Arc<AtomicBool>` because the worker thread
-    // reads it across thread boundaries.
     let cancel_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let cancel_flag_for_dialog = cancel_flag.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id == "cancel" {
-            cancel_flag_for_dialog.store(true, Ordering::Relaxed);
-        }
-    });
+    dialog.connect_response(Some("cancel"), move |_, _| cancel_flag_for_dialog.store(true, Ordering::Relaxed));
 
+    // Store the converted file under the typed name: the dialog closes
+    // with it, or stays with the name and says why (#428).
+    let store: Rc<dyn Fn(String, PathBuf)> = {
+        let app = app.clone();
+        let dialog = dialog.downgrade();
+        let row = row.clone();
+        let import_btn = import_btn.clone();
+        let converted = converted.clone();
+        let on_done = Rc::new(on_done);
+        let secs = pick.duration_secs;
+        Rc::new(move |uuid: String, path: PathBuf| {
+            let stored = app.with_db(|db| db.import_guided_file(&uuid, &row.name(), &path.to_string_lossy(), secs));
+            match stored {
+                Some(Ok(_)) => {}
+                failed => {
+                    row.import_failed(&import_btn, "guided.import", failed.map(|r| r.map(drop)));
+                    *converted.borrow_mut() = Some((uuid, path));
+                    return;
+                }
+            }
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.force_close();
+            }
+            // The row is stored; only selecting it needs the read.
+            if let Some(Ok(Some(file))) = app.with_db(|db| meditate_core::db::find_guided_file_by_uuid_from_db(db, &uuid)) {
+                on_done(file);
+            }
+        })
+    };
+
+    let pick_for_click = pick.clone();
+    let row_for_click = row.clone();
+    let dialog_for_click = dialog.downgrade();
+    let anchor_for_click = anchor.clone();
     let cancel_flag_for_click = cancel_flag.clone();
     import_btn.connect_clicked(move |btn| {
-        let trimmed = entry_for_click.text().trim().to_string();
-        if trimmed.is_empty() {
+        let Some(dialog) = dialog_for_click.upgrade() else { return };
+        // Converted already, its store failed: store it again.
+        let pending = converted.borrow_mut().take();
+        if let Some((uuid, path)) = pending {
+            store(uuid, path);
             return;
         }
         // Freeze the form fields but leave Cancel responsive so the
         // user can abort. The dialog stays open until the worker
         // either completes (success / error) or honours cancel.
-        entry_for_click.set_sensitive(false);
+        row_for_click.entry.set_sensitive(false);
         btn.set_sensitive(false);
 
         let spinner = adw::Spinner::new();
@@ -288,13 +279,10 @@ pub fn import_picked_file(
         busy_box.append(&label);
         btn.set_child(Some(&busy_box));
 
-        let app = app_for_click.clone();
-        let dialog = dialog_for_click.clone();
         let parent = anchor_for_click.clone();
         let pick = pick_for_click.clone();
-        let trimmed_for_done = trimmed.clone();
-        let on_done = on_done_for_click.clone();
         let cancel_flag = cancel_flag_for_click.clone();
+        let store = store.clone();
         glib::MainContext::default().spawn_local(async move {
             let source = pick.source_path.clone();
             let cancel_for_worker = cancel_flag.clone();
@@ -312,46 +300,20 @@ pub fn import_picked_file(
             }
 
             match import_result {
-                Ok(Ok((new_uuid, dest_path))) => {
-                    let dest_str = dest_path.to_string_lossy().to_string();
-                    let mut insert_err: Option<String> = None;
-                    let wrote = app.with_db(|db| {
-                        if let Err(e) = db.insert_guided_file_with_uuid(
-                            &new_uuid,
-                            &trimmed_for_done,
-                            &dest_str,
-                            pick.duration_secs,
-                            true, // auto-star on import (mirrors Save Preset)
-                        ) {
-                            insert_err = Some(e.to_string());
-                        }
-                    });
-                    if wrote.is_none() {
-                        insert_err = Some(gettext("Save failed"));
-                    }
-                    if let Some(msg) = insert_err {
-                        let _ = std::fs::remove_file(&dest_path);
-                        crate::db::show_toast(&parent, gettext("Import failed: {error}").replace("{error}", &msg));
-                    } else if let Some(row) = app
-                        .with_db(|db| meditate_core::db::find_guided_file_by_uuid_from_db(db, &new_uuid))
-                        .and_then(std::result::Result::ok)
-                        .flatten()
-                    {
-                        on_done(row);
-                    }
-                }
+                Ok(Ok((new_uuid, dest_path))) => return store(new_uuid, dest_path),
                 Ok(Err(AudioFileError::NoAudioTrack)) => crate::db::show_toast(&parent, gettext("This file has no audio track")),
                 Ok(Err(AudioFileError::TooLargeToSync)) => crate::db::show_toast(&parent, too_large_to_sync()),
                 Ok(Err(AudioFileError::Other(e))) => crate::db::show_toast(&parent, gettext("Import failed: {error}").replace("{error}", &e.to_string())),
                 Err(_) => crate::db::show_toast(&parent, gettext("Import worker died")),
             }
+            // A failed conversion used up its pick: a retry starts anew.
             dialog.force_close();
         });
     });
 
     dialog.present(Some(anchor));
-    entry.grab_focus();
-    entry.select_region(0, -1);
+    row.entry.grab_focus();
+    row.entry.select_region(0, -1);
 }
 
 /// Worker-thread half of the import: copies (OGG passthrough) or
@@ -903,76 +865,19 @@ fn present_rename_dialog(
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
 ) {
-    let entry = gtk::Entry::builder()
-        .text(current_name)
-        .activates_default(true)
-        .build();
-    let collision_label = gtk::Label::builder()
-        .label(gettext("A guided file with this name already exists."))
-        .css_classes(["error", "caption"])
-        .halign(gtk::Align::Start)
-        .visible(false)
-        .build();
-    let form = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(4)
-        .build();
-    form.append(&entry);
-    form.append(&collision_label);
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Rename Guided File"))
-        .extra_child(&form)
-        .close_response("cancel")
-        .default_response("rename")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("rename", &gettext("Rename"));
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-    dialog.set_response_enabled("rename", false);
-
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        let collision_label = collision_label.clone();
-        let uuid_for_validate = uuid.to_string();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let collision = !trimmed.is_empty()
-                && app
-                    .with_db(|db| meditate_core::db::is_guided_file_name_taken_from_db(db, trimmed, &uuid_for_validate))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false);
-            let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("rename", valid);
-            collision_label.set_visible(!trimmed.is_empty() && collision);
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
-    let app_for_response = app.clone();
-    let uuid_for_response = uuid.to_string();
+    let except = uuid.to_string();
+    let taken = taken_in(app, move |db, name| meditate_core::db::is_guided_file_name_taken_from_db(db, name, &except));
+    let app = app.clone();
+    let uuid = uuid.to_string();
     let old_name = current_name.to_string();
-    let entry_for_response = entry.clone();
-    let toast_overlay_for_response = toast_overlay.clone();
-    let anchor_for_response = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "rename" {
-            return;
+    let toast_overlay = toast_overlay.clone();
+    name_dialog(anchor, &gettext("Rename Guided File"), current_name, "", &gettext("Rename"), taken, move |new_name| {
+        if new_name == old_name {
+            return Some(Ok(()));
         }
-        let new_name = entry_for_response.text().trim().to_string();
-        if new_name.is_empty() || new_name == old_name {
-            return;
-        }
-        let renamed = app_for_response.with_db(|db| {
-            db.rename_guided_file(&uuid_for_response, &new_name)
-        });
-        if !write_ok(&anchor_for_response, "guided.rename", renamed, Failed::Save) {
-            return;
+        let renamed = app.with_db(|db| db.rename_guided_file(&uuid, new_name));
+        if !matches!(renamed, Some(Ok(()))) {
+            return renamed;
         }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
@@ -983,12 +888,12 @@ fn present_rename_dialog(
         // guided_file_update event with the old name as the new value
         // — peers replay it correctly because the event log resolves
         // by lamport_ts (undo's event is later, so it wins).
-        let app_for_undo = app_for_response.clone();
-        let uuid_for_undo = uuid_for_response.clone();
+        let app_for_undo = app.clone();
+        let uuid_for_undo = uuid.clone();
         let old_name_for_undo = old_name.clone();
         let on_changed_for_undo = on_changed.clone();
         let rebuilder_for_undo = rebuilder.clone();
-        let overlay_for_failure = toast_overlay_for_response.clone();
+        let overlay_for_failure = toast_overlay.clone();
         let toast = crate::db::undo_toast(gettext("File renamed"), move || {
             let renamed = app_for_undo.with_db(|db| {
                 db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
@@ -999,12 +904,9 @@ fn present_rename_dialog(
             }
             on_changed_for_undo();
         }, || {});
-        crate::db::post_toast(&toast_overlay_for_response, Some("guided"), toast);
+        crate::db::post_toast(&toast_overlay, Some("guided"), toast);
+        renamed
     });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
-    entry.select_region(0, -1);
 }
 
 fn present_delete_dialog(

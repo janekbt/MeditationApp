@@ -62,7 +62,7 @@ fn label_then_preset_round_trip_keeps_uuid_reference_intact() {
     // Device A: author a label + a preset whose config_json embeds
     // the label's UUID, then push.
     let a = open_test_db(&tempdir, "device_a");
-    let label_rowid = a.insert_label("Morning").expect("insert label");
+    let label_rowid = a.insert_label("Morning").expect("insert label").id;
     let label = list_labels_from_db(&a)
         .expect("list labels")
         .into_iter()
@@ -148,7 +148,7 @@ fn session_arriving_before_its_label_in_a_batch_links_after_recompute() {
     // baseline count so we can slice off just the two events we
     // care about for the out-of-order replay.
     let pre_insert_count = a.pending_events().expect("baseline pending").len();
-    let label_rowid = a.insert_label("Pre-coffee").expect("insert label");
+    let label_rowid = a.insert_label("Pre-coffee").expect("insert label").id;
     let a_label = list_labels_from_db(&a)
         .expect("list labels")
         .into_iter()
@@ -525,7 +525,7 @@ fn last_writer_wins_when_two_devices_rename_the_same_label() {
 
     // Initial state: A creates the label, both devices converge.
     let a = open_test_db(&tempdir, "device_a");
-    let label_rowid_a = a.insert_label("Original").expect("insert label");
+    let label_rowid_a = a.insert_label("Original").expect("insert label").id;
     let label_uuid = list_labels_from_db(&a)
         .expect("list labels A")
         .into_iter()
@@ -872,7 +872,7 @@ fn label_from_a_reaches_c_via_b_through_the_shared_remote() {
 
     // A authors + pushes a label.
     let a = open_test_db(&tempdir, "device_a");
-    let a_label_rowid = a.insert_label("Shared-Across-Chain").expect("A label");
+    let a_label_rowid = a.insert_label("Shared-Across-Chain").expect("A label").id;
     let label_uuid = list_labels_from_db(&a)
         .unwrap()
         .into_iter()

@@ -38,7 +38,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P1. Core write paths | done: writes-keep-peer-edits (#234, #225, #370, #226, #230, and #218 from P15), one-path-per-table (#235, #237, #215, #216, #217, #231) | CC, K3 |
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
-| [ ] | P4. Names and dialogs | #358, #374, #415, #486, #465 | DD, FF |
+| [ ] | P4. Names and dialogs | #465; done: one-name-dialog (#358, #374, #415, #486) | DD, FF |
 | [ ] | P5. Session engine | #269, #270, #271, #272, #273, #274, #275, #313, #394, #395, #429, #430 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
@@ -124,7 +124,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `read_kv`, `write_kv`, `existing_rowid_by_uuid` (`mod.rs:339, 359, 380`) build SQL with `format!` and prepare it fresh; static SQL per table with `prepare_cached`.
 - `device`: seed the row once in `init`, then `UPDATE ... RETURNING` (part of #221; do it there); `observe_remote_lamport` runs three statements per pulled event; a single-row CHECK as `session_in_progress` has.
 - `uuids.rs`: the public `.0` field and cross-type `PartialEq<str>` are a test-compat shim (`starred_order.rs` uses `g.uuid.0`).
-- Docs: `labels.rs:237-246` (`find_or_create_label`'s doc on `list_label_conflicts`), `mod.rs:135-144` (`Event`'s doc on `Database`), `schema.rs:128-131` ("kept literal", but it's substituted), `116-117` (`sound`, now `sound_uuid`), `23` (says three fields, has four); `presets.rs:250-256` blank run. The busy-timeout comments (`mod.rs:24-26, 193`) are #157.
+- Docs: `mod.rs:135-144` (`Event`'s doc on `Database`), `schema.rs:128-131` ("kept literal", but it's substituted), `116-117` (`sound`, now `sound_uuid`), `23` (says three fields, has four); `presets.rs:250-256` blank run. The busy-timeout comments (`mod.rs:24-26, 193`) are #157.
 
 #### #233 Tests
 - `labels.rs` tests 1130-1325: nine hand-built `Event` literals; `synth_event`/`synth_label_insert` exist (also `error.rs:206`). `presets.rs:595`: use `test_helpers::event_payload`.
@@ -345,7 +345,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Related: #355 (bell-sound import, delete and name checks into core: do the name rule there).
 - `is_passthrough_ext` (140) is called only by tests; `target_extension_and_mime` (174) repeats the wav/ogg rule with a redundant `"ogg"` arm. Kotlin re-decides it from the folder name (`MeditateGuidedImport.kt:111-118`); Rust could hand Kotlin the decision.
 - `safe_copy_no_follow` (240-273) is `std::io::copy` by hand, and unlike it stops on `Interrupted` (then deletes the half copy).
-- `name_collides` (185) is `name_collides_excluding(.., "")` (197) written out; android `ui.rs:1659` mirrors it again. Bell sounds compare with Unicode `to_lowercase`, the other four kinds with SQL `NOCASE` (ASCII only), so "Ä" and "ä" collide only for bells; one rule.
 - `display_name_from_path` (215) is dead and returns English "Custom sound" (typed-key rule); `mime_matches` (51) is test-only; extension checks allocate lowercase strings where `eq_ignore_ascii_case` (as at 159) does.
 - `sound.rs:15` and `vibration.rs:43` re-export `preview::{PreviewAction, PreviewToggle}` "for back-compat"; four gtk files use them, android imports `preview` directly.
 
@@ -403,7 +402,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #301 One decision, a different output per app
 - Related: #482 (insights, streak dash, sync tone).
 - `mini_stat_or_dash` (GTK) and `mini_stat_value` (Android) (`format.rs:430-444`): Android groups digits, GTK doesn't. `format_time_of_day` (GTK, 24 h only) and `time_of_day_key` (Android, follows the 12/24 h setting) (674-692).
-- `NameValidity` (`naming.rs:132-170`) is only ever reduced with `is_savable()` (14 call sites, all trimming first); no collision hint is shown though the doc says so.
 - `InsightKey::glyph` (`insights.rs:135-152`) says it keeps the icons portable, but Android has its own `insight_icon_id` (`ui.rs:2370`).
 - Fix: GTK renders the typed keys and the string helpers go; `is_savable_name(s, taken) -> bool`; say in the glyph doc it is GTK-only.
 
@@ -576,13 +574,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: `sounds.rs:260-334` (`add_play_button`, `PreviewState` 30-37) is a near copy of `guided.rs:871-930`, and `vibrations.rs:286-331` is a third; the "revert to Play" pair twice (296-299, 322-326). The transcode copy (`sounds.rs:742-846` vs `guided.rs:461-556`) is already #61; the busy spinner (597-606) copies `guided.rs:302`.
 - Fix: one preview-button helper with a play closure and a tooltip. Related: #61.
 
-#### #358 One name dialog
-- Related: #486 (the name rule inside the write).
-- Related: #415 (Android's six name dialogs).
-- Related: #374 (the vibration editor and guided import also skip `validate`).
-- Where: create and rename dialogs build the same entry, AlertDialog and validate closure: `presets.rs:502-559, 561-626`, `sounds.rs:902-974`, plus `labels.rs:303`, `guided.rs:942`, `vibrations.rs:527`. Callbacks wrapped as `Rc<Box<dyn Fn>>` (`presets.rs:505/544, 699/713`, `sounds.rs:390/401/470`). "Import failed:" + msg (`sounds.rs:676`) is a third msgid next to "Import failed: {error}" and "Import failed".
-- Fix: one `name_dialog(anchor, heading, initial, response, is_taken, on_ok)` (the leak in #352 is fixed once there); reuse "Import failed: {error}".
-
 #### #359 Preferences
 - The `SyncSettingsError` toast mapping twice (`preferences.rs:305-326, 416-435`; Android twice more, `ui.rs:9119-9140, 9638-9660`); the keychain read wrapped in a 10-line match for an MSRV note that no longer applies (291-303 vs 411-415).
 - The lead-in is read through core but written raw (118-121, 137-140; Android `ui.rs:6644-6658`): core writers like `goal::write_daily_goal_mins`. `f64::from(lead_ms) / 1000.0` (127) next to `ms()` (102).
@@ -625,10 +616,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Related: #402 (Android's import flow).
 - Where: "insert, remove the orphan if the insert fails, read the row back" (`guided.rs:312-345`) and "delete the row, remove the file when the Undo toast ends" (1094-1210) are written again in Android (`ui.rs:1166-1185, 5840, 10179`), with different error formatting; #355 moves the same into core for bell sounds only. `transcode_to_ogg_preserve_channels` (461-556) and `do_import_io` (400) copy `sounds.rs:742, 691` (#61). The `AudioFileError` to toast text is written three times (`guided.rs:155-163, 351-361`, `sounds.rs:649-653`; Android has one `audio_file_error_text`, `ui.rs:1123`), and cancel travels as `AudioFileError::Other("cancelled")` (450). The display name is built by hand (141-145) where `sounds.rs:472` uses `display_name_from_path`; `format!("{new_uuid}.ogg")` (413) copies `guided_file_path`, which 1166 uses.
 - Fix: widen #355 to one core library-file helper for both kinds (`import_* -> Row`, and a delete that names the file to drop when Undo expires); one `transcode_to_ogg(src, dest, normalise, cancel)`; one `audio_error_text`; an `AudioFileError::Cancelled` variant. Related: #355, #61, #356.
-
-#### #374 Name checks through core's `validate`
-- Where: the vibration editor's Save gate (`vibration_editor.rs:453-470`), the guided import dialog (`guided.rs:213-245`) and rename (980-1013) check empty and taken by hand (`!trimmed.is_empty() && collision`, where `collision` already implies non-empty); labels, sounds and the vibrations rename use `meditate_core::validate`.
-- Fix: fold into #358's one name dialog with `validate`; #358 named `guided.rs:942` but not these two. Related: #358, #288.
 
 #### #375 sound.rs
 - Related: #85 (`preload_end_bell` was listed there first; do it once).
@@ -712,8 +699,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #401 Labels and preset rows
 - Related: #85 (the validator and `bell_name_taken` duplicates).
-- Where: ten wrappers around `list_labels_from_db` (700, 807, 845, 2603, 2615, 2670, 3230, 3280, 3294, 3420), each swallowing errors its own way; `lookup_label_uuid`, `lookup_label_name`, `first_label` scan the list for one id, and `create_label_in_db` lists again to read back the uuid (#410), as GTK does (`labels.rs:283-285`); the uuid-to-name map built three times (699, 806, 844); `list_starred_presets_for_mode` and `list_presets_for_mode` differ only in the query and `selected` (689-717, 798-823), and `widget_rows` is a third copy (840-871); `validate_label_name` is `validate_rename_label_name(n, 0)` (2632, 3214).
-- Fix: core `find_label_by_id` and `insert_label -> Label` for both apps; one `preset_items(..)`; one validator. Core's `query_one` / `uuid_by_id` (`db/mod.rs`) make the reader one line.
+- Where: ten wrappers around `list_labels_from_db` (700, 807, 845, 2603, 2615, 2670, 3230, 3280, 3294, 3420), each swallowing errors its own way; `lookup_label_uuid`, `lookup_label_name`, `first_label` scan the list for one id; the uuid-to-name map built three times (699, 806, 844); `list_starred_presets_for_mode` and `list_presets_for_mode` differ only in the query and `selected` (689-717, 798-823), and `widget_rows` is a third copy (840-871); `validate_label_name` is `validate_rename_label_name(n, 0)` (2632, 3214).
+- Fix: core `find_label_by_id` for both apps (`insert_label -> Label` landed in one-name-dialog); one `preset_items(..)`; one validator. Core's `query_one` / `uuid_by_id` (`db/mod.rs`) make the reader one line.
 
 #### #402 The import flow
 - Related: #480 (one Guided selection in core).
@@ -751,11 +738,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: `ChooserTarget` is `BellSlot` plus the interval editor, but every path maps it by hand: `on_bell_chooser_pick` (6797-6845) and `on_pattern_chooser_pick` (7009-7048) each have a four-arm match writing literal keys (`"starting_bell_sound"`, `end_bell_sound_key_for_mode(..)`) or `write_bb_phase` with three `None`s; eight openers (6590-6632, 6740-6768, 6983, 7000, the `bbc_phase_handlers` macro arms, 8020-8053) each re-read the current uuid with their own key and default and set target, category, current, populate and page; `chooser_bell_volume` (10445) is a third map, `app::volume_slot` (`app.rs:351`) a fourth. Core has `bell_volume::{read, write, sound_uuid}(db, BellSlot)` for the volume only.
 - Also derivable: `bell_chooser_category` and `bell_chooser_current` (4389-4390) follow from the target and the ticked row, as `ticked_pattern_uuid` does for patterns.
 - Fix: `ChooserTarget::{Bell(BellSlot), IntervalEditor}`; core `pattern_uuid`, `write_sound`, `write_pattern` by `BellSlot` next to `sound_uuid`; one `open_bell_chooser(ui, target)`, one `open_pattern_chooser(ui, target)`, one pick arm per chooser. Related: #399, #400, #281.
-
-#### #415 One name dialog (Android)
-- Related: #465 (one dialog frame).
-- Where: create preset, rename preset, rename guided file, rename bell sound, create label and rename label (5907-5966, 6097-6160, 6300-6365, 6849-6911, 8206-8300) each have their own Slint properties, `Modal` variant, pending-id cell and tap, changed and confirm handlers around `naming::validate(name.trim(), |n| taken(n, except)).is_savable()` (11 times); the re-check on confirm is written four times, labels have their own wrappers (2632, 3214); the vibration editor's Save gate is hand-rolled (`ve_recompute_save` 7245: trim, empty, taken, a DB error counted as "not taken") and Save doesn't re-check (#423). Bell rename checks the whole library per keystroke (4104), where the others use an indexed `is_*_name_taken_from_db`.
-- Fix: one Slint name dialog and a Rust `NameTarget` enum carrying the id; one `taken(target, name)`, one changed and one confirm handler, `validate` everywhere; core `is_bell_sound_name_taken`. The Android side of #358. Related: #358, #374, #355.
 
 #### #416 Previews
 - Where: the pattern and bell preview toggles (7701-7772, 7773-7833) run the same `PreviewToggle` steps by hand (request, stop and start, a failure notice, a generation-guarded revert); `if dur_ms > 0` (7746) can't be false there; the guided preview stop is written three times (5762-5770, 5833-5839, `stop_all_previews` 10359), the bell delete stops the bell preview inline (6916-6923) while the pattern delete calls `stop_all_previews`; `VOLUME_PREVIEW_GEN` is a second hand counter next to `VE_PREVIEW_GEN`; the editor preview and the chooser preview each do `haptics::cancel`, `build_master_envelope`, `vibrate_waveform` and a revert timer (7665-7695, 7703-7745).
@@ -990,10 +972,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Where: open, seed non-audio rows, seed the bundled bells, `finalize_session_in_progress` with its Undo toast, `remove_orphan_files` and the log lines are written in gtk `application.rs:137-197` with `db/mod.rs:405-420` and android `ui.rs:10479-10584`. They drift: a failed seed fails the whole open on Linux and is only logged on Android (#490); the seed order differs.
 - Fix: core `open_for_app(path, sounds_dir, guided_dir, bundled) -> Result<Opened { db, recovered }, DbOpenFailureKey>`; the orphan sweep then has one place to move after the first frame. Related: #419, #336, #440, #228, #85.
 
-#### #486 Name checks inside the write
-- Where: before every create or rename both apps trim, `validate`, and check again on confirm (gtk `labels.rs:279-281, 338-340`, android `ui.rs:6126-6133` and #415's sites), while core's `insert_label`, `update_label`, `insert_preset` and `rename_*` take untrimmed or empty names; each app fetches `default_starred_on_save()` and passes it to `insert_preset` (gtk `presets.rs:187-189`, android `ui.rs:6138-6140`).
-- Fix: core create and rename trim and return a typed `NameError` (empty, taken); `create_user_preset(name, mode, json)` applies the starred default. One name dialog (#358, #415) then holds no rule. Related: #374.
-
 #### #487 Smaller ones
 - Android builds the lead-in noise for every bell (`lead_in()`, `ui.rs:10376-10379`: DB lock, up to about 480k samples, a 1 MB JNI copy, `audio.rs:147, 175`), but Kotlin uses it only on Bluetooth (`MeditateAudio.kt:265`); GTK checks the route first and caches one WAV per length (`sound.rs:395-420`). Pass it only on a Bluetooth route, or the length and let Kotlin cache. Related: #303.
 - The export file name: gtk `meditate-backup-%Y-%m-%d_%H%M%S.csv` (`data_io.rs:66-70`), android `meditate-sessions-{today}.csv` (`ui.rs:108`). One core `export_file_name(now)`.
@@ -1080,6 +1058,10 @@ Only together with other work in the same area; none has a bug behind it.
 - **#504, presets carry a real label uuid** (2026-11-10, /simplify of change writes-all-or-nothing): "label on, none picked" means "the mode's default", a rule now in `apply`, `retarget_label` and `resolve_label_for_mode`. Storing the default's uuid when a preset is saved (and once for stored presets) would leave one rule; changes stored presets, so it needs a migration and is the root fix for OPEN-ISSUES #498.
 - **#508, the widget built once per change** (2026-11-10, /simplify of change one-refresh-per-change): `refresh_guided_files` (android `ui.rs`) rebuilds the widget inside itself, so the pull can't combine `presets_changed` and `guided_files_changed` without building it twice and still writes the preset refresh out by hand (a third copy of what a preset change refreshes). Take `refresh_widget` out of `refresh_guided_files`, let the change helpers refresh lists only, and build the widget once at the end of each change; every `refresh_guided_files` caller (the Local star, the unstar, the moves) then calls it. Gain: one list of what a preset change refreshes.
 - **#510, one seeded opener in core** (2026-11-11, /simplify of change one-database-type-linux): GTK `db::open` (`meditate-gtk/src/db/mod.rs`) and Android `ui.rs` (~10302) each create the folder, call core's `Database::open`, seed the bells from their own path table and then `seed_all_non_audio`; a mkdir failure is squeezed into `DbError::Decode`. A core `Database::open_seeded(path, bells)` that creates the folder (an `Io` variant) and seeds would remove both copies and the GTK source test `the_app_opens_its_database_with_the_bundled_bells`. Related: #410 (a core create-label that returns the `Label`, also from this /simplify).
+- **#512, one naming target in core** (2026-11-11, /simplify of change one-name-dialog): Android's `NameTarget` is matched four times: `kind`, `taken`, the create-or-rename choice in `open_name_dialog`, and the write in `name_dialog_confirm`. GTK pairs `taken_in(..)` with a save closure at each of its eight call sites. A core enum (`Preset(Option<uuid>)`, `Label(Option<id>)`, `Guided(uuid)`, `Bell(uuid)`, `Import(ImportKind)`) with `is_taken(db, name)`, `is_rename()` and `write(db, name)` would leave the apps only the refresh after a save. `Import(u8)` (0 guided, 1 bell) and its `if kind == 1` tags would become a real enum. The `guided_import_kind` Cell can't simply go, since it also remembers the kind across the file picker. Related: #415, #486.
+- **#513, a pending import in core** (2026-11-11, /simplify of change one-name-dialog): "a converted file whose store failed is kept for the next Save and deleted on Cancel" is written in GTK guided, GTK sounds (both through `name_dialog::pending_import`) and Android (`guided_import_converted`). A core `PendingImport { uuid, path, kind, secs/mime }` with `store(db, name)` and `discard()` would make it one rule, and the two GTK import dialogs could become one. Related: #355, #372.
+- **#514, the GTK name dialog's own Save button** (2026-11-11, /simplify of change one-name-dialog): `name_dialog` keeps a failed save open with `can-close` false, a close-attempt idle and two flags (`answered`, `closing`), which depends on libadwaita's signal order (pinned by its two tests). A Save button inside the dialog, as the import dialogs have, would let responses close normally. Open question: Enter and the default-response styling must be rebuilt.
+- **#515, the pattern editors on the shared name field** (2026-11-11, /simplify of change one-name-dialog): GTK `vibration_editor.rs` `gate_name` builds a fresh `NameField` per keystroke and draws its own hint label, because its Name is an `AdwEntryRow`, not `NameRow`'s `gtk::Entry`. Android's `ve_recompute_save` does the same, and its save failure builds a throwaway field. Keeping one `NameField` per editor (GTK: `NameRow` over an existing editable) removes both copies. Also Slint's `name-dialog-taken`/`name-dialog-failed` pair could be one `NameNote` property.
 - **R12, one blob routine for sounds and guided files** (the runner half moved to core in batch F): about -90 in the orchestrator; the remote paths must stay byte-identical.
 
 ## Considered and rejected

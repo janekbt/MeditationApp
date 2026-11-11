@@ -209,7 +209,7 @@ fn preset_config_round_trips_through_db_and_drives_a_session() {
 
     // Author a label the preset will reference, then build a
     // PresetConfig pinned to it.
-    let label_rowid = db.insert_label("Mindful").expect("label");
+    let label_rowid = db.insert_label("Mindful").expect("label").id;
     let label_uuid = list_labels_from_db(&db)
         .unwrap()
         .into_iter()
@@ -294,8 +294,8 @@ fn session_filter_returns_correct_subsets_for_label_notes_and_pagination() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let (db, _) = open_test_db(&tempdir, "filter");
 
-    let work = db.insert_label("Work").expect("label work");
-    let home = db.insert_label("Home").expect("label home");
+    let work = db.insert_label("Work").expect("label work").id;
+    let home = db.insert_label("Home").expect("label home").id;
 
     // 8 sessions: 3 work (1 with notes), 3 home (2 with notes), 2 unlabeled.
     let plan: &[(&str, Option<i64>, Option<&str>)] = &[
@@ -415,7 +415,7 @@ fn every_entity_table_survives_a_database_close_reopen_cycle() {
 
     // Author one row of each user-content entity kind. UUIDs and
     // identifying names captured for the reopen assertions.
-    let label_rowid = db.insert_label("Persistent").expect("label");
+    let label_rowid = db.insert_label("Persistent").expect("label").id;
     let label_uuid = list_labels_from_db(&db)
         .unwrap()
         .into_iter()

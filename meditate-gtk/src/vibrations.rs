@@ -7,10 +7,8 @@
 //! the chosen UUID.
 //!
 //! Mirrors `sounds.rs`'s shape: synthetic "Create custom pattern…"
-//! top row that drills into the editor, per-row Rename, per-row
-//! Delete (non-bundled only). The editor itself lands in the next
-//! phasing step — for now the create row presents a toast pointing
-//! at the prototype.
+//! top row that drills into the editor, per-row Edit (a copy for a
+//! bundled pattern), per-row Delete (non-bundled only).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -231,7 +229,7 @@ fn build_pattern_row(
         row.add_suffix(&check);
     }
 
-    // Play button comes before edit/rename/delete so it's the
+    // Play button comes before edit/delete so it's the
     // leftmost suffix — primary "test this on the motor" affordance.
     add_play_button(
         &row,
@@ -241,25 +239,20 @@ fn build_pattern_row(
         selection.preview.clone(),
     );
 
-    if pattern.is_bundled {
-        // Bundled rows stay permanent — the seed re-creates them on
-        // every open anyway, and an accidental tombstone could
-        // confuse a peer that hasn't seeded yet. Rename is the only
-        // mutation we let through; the curve, duration, and kind are
-        // the seed's identity.
-        add_rename_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
-    } else {
-        // Edit covers rename + curve + duration + chart kind, so we
-        // skip the standalone rename button here to avoid two
-        // overlapping affordances.
-        add_edit_button(
-            &row,
-            pattern,
-            app,
-            &selection.nav_view,
-            rebuilder.clone(),
-            &selection.toast_overlay,
-        );
+    // Edit covers rename + curve + duration + chart kind. A bundled
+    // row's Edit opens a copy (the editor decides), as on Android:
+    // bundled rows stay permanent, since the seed re-creates them on
+    // every open anyway and an accidental tombstone could confuse a
+    // peer that hasn't seeded yet.
+    add_edit_button(
+        &row,
+        pattern,
+        app,
+        &selection.nav_view,
+        rebuilder.clone(),
+        &selection.toast_overlay,
+    );
+    if !pattern.is_bundled {
         add_delete_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
     }
 
@@ -373,7 +366,8 @@ fn add_edit_button(
                 if let Some(rb) = rebuilder_for_saved.borrow().as_ref() {
                     rb();
                 }
-                if changed {
+                // A bundled pattern's copy is a new pattern: no Undo.
+                if changed && !before.is_bundled {
                     show_undo_edit_toast(
                         &toast_for_saved,
                         &app_for_saved,
@@ -385,36 +379,6 @@ fn add_edit_button(
         );
     });
     row.add_suffix(&edit_btn);
-}
-
-fn add_rename_button(
-    row: &adw::ActionRow,
-    pattern: &VibrationPattern,
-    app: &MeditateApplication,
-    rebuilder: crate::Rebuilder,
-    toast_overlay: &adw::ToastOverlay,
-) {
-    let rename_btn = gtk::Button::builder()
-        .icon_name("document-edit-symbolic")
-        .tooltip_text(gettext("Rename"))
-        .css_classes(["flat", "circular"])
-        .valign(gtk::Align::Center)
-        .build();
-    let app = app.clone();
-    let uuid = pattern.uuid.0.clone();
-    let row_clone = row.clone();
-    let toast_overlay = toast_overlay.clone();
-    rename_btn.connect_clicked(move |btn| {
-        present_rename_dialog(
-            btn,
-            &app,
-            &uuid,
-            &row_clone.title(),
-            rebuilder.clone(),
-            &toast_overlay,
-        );
-    });
-    row.add_suffix(&rename_btn);
 }
 
 fn add_delete_button(
@@ -497,99 +461,6 @@ fn show_undo_delete_toast(
     }, || {});
     // No slot: pattern offers queue, so each stays undoable.
     crate::db::post_toast(overlay, None, toast);
-}
-
-fn present_rename_dialog(
-    anchor: &gtk::Button,
-    app: &MeditateApplication,
-    uuid: &str,
-    current_name: &str,
-    rebuilder: crate::Rebuilder,
-    toast_overlay: &adw::ToastOverlay,
-) {
-    let entry = gtk::Entry::builder()
-        .text(current_name)
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Rename Pattern"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("rename")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("rename", &gettext("Rename"));
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-
-    // Live validation — Rename is gated on a non-empty trimmed name
-    // and no collision with another row's case-insensitive name.
-    // Renaming-to-self (same uuid, same name modulo case) is allowed
-    // so the user can normalise capitalisation without a false
-    // collision.
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let uuid = uuid.to_string();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| meditate_core::db::is_vibration_pattern_name_taken_from_db(db, name, &uuid))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false)
-            });
-            dialog.set_response_enabled("rename", validity.is_savable());
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
-    let app = app.clone();
-    let uuid = uuid.to_string();
-    let entry_for_response = entry.clone();
-    let toast_overlay = toast_overlay.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "rename" {
-            return;
-        }
-        let new_name = entry_for_response.text().to_string();
-        let trimmed = new_name.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        // Read the current row to round-trip duration / intensities /
-        // chart_kind through the update — those don't change on a
-        // rename, but update_vibration_pattern wants every field.
-        let before = app
-            .with_db(|db| meditate_core::db::find_vibration_pattern_by_uuid_from_db(db, &uuid))
-            .and_then(std::result::Result::ok)
-            .flatten();
-        // Core's `rename_vibration_pattern` handles the read-modify-
-        // write and returns false on a no-op rename so the shell can
-        // skip the undo toast.
-        let changed = match app.with_db(|db| db.rename_vibration_pattern(&uuid, trimmed)) {
-            Some(Ok(changed)) => changed,
-            failed => {
-                write_ok(&toast_overlay, "pattern.rename", failed, Failed::Save);
-                return;
-            }
-        };
-        if !changed {
-            return;
-        }
-        if let Some(rb) = rebuilder.borrow().as_ref() {
-            rb();
-        }
-        if let Some(before) = before {
-            show_undo_edit_toast(&toast_overlay, &app, before, rebuilder.clone());
-        }
-    });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
 }
 
 fn present_delete_dialog(

@@ -1597,13 +1597,6 @@ component ConfirmDialog inherits Rectangle {
     callback cancel();
     callback confirm();
 
-    // Enter in the dialog's field: what the confirm button does.
-    public function accept() {
-        if (root.confirm-enabled) {
-            root.confirm();
-        }
-    }
-
     background: MaterialPalette.scrim.with-alpha(0.32);
     ScrimArea {
         tapped => { root.cancel(); }
@@ -1630,7 +1623,7 @@ component ConfirmDialog inherits Rectangle {
                 color: MaterialPalette.on-surface;
                 wrap: word-wrap;
             }
-            // A name dialog's field, or Delete Sound's name.
+            // Delete Sound's name.
             @children
             if root.body != "" : Text {
                 text: root.body;
@@ -2414,26 +2407,32 @@ export enum LabelTarget {
     edit,
 }
 
+/// What the one name dialog names; Rust picks it on open.
+export enum NameKind {
+    preset-create,
+    preset-rename,
+    label-create,
+    label-rename,
+    guided-rename,
+    bell-rename,
+    guided-import,
+    bell-import,
+}
+
 /// The open dialog. Dialogs never stack, so one property holds it;
 /// Back and a session start close whichever it is.
 export enum Modal {
     none,
-    guided-import,
-    guided-rename,
+    name,
     goal,
     delete-all,
     recovery,
     label-conflict,
-    create-label,
-    rename-label,
     delete-label,
     duration,
     discard,
-    create-preset,
     override-preset,
-    rename-preset,
     delete-preset,
-    bell-rename,
     bell-delete,
     interval-bell-delete,
     pattern-delete,
@@ -2529,28 +2528,26 @@ export component MainWindow inherits Window {
     // pick to Opus-in-Ogg and inserts a starred guided_files row.
     // Mirrors GTK's `import_picked_file`.
     callback guided-import-tap();
-    in-out property <string> guided-import-text: "";
-    in property <bool> guided-import-valid: false;
-    // "Importing: <name> (m:ss)" body line (Rust-formatted).
-    in property <string> guided-import-subtitle: "";
-    // Worker running → swap Import for a "Converting…" label and
-    // freeze the form (Cancel stays live, like GTK).
-    in property <bool> guided-import-busy: false;
-    // Dialog heading — the same dialog + worker machinery serves
-    // both the guided import and the bell-sound import (BI); Rust
-    // sets the heading per flow.
-    in property <string> guided-import-title: @tr("Import Guided File");
     // Bell chooser's Import sound… row (BI).
     callback bell-import-tap();
-    // Transcode progress 0.0–1.0, Rust-driven from the Kotlin
-    // worker. Fills the Converting… button left→right.
-    in property <float> guided-import-progress: 0.0;
-    callback guided-import-changed(string);
-    callback guided-import-confirm();
-    // Cancel — aborts a running transcode (Rust flags the Kotlin
-    // worker) AND tears down dialog state. Mirrors GTK's Cancel
-    // staying live during the import.
-    callback guided-import-cancel();
+    // The one name dialog (Modal.name): what it names, the typed
+    // text, whether Save is on, and what the line under the field
+    // says (taken, or a failed save). An import shows "Importing:
+    // <name> (m:ss)" and, while the worker converts, freezes the form
+    // and swaps Import for its progress (0.0 to 1.0).
+    in property <NameKind> name-dialog-kind;
+    in-out property <string> name-dialog-text: "";
+    in property <bool> name-dialog-valid: false;
+    in property <bool> name-dialog-taken: false;
+    in property <bool> name-dialog-failed: false;
+    in property <string> name-dialog-subtitle: "";
+    in property <bool> name-dialog-busy: false;
+    in property <float> name-dialog-progress: 0.0;
+    callback name-dialog-changed(string);
+    callback name-dialog-confirm();
+    // Also aborts a running import (Rust flags the Kotlin worker),
+    // like GTK's Cancel staying live during the import.
+    callback name-dialog-cancel();
     // Starred-files list in Guided Setup (GM-F3). Rust-populated
     // from the starred `guided_files` rows; tapping a row selects
     // it (Current-file row updates; uuid recorded for save
@@ -2608,10 +2605,6 @@ export component MainWindow inherits Window {
     callback guided-manage-rename-tap(string, string);
     callback guided-manage-preview-tap(string);
     in property <string> guided-manage-preview-uuid: "";
-    in-out property <string> guided-rename-text: "";
-    in property <bool> guided-rename-valid: false;
-    callback guided-rename-changed(string);
-    callback guided-rename-confirm();
 
     // Preferences page (Phase 7 SY-2). Slide-in from the AppBar
     // sandwich button. The Sync group mirrors GTK's
@@ -2779,25 +2772,6 @@ export component MainWindow inherits Window {
     // `selected` flag on the row matching the active mode's
     // resolved label.
     in property <[LabelItem]> label-items: [];
-
-    // Create-label dialog state. The synthetic "Create new
-    // label…" row at the top of the chooser opens it; Rust
-    // revalidates on every `create-label-changed` keystroke (via
-    // `meditate_core::validate` against `is_label_name_taken_from_db`)
-    // and writes the result back to `create-label-valid` so the
-    // Create button's `enabled` reflects the live validity.
-    in-out property <string> create-label-text: "";
-    in property <bool> create-label-valid: false;
-
-    // Rename-label dialog state. Same shape as the Create
-    // dialog, but Rust passes the label's own id as `except_id`
-    // when revalidating so a user retyping the existing name
-    // (e.g., to fix capitalisation) doesn't trip the collision
-    // check. Mirrors `present_rename_label_dialog` in
-    // `meditate-gtk/src/labels.rs`.
-    in-out property <int> rename-label-id: 0;
-    in-out property <string> rename-label-text: "";
-    in property <bool> rename-label-valid: false;
 
     // Delete-label dialog state. Rust computes the impact body
     // ("This label is not used by any sessions." vs "N sessions
@@ -2983,14 +2957,6 @@ export component MainWindow inherits Window {
     callback preset-chooser-back();
     callback preset-chooser-create();
     callback preset-chooser-override(string, string);
-    // Create-preset dialog (modal). `create-preset-valid` is
-    // Rust-driven live validation (non-empty + no case-
-    // insensitive collision), mirroring GTK's
-    // `present_create_preset_dialog`.
-    in-out property <string> create-preset-text: "";
-    in property <bool> create-preset-valid: false;
-    callback create-preset-changed(string);
-    callback create-preset-confirm();
     // Override-confirm dialog (modal).
     in property <string> override-preset-name: "";
     callback override-preset-confirm();
@@ -3018,10 +2984,6 @@ export component MainWindow inherits Window {
     property <int> guided-starred-drag-index: -1;
     callback guided-manage-move(string, int);
     property <int> guided-manage-drag-index: -1;
-    in-out property <string> rename-preset-text: "";
-    in property <bool> rename-preset-valid: false;
-    callback rename-preset-changed(string);
-    callback rename-preset-confirm();
     in property <string> delete-preset-name: "";
     callback delete-preset-confirm();
     callback label-active-toggled(bool);
@@ -3101,14 +3063,10 @@ export component MainWindow inherits Window {
     callback bell-chooser-pick(string);
     callback bell-chooser-back();
     callback bell-preview-toggle(string);
-    // Rename (every row) + Delete (custom rows), mirroring GTK's
-    // sound chooser. Rename is live-validated like the guided one;
-    // Delete asks first, since bells using the sound lose their audio.
+    // Rename (every row, the name dialog) + Delete (custom rows),
+    // mirroring GTK's sound chooser. Delete asks first, since bells
+    // using the sound lose their audio.
     callback bell-rename-tap(string, string);
-    in-out property <string> bell-rename-text: "";
-    in property <bool> bell-rename-valid: false;
-    callback bell-rename-changed(string);
-    callback bell-rename-confirm();
     callback bell-delete-tap(string, string);
     in property <string> bell-delete-name: "";
     callback bell-delete-confirm();
@@ -3209,6 +3167,8 @@ export component MainWindow inherits Window {
     // Save gated on a non-empty, non-colliding name (Rust
     // re-validates via is_vibration_pattern_name_taken_from_db).
     in property <bool> ve-save-enabled: false;
+    // The typed name is another pattern's: said under the field.
+    in property <bool> ve-name-taken: false;
     // Duration in tenths of a second (5..=100 ⇒ 0.5..=10.0 s,
     // matching GTK's 0.1-step SpinRow) so it rides the integer
     // StepperRow. Rust converts to ms / seconds.
@@ -3295,11 +3255,7 @@ export component MainWindow inherits Window {
     callback prep-secs-committed();
 
     callback create-label-tap();
-    callback create-label-changed(string);
-    callback create-label-confirm();
     callback rename-label-tap(int);
-    callback rename-label-changed(string);
-    callback rename-label-confirm();
     callback delete-label-tap(int);
     callback delete-label-confirm();
     // Per-phase stepper. `index` is 0=In, 1=HoldIn, 2=Out, 3=HoldOut
@@ -7386,6 +7342,17 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                if root.ve-name-taken : Rectangle {
+                    height: ve-name-hint.preferred-height + 8px;
+                    ve-name-hint := Text {
+                        x: 16px;
+                        width: parent.width - 32px;
+                        text: @tr("This name is already in use");
+                        font-size: 12px;
+                        color: MaterialPalette.error;
+                        wrap: word-wrap;
+                    }
+                }
 
                 Rectangle {
                     height: 1px;
@@ -7831,51 +7798,6 @@ export component MainWindow inherits Window {
         } // Flickable (prc-scroll)
     }
 
-    // ── Create-label dialog (modal overlay) ─────────────────────
-    // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
-    // heading + single-line text entry + Cancel/Create buttons,
-    // with Create disabled until the live-validated name is
-    // non-empty AND not a case-insensitive collision against
-    // existing labels. The validation closure lives Rust-side and
-    // writes back to `create-label-valid` on every keystroke via
-    // the `create-label-changed` callback.
-    if root.modal == Modal.create-label : create-label-dialog := ConfirmDialog {
-        title: @tr("Create Label");
-        confirm-text: @tr("Create");
-        confirm-enabled: root.create-label-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.create-label-confirm(); }
-        TextField {
-            accepted => { create-label-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Label name");
-            text <=> root.create-label-text;
-            edited(text) => { root.create-label-changed(text); }
-        }
-    }
-
-    // ── Rename-label dialog (modal overlay) ─────────────────────
-    // Mirrors `meditate-gtk/src/labels.rs::present_rename_label_dialog`:
-    // single-line text entry pre-filled by Rust with the
-    // current name, Cancel + Rename buttons (Rename initially
-    // enabled since the unchanged name is a valid Ok). Rust
-    // tracks the row's id via `rename-label-id` so the live
-    // validator can pass it as `except_id`.
-    if root.modal == Modal.rename-label : rename-label-dialog := ConfirmDialog {
-        title: @tr("Rename Label");
-        confirm-text: @tr("Rename");
-        confirm-enabled: root.rename-label-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.rename-label-confirm(); }
-        TextField {
-            accepted => { rename-label-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Label name");
-            text <=> root.rename-label-text;
-            edited(text) => { root.rename-label-changed(text); }
-        }
-    }
-
     // ── Delete-label confirmation dialog (modal overlay) ────────
     // Mirrors `present_delete_label_dialog` in
     // `meditate-gtk/src/labels.rs:361`: heading + impact body +
@@ -7892,27 +7814,6 @@ export component MainWindow inherits Window {
         confirm => { root.delete-label-confirm(); }
     }
 
-    // ── Create-preset dialog (modal, P-4) ───────────────────────
-    // Mirrors GTK's `present_create_preset_dialog`: name entry +
-    // Cancel/Create, Create gated on Rust live validation
-    // (non-empty + no case-insensitive collision). Declared after
-    // every chooser (incl. the preset overlay) so it z-stacks on
-    // top — declare-overlays-last rule.
-    if root.modal == Modal.create-preset : create-preset-dialog := ConfirmDialog {
-        title: @tr("Create Preset");
-        confirm-text: @tr("Create");
-        confirm-enabled: root.create-preset-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.create-preset-confirm(); }
-        TextField {
-            accepted => { create-preset-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Preset name");
-            text <=> root.create-preset-text;
-            edited(text) => { root.create-preset-changed(text); }
-        }
-    }
-
     // ── Override-preset confirm dialog (modal, P-4) ──────────────
     // Mirrors GTK's `present_override_dialog`.
     if root.modal == Modal.override-preset : ConfirmDialog {
@@ -7921,25 +7822,6 @@ export component MainWindow inherits Window {
         confirm-text: @tr("Override");
         cancel => { root.modal = Modal.none; }
         confirm => { root.override-preset-confirm(); }
-    }
-
-    // ── Rename-preset dialog (modal, P-5) ───────────────────────
-    // Mirrors GTK's `present_rename_preset_dialog`: pre-filled
-    // name, Cancel/Rename, Rename gated on Rust live validation
-    // (own-uuid name exception so an unchanged name stays valid).
-    if root.modal == Modal.rename-preset : rename-preset-dialog := ConfirmDialog {
-        title: @tr("Rename Preset");
-        confirm-text: @tr("Rename");
-        confirm-enabled: root.rename-preset-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.rename-preset-confirm(); }
-        TextField {
-            accepted => { rename-preset-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Preset name");
-            text <=> root.rename-preset-text;
-            edited(text) => { root.rename-preset-changed(text); }
-        }
     }
 
     // ── Delete-preset confirm dialog (modal, P-5) ───────────────
@@ -8997,145 +8879,6 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Guided import name dialog (modal, GM-F2) ─────────────────
-    // Declared LAST → top of the z-stack (declare-overlays-last
-    // rule). `guided-import-valid` is Rust-driven live validation
-    // (non-empty + no case-insensitive guided_files collision).
-    // While the worker runs, the form freezes and Import becomes a
-    // "Converting…" label; Cancel stays live (mirrors GTK).
-    if root.modal == Modal.guided-import : Rectangle {
-        background: MaterialPalette.scrim.with-alpha(0.32);
-        ScrimArea {
-            tapped => {
-                if (!root.guided-import-busy) {
-                    root.guided-import-cancel();
-                    root.modal = Modal.none;
-                }
-            }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: KeyboardArea.card-y(self.height);
-            width: min(320px, root.width - 32px);
-            height: guided-import-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            guided-import-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: root.guided-import-title;
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: root.guided-import-subtitle;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                TextField {
-                    label: @tr("Track name");
-                    text <=> root.guided-import-text;
-                    enabled: !root.guided-import-busy;
-                    edited(text) => { root.guided-import-changed(text); }
-                    accepted => { if (root.guided-import-valid) { root.guided-import-confirm(); } }
-                    init => { self.select-all(); self.focus(); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.guided-import-cancel();
-                            root.modal = Modal.none;
-                        }
-                    }
-                    if !root.guided-import-busy : TextButton {
-                        text: @tr("Import");
-                        enabled: root.guided-import-valid;
-                        clicked => { root.guided-import-confirm(); }
-                    }
-                    // Converting… progress pill — a clipped
-                    // rounded track with a primary fill that
-                    // grows left→right with the transcode percent
-                    // (Rust-driven from the Kotlin worker). The
-                    // label is drawn twice: on-surface on the bare
-                    // track, and an on-primary copy clipped to the
-                    // fill so it stays readable as the fill passes
-                    // under it.
-                    if root.guided-import-busy : import-pill := Rectangle {
-                        width: 156px;
-                        height: 40px;
-                        border-radius: 20px;
-                        clip: true;
-                        background: MaterialPalette.surface-container-highest;
-
-                        Text {
-                            width: parent.width;
-                            height: parent.height;
-                            text: @tr("Converting… {}%", round(root.guided-import-progress * 100));
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 14px;
-                            color: MaterialPalette.on-surface;
-                        }
-                        Rectangle {
-                            x: 0;
-                            y: 0;
-                            height: parent.height;
-                            width: parent.width
-                                * clamp(root.guided-import-progress, 0.0, 1.0);
-                            background: MaterialPalette.primary;
-                            clip: true;
-
-                            Text {
-                                x: 0;
-                                y: 0;
-                                width: import-pill.width;
-                                height: import-pill.height;
-                                text: @tr("Converting… {}%", round(root.guided-import-progress * 100));
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                font-size: 14px;
-                                color: MaterialPalette.on-primary;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Bell-sound rename + delete dialogs (modal) ─────────────
-    // Over the bell-sound chooser (declared after it). Mirror GTK's
-    // sounds.rs present_rename_dialog / present_delete_dialog.
-    if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {
-        title: @tr("Rename Sound");
-        confirm-text: @tr("Rename");
-        confirm-enabled: root.bell-rename-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.bell-rename-confirm(); }
-        TextField {
-            accepted => { bell-rename-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Name");
-            text <=> root.bell-rename-text;
-            edited(text) => { root.bell-rename-changed(text); }
-        }
-    }
-
     if root.modal == Modal.bell-delete : ConfirmDialog {
         title: @tr("Delete Sound?");
         body: @tr("Bells that reference this sound will lose their audio.");
@@ -9192,23 +8935,153 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Guided rename dialog (modal, GM-F4b) ─────────────────────
-    // Declared LAST → tops the z-stack over the Manage Files
-    // page. Live-validated (non-empty + no case-insensitive
-    // collision EXCEPting this row's own uuid, so an unchanged
-    // name stays valid). Mirrors GTK's `present_rename_dialog`.
-    if root.modal == Modal.guided-rename : guided-rename-dialog := ConfirmDialog {
-        title: @tr("Rename Guided File");
-        confirm-text: @tr("Rename");
-        confirm-enabled: root.guided-rename-valid;
-        cancel => { root.modal = Modal.none; }
-        confirm => { root.guided-rename-confirm(); }
-        TextField {
-            accepted => { guided-rename-dialog.accept(); }
-            init => { self.select-all(); self.focus(); }
-            label: @tr("Track name");
-            text <=> root.guided-rename-text;
-            edited(text) => { root.guided-rename-changed(text); }
+    // ── The one name dialog ─────────────────────────────────────
+    // Every create, rename and import naming, as GTK's
+    // `name_dialog.rs`. Rust opens it with its kind and text and
+    // answers each keystroke: Save is off while the name is empty or
+    // taken, and the line under the field says why, or that a save
+    // failed (the dialog stays open then, with the name). An import
+    // freezes the form while it converts; Cancel stays live. Declared
+    // after everything it covers (Slint z-order is declaration order).
+    if root.modal == Modal.name : name-dialog := Rectangle {
+        background: MaterialPalette.scrim.with-alpha(0.32);
+        // Enter in the field: what the confirm button does.
+        function accept() {
+            if (root.name-dialog-valid && !root.name-dialog-busy) {
+                root.name-dialog-confirm();
+            }
+        }
+        function cancel() {
+            root.name-dialog-cancel();
+            root.modal = Modal.none;
+        }
+        ScrimArea {
+            tapped => {
+                if (!root.name-dialog-busy) {
+                    name-dialog.cancel();
+                }
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: KeyboardArea.card-y(self.height);
+            width: min(320px, root.width - 32px);
+            height: name-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            name-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: root.name-dialog-kind == NameKind.preset-create ? @tr("Create Preset")
+                        : root.name-dialog-kind == NameKind.preset-rename ? @tr("Rename Preset")
+                        : root.name-dialog-kind == NameKind.label-create ? @tr("Create Label")
+                        : root.name-dialog-kind == NameKind.label-rename ? @tr("Rename Label")
+                        : root.name-dialog-kind == NameKind.guided-rename ? @tr("Rename Guided File")
+                        : root.name-dialog-kind == NameKind.bell-rename ? @tr("Rename Sound")
+                        : root.name-dialog-kind == NameKind.bell-import ? Tr.import-bell-title()
+                        : Tr.import-guided-title();
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                    wrap: word-wrap;
+                }
+                // "Importing: <name> (m:ss)" on an import.
+                if root.name-dialog-subtitle != "" : Text {
+                    text: root.name-dialog-subtitle;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    TextField {
+                        accepted => { name-dialog.accept(); }
+                        init => { self.select-all(); self.focus(); }
+                        label: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.preset-rename ? @tr("Preset name")
+                            : root.name-dialog-kind == NameKind.label-create || root.name-dialog-kind == NameKind.label-rename ? @tr("Label name")
+                            : root.name-dialog-kind == NameKind.guided-rename || root.name-dialog-kind == NameKind.guided-import ? @tr("Track name")
+                            : @tr("Name");
+                        text <=> root.name-dialog-text;
+                        enabled: !root.name-dialog-busy;
+                        edited(text) => { root.name-dialog-changed(text); }
+                    }
+                    if root.name-dialog-taken || root.name-dialog-failed : Text {
+                        text: root.name-dialog-taken ? @tr("This name is already in use") : Tr.save-failed();
+                        font-size: 12px;
+                        color: MaterialPalette.error;
+                        wrap: word-wrap;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => { name-dialog.cancel(); }
+                    }
+                    if !root.name-dialog-busy : ConfirmButton {
+                        text: root.name-dialog-kind == NameKind.preset-create || root.name-dialog-kind == NameKind.label-create ? @tr("Create")
+                            : root.name-dialog-kind == NameKind.guided-import || root.name-dialog-kind == NameKind.bell-import ? @tr("Import")
+                            : @tr("Rename");
+                        enabled: root.name-dialog-valid;
+                        clicked => { root.name-dialog-confirm(); }
+                    }
+                    // Converting… progress pill: a clipped rounded
+                    // track with a primary fill that grows with the
+                    // transcode percent (Rust-driven from the Kotlin
+                    // worker). The label is drawn twice: on-surface on
+                    // the bare track, and an on-primary copy clipped to
+                    // the fill so it stays readable as the fill passes.
+                    if root.name-dialog-busy : import-pill := Rectangle {
+                        width: 156px;
+                        height: 40px;
+                        border-radius: 20px;
+                        clip: true;
+                        background: MaterialPalette.surface-container-highest;
+
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: MaterialPalette.on-surface;
+                        }
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            height: parent.height;
+                            width: parent.width
+                                * clamp(root.name-dialog-progress, 0.0, 1.0);
+                            background: MaterialPalette.primary;
+                            clip: true;
+
+                            Text {
+                                x: 0;
+                                y: 0;
+                                width: import-pill.width;
+                                height: import-pill.height;
+                                text: @tr("Converting… {}%", round(root.name-dialog-progress * 100));
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 14px;
+                                color: MaterialPalette.on-primary;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     // ── Daily-goal entry dialog (ST) ─────────────────────────────

@@ -1235,3 +1235,6 @@ msgstr "实验性"
 
 msgid "Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off."
 msgstr "将手机屏幕朝下可暂停，屏幕朝上可继续。摇动手机会结束并保存会话。每个识别到的手势都会短暂振动。仅适用于坐姿或卧姿冥想：移动（例如行禅）会触发手势。"
+
+msgid "This name is already in use"
+msgstr "此名称已被使用"

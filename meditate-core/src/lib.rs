@@ -105,11 +105,6 @@ pub use diag::log;
 /// paths.
 pub use settings_keys::{format_bool, parse_bool, read_bool};
 
-/// Pre-flight validator for user-supplied names (labels, sounds,
-/// presets, vibration patterns, guided files). Same rules across
-/// every entity flow.
-pub use naming::validate;
-
 /// Sync error / WebDAV surface — heavily used by sync_runner and
 /// the recovery flows.
 pub use sync::{SyncError, SyncResult, WebDavError, WebDavResult};

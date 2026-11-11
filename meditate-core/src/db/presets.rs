@@ -97,21 +97,21 @@ pub fn find_preset_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Opti
     db.query_one(&format!("SELECT {COLUMNS} FROM presets WHERE uuid = ?1"), params![uuid_str], from_row)
 }
 impl Database {
-    /// Create a preset under a freshly-minted v4 UUID. Convenience
+    /// Create a preset under a freshly-minted v4 UUID, starred, with
+    /// its name trimmed. Convenience
     /// over `insert_preset_with_uuid` for the user-creates-from-Setup
     /// flow where the shell doesn't need a stable uuid up front.
     pub fn insert_preset(
         &self,
         name: &str,
         mode: SessionMode,
-        is_starred: bool,
         config_json: &str,
     ) -> Result<i64> {
         self.insert_preset_with_uuid(
             &mint_uuid(),
-            name,
+            crate::naming::clean(name)?,
             mode,
-            is_starred,
+            crate::preset_config::default_starred_on_save(),
             config_json,
         )
     }
@@ -208,6 +208,7 @@ impl Database {
     /// returns `DuplicatePreset` and writes nothing. A case variant
     /// of its own name is a rename.
     pub fn update_preset_name(&self, uuid_str: &str, name: &str) -> Result<()> {
+        let name = crate::naming::clean(name)?;
         self.edit_preset(uuid_str, |p| p.name = name.to_string())
     }
 
@@ -373,8 +374,8 @@ mod tests {
     }
 
     fn insert_basic_preset(db: &Database, name: &str, mode: SessionMode) -> i64 {
-        db.insert_preset(
-            name,
+        db.insert_preset_with_uuid(
+            &crate::db::mint_uuid(), name,
             mode,
             false,
             r#"{"placeholder":true}"#,
@@ -382,13 +383,18 @@ mod tests {
     }
 
     #[test]
+    fn a_new_preset_is_starred() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset("Sit", SessionMode::Timer, "{}").unwrap();
+        assert_eq!(list_starred_presets_for_mode_from_db(&db, SessionMode::Timer).unwrap().len(), 1);
+    }
+
+    #[test]
     fn insert_preset_round_trips_through_list() {
         let db = Database::open_in_memory().unwrap();
         let id = db.insert_preset(
             "Sitting",
-            SessionMode::Timer,
-            true,
-            r#"{"duration_secs":900}"#,
+            SessionMode::Timer, r#"{"duration_secs":900}"#,
         ).unwrap();
 
         let presets = list_presets_from_db(&db).unwrap();
@@ -410,9 +416,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let id = db.insert_preset(
             "Headspace Track 1",
-            SessionMode::Guided,
-            true,
-            r#"{"guided_file_uuid":"x"}"#,
+            SessionMode::Guided, r#"{"guided_file_uuid":"x"}"#,
         ).unwrap();
         let presets = list_presets_from_db(&db).unwrap();
         assert_eq!(presets.len(), 1);
@@ -455,11 +459,10 @@ mod tests {
     #[test]
     fn insert_preset_duplicate_name_returns_duplicate_preset() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_preset("Sitting", SessionMode::Timer, false, r#"{}"#).unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, r#"{}"#).unwrap();
         let r = db.insert_preset(
             "sitting",  // case-insensitive collision
             SessionMode::BoxBreath,
-            false,
             r#"{}"#,
         );
         assert!(
@@ -472,7 +475,7 @@ mod tests {
     #[test]
     fn insert_preset_emits_a_preset_insert_event() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_preset("Sitting", SessionMode::Timer, true, r#"{"dur":900}"#).unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, r#"{"dur":900}"#).unwrap();
         let events = db.pending_events().unwrap();
         let insert: Vec<_> = events.iter()
             .filter(|(_, e)| e.kind == "preset_insert")
@@ -541,10 +544,10 @@ mod tests {
     fn list_starred_presets_for_mode_returns_only_starred_in_mode() {
         let db = Database::open_in_memory().unwrap();
         // Mix: Timer starred + unstarred; BoxBreath starred + unstarred.
-        db.insert_preset("T-star", SessionMode::Timer, true, r#"{}"#).unwrap();
-        db.insert_preset("T-no", SessionMode::Timer, false, r#"{}"#).unwrap();
-        db.insert_preset("BB-star", SessionMode::BoxBreath, true, r#"{}"#).unwrap();
-        db.insert_preset("BB-no", SessionMode::BoxBreath, false, r#"{}"#).unwrap();
+        db.insert_preset("T-star", SessionMode::Timer, r#"{}"#).unwrap();
+        db.insert_preset_with_uuid(&crate::db::mint_uuid(), "T-no", SessionMode::Timer, false, r#"{}"#).unwrap();
+        db.insert_preset("BB-star", SessionMode::BoxBreath, r#"{}"#).unwrap();
+        db.insert_preset_with_uuid(&crate::db::mint_uuid(), "BB-no", SessionMode::BoxBreath, false, r#"{}"#).unwrap();
 
         let timer_starred: Vec<String> =
             list_starred_presets_for_mode_from_db(&db, SessionMode::Timer).unwrap()
@@ -870,7 +873,7 @@ mod tests {
 
     fn timer_presets(db: &Database, names: &[&str]) {
         for name in names {
-            db.insert_preset(name, SessionMode::Timer, true, "{}").unwrap();
+            db.insert_preset(name, SessionMode::Timer, "{}").unwrap();
         }
     }
 
@@ -886,7 +889,7 @@ mod tests {
     fn a_starred_preset_moved_on_setup_takes_its_place() {
         let db = Database::open_in_memory().unwrap();
         timer_presets(&db, &["A"]);
-        db.insert_preset("u", SessionMode::Timer, false, "{}").unwrap();
+        db.insert_preset_with_uuid(&crate::db::mint_uuid(), "u", SessionMode::Timer, false, "{}").unwrap();
         timer_presets(&db, &["B"]);
         let before = db.pending_events().unwrap().len();
         db.move_starred_preset(&uuid_of(&db, "A"), 0).unwrap();
@@ -903,7 +906,7 @@ mod tests {
     fn a_starred_preset_moved_down_on_setup_lands_last() {
         let db = Database::open_in_memory().unwrap();
         timer_presets(&db, &["A"]);
-        db.insert_preset("u", SessionMode::Timer, false, "{}").unwrap();
+        db.insert_preset_with_uuid(&crate::db::mint_uuid(), "u", SessionMode::Timer, false, "{}").unwrap();
         timer_presets(&db, &["B", "C"]);
         db.move_starred_preset(&uuid_of(&db, "A"), 2).unwrap();
         assert_eq!(starred_order(&db, SessionMode::Timer), ["B", "C", "A"]);
@@ -913,9 +916,9 @@ mod tests {
     fn a_moved_preset_takes_its_new_place() {
         let db = Database::open_in_memory().unwrap();
         timer_presets(&db, &["A"]);
-        db.insert_preset("X", SessionMode::BoxBreath, true, "{}").unwrap();
+        db.insert_preset("X", SessionMode::BoxBreath, "{}").unwrap();
         timer_presets(&db, &["B"]);
-        db.insert_preset("Y", SessionMode::BoxBreath, true, "{}").unwrap();
+        db.insert_preset("Y", SessionMode::BoxBreath, "{}").unwrap();
         timer_presets(&db, &["C"]);
         db.move_preset(&uuid_of(&db, "C"), 0).unwrap();
         assert_eq!(order(&db, SessionMode::Timer), ["C", "A", "B"]);
@@ -1148,7 +1151,7 @@ mod tests {
         let one = Database::open_in_memory().unwrap();
         let two = Database::open_in_memory().unwrap();
         for name in ["P", "Q"] {
-            one.insert_preset(name, SessionMode::BoxBreath, true, "{}").unwrap();
+            one.insert_preset(name, SessionMode::BoxBreath, "{}").unwrap();
         }
         // The bundled ids differ only in their last digits.
         one.insert_preset_with_uuid(crate::seeds::DEFAULT_BOX_BREATH_4444_UUID, "4-4-4-4", SessionMode::BoxBreath, true, "{}").unwrap();

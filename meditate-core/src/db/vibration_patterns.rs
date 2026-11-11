@@ -174,18 +174,11 @@ impl Database {
     ) -> Result<String> {
         let uuid_str = super::mint_uuid();
         self.insert_vibration_pattern_with_uuid(
-            &uuid_str, name, duration_ms, intensities, chart_kind, is_bundled,
+            &uuid_str, crate::naming::clean(name)?, duration_ms, intensities, chart_kind, is_bundled,
         )?;
         Ok(uuid_str)
     }
 
-
-    /// Rename a pattern. `Ok(false)` when the row doesn't exist or
-    /// already has that name (the shell skips its undo toast then);
-    /// `DuplicateVibrationPattern` if another row holds the name.
-    pub fn rename_vibration_pattern(&self, uuid_str: &str, new_name: &str) -> Result<bool> {
-        self.edit_vibration_pattern(uuid_str, |p| p.name = new_name.to_string())
-    }
 
     /// Update the four mutable fields on an existing pattern. Unknown
     /// uuids, and the values the pattern already has (points within
@@ -201,6 +194,7 @@ impl Database {
         intensities: &[f32],
         chart_kind: ChartKind,
     ) -> Result<bool> {
+        let name = crate::naming::clean(name)?;
         self.edit_vibration_pattern(uuid_str, |p| {
             p.name = name.to_string();
             p.duration_ms = duration_ms;
@@ -320,7 +314,7 @@ mod tests {
         db.insert_vibration_pattern_with_uuid(PAT, "Wave", 1000, &[0.3, 0.6], ChartKind::Line, false).unwrap();
         let other = db.insert_vibration_pattern("Tide", 1000, &[0.3, 0.6], ChartKind::Line, false).unwrap();
         let before = sent(&db);
-        assert_matches!(db.rename_vibration_pattern(&other, "WAVE"), Err(DbError::DuplicateVibrationPattern(_)));
+        assert_matches!(db.update_vibration_pattern(&other, "WAVE", 1000, &[0.3, 0.6], ChartKind::Line), Err(DbError::DuplicateVibrationPattern(_)));
         assert_eq!(sent(&db), before);
     }
 

@@ -630,7 +630,7 @@ mod tests {
         // back as a "(conflict)" copy, and restored rows could wipe
         // the guided file shown under a session.
         let db = fresh_db();
-        let morning = db.find_or_create_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         let originals = [
             Session {
                 start_iso: unix_to_local_iso(1_712_000_000),

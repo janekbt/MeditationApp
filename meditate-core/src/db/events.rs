@@ -920,7 +920,7 @@ mod tests {
     #[test]
     fn a_committed_write_reports_the_screens_it_touches() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Yoga").unwrap();
+        let id = db.insert_label("Yoga").unwrap().id;
         db.take_committed();
         db.update_label(id, "Zen").unwrap();
         let label = Refresh { log: true, stats: true, setup: true, labels: true, guided: false };
@@ -1222,7 +1222,7 @@ mod tests {
         // survive untouched — only the events table changes.
         let db = Database::open_in_memory().unwrap();
         db.append_event(&sample_event(1)).unwrap();
-        let label_id = db.insert_label("focus").unwrap();
+        let label_id = db.insert_label("focus").unwrap().id;
         db.set_setting("k", "v").unwrap();
         db.record_known_remote(Known::Files, "a").unwrap();
         let labels_before = crate::db::list_labels_from_db(&db).unwrap().len();
@@ -1260,7 +1260,7 @@ mod tests {
         }).unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, crate::bells::BellTime::new(5, crate::bells::TimeUnit::Min), crate::bells::BellTime::ZERO, crate::bells::BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
-        db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, r#"{}"#).unwrap();
         db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();
         db.insert_vibration_pattern("Custom Pulse", 200, &[1.0, 0.0], ChartKind::Bar, false).unwrap();
         db.insert_bell_sound("Bundled", "/p/b.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
@@ -2008,7 +2008,7 @@ mod tests {
         use crate::bells::{BellTime, TimeUnit};
         let a = Database::open_in_memory().unwrap();
         a.seed_box_breath_phases().unwrap();
-        let label = a.insert_label("Walk").unwrap();
+        let label = a.insert_label("Walk").unwrap().id;
         let preset = "a0000000-0000-4000-8000-00000000000a";
         a.insert_preset_with_uuid(preset, "Calm", SessionMode::Timer, false, r#"{"a":1}"#).unwrap();
         a.update_preset_name(preset, "Quiet").unwrap();
@@ -2023,7 +2023,7 @@ mod tests {
         a.set_box_breath_phase(BoxBreathPhaseId::HoldIn, true, SignalMode::Vibration,
             BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, BellVolume::from_percent(70.0)).unwrap();
         let pattern = a.insert_vibration_pattern("Wave", 1200, &[0.25, 0.5, 1.0], ChartKind::Bar, false).unwrap();
-        a.rename_vibration_pattern(&pattern, "Tide").unwrap();
+        a.update_vibration_pattern(&pattern, "Tide", 1200, &[0.25, 0.5, 1.0], ChartKind::Bar).unwrap();
         let file = "e0000000-0000-4000-8000-00000000000e";
         a.insert_guided_file_with_uuid(file, "Body Scan", "a.ogg", 600, false).unwrap();
         a.rename_guided_file(file, "Scan").unwrap();

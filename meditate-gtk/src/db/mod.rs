@@ -43,13 +43,7 @@ pub fn write_ok<T, E: std::fmt::Debug + 'static>(
 
 /// "«X» is already taken" when the write failed on a name clash.
 fn clash_text(err: &dyn std::any::Any) -> Option<String> {
-    let name = match err.downcast_ref::<DbError>()? {
-        DbError::DuplicateLabel(n)
-        | DbError::DuplicatePreset(n)
-        | DbError::DuplicateGuidedFile(n)
-        | DbError::DuplicateVibrationPattern(n) => n,
-        _ => return None,
-    };
+    let name = err.downcast_ref::<DbError>()?.taken_name()?;
     Some(gettext("«{name}» is already taken").replace("{name}", name))
 }
 
@@ -417,6 +411,7 @@ mod tests {
             E::DuplicatePreset("Zen".into()),
             E::DuplicateGuidedFile("Zen".into()),
             E::DuplicateVibrationPattern("Zen".into()),
+            E::DuplicateBellSound("Zen".into()),
         ] {
             assert!(clash_text(&err).is_some_and(|t| t.contains("Zen")), "{err:?}");
         }

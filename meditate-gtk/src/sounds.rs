@@ -17,6 +17,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{write_ok, Failed, BellSound, BellSoundCategory};
 use crate::i18n::gettext;
+use crate::name_dialog::{name_dialog, taken_in, NameRow};
 use meditate_core::sound::AudioFileError;
 
 /// Which sound is currently previewing + the play-button widget
@@ -448,6 +449,7 @@ pub(crate) fn audio_file_filter() -> gtk::FileFilter {
     filter
 }
 
+
 fn present_import_confirm_dialog(
     anchor: &adw::ActionRow,
     app: &MeditateApplication,
@@ -462,21 +464,6 @@ fn present_import_confirm_dialog(
         .unwrap_or("")
         .to_string();
 
-    let entry = gtk::Entry::builder()
-        .text(&stem)
-        .build();
-
-    // Inline form-error label hidden by default. Shown when the
-    // user types a name that collides with an existing bell-sound,
-    // so the greyed-out Import button has a visible reason next
-    // to it (tooltips don't reach touch users on the Librem).
-    let collision_label = gtk::Label::builder()
-        .label(gettext("This name is already in use"))
-        .css_classes(["error", "caption"])
-        .halign(gtk::Align::Start)
-        .visible(false)
-        .build();
-
     // Import is a custom button (not an AdwAlertDialog response) so
     // the dialog stays open while the worker thread transcodes —
     // responses auto-dismiss on dispatch and can't host a "loading"
@@ -489,24 +476,28 @@ fn present_import_confirm_dialog(
         .hexpand(true)
         .build();
 
-    // Two-level box: tight gap (4px) between entry and inline
-    // error label so they read as one form field; wider gap (18px)
-    // between the form and Import so import_btn↔Cancel and
-    // entry↔import_btn feel symmetric (Cancel sits in AdwAlertDialog's
-    // own response row below extra_child, separated by the dialog's
-    // internal padding which is in the same range).
-    let form_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(4)
-        .build();
-    form_box.append(&entry);
-    form_box.append(&collision_label);
+    // The shared name row: its hint says why Import is off, next to
+    // the greyed button (tooltips don't reach touch users on the
+    // Librem). One name set over both categories.
+    let btn_for_row = import_btn.downgrade();
+    let row = NameRow::new(
+        &stem,
+        taken_in(app, |db, name| meditate_core::db::is_bell_sound_name_taken_from_db(db, name, "")),
+        move |savable| {
+            if let Some(btn) = btn_for_row.upgrade() {
+                btn.set_sensitive(savable);
+            }
+        },
+    );
 
+    // Wider gap (18px) between the form and Import so
+    // import_btn↔Cancel and entry↔import_btn feel symmetric (Cancel
+    // sits in AdwAlertDialog's own response row below extra_child).
     let extra_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(18)
         .build();
-    extra_box.append(&form_box);
+    extra_box.append(&row.widget);
     extra_box.append(&import_btn);
 
     let dialog = adw::AlertDialog::builder()
@@ -518,56 +509,54 @@ fn present_import_confirm_dialog(
         .build();
     dialog.add_response("cancel", &gettext("Cancel"));
 
-    // Live validation — name not empty, no collision with existing
-    // bell-sound names (case-insensitive). Same shape the rename
-    // dialog uses, plus the collision_label appears next to a
-    // greyed Import so the user sees *why* it isn't clickable.
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let import_btn = import_btn.clone();
-        let collision_label = collision_label.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let library = app
-                .with_db(super::db::Database::list_bell_sounds)
-                .and_then(std::result::Result::ok)
-                .unwrap_or_default();
-            let collision = meditate_core::sound::name_collides(trimmed, &library);
-            let valid = !trimmed.is_empty() && !collision;
-            import_btn.set_sensitive(valid);
-            // Only show the collision message when the user has
-            // actually typed something. For an empty entry the
-            // greyed button is intuitive on its own — flagging
-            // "name in use" against a blank field would mislead.
-            collision_label.set_visible(!trimmed.is_empty() && collision);
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
     // Enter on the entry triggers Import (replaces the
     // activates_default behavior we lost when Import left the
     // response row).
     let import_btn_for_enter = import_btn.clone();
-    entry.connect_activate(move |_| {
+    row.entry.connect_activate(move |_| {
         if import_btn_for_enter.is_sensitive() {
             import_btn_for_enter.emit_clicked();
         }
     });
 
-    let app_for_click = app.clone();
+    // (uuid, mime) of a converted file whose store failed.
+    let converted: crate::name_dialog::PendingImport<(String, &'static str)> = crate::name_dialog::pending_import(&dialog);
+
+    // Store the converted file under the typed name: the dialog closes
+    // with it, or stays with the name and says why (#428).
+    let store: Rc<dyn Fn(String, std::path::PathBuf, &'static str)> = {
+        let app = app.clone();
+        let dialog = dialog.downgrade();
+        let row = row.clone();
+        let import_btn = import_btn.clone();
+        let converted = converted.clone();
+        Rc::new(move |uuid, path, mime| {
+            let Some(dialog) = dialog.upgrade() else { return };
+            let stored = app.with_db(|db| {
+                db.import_bell_sound(&uuid, &row.name(), &path.to_string_lossy(), mime, category).map(drop)
+            });
+            if matches!(stored, Some(Ok(()))) {
+                dialog.force_close();
+                on_imported();
+                return;
+            }
+            dialog.set_can_close(true);
+            dialog.set_response_enabled("cancel", true);
+            row.import_failed(&import_btn, "sound.import", stored);
+            *converted.borrow_mut() = Some(((uuid, mime), path));
+        })
+    };
+
     let source_for_click = source_path.to_path_buf();
-    let entry_for_click = entry.clone();
-    let dialog_for_click = dialog.clone();
+    let row_for_click = row.clone();
+    let dialog_for_click = dialog.downgrade();
     let anchor_for_click = anchor.clone();
-    let on_imported_for_click = on_imported.clone();
     import_btn.connect_clicked(move |btn| {
-        let name = entry_for_click.text().to_string();
-        let trimmed = name.trim().to_string();
-        if trimmed.is_empty() {
+        let Some(dialog) = dialog_for_click.upgrade() else { return };
+        // Converted already, its store failed: store it again.
+        let pending = converted.borrow_mut().take();
+        if let Some(((uuid, mime), path)) = pending {
+            store(uuid, path, mime);
             return;
         }
 
@@ -575,9 +564,9 @@ fn present_import_confirm_dialog(
         // entry frozen, button greyed and showing a spinner.
         // can_close=false suppresses Escape too. The only exit
         // path is the spawn_local closure's force_close().
-        dialog_for_click.set_can_close(false);
-        dialog_for_click.set_response_enabled("cancel", false);
-        entry_for_click.set_sensitive(false);
+        dialog.set_can_close(false);
+        dialog.set_response_enabled("cancel", false);
+        row_for_click.entry.set_sensitive(false);
         btn.set_sensitive(false);
 
         let spinner = adw::Spinner::new();
@@ -592,46 +581,18 @@ fn present_import_confirm_dialog(
         btn.set_child(Some(&busy_box));
 
         // Off-thread: copy or transcode the file. !Send GTK widgets
-        // (app handle, dialog, anchor, on_imported callback) stay
-        // on the main thread inside the spawn_local closure; only
-        // the source PathBuf crosses into spawn_blocking.
-        let app = app_for_click.clone();
+        // stay on the main thread inside the spawn_local closure;
+        // only the source PathBuf crosses into spawn_blocking.
         let source = source_for_click.clone();
-        let dialog = dialog_for_click.clone();
         let anchor = anchor_for_click.clone();
-        let on_imported = on_imported_for_click.clone();
-        let trimmed_for_done = trimmed.clone();
+        let store = store.clone();
         glib::MainContext::default().spawn_local(async move {
             let import_result = gtk::gio::spawn_blocking(move || {
                 do_import_io(&source)
             }).await;
 
             match import_result {
-                Ok(Ok((new_uuid, dest_path, mime))) => {
-                    let dest_str = dest_path.to_string_lossy().to_string();
-                    let mut insert_err: Option<String> = None;
-                    let wrote = app.with_db(|db| {
-                        if let Err(e) = db.insert_bell_sound_with_uuid(
-                            &new_uuid,
-                            &trimmed_for_done,
-                            &dest_str,
-                            false,
-                            mime,
-                            category,
-                        ) {
-                            insert_err = Some(e.to_string());
-                        }
-                    });
-                    if wrote.is_none() {
-                        insert_err = Some(gettext("Save failed"));
-                    }
-                    if let Some(msg) = insert_err {
-                        let _ = std::fs::remove_file(&dest_path);
-                        crate::db::show_toast(&anchor, gettext("Import failed: {error}").replace("{error}", &msg));
-                    } else {
-                        on_imported();
-                    }
-                }
+                Ok(Ok((new_uuid, dest_path, mime))) => return store(new_uuid, dest_path, mime),
                 Ok(Err(AudioFileError::NoAudioTrack)) => {
                     crate::db::show_toast(&anchor, gettext("This file has no audio track"));
                 }
@@ -639,12 +600,13 @@ fn present_import_confirm_dialog(
                 Ok(Err(AudioFileError::Other(e))) => crate::db::show_toast(&anchor, gettext("Import failed: {error}").replace("{error}", &e)),
                 Err(_) => crate::db::show_toast(&anchor, gettext("Import worker died")),
             }
+            // A failed conversion used up its pick: a retry starts anew.
             dialog.force_close();
         });
     });
 
     dialog.present(Some(anchor));
-    entry.grab_focus();
+    row.entry.grab_focus();
 }
 
 /// Worker-thread half of the custom-sound import. Copies or
@@ -872,67 +834,20 @@ fn present_rename_dialog(
     current_name: &str,
     rebuilder: crate::Rebuilder,
 ) {
-    let entry = gtk::Entry::builder()
-        .text(current_name)
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Rename Sound"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("rename")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("rename", &gettext("Rename"));
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-
-    // Live validation — gate the Rename button on:
-    //   1. non-empty trimmed name
-    //   2. no other bell-sound row holds the same name (case-insensitive)
-    // The user's own current name is allowed (renaming-to-self is a no-op).
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let uuid = uuid.to_string();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                let library = app
-                    .with_db(super::db::Database::list_bell_sounds)
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or_default();
-                meditate_core::sound::name_collides_excluding(name, &library, &uuid)
-            });
-            dialog.set_response_enabled("rename", validity.is_savable());
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
+    // One name set over both categories; its own name is no clash.
+    let except = uuid.to_string();
+    let taken = taken_in(app, move |db, name| meditate_core::db::is_bell_sound_name_taken_from_db(db, name, &except));
     let app = app.clone();
     let uuid = uuid.to_string();
-    let entry_for_response = entry.clone();
-    let anchor_for_failure = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "rename" { return; }
-        let new_name = entry_for_response.text().to_string();
-        let trimmed = new_name.trim();
-        if trimmed.is_empty() {
-            return;
+    name_dialog(anchor, &gettext("Rename Sound"), current_name, "", &gettext("Rename"), taken, move |name| {
+        let renamed = app.with_db(|db| db.rename_bell_sound(&uuid, name));
+        if matches!(renamed, Some(Ok(()))) {
+            if let Some(rb) = rebuilder.borrow().as_ref() {
+                rb();
+            }
         }
-        let renamed = app.with_db(|db| db.rename_bell_sound(&uuid, trimmed));
-        write_ok(&anchor_for_failure, "sound.rename", renamed, Failed::Save);
-        if let Some(rb) = rebuilder.borrow().as_ref() {
-            rb();
-        }
+        renamed
     });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
 }
 
 fn present_delete_dialog(

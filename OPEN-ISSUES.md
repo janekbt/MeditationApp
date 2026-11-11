@@ -15,10 +15,10 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
-| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #423, #497 | what the user typed or saved goes missing |
+| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #497 | what the user typed or saved goes missing |
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
 | [ ] | EE. Failures nobody sees: core and Linux | #347, #366, #489, #251, #247, #344, #365 | the user thinks it worked |
-| [ ] | FF. Failures nobody sees: Android | #409, #410, #411, #425, #426, #427, #428, #448 | the user thinks it worked |
+| [ ] | FF. Failures nobody sees: Android | #409, #411, #425, #426, #427, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #475, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
@@ -78,9 +78,6 @@ Data the user typed or saved goes missing, moves, or exists twice.
 - Where: `insert_interval_bell`, `find_interval_bell_by_id`, `update_interval_bell` (8117-8137) are three writes without a transaction.
 - Scenario: the volume update fails (the sync holds the database): "Save failed", the editor stays open, but a bell at the default volume is stored; Save again adds a second one, and the bell rings twice. Against "multi-step writes are all-or-nothing".
 - Fix: #354's `insert_interval_bell(.., volume)`.
-
-### #423 Re-saving after a sync can store a duplicate pattern name
-- The vibration editor only re-checks the name when it is edited (`ve_recompute_save` 7245), Save doesn't check again (7597), and a DB error counts as "not taken". A same-named pattern synced in while the editor is open is saved as a duplicate. Fix with #415.
 
 ### #497 Opening a pattern on Android cuts its points to the length's limit
 - Where: android `ui.rs` `on_pattern_edit` (about 7378-7386) sets `ve-points-max` from `max_points_for_duration_s` (one point per 100 ms, `vibration.rs:249`) before `ve-points`; the points control clamps a stored count above it and `on_ve_points_changed` resamples. Linux keeps the stored points (`vibration_editor.rs:188`).
@@ -228,13 +225,12 @@ With #299: the daily goal is never capped at 1440 on write or read (`goal.rs:38-
 
 The Android half of EE.
 
+- Seen in change one-name-dialog's review (2026-11-11), there before it: the name dialog's import arm (`name_dialog_confirm`, android `ui.rs`) returns silently when the picked source, the Android app handle or its data path is missing. Each needs a message, as the conversion failure has.
+
 ### #409 A widget tap that can't start says nothing
 - Where: a deleted or not-yet-synced preset only logs "deep-link preset gone" (979), a mode mismatch logs "deep-link ignored"; a starred Local Folder file whose length isn't read yet selects the file and never starts (1058-1066: `ready` is false, and `poll_local_folder` 1571-1586 doesn't start when the length arrives).
 - Scenario: tap a widget row for a preset deleted on the other device, or a fresh local file: the app opens on Setup, nothing runs, no message. The starred-file "not found" path (1050) does tell.
 - Fix: a snackbar for each; start once the length arrives when the tap asked for it.
-
-### #410 Creating a label can report "Save failed" for a label that was saved
-- `create_label_in_db` (3405-3426) returns `None` when reading the uuid back fails after a successful insert; the caller shows "Save failed", and a retry is refused as a duplicate. The comment says failures are "just logged". Fix: `insert_label` returns the row (#401).
 
 ### #411 Tapping a Local Folder file can say "Save failed" for a read
 - `select_local_file` (1401) runs the lookup through `local_save`, so a read error shows "Save failed" and marks a running folder refresh as failed. Fix: a read path with its own message.
@@ -251,9 +247,6 @@ The Android half of EE.
 - Where: the Push My Data and Wipe Local prepare steps (9213-9232, 9253-9286), the daily goal write (9347-9356) and `let _ = clear_refused_uploads` (9734) only log.
 - Scenario: the user confirms Wipe Local twice, the prepare fails: the dialog closes, no sync starts, nothing says the data wasn't reset. A failed goal write leaves Preferences showing the new goal while Stats uses the old one. Same class as #382 and #340.
 - Fix: `write_ok`/`setting_saved` for each.
-
-### #428 Creating or renaming a label that fails closes the dialog and loses the typed name
-- `create_label` and `rename_label` close the dialog and the labels page even after "Save failed" (8220-8231, 8298), unlike every other name dialog here, which stays open for a retry.
 
 ### #448 A file pick whose provider fails the name query does nothing
 - `queryDisplayName` (`MeditateFilePickerActivity.kt:153`) runs outside the try that writes `err:`; the outer catch (145) only logs. An offline cloud file or a revoked grant: the user picks a file and nothing happens.

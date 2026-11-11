@@ -144,6 +144,12 @@ impl Database {
         })
     }
 
+    /// The user imports a file under `name`: starred, as a saved
+    /// preset is.
+    pub fn import_guided_file(&self, uuid_str: &str, name: &str, file_path: &str, duration_secs: u32) -> Result<i64> {
+        self.insert_guided_file_with_uuid(uuid_str, crate::naming::clean(name)?, file_path, duration_secs, true)
+    }
+
     /// Undo of a delete: the file comes back with its uuid and its
     /// creation time, so it takes its old place in the list.
     pub fn restore_guided_file(&self, file: &GuidedFile) -> Result<i64> {
@@ -203,6 +209,7 @@ impl Database {
     /// write nothing. Returns `DuplicateGuidedFile(name)` if another
     /// row already holds the new name (case-insensitive).
     pub fn rename_guided_file(&self, uuid_str: &str, name: &str) -> Result<()> {
+        let name = crate::naming::clean(name)?;
         self.edit_guided_file(uuid_str, |f| f.name = name.to_string())
     }
 

@@ -103,7 +103,7 @@ mod tests {
         // otherwise an account swap would silently destroy local state.
         let db = Database::open_in_memory().unwrap();
         let _ = db.append_event(&sample_event(1)).unwrap();
-        let label_id = db.insert_label("focus").unwrap();
+        let label_id = db.insert_label("focus").unwrap().id;
         db.record_known_remote(Known::Files, "a").unwrap();
         db.set_setting("k", "v").unwrap();
         let labels_before = crate::db::list_labels_from_db(&db).unwrap().len();

@@ -1310,7 +1310,7 @@ mod tests {
     fn saved_preset(db: &Database, bells: Vec<PresetIntervalBell>) -> PresetConfig {
         apply(db, &with_bells(bells), SessionMode::Timer).unwrap();
         let saved = snapshot(db, SessionMode::Timer, PresetTiming::default()).unwrap();
-        db.insert_preset("P", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.insert_preset("P", SessionMode::Timer, &saved.to_json()).unwrap();
         saved
     }
 
@@ -1361,13 +1361,13 @@ mod tests {
         bells_off.interval_bells.enabled = false;
         bells_off.interval_bells.bells.retain(|b| b.time.number() == 5);
         bells_off.interval_bells.bells[0].uuid = row_at(&db, 10).uuid;
-        db.insert_preset("Bells off", SessionMode::Timer, true, &bells_off.to_json()).unwrap();
+        db.insert_preset("Bells off", SessionMode::Timer, &bells_off.to_json()).unwrap();
         let breath = PresetConfig {
             timing: PresetTiming::BoxBreath { stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 300 },
             interval_bells: PresetIntervalBells { enabled: true, bells: vec![PresetIntervalBell { enabled: true, ..PresetIntervalBell::from(row_at(&db, 10)) }] },
             ..Default::default()
         };
-        db.insert_preset("Breath", SessionMode::BoxBreath, true, &breath.to_json()).unwrap();
+        db.insert_preset("Breath", SessionMode::BoxBreath, &breath.to_json()).unwrap();
         assert_eq!(edit_interval_bell(&db, &at(12, row_at(&db, 10))).unwrap(), BellEdit::InPlace);
         assert_eq!(bell_rows(&db), [(12, false), (5, true)]);
     }
@@ -1447,7 +1447,7 @@ mod tests {
         let a = saved_preset(&db, vec![bell(5, true)]);
         edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap();
         let b = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
-        db.insert_preset("B", SessionMode::Timer, true, &b.to_json()).unwrap();
+        db.insert_preset("B", SessionMode::Timer, &b.to_json()).unwrap();
         db.delete_interval_bell(row_at(&db, 7).uuid.as_str()).unwrap();
         apply(&db, &a, SessionMode::Timer).unwrap();
         edit_interval_bell(&db, &at(12, row_at(&db, 5))).unwrap();
@@ -1471,7 +1471,7 @@ mod tests {
         apply(&db, &with_bells(vec![bell(5, true)]), SessionMode::Timer).unwrap();
         let mut old = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         old.interval_bells.bells[0].uuid = Default::default();
-        db.insert_preset("Old", SessionMode::Timer, true, &old.to_json()).unwrap();
+        db.insert_preset("Old", SessionMode::Timer, &old.to_json()).unwrap();
         assert!(matches!(edit_interval_bell(&db, &at(7, row_at(&db, 5))).unwrap(), BellEdit::Copied(_)));
         assert_eq!(sorted_rows(&db), [(5, false), (7, true)]);
     }
@@ -1508,7 +1508,7 @@ mod tests {
         apply(&db, &with_bells(vec![bell(5, true), bell(10, true)]), SessionMode::Timer).unwrap();
         let mut saved = snapshot(&db, SessionMode::Timer, PresetTiming::default()).unwrap();
         saved.interval_bells.bells.reverse();
-        db.insert_preset("Two bells", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.insert_preset("Two bells", SessionMode::Timer, &saved.to_json()).unwrap();
         assert_eq!(active(&db, SessionMode::Timer).len(), 1, "saved in another order");
         db.insert_interval_bell(IntervalBellKind::Interval, BellTime::new(3, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, "s", "p", SignalMode::Sound).unwrap();
         let extra = db.list_interval_bells().unwrap().into_iter().find(|b| b.time == BellTime::new(3, TimeUnit::Min)).unwrap();
@@ -1542,11 +1542,11 @@ mod tests {
         apply(&db, &config, SessionMode::Timer).unwrap();
         db.set_setting("timer_session_secs", "1200").unwrap();
         let quiet = snapshot(&db, SessionMode::Timer, timing.clone()).unwrap();
-        db.insert_preset("Quiet", SessionMode::Timer, true, &quiet.to_json()).unwrap();
+        db.insert_preset("Quiet", SessionMode::Timer, &quiet.to_json()).unwrap();
         db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "false" } else { "true" }).unwrap();
         let other = snapshot(&db, SessionMode::Timer, timing.clone()).unwrap();
-        db.insert_preset("Other", SessionMode::Timer, true, &other.to_json()).unwrap();
-        db.insert_preset("Unstarred", SessionMode::Timer, false, &other.to_json()).unwrap();
+        db.insert_preset("Other", SessionMode::Timer, &other.to_json()).unwrap();
+        db.insert_preset_with_uuid(&crate::db::mint_uuid(), "Unstarred", SessionMode::Timer, false, &other.to_json()).unwrap();
         let names = || active_names(&db, SessionMode::Timer);
         assert_eq!(names(), ["Other"], "only starred ones show");
         db.set_setting("starting_bell_active", if quiet.starting_bell.enabled { "true" } else { "false" }).unwrap();
@@ -1566,8 +1566,8 @@ mod tests {
         plain.label = PresetLabel { enabled: false, uuid: None };
         let mut labelled = plain.clone();
         labelled.label = PresetLabel { enabled: true, uuid: Some("label-uuid".into()) };
-        db.insert_preset("A", SessionMode::Timer, true, &plain.to_json()).unwrap();
-        db.insert_preset("B", SessionMode::Timer, true, &labelled.to_json()).unwrap();
+        db.insert_preset("A", SessionMode::Timer, &plain.to_json()).unwrap();
+        db.insert_preset("B", SessionMode::Timer, &labelled.to_json()).unwrap();
         db.set_setting("timer_session_secs", "1200").unwrap();
         apply(&db, &labelled, SessionMode::Timer).unwrap();
         apply(&db, &plain, SessionMode::Timer).unwrap();
@@ -1584,12 +1584,12 @@ mod tests {
         apply(&db, &cfg_with_known_uuids(timing.clone(), &sound, &pattern), SessionMode::Timer).unwrap();
         db.set_setting("timer_session_secs", "1200").unwrap();
         let timer = snapshot(&db, SessionMode::Timer, timing).unwrap();
-        db.insert_preset("Sit", SessionMode::Timer, true, &timer.to_json()).unwrap();
+        db.insert_preset("Sit", SessionMode::Timer, &timer.to_json()).unwrap();
         let mut breath = snapshot(&db, SessionMode::BoxBreath, PresetTiming::BoxBreath {
             stopwatch: false, inhale_secs: 4, hold_full_secs: 4, exhale_secs: 4, hold_empty_secs: 4, duration_secs: 300,
         }).unwrap();
         breath.box_breath_cues.phases.clear();
-        db.insert_preset("Box", SessionMode::BoxBreath, true, &breath.to_json()).unwrap();
+        db.insert_preset("Box", SessionMode::BoxBreath, &breath.to_json()).unwrap();
         db.set_box_breath_phase(
             crate::db::BoxBreathPhaseId::In, false, SignalMode::Vibration, &sound, &pattern, Default::default(),
         )
@@ -1823,12 +1823,12 @@ mod tests {
         db.set_setting("timer_session_secs", "600").unwrap();
         db.set_setting("timer_stopwatch_active", "true").unwrap();
         let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: true, duration_secs: 600 }).unwrap();
-        db.insert_preset("Open", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.insert_preset("Open", SessionMode::Timer, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "true").unwrap();
         assert_eq!(active(&db, SessionMode::Timer).len(), 1, "hidden while counting up");
         db.set_setting("timer_stopwatch_active", "false").unwrap();
         let saved = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 }).unwrap();
-        db.insert_preset("Countdown", SessionMode::Timer, true, &saved.to_json()).unwrap();
+        db.insert_preset("Countdown", SessionMode::Timer, &saved.to_json()).unwrap();
         db.set_setting("timer_auto_finish", "false").unwrap();
         assert!(active(&db, SessionMode::Timer).is_empty(), "shown for a countdown, it counts");
     }
@@ -1935,7 +1935,7 @@ mod tests {
     #[test]
     fn session_summary_names_stopwatch_and_label() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Walking").unwrap();
+        let id = db.insert_label("Walking").unwrap().id;
         let uuid = crate::db::list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == id).unwrap().uuid;
         db.set_setting("timer_stopwatch_active", "true").unwrap();
         db.set_setting("label_active_timer", "true").unwrap();
@@ -2074,7 +2074,7 @@ mod tests {
             label: PresetLabel { enabled: true, uuid: None },
             ..timer_config()
         };
-        db.insert_preset("No label", SessionMode::Timer, true, &cfg.to_json()).unwrap();
+        db.insert_preset("No label", SessionMode::Timer, &cfg.to_json()).unwrap();
         apply(&db, &cfg, SessionMode::Timer).unwrap();
         assert_eq!(crate::labels::label_uuid_from_db(&db, SessionMode::Timer), None, "the mode default");
         assert_eq!(active(&db, SessionMode::Timer).len(), 1, "the preset shows as active");
@@ -2093,7 +2093,7 @@ mod tests {
             label: PresetLabel { enabled: true, uuid: None },
             ..timer_config()
         };
-        db.insert_preset("Default label", SessionMode::Timer, true, &cfg.to_json()).unwrap();
+        db.insert_preset("Default label", SessionMode::Timer, &cfg.to_json()).unwrap();
         db.merge_labels(default_id, sitting).unwrap();
         crate::labels::persist_uuid_for_mode(&db, SessionMode::Timer, "walking-uuid").unwrap();
         let stored = crate::db::list_presets_from_db(&db).unwrap().remove(0);
@@ -2128,8 +2128,8 @@ mod tests {
         // Another mode's "default", and a Timer preset with the label off.
         let breath = PresetConfig { label: PresetLabel { enabled: true, uuid: None }, ..PresetConfig::default() }.to_json();
         let off = PresetConfig { label: PresetLabel { enabled: false, uuid: None }, ..timer_config() }.to_json();
-        db.insert_preset("Breath", SessionMode::BoxBreath, true, &breath).unwrap();
-        db.insert_preset("Off", SessionMode::Timer, true, &off).unwrap();
+        db.insert_preset("Breath", SessionMode::BoxBreath, &breath).unwrap();
+        db.insert_preset("Off", SessionMode::Timer, &off).unwrap();
         db.merge_labels(default_id, sitting).unwrap();
         let after: Vec<String> = crate::db::list_presets_from_db(&db).unwrap().into_iter().map(|p| p.config_json).collect();
         assert!(after.contains(&breath) && after.contains(&off), "{after:?}");

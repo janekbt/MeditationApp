@@ -7,6 +7,10 @@ pub enum DbError {
     DuplicatePreset(String),
     DuplicateGuidedFile(String),
     DuplicateVibrationPattern(String),
+    DuplicateBellSound(String),
+    /// A user-facing create, rename or import got a name that is
+    /// empty once trimmed.
+    EmptyName,
     Sqlite(rusqlite::Error),
     /// A structural data problem at a boundary between SQLite and
     /// Rust types — bad JSON in a `recompute_*` payload, malformed
@@ -41,11 +45,33 @@ impl std::fmt::Display for DbError {
             Self::DuplicatePreset(name) => write!(f, "duplicate preset: {name}"),
             Self::DuplicateGuidedFile(name) => write!(f, "duplicate guided file: {name}"),
             Self::DuplicateVibrationPattern(name) => write!(f, "duplicate vibration pattern: {name}"),
+            Self::DuplicateBellSound(name) => write!(f, "duplicate bell sound: {name}"),
+            Self::EmptyName => write!(f, "empty name"),
             Self::SchemaVersionTooNew { db, build } =>
                 write!(f, "db schema_version={db} exceeds build schema_version={build}"),
             Self::DateOutOfRange => write!(f, "date out of range"),
             Self::Decode(s) => write!(f, "decode error: {s}"),
             Self::Sqlite(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl DbError {
+    /// Whether the write was refused because another item of its
+    /// kind holds the name.
+    pub fn is_name_taken(&self) -> bool {
+        self.taken_name().is_some()
+    }
+
+    /// The name another item of its kind holds, when that refused it.
+    pub fn taken_name(&self) -> Option<&str> {
+        match self {
+            Self::DuplicateLabel(n)
+            | Self::DuplicatePreset(n)
+            | Self::DuplicateGuidedFile(n)
+            | Self::DuplicateVibrationPattern(n)
+            | Self::DuplicateBellSound(n) => Some(n),
+            _ => None,
         }
     }
 }
@@ -159,6 +185,23 @@ mod tests {
             "duplicate vibration pattern: Pulse",
         );
         assert_eq!(DbError::DateOutOfRange.to_string(), "date out of range");
+        assert_eq!(DbError::EmptyName.to_string(), "empty name");
+        assert_eq!(DbError::DuplicateBellSound("Gong".into()).to_string(), "duplicate bell sound: Gong");
+    }
+
+    #[test]
+    fn only_the_duplicate_errors_say_the_name_is_taken() {
+        for taken in [
+            DbError::DuplicateLabel("a".into()),
+            DbError::DuplicatePreset("a".into()),
+            DbError::DuplicateGuidedFile("a".into()),
+            DbError::DuplicateVibrationPattern("a".into()),
+            DbError::DuplicateBellSound("a".into()),
+        ] {
+            assert!(taken.is_name_taken(), "{taken:?}");
+        }
+        assert!(!DbError::EmptyName.is_name_taken());
+        assert!(!DbError::Decode("x".into()).is_name_taken());
     }
 
     #[test]

@@ -1501,12 +1501,13 @@ mod tests {
         assert_eq!(slint.matches("y: KeyboardArea.card-y(self.height);").count(), 9, "every modal card");
         assert_eq!(slint.matches("y: (parent.height - self.height) / 2;").count(), 3, "only the volume slider's bars and thumb");
         // Enter confirms, while the button would.
-        assert!(slint.contains("public function accept() {\n        if (root.confirm-enabled) {\n            root.confirm();"));
-        assert_eq!(slint.matches("-dialog.accept(); }").count(), 6, "the six name dialogs");
+        assert!(slint.contains("function accept() {\n            if (root.name-dialog-valid && !root.name-dialog-busy) {\n                root.name-dialog-confirm();"));
+        assert_eq!(slint.matches(".accept(); }").count(), 1, "the one name dialog");
+        assert!(slint.contains("accepted => { name-dialog.accept(); }"));
         // The field is disabled while converting, as the button is gone then.
-        assert!(slint.contains("accepted => { if (root.guided-import-valid) { root.guided-import-confirm(); } }"));
+        assert!(slint.contains("enabled: !root.name-dialog-busy;"));
         assert!(slint.contains("accepted => { root.set-goal(); }"));
-        // Those eight fields take the focus as their dialog opens; a
+        // Those two fields take the focus as their dialog opens; a
         // pre-filled one selects its text, so typing replaces it (as GTK).
         // The field's own init: the next one after its anchor.
         let opens = |anchor: &str| {
@@ -1516,15 +1517,10 @@ mod tests {
         // Selected before it takes the focus, so the keyboard gets the
         // selection with the focus, in one message (empty fields select nothing).
         let line = "init => { self.select-all(); self.focus(); }";
-        for anchor in [
-            "create-label-dialog := ConfirmDialog {", "rename-label-dialog := ConfirmDialog {",
-            "create-preset-dialog := ConfirmDialog {", "rename-preset-dialog := ConfirmDialog {",
-            "bell-rename-dialog := ConfirmDialog {", "guided-rename-dialog := ConfirmDialog {",
-            "text <=> root.guided-import-text;", "text <=> root.goal-dialog-text;",
-        ] {
+        for anchor in ["accepted => { name-dialog.accept(); }", "text <=> root.goal-dialog-text;"] {
             assert!(opens(anchor).starts_with(line), "{anchor}");
         }
-        assert_eq!(slint.matches(line).count(), 8, "only these eight");
+        assert_eq!(slint.matches(line).count(), 2, "only these two");
         // Number fields: take the number, close the keyboard.
         assert_eq!(slint.matches("accepted => { self.clear-focus(); KeyboardArea.hide(); }").count(), 2, "spin box and stepper row");
         assert!(slint.contains("changed modal => {\n        if (root.modal == Modal.none) {\n            KeyboardArea.hide();"));
@@ -1700,7 +1696,7 @@ mod tests {
         assert!(back[first..].starts_with("if ui.get_modal() != Modal::None {\n                dismiss_modal(&ui);"));
         assert!(body("fn close_transient_overlays(").contains("dismiss_modal(ui);"));
         let dismiss = body("fn dismiss_modal(");
-        assert!(dismiss.contains("if ui.get_guided_import_busy() {\n            return;"));
+        assert!(dismiss.contains("if ui.get_name_dialog_busy() {\n            return;"));
         // A sync-raised conflict waits until no dialog is open.
         assert!(body("fn check_label_conflicts(").contains("if ui.get_modal() != Modal::None {\n        return;"));
     }
@@ -1745,8 +1741,12 @@ mod tests {
         let bell = body("ui.on_interval_editor_save(");
         assert!(bell.contains("write_ok("), "interval bell save reports");
         assert!(bell.contains("let original = editing_ib.borrow().clone();"), "the bell edit survives a failure");
-        for sig in ["ui.on_create_label_confirm(", "ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
-            assert!(body(sig).contains("show_notice("), "{sig} reports");
+        assert!(body("ui.on_delete_label_confirm(").contains("show_notice("), "label delete reports");
+        // Label create and rename report in the name dialog (#410).
+        let name = body("ui.on_name_dialog_confirm(");
+        for target in ["NameTarget::LabelCreate => {", "NameTarget::LabelRename(id) => {"] {
+            let arm = &name[name.find(target).expect(target)..];
+            assert!(arm[..arm.find("\n                }\n").unwrap()].contains("name_saved(&ui, \"labels."), "{target} reports");
         }
         let undo = body("ui.on_snackbar_undo_tap(");
         // The guided one reports by offering its Undo again.
@@ -1768,7 +1768,9 @@ mod tests {
             let at = lib.find(sig).unwrap();
             &lib[at..at + lib[at..].find("\n        });\n").unwrap()]
         };
-        let rename = body("ui.on_rename_label_confirm(");
+        let rename = body("ui.on_name_dialog_confirm(");
+        let rename = &rename[rename.find("NameTarget::LabelRename(id) => {").unwrap()..];
+        let rename = &rename[..rename.find("\n                }\n").unwrap()];
         assert!(rename.contains("reset_log_feed(") && rename.contains("refresh_after_label_change("), "the editor's name through refresh_label_users");
         let delete = body("ui.on_delete_label_confirm(");
         assert!(delete.contains("reset_log_feed(") && !delete.contains("if ui.get_filter_label_id() != filtered"));
@@ -2074,9 +2076,10 @@ mod tests {
         assert!(slint.contains("tapped(kind) => { running-note.release(); root.end-button-tap(kind); }"), "a running-page button lets go of the note");
     }
 
-    /// Confirm and name dialogs share one card (320 px, centred), so
-    /// widths and body alignment can't drift apart again. Only dialogs
-    /// with more than a field and two buttons are built by hand.
+    /// Confirm dialogs share one card (320 px, centred), so widths and
+    /// body alignment can't drift apart again; the one name dialog has
+    /// the same width. Only dialogs with more than a body and two
+    /// buttons are built by hand.
     #[test]
     fn simple_dialogs_share_one_card() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2084,8 +2087,10 @@ mod tests {
         let at = slint.find("component ConfirmDialog inherits Rectangle {").unwrap();
         let card = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(card.contains("width: min(320px, root.width - 32px);"));
-        assert!(card.contains("@children"), "name dialogs add their field");
-        assert!(card.contains("enabled: root.confirm-enabled;"), "a name dialog gates its button");
+        assert!(card.contains("@children"), "Delete Sound adds its name");
+        assert!(card.contains("enabled: root.confirm-enabled;"), "Import the Rest gates its button");
+        let name = &slint[slint.find("if root.modal == Modal.name : name-dialog := Rectangle {").unwrap()..];
+        assert!(name[..2000].contains("width: min(320px, root.width - 32px);"), "the name dialog's card too");
         assert_eq!(card.matches("horizontal-alignment: center;").count(), 2, "title and body centred");
         assert_eq!(slint.matches("min(340px").count(), 3, "only Recovery, the label conflict and the sync status, for their button rows");
 
@@ -2093,12 +2098,12 @@ mod tests {
             .match_indices("if root.modal == Modal.")
             .filter_map(|(i, _)| {
                 let line = &slint[i..i + slint[i..].find('\n').unwrap()];
-                line.ends_with(": Rectangle {").then(|| &line["if root.modal == Modal.".len()..line.find(" :").unwrap()])
+                line.ends_with(" Rectangle {").then(|| &line["if root.modal == Modal.".len()..line.find(" :").unwrap()])
             })
             .collect();
-        assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "sync-status", "label-conflict"]);
-        // Ten plain, six with an id for Enter in their field (#11).
-        assert_eq!(slint.matches(" ConfirmDialog {").count(), 16);
+        assert_eq!(by_hand, ["duration", "prep", "name", "goal", "recovery", "sync-status", "label-conflict"]);
+        // Every name dialog is the one by hand above (#415).
+        assert_eq!(slint.matches(" ConfirmDialog {").count(), 10);
     }
 
     #[test]
@@ -2720,9 +2725,9 @@ mod tests {
         assert!(!lib.contains("clear_import_"));
 
         assert!(guided.contains("-> bool {\n    match invoke_import("), "start_import reports a failure");
-        let confirm = body(&lib, "ui.on_guided_import_confirm(");
+        let confirm = &lib[lib.find("ui.on_name_dialog_confirm(").unwrap()..];
         let start = &confirm[confirm.find("if !guided::start_import(").expect("checks the start")..];
-        assert!(start[..400].contains("set_guided_import_busy(false)"), "no endless spinner");
+        assert!(start[..400].contains("set_name_dialog_busy(false)"), "no endless spinner");
         assert!(start[..400].contains("invoke_import_failed()"), "and the user hears why");
     }
 
@@ -3574,7 +3579,7 @@ mod tests {
 
         // Dialogs, modal over the chooser (declared after it).
         let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
-        for d in ["if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
+        for d in ["if root.modal == Modal.name : name-dialog := Rectangle {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
             assert!(slint.find(d).expect(d) > chooser, "{d}");
         }
         let del = slint.find("if root.modal == Modal.bell-delete : ConfirmDialog {").unwrap();
@@ -3582,18 +3587,18 @@ mod tests {
         assert!(del.contains("@tr(\"Delete Sound?\")"));
         assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
         assert!(del.contains("root.bell-delete-confirm();"));
-        let ren = slint.find("if root.modal == Modal.bell-rename : bell-rename-dialog := ConfirmDialog {").unwrap();
-        let ren = &slint[ren..ren + 2500];
-        assert!(ren.contains("@tr(\"Rename Sound\")"));
-        assert!(ren.contains("confirm-enabled: root.bell-rename-valid;"));
+        let ren = slint.find("if root.modal == Modal.name : name-dialog := Rectangle {").unwrap();
+        let ren = &slint[ren..ren + 7000];
+        assert!(ren.contains(": root.name-dialog-kind == NameKind.bell-rename ? @tr(\"Rename Sound\")"));
+        assert!(ren.contains("enabled: root.name-dialog-valid;"));
 
         // Rust: bundled rows are not deletable; rename validates with
-        // core's collision check (excluding the row itself); both
-        // writes go through core and refresh the chooser + Setup rows.
+        // core's check over both categories (excluding the row itself);
+        // both writes go through core and refresh the chooser + Setup rows.
         let populate = lib.find("fn populate_bell_chooser(").unwrap();
         assert!(lib[populate..populate + 1500].contains("deletable: !b.is_bundled,"));
-        assert!(lib.contains("meditate_core::sound::name_collides_excluding("));
-        for (handler, call) in [("ui.on_bell_rename_confirm(", "db.rename_bell_sound("),
+        assert!(lib.contains("Self::BellRename(uuid) => is_bell_sound_name_taken_from_db(&db, name, uuid),"));
+        for (handler, call) in [("NameTarget::BellRename(uuid) => {", "db.rename_bell_sound("),
                                 ("ui.on_bell_delete_confirm(", "db.delete_bell_sound(")] {
             let at = lib.find(handler).unwrap_or_else(|| panic!("{handler}"));
             let body = &lib[at..at + 3000];
@@ -3708,7 +3713,7 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("if !write_ok(&ui, \"preset.override\", written)").unwrap();
         assert!(lib[at..at + 120].contains("return;"));
-        assert!(lib.contains("write_ok(&ui, \"preset.save\", failed);"));
+        assert!(lib.contains("if name_saved(&ui, \"preset.save\", created) {"));
         assert!(!lib.contains("pending_save_snapshot.borrow_mut().take()"), "the snapshot stays for a retry");
     }
 
@@ -3756,15 +3761,19 @@ mod tests {
     #[test]
     fn a_failed_import_closes_its_dialog_and_says_so() {
         // A failed bell import only logged; a failed guided import's
-        // message sat under the dialog backdrop. Either way the dialog
-        // stayed open with its source used up, so Import did nothing.
+        // message sat under the dialog backdrop. A failed conversion
+        // used up its source, so its dialog closes and says why; a
+        // failed store keeps the dialog, the name and the converted
+        // file for the next Save (#428), and Cancel removes the file.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("let outcome = if kind == 1 {").unwrap();
-        let rest = &lib[at..at + 6000];
-        let close = rest.find("close_modal(&ui, Modal::GuidedImport);\n                            match outcome {").unwrap();
-        assert!(rest[close..].contains("invoke_import_failed()"));
-        assert_eq!(lib.matches("close_modal(&ui, Modal::GuidedImport);\n                            match outcome").count(), 1);
+        let at = lib.find("let tag = if kind == 1 { \"sound.import\" } else { \"guided\" };").unwrap();
+        let rest = &lib[at..at + 3000];
+        let failed = rest.find("Err(e) => {").unwrap();
+        assert!(rest[failed..].starts_with("Err(e) => {\n                                    meditate_core::log(tag, &format!(\"import failed: {e:?}\"));\n                                    NAME_DIALOG.set(None);\n                                    close_modal(&ui, Modal::Name);\n                                    show_notice(&ui, audio_file_error_text(&ui, &e), None, 4);"));
+        assert!(rest[..failed].contains("if !name_saved(&ui, tag, stored) {\n                                        *guided_import_converted_tick.borrow_mut() = Some((uuid, dest, secs));"));
+        let cancel = &lib[lib.find("ui.on_name_dialog_cancel(").unwrap()..];
+        assert!(cancel[..2000].contains("if let Some((_, dest, _)) = guided_import_converted.borrow_mut().take() {\n                let _ = std::fs::remove_file(dest);"));
     }
 
     #[test]
@@ -3826,15 +3835,15 @@ mod tests {
         let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(helper.contains("ui.set_edit_label_enabled(false);"));
         assert!(helper.contains("LabelTarget::Edit => picked(ui.get_edit_label_id()),"));
-        for handler in ["ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
+        for handler in ["NameTarget::LabelRename(id) => {", "ui.on_delete_label_confirm("] {
             let at = lib.find(handler).unwrap();
             let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
             assert!(body.contains("refresh_after_label_change(&ui, mode);"), "{handler}");
             assert!(body.contains("refresh_filter_label_items(&ui);"), "{handler}");
         }
-        let at = lib.find("ui.on_create_label_confirm(").unwrap();
+        let at = lib.find("NameTarget::LabelCreate => {").unwrap();
         let create = &lib[at..at + lib[at..].find("\n        });").unwrap()];
-        assert!(create.contains("ui.set_edit_label_id(id as i32);"));
+        assert!(create.contains("ui.set_edit_label_id(label.id as i32);"));
         let at = lib.find("fn refresh_filter_label_items(").unwrap();
         let filter = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(filter.contains("ui.set_filter_label_id(0);"));
@@ -5508,15 +5517,11 @@ mod tests {
         let code = ui_code();
         for (name, check) in [
             ("override_preset_confirm", "write_ok("),
-            ("rename_preset_confirm", "write_ok("),
             ("delete_preset_confirm", "delete_ok("),
-            ("guided_rename_confirm", "write_ok("),
             ("guided_manage_delete_tap", "delete_ok("),
-            ("bell_rename_confirm", "write_ok("),
             ("bell_delete_confirm", "delete_ok("),
             ("pattern_delete_confirm", "delete_ok("),
             ("guided_manage_star_tap", "write_ok("),
-            ("create_preset_confirm", "write_ok("),
             ("vibration_editor_save", "write_ok("),
             ("interval_bell_toggled", "write_ok("),
             ("interval_bell_delete", "delete_ok("),
@@ -5525,8 +5530,8 @@ mod tests {
             let gate = h.find(check).unwrap_or_else(|| panic!("{name}: the result decides"));
             assert!(!h.contains(".borrow_mut().take()"), "{name}: the dialog's item stays for the next try");
             assert!(!h.contains("lock_db() else { return; }"), "{name}: no database is a failure too");
-            if ["create_preset_confirm", "vibration_editor_save"].contains(&name) {
-                // These stay open for a retry, under the snackbar.
+            if name == "vibration_editor_save" {
+                // It stays open for a retry, under the snackbar.
                 let failed = &h[h.find("failed =>").unwrap_or_else(|| panic!("{name}: a failure arm"))..];
                 let arm = &failed[..failed.find("\n                    }").unwrap()];
                 assert!(!arm.contains("close_modal(") && !arm.contains("_page(false)"), "{name}: stays open on failure");
@@ -5540,6 +5545,26 @@ mod tests {
         // A preset deleted meanwhile by a sync still closes its dialog.
         let h = handler(&code, "delete_preset_confirm");
         assert!(h.find("close_modal(").unwrap() < h.find("find_preset_by_uuid(").unwrap());
+        // Every naming hands its write to the name dialog, which closes
+        // on success only and otherwise keeps the name (#428).
+        let h = handler(&code, "name_dialog_confirm");
+        assert_eq!(h.matches("name_saved(&ui,").count(), 8, "six targets, the import's second store and Create with no setup");
+        assert!(!h.contains("close_modal("), "the result decides");
+        assert!(!h.contains("lock_db() else { return; }"), "no database is a failure too");
+        let saved = ui_fn(&code, "fn name_saved(");
+        assert!(saved.contains("if closed {\n        NAME_DIALOG.set(None);\n        close_modal(ui, Modal::Name);"));
+        // Creates and imports check the opening name; only renames exempt it.
+        let open = ui_fn(&code, "fn open_name_dialog(");
+        assert!(open.contains("NameTarget::PresetCreate | NameTarget::LabelCreate | NameTarget::Import(_) => meditate_core::naming::NameField::new("));
+        assert!(open.contains("NameTarget::PresetRename(_) | NameTarget::LabelRename(_) | NameTarget::GuidedRename(_) | NameTarget::BellRename(_) => {\n            meditate_core::naming::NameField::renaming("));
+        // A Create with no setup to save fails out loud, not silently.
+        let h = handler(&code, "name_dialog_confirm");
+        assert!(h.contains("// No setup to save: fails like any write.\n                        name_saved(&ui, \"preset.save\", None);"));
+        // The pattern editor gates Save, and a name taken meanwhile, through core's field.
+        let gate = ui_fn(&code, "fn ve_recompute_save(");
+        assert!(gate.contains("NameField::new(") && gate.contains("ve_show_name("));
+        let h = handler(&code, "vibration_editor_save");
+        assert!(h.contains("e.is_name_taken()") && h.contains(".confirm(\"vibration.editor\", Some(Err(e)))"));
     }
 
     #[test]
@@ -5584,7 +5609,7 @@ mod tests {
         let at = code.find("fn refresh_after_label_change(").unwrap();
         let labels = &code[at..at + code[at..].find("\n}\n").unwrap()];
         assert!(labels.contains("presets_changed(ui, mode);"));
-        for name in ["bell_rename_confirm", "bell_delete_confirm"] {
+        for name in ["name_dialog_confirm", "bell_delete_confirm"] {
             assert!(handler(&code, name).contains("bell_names_changed(&ui);"), "{name}");
         }
         let names = ui_fn(&code, "fn bell_names_changed(");
@@ -5624,7 +5649,7 @@ mod tests {
         assert!(follow.contains("meditate_core::guided::follow_selection("), "the rule lives in core");
         // Manage Files' own rename and delete use the same rule.
         assert!(handler(&code, "guided_manage_delete_tap").contains("follow_guided_sel(&ui, &guided_sel)"));
-        assert!(handler(&code, "guided_rename_confirm").contains("follow_guided_sel(&ui, &guided_sel)"));
+        assert!(handler(&code, "name_dialog_confirm").contains("follow_guided_sel(&ui, &guided_sel)"));
     }
 
     #[test]

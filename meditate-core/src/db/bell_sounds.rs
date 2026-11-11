@@ -5,7 +5,7 @@
 use rusqlite::params;
 
 use super::events::EventKind;
-use super::{Database, Result};
+use super::{Database, DbError, Result};
 
 /// Bundled and user-imported audio files for cue playback. Categories
 /// are mutually exclusive — no row sits in both — and the chooser
@@ -92,6 +92,30 @@ fn bundled_name<'a>(uuid: &str, name: &'a str) -> &'a str {
     if uuid == crate::seeds::BUNDLED_KANSHO_UUID && name == OLD_KANSHO { KANSHO } else { name }
 }
 
+/// True iff a bell sound other than `except_uuid` uses `name`,
+/// ignoring case, in either category.
+pub fn is_bell_sound_name_taken_from_db(db: &Database, name: &str, except_uuid: &str) -> Result<bool> {
+    Ok(db.conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bell_sounds WHERE name = ?1 COLLATE NOCASE AND uuid != ?2)",
+        params![name, except_uuid],
+        |row| row.get(0),
+    )?)
+}
+
+/// A new row, stamped now.
+fn new_sound(uuid: &str, name: &str, file_path: &str, is_bundled: bool, mime_type: &str, category: BellSoundCategory) -> BellSound {
+    BellSound {
+        id: 0,
+        uuid: uuid.into(),
+        name: name.to_string(),
+        file_path: file_path.to_string(),
+        is_bundled,
+        mime_type: mime_type.to_string(),
+        category,
+        created_iso: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
 impl Database {
     /// A bundled Kansho row with no event behind it (Wipe Local keeps
     /// bundled rows and drops their events) is never rebuilt; it gets
@@ -125,6 +149,19 @@ impl Database {
         )
     }
 
+    /// The user imports a custom sound under `name`.
+    pub fn import_bell_sound(
+        &self,
+        uuid_str: &str,
+        name: &str,
+        file_path: &str,
+        mime_type: &str,
+        category: BellSoundCategory,
+    ) -> Result<i64> {
+        let sound = new_sound(uuid_str, crate::naming::clean(name)?, file_path, false, mime_type, category);
+        self.insert_bell_sound_at(&sound, true)
+    }
+
     /// Insert with a caller-supplied UUID. Idempotent on uuid: a re-
     /// run with the same id skips the insert AND emits no event so a
     /// peer doesn't get a redundant duplicate-insert. Returns the
@@ -139,18 +176,18 @@ impl Database {
         mime_type: &str,
         category: BellSoundCategory,
     ) -> Result<i64> {
+        self.insert_bell_sound_at(&new_sound(uuid_str, name, file_path, is_bundled, mime_type, category), false)
+    }
+
+    /// The insert; `refuse_taken` checks the name under the write lock,
+    /// so a sync can't slip the same name in between.
+    fn insert_bell_sound_at(&self, sound: &BellSound, refuse_taken: bool) -> Result<i64> {
         let tx = self.tx()?;
-        let rowid = self.insert_new_in("bell_sounds", uuid_str, || {
-            self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, &BellSound {
-                id: 0,
-                uuid: uuid_str.into(),
-                name: name.to_string(),
-                file_path: file_path.to_string(),
-                is_bundled,
-                mime_type: mime_type.to_string(),
-                category,
-                created_iso: chrono::Utc::now().to_rfc3339(),
-            })
+        if refuse_taken && is_bell_sound_name_taken_from_db(self, &sound.name, sound.uuid.as_str())? {
+            return Err(DbError::DuplicateBellSound(sound.name.clone()));
+        }
+        let rowid = self.insert_new_in("bell_sounds", sound.uuid.as_str(), || {
+            self.write_bell_sound_in(&tx, EventKind::BellSoundInsert, sound)
         })?;
         tx.commit()?;
         Ok(rowid)
@@ -177,6 +214,7 @@ impl Database {
     /// field of the row so a peer that's missed the insert can still
     /// materialise from this rename alone.
     pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
+        let name = crate::naming::clean(name)?;
         let Some(stored) = self.find_bell_sound(uuid_str)? else {
             return Ok(());
         };
@@ -185,6 +223,9 @@ impl Database {
         // made in the meantime.
         if sound == stored { return Ok(()); }
         let tx = self.tx()?;
+        if is_bell_sound_name_taken_from_db(self, &sound.name, uuid_str)? {
+            return Err(DbError::DuplicateBellSound(sound.name));
+        }
         self.write_bell_sound_in(&tx, EventKind::BellSoundUpdate, &sound)?;
         tx.commit()?;
         Ok(())
@@ -307,6 +348,51 @@ mod tests {
             target_id: uuid.to_string(),
             payload: serde_json::json!({ "uuid": uuid }).to_string(),
         }
+    }
+
+    fn name_of(db: &Database, uuid: &str) -> String {
+        db.find_bell_sound(uuid).unwrap().unwrap().name
+    }
+
+    #[test]
+    fn a_bell_sound_cannot_take_a_used_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.import_bell_sound("b-1", "Kansho", "/x/k.wav", "audio/wav", BellSoundCategory::General).unwrap();
+        // One name set over both categories.
+        let err = db.import_bell_sound("b-2", "kansho", "/x/k2.wav", "audio/wav", BellSoundCategory::BoxBreath).unwrap_err();
+        assert!(matches!(err, DbError::DuplicateBellSound(_)) && err.is_name_taken(), "{err:?}");
+        assert!(db.find_bell_sound("b-2").unwrap().is_none());
+
+        db.import_bell_sound("b-3", "Gong", "/x/g.wav", "audio/wav", BellSoundCategory::BoxBreath).unwrap();
+        let err = db.rename_bell_sound("b-3", "KANSHO").unwrap_err();
+        assert!(matches!(err, DbError::DuplicateBellSound(_)), "{err:?}");
+        assert_eq!(name_of(&db, "b-3"), "Gong");
+
+        assert!(is_bell_sound_name_taken_from_db(&db, "kansho", "").unwrap());
+        assert!(!is_bell_sound_name_taken_from_db(&db, "kansho", "b-1").unwrap());
+        assert!(!is_bell_sound_name_taken_from_db(&db, "Temple", "").unwrap());
+    }
+
+    #[test]
+    fn bell_sounds_that_already_share_a_name_keep_working() {
+        let db = Database::open_in_memory().unwrap();
+        // A user sound holds a bundled name before the seed runs (an
+        // upgrade): the seed inserts by uuid and never trips the check.
+        db.import_bell_sound("user", "Kansho", "/x/k.wav", "audio/wav", BellSoundCategory::General).unwrap();
+        let kansho = crate::seeds::BUNDLED_KANSHO_UUID;
+        db.seed_bell_sounds_with_paths(&[(kansho, "Kansho", "res:///kansho.ogg", "audio/ogg")]).unwrap();
+        let twins: Vec<_> = db.list_bell_sounds().unwrap().into_iter().filter(|b| b.name == "Kansho").collect();
+        assert_eq!(twins.len(), 2);
+
+        // Its own name is no clash; the twin holds the name in other case.
+        db.rename_bell_sound("user", "Kansho").unwrap();
+        db.rename_bell_sound(kansho, "Kansho").unwrap();
+        assert!(matches!(db.rename_bell_sound("user", "kansho"), Err(DbError::DuplicateBellSound(_))));
+        assert_eq!(name_of(&db, "user"), "Kansho");
+
+        db.rename_bell_sound("user", "Temple").unwrap();
+        assert_eq!(name_of(&db, "user"), "Temple");
+        assert_eq!(name_of(&db, kansho), "Kansho");
     }
 
     #[test]

@@ -4,8 +4,6 @@
 //! the gating predicates and the small bit of metadata derivation
 //! that any shell's import path needs.
 
-use crate::db::BellSound;
-
 /// Shared preview-toggle state machine. The bell-sound chooser's
 /// current shell-side `play_preview` / `stop_preview` pair (mono
 /// `gtk::MediaFile` slot) is the thin equivalent; promoting it to
@@ -179,36 +177,6 @@ pub fn target_extension_and_mime(source_ext: &str) -> (&'static str, &'static st
     }
 }
 
-/// Case-insensitive name-collision check against an existing
-/// bell-sound library. Trims `candidate` before comparing so a name
-/// that's just `existing + " "` still counts as a collision.
-pub fn name_collides(candidate: &str, existing: &[BellSound]) -> bool {
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let lower = trimmed.to_lowercase();
-    existing.iter().any(|s| s.name.to_lowercase() == lower)
-}
-
-/// Same as `name_collides` but skips a row by uuid — used by the
-/// Rename flow so renaming a sound to the same name it already has
-/// isn't a collision against itself.
-pub fn name_collides_excluding(
-    candidate: &str,
-    existing: &[BellSound],
-    exclude_uuid: &str,
-) -> bool {
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let lower = trimmed.to_lowercase();
-    existing
-        .iter()
-        .any(|s| s.uuid != exclude_uuid && s.name.to_lowercase() == lower)
-}
-
 /// Pull a display name from an imported file's path. Uses the file
 /// stem when it parses as UTF-8; falls back to a generic
 /// "Custom sound" otherwise.
@@ -274,7 +242,6 @@ pub fn safe_copy_no_follow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::BellSoundCategory;
 
     #[test]
     fn is_passthrough_ext_accepts_wav_ogg_only() {
@@ -307,19 +274,6 @@ mod tests {
         }
     }
 
-    fn sound(uuid: &str, name: &str) -> BellSound {
-        BellSound {
-            id: 0,
-            uuid: uuid.into(),
-            name: name.into(),
-            file_path: format!("sounds/{uuid}.ogg"),
-            is_bundled: false,
-            mime_type: "audio/ogg".into(),
-            category: BellSoundCategory::General,
-            created_iso: "1970-01-01T00:00:00".into(),
-        }
-    }
-
     #[test]
     fn size_limit_is_inclusive() {
         assert!(is_within_size_limit(MAX_CUSTOM_BELL_BYTES));
@@ -336,35 +290,6 @@ mod tests {
         assert_eq!(target_extension_and_mime("flac"), ("ogg", "audio/ogg"));
         assert_eq!(target_extension_and_mime("opus"), ("ogg", "audio/ogg"));
         assert_eq!(target_extension_and_mime("m4a"), ("ogg", "audio/ogg"));
-    }
-
-    #[test]
-    fn name_collision_is_case_insensitive() {
-        let lib = vec![sound("u1", "Tibetan Bowl"), sound("u2", "Chime")];
-        assert!(name_collides("Tibetan Bowl", &lib));
-        assert!(name_collides("tibetan bowl", &lib));
-        assert!(name_collides("TIBETAN BOWL", &lib));
-        assert!(name_collides("  Chime ", &lib), "whitespace-trim happens");
-        assert!(!name_collides("Other", &lib));
-    }
-
-    #[test]
-    fn empty_or_whitespace_candidate_never_collides() {
-        let lib = vec![sound("u1", "Chime")];
-        assert!(!name_collides("", &lib));
-        assert!(!name_collides("   ", &lib));
-        assert!(!name_collides("\t", &lib));
-    }
-
-    #[test]
-    fn rename_can_keep_its_own_name() {
-        let lib = vec![sound("u1", "Chime"), sound("u2", "Other")];
-        // Renaming u1 to "Chime" must NOT collide against itself.
-        assert!(!name_collides_excluding("Chime", &lib, "u1"));
-        // But renaming u1 to "Other" still collides with u2.
-        assert!(name_collides_excluding("Other", &lib, "u1"));
-        // Renaming u3 (not in lib) to "Chime" does collide.
-        assert!(name_collides_excluding("Chime", &lib, "u3"));
     }
 
     #[test]

@@ -63,7 +63,7 @@ mod vibration_patterns;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 
-pub use bell_sounds::{BellSound, BellSoundCategory};
+pub use bell_sounds::{is_bell_sound_name_taken_from_db, BellSound, BellSoundCategory};
 pub use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::{Event, Refresh};
 pub use guided_files::{
@@ -1139,7 +1139,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("two.db");
         let app = Database::open(&path).unwrap();
-        let id = app.insert_label("Old").unwrap();
+        let id = app.insert_label("Old").unwrap().id;
         let (started, wait) = std::sync::mpsc::channel();
         let sync_path = path.clone();
         let sync = std::thread::spawn(move || {

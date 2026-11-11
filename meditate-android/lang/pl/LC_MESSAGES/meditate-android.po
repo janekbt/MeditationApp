@@ -1303,3 +1303,6 @@ msgstr "Eksperymentalne"
 
 msgid "Turn the phone face down to pause, face up to continue. Shaking it finishes and saves the session. Each recognised gesture vibrates briefly. Only for meditation sitting or lying down: movement, as in walking meditation, sets it off."
 msgstr "Obróć telefon ekranem w dół, aby wstrzymać, i ekranem w górę, aby kontynuować. Potrząśnięcie kończy i zapisuje sesję. Każdy rozpoznany gest krótko wibruje. Tylko do medytacji na siedząco lub na leżąco: ruch, np. podczas medytacji w chodzie, wyzwala gesty."
+
+msgid "This name is already in use"
+msgstr "Ta nazwa jest już używana"

@@ -668,10 +668,8 @@ fn resolved_label_for_mode(
 // the home preset list uses *starred* presets gated on
 // `mode_supports_presets` (Guided has its own files library,
 // no presets — `timer/imp.rs:3159`); the Manage / chooser list
-// uses *all* presets for the mode (`presets.rs:209`); name
-// validation is `is_preset_name_taken(name, except_uuid)` with
-// `""` on create and the preset's own uuid on rename
-// (`presets.rs:461,520`). Apply / Save / Manage plumbing builds
+// uses *all* presets for the mode (`presets.rs:209`); names go
+// through the one name dialog (`NameTarget`). Apply / Save / Manage plumbing builds
 // on these in P-2..P-5; decisions stay in core
 // (`preset_config::{snapshot, apply, mode_supports_presets}`).
 
@@ -895,15 +893,15 @@ fn close_modal(ui: &MainWindow, modal: Modal) {
     }
 }
 
-/// Close the open dialog, as Back and a session start do. A guided
-/// import that is transcoding stays (it shows its progress, even above
+/// Close the open dialog, as Back and a session start do. An import
+/// that is transcoding stays (it shows its progress, even above
 /// Running); an idle one is cancelled like its Cancel button.
 fn dismiss_modal(ui: &MainWindow) {
-    if ui.get_modal() == Modal::GuidedImport {
-        if ui.get_guided_import_busy() {
+    if ui.get_modal() == Modal::Name {
+        if ui.get_name_dialog_busy() {
             return;
         }
-        ui.invoke_guided_import_cancel();
+        ui.invoke_name_dialog_cancel();
     }
     ui.set_modal(Modal::None);
 }
@@ -1121,54 +1119,162 @@ fn audio_file_error_text(
     }
 }
 
-/// Case-insensitive preset-name collision check for the create
-/// dialog's live validation. `except_uuid` = `""` on create
-/// (rename's own-uuid exception lands with P-5). Mirrors GTK's
-/// `is_preset_name_taken` call in `present_create_preset_dialog`.
-fn preset_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db) = lock_db() else { return false; };
-    meditate_core::db::is_preset_name_taken_from_db(&db, name, except_uuid)
-        .unwrap_or(false)
+/// What the one name dialog names (#415): every create, rename and
+/// import naming. The Slint side only knows its kind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NameTarget {
+    PresetCreate,
+    PresetRename(String),
+    LabelCreate,
+    LabelRename(i64),
+    GuidedRename(String),
+    BellRename(String),
+    /// 0 = guided file, 1 = bell sound.
+    Import(u8),
 }
 
-/// Case-insensitive guided-file-name collision check for the
-/// import dialog's live validation. `except_uuid` = `""` on
-/// import (rename's own-uuid exception lands with GM-F4).
-/// Mirrors GTK's `is_guided_file_name_taken` call in
-/// `import_picked_file`.
-fn guided_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db) = lock_db() else { return false; };
-    meditate_core::db::is_guided_file_name_taken_from_db(
-        &db, name, except_uuid,
-    )
-    .unwrap_or(false)
-}
-
-/// Insert the freshly-transcoded guided file as a starred
-/// `guided_files` row (auto-star mirrors GTK's import on_done,
-/// which stars on import like Save Preset). On a DB error the
-/// orphaned `<uuid>.ogg` is removed so disk state matches the
-/// (absent) row, exactly like GTK's `remove_file(&dest_path)`
-/// on insert failure.
-fn insert_guided_file(
-    uuid: &str,
-    name: &str,
-    dest: &str,
-    secs: u32,
-) -> Result<(), String> {
-    let res = {
-        let Some(db) = lock_db() else {
-            return Err("db unavailable".into());
-        };
-        db.insert_guided_file_with_uuid(uuid, name, dest, secs, true)
-    };
-    match res {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let _ = std::fs::remove_file(dest);
-            Err(format!("{e:?}"))
+impl NameTarget {
+    fn kind(&self) -> NameKind {
+        match self {
+            Self::PresetCreate => NameKind::PresetCreate,
+            Self::PresetRename(_) => NameKind::PresetRename,
+            Self::LabelCreate => NameKind::LabelCreate,
+            Self::LabelRename(_) => NameKind::LabelRename,
+            Self::GuidedRename(_) => NameKind::GuidedRename,
+            Self::BellRename(_) => NameKind::BellRename,
+            Self::Import(1) => NameKind::BellImport,
+            Self::Import(_) => NameKind::GuidedImport,
         }
     }
+
+    /// Whether another item of this kind holds `name`, ignoring case.
+    /// A failed read answers "free": the write decides.
+    fn taken(&self, name: &str) -> bool {
+        use meditate_core::db::{
+            is_bell_sound_name_taken_from_db, is_guided_file_name_taken_from_db,
+            is_label_name_taken_from_db, is_preset_name_taken_from_db,
+        };
+        let Some(db) = lock_db() else { return false };
+        match self {
+            Self::PresetCreate => is_preset_name_taken_from_db(&db, name, ""),
+            Self::PresetRename(uuid) => is_preset_name_taken_from_db(&db, name, uuid),
+            Self::LabelCreate => is_label_name_taken_from_db(&db, name, 0),
+            Self::LabelRename(id) => is_label_name_taken_from_db(&db, name, *id),
+            Self::GuidedRename(uuid) => is_guided_file_name_taken_from_db(&db, name, uuid),
+            Self::BellRename(uuid) => is_bell_sound_name_taken_from_db(&db, name, uuid),
+            Self::Import(1) => is_bell_sound_name_taken_from_db(&db, name, ""),
+            Self::Import(_) => is_guided_file_name_taken_from_db(&db, name, ""),
+        }
+        .unwrap_or(false)
+    }
+}
+
+thread_local! {
+    /// The open name dialog's target and typed name.
+    static NAME_DIALOG: RefCell<Option<(NameTarget, meditate_core::naming::NameField)>> = const { RefCell::new(None) };
+}
+
+/// Open the one name dialog on `target` with `text` (empty for a
+/// create). `subtitle` is an import's "Importing: <name> (m:ss)".
+fn open_name_dialog(ui: &MainWindow, target: NameTarget, text: &str, subtitle: slint::SharedString) {
+    let field = match target {
+        NameTarget::PresetRename(_) | NameTarget::LabelRename(_) | NameTarget::GuidedRename(_) | NameTarget::BellRename(_) => {
+            meditate_core::naming::NameField::renaming(text, |n| target.taken(n))
+        }
+        NameTarget::PresetCreate | NameTarget::LabelCreate | NameTarget::Import(_) => meditate_core::naming::NameField::new(text, |n| target.taken(n)),
+    };
+    ui.set_name_dialog_kind(target.kind());
+    ui.set_name_dialog_text(text.into());
+    ui.set_name_dialog_subtitle(subtitle);
+    ui.set_name_dialog_busy(false);
+    ui.set_name_dialog_progress(0.0);
+    show_name_field(ui, &field);
+    NAME_DIALOG.set(Some((target, field)));
+    ui.set_modal(Modal::Name);
+}
+
+fn show_name_field(ui: &MainWindow, field: &meditate_core::naming::NameField) {
+    ui.set_name_dialog_valid(field.can_save());
+    ui.set_name_dialog_taken(field.note == meditate_core::naming::NameNote::Taken);
+    ui.set_name_dialog_failed(field.note == meditate_core::naming::NameNote::SaveFailed);
+}
+
+/// The open dialog's target and trimmed name, while Save is on.
+fn name_to_save() -> Option<(NameTarget, String)> {
+    NAME_DIALOG.with_borrow(|open| {
+        open.as_ref().filter(|(_, field)| field.can_save()).map(|(target, field)| (target.clone(), field.name().to_string()))
+    })
+}
+
+/// Hand the write's result to the name dialog: it closes on success,
+/// and otherwise stays open with the name and says why. `true` when
+/// it closed.
+fn name_saved(ui: &MainWindow, tag: &str, result: Option<Result<(), meditate_core::db::DbError>>) -> bool {
+    let closed = NAME_DIALOG.with_borrow_mut(|open| match open {
+        Some((_, field)) => {
+            let closed = field.confirm(tag, result);
+            show_name_field(ui, field);
+            closed
+        }
+        // No dialog left to keep the name: a failure still says so.
+        None => {
+            if !matches!(result, Some(Ok(()))) {
+                meditate_core::log(tag, &format!("failed with no dialog open: {result:?}"));
+                show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+            }
+            true
+        }
+    });
+    if closed {
+        NAME_DIALOG.set(None);
+        close_modal(ui, Modal::Name);
+    }
+    closed
+}
+
+/// Store a converted import under `name` and show it where it
+/// belongs: the bell chooser's category, or the selected guided file.
+fn finish_import(
+    ui: &MainWindow,
+    kind: u8,
+    (uuid, name, dest, secs): (&str, &str, &str, u32),
+    guided_sel: &RefCell<Option<GuidedSel>>,
+    bell_chooser_current: &RefCell<String>,
+) -> Option<Result<(), meditate_core::db::DbError>> {
+    let result = lock_db().map(|db| {
+        if kind == 1 {
+            // The Android transcode is Opus-in-Ogg.
+            let category = if BELL_CHOOSER_CATEGORY.get() == 1 {
+                meditate_core::db::BellSoundCategory::BoxBreath
+            } else {
+                meditate_core::db::BellSoundCategory::General
+            };
+            db.import_bell_sound(uuid, name, dest, "audio/ogg", category).map(drop)
+        } else {
+            db.import_guided_file(uuid, name, dest, secs).map(drop)
+        }
+    });
+    if matches!(result, Some(Ok(()))) {
+        if kind == 1 {
+            repopulate_bell_chooser(ui, BELL_CHOOSER_CATEGORY.get(), &bell_chooser_current.borrow());
+            refresh_bell_rows(ui);
+        } else {
+            *guided_sel.borrow_mut() = Some(GuidedSel {
+                name: name.trim().to_string(),
+                path: dest.to_string(),
+                duration_secs: secs,
+                uuid: Some(uuid.to_string()),
+                local_id: None,
+                folder: None,
+                local_root: None,
+            });
+            // Auto-starred: in both lists now (Manage Files may be
+            // open through its Create row).
+            guided_files_changed(ui);
+            show_guided_sel(ui, guided_sel.borrow().as_ref());
+        }
+    }
+    result
 }
 
 /// Push the starred `guided_files` rows into the Guided Setup
@@ -1600,69 +1706,15 @@ type Slot<T> = std::rc::Rc<std::cell::RefCell<Option<T>>>;
 /// worker's result: (uuid, name, dest, secs).
 type GuidedImportFinalize = (String, String, String, u32);
 
-/// Populate + open the Guided import name dialog from a picked
-/// source (path, display name, probed secs). Shared by the
-/// "Import File" button (current pick) and the Manage Files
-/// "Create new…" row (fresh pick). Mirrors GTK's
-/// `import_picked_file` dialog setup.
-/// Insert a freshly-transcoded bell sound (BI). Mirrors GTK's
-/// sounds.rs insert: is_bundled=false, mime audio/ogg (the
-/// Android transcode is Opus-in-Ogg — same container, same mime),
-/// category = the chooser the import was started from. Orphaned
-/// file removed on DB failure, like the guided insert.
-fn insert_bell_sound_import(
-    uuid: &str,
-    name: &str,
-    dest: &str,
-    category_idx: u8,
-) -> Result<(), String> {
-    let category = if category_idx == 1 {
-        meditate_core::db::BellSoundCategory::BoxBreath
-    } else {
-        meditate_core::db::BellSoundCategory::General
-    };
-    let res = {
-        let Some(db) = lock_db() else {
-            return Err("db unavailable".into());
-        };
-        db.insert_bell_sound_with_uuid(
-            uuid,
-            name,
-            dest,
-            false,
-            "audio/ogg",
-            category,
-        )
-    };
-    match res {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let _ = std::fs::remove_file(dest);
-            Err(format!("{e:?}"))
-        }
-    }
-}
+/// A guided or bell import converted, whose insert failed: (uuid,
+/// dest, secs). The name dialog stays open; its next Save inserts
+/// the converted file again, and Cancel removes it.
+type ImportConverted = (String, String, u32);
 
-/// Case-insensitive name collision against the FULL bell-sound
-/// library (both categories — a General and a BoxBreath sound
-/// sharing a name would be ambiguous everywhere a name renders).
-/// Mirrors GTK's `name_collides(trimmed, &library)` in sounds.rs.
-fn bell_name_taken(name: &str) -> bool {
-    let Some(db) = lock_db() else { return false; };
-    let library = db.list_bell_sounds().unwrap_or_default();
-    meditate_core::sound::name_collides(name, &library)
-}
-
-/// Name-collision check for the shared import dialog, routed by
-/// the flow the dialog currently serves (0 = guided, 1 = bell).
-fn import_name_taken(kind: u8, name: &str) -> bool {
-    if kind == 1 {
-        bell_name_taken(name)
-    } else {
-        guided_name_taken(name, "")
-    }
-}
-
+/// Open the name dialog for a picked source (path, display name,
+/// probed secs). Shared by the "Import File" button (current pick),
+/// the Manage Files "Create new…" row (fresh pick) and the bell
+/// chooser's import (kind 1). Mirrors GTK's `import_picked_file`.
 fn present_guided_import_dialog(
     ui: &MainWindow,
     guided_import_src: &std::rc::Rc<
@@ -1673,11 +1725,6 @@ fn present_guided_import_dialog(
     secs: u32,
     kind: u8,
 ) {
-    ui.set_guided_import_title(if kind == 1 {
-        ui.global::<Tr>().invoke_import_bell_title()
-    } else {
-        ui.global::<Tr>().invoke_import_guided_title()
-    });
     meditate_core::log(
         "guided",
         &format!("import: {display_name} ({secs}s)"),
@@ -1688,20 +1735,12 @@ fn present_guided_import_dialog(
     let default_name = display_name
         .rsplit_once('.')
         .map(|(stem, _)| stem)
-        .unwrap_or(display_name)
-        .to_string();
-    ui.set_guided_import_subtitle(ui.global::<Tr>().invoke_importing(
+        .unwrap_or(display_name);
+    let subtitle = ui.global::<Tr>().invoke_importing(
         display_name.into(),
         meditate_core::format::format_duration_brief(secs).into(),
-    ));
-    ui.set_guided_import_text(default_name.clone().into());
-    let v = meditate_core::naming::validate(
-        default_name.trim(),
-        |n| import_name_taken(kind, n),
     );
-    ui.set_guided_import_valid(v.is_savable());
-    ui.set_guided_import_busy(false);
-    ui.set_modal(Modal::GuidedImport);
+    open_name_dialog(ui, NameTarget::Import(kind), default_name, subtitle);
 }
 
 /// Resolve a starred-list tap to a `GuidedSel` (carries the uuid
@@ -2571,20 +2610,6 @@ fn write_label_uuid_for_mode(ui: &MainWindow, mode: meditate_core::SessionMode, 
     setting_saved(ui, "settings.label_uuid", lock_db().map(|db| meditate_core::labels::persist_uuid_for_mode(&db, mode, uuid)));
 }
 
-/// Live name validation for the Create-Label dialog. Trims the
-/// candidate, then runs `meditate_core::validate` against the
-/// `is_label_name_taken_from_db` predicate (case-insensitive
-/// collision check). Returns `true` only on
-/// `NameValidity::Ok` — empty input + collisions disable Create.
-fn validate_label_name(name: &str) -> bool {
-    let trimmed = name.trim();
-    let Some(db) = lock_db() else { return false; };
-    let validity = meditate_core::validate(trimmed, |n| {
-        meditate_core::db::is_label_name_taken_from_db(&db, n, 0).unwrap_or(false)
-    });
-    validity.is_savable()
-}
-
 /// Page size for the Log feed. Mirrors GTK's
 /// `meditate-gtk/src/log/imp.rs::load_page::PAGE_SIZE`.
 const LOG_PAGE_SIZE: u32 = 15;
@@ -3172,20 +3197,6 @@ fn clear_session_in_progress_snapshot() {
     }
 }
 
-/// Rename-flavour of `validate_label_name`: pass the label's own
-/// id as `except_id` so the unchanged name (or a case-only edit
-/// of it) doesn't trip the collision check. Mirrors GTK's
-/// `is_label_name_taken(name, label_id)` call inside
-/// `present_rename_label_dialog`.
-fn validate_rename_label_name(name: &str, except_id: i64) -> bool {
-    let trimmed = name.trim();
-    let Some(db) = lock_db() else { return false; };
-    let validity = meditate_core::validate(trimmed, |n| {
-        meditate_core::db::is_label_name_taken_from_db(&db, n, except_id).unwrap_or(false)
-    });
-    validity.is_savable()
-}
-
 /// Ordered (rowid, name) list of all labels — index 0 in the
 /// filter dropdown is the synthetic "All labels" entry, so the
 /// returned Vec maps 1:1 onto dropdown indices 1..=N. Mirrors
@@ -3332,67 +3343,6 @@ fn delete_label_in_db(id: i64) -> bool {
             false
         }
     }
-}
-
-fn rename_label_in_db(id: i64, name: &str) -> bool {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let Some(db) = lock_db() else { return false; };
-    match db.update_label(id, trimmed) {
-        Ok(()) => {
-            meditate_core::log(
-                "labels.rename",
-                &format!("ok id={id} new_name={trimmed}"),
-            );
-            true
-        }
-        Err(e) => {
-            meditate_core::log(
-                "labels.rename",
-                &format!("update FAILED id={id} new_name={trimmed} err={e:?}"),
-            );
-            false
-        }
-    }
-}
-
-/// Insert a new label row + return `(rowid, uuid)`. Mirrors GTK's
-/// create-label dialog (`meditate-gtk/src/labels.rs`):
-/// `insert_label` returns the rowid; the freshly inserted UUID is
-/// then read back via `list_labels_from_db` so the caller can
-/// persist it as the active mode's selection.
-fn create_label_in_db(name: &str) -> Option<(i64, String)> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let db = lock_db()?;
-    let id = match db.insert_label(trimmed) {
-        Ok(id) => id,
-        Err(e) => {
-            // Duplicate raced past live validation (UNIQUE
-            // constraint slipped through) — GTK surfaces this via
-            // a toast; we just log it. Acceptable since live
-            // validation already blocks the common path.
-            meditate_core::log(
-                "labels.create",
-                &format!("insert FAILED name={trimmed} err={e:?}"),
-            );
-            return None;
-        }
-    };
-    let uuid = meditate_core::db::list_labels_from_db(&db)
-        .ok()?
-        .into_iter()
-        .find(|l| l.id == id)
-        .map(|l| l.uuid.0)?;
-    meditate_core::log(
-        "labels.create",
-        &format!("ok name={trimmed} id={id} uuid={uuid}"),
-    );
-    Some((id, uuid))
 }
 
 fn write_signal_mode_for_mode(
@@ -3967,14 +3917,6 @@ fn repopulate_bell_chooser(ui: &MainWindow, category: u8, current_uuid: &str) {
     populate_bell_chooser(ui, current_uuid, category);
 }
 
-/// Whether another bell sound (any category) already holds `name`,
-/// case-insensitively; the row being renamed doesn't count.
-fn bell_sound_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db) = lock_db() else { return false; };
-    let library = db.list_bell_sounds().unwrap_or_default();
-    meditate_core::sound::name_collides_excluding(name, &library, except_uuid)
-}
-
 /// The uuid of a chooser's ticked row, or empty.
 fn ticked_uuid(items: slint::ModelRc<SoundChoice>) -> String {
     use slint::Model;
@@ -4247,10 +4189,7 @@ fn build_ui() -> MainWindow {
     let pending_override_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
 
-    // P-5 Manage state. `rename_preset_uuid` / `delete_preset_uuid`
-    // pin which row the rename / delete dialog targets.
-    let rename_preset_uuid: Rc<RefCell<Option<String>>> =
-        Rc::new(RefCell::new(None));
+    // P-5 Manage state: which row the delete dialog targets.
     let delete_preset_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
     // Create-from-Manage intent: set when the chooser's "Create
@@ -4260,11 +4199,6 @@ fn build_ui() -> MainWindow {
     // calling `import_picked_file` directly.
     let guided_create_import: Rc<Cell<bool>> =
         Rc::new(Cell::new(false));
-    // GM-F4b: uuid of the row whose rename dialog is open, held
-    // between `guided-manage-rename-tap` and the live validator /
-    // confirm so the collision check can EXCEPT this own row.
-    let guided_rename_uuid: Rc<RefCell<Option<String>>> =
-        Rc::new(RefCell::new(None));
     // BI import context: the open chooser's selected uuid (its
     // category is `BELL_CHOOSER_CATEGORY`), stashed at every
     // chooser-open site so the Import sound flow repopulates with
@@ -4274,6 +4208,7 @@ fn build_ui() -> MainWindow {
     // Which flow the shared import dialog serves: 0 = guided,
     // 1 = bell (category from BELL_CHOOSER_CATEGORY at finalize).
     let guided_import_kind: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+    let guided_import_converted: Slot<ImportConverted> = Rc::new(RefCell::new(None));
 
     // Session being edited via the Log card → Edit-Session
     // overlay: rowid and row, captured by `card-tap` and written
@@ -4602,6 +4537,7 @@ fn build_ui() -> MainWindow {
         let guided_create_import = guided_create_import.clone();
         let guided_import_src_tick = guided_import_src.clone();
         let guided_import_kind_tick = guided_import_kind.clone();
+        let guided_import_converted_tick = guided_import_converted.clone();
         let bell_chooser_current_tick = bell_chooser_current.clone();
         let loaded_log_sessions_tick = loaded_log_sessions.clone();
         let pending_deletes_tick = pending_deletes.clone();
@@ -4817,11 +4753,14 @@ fn build_ui() -> MainWindow {
                     }
                 }
                 // Guided import transcode finished (GM-F2): the
-                // Kotlin worker dropped a result file. On success
-                // insert the starred `guided_files` row and adopt
-                // the imported track as the current selection
-                // (mirrors GTK's import on_done). On failure keep
-                // the dialog open so the user can retry / cancel.
+                // Kotlin worker dropped a result file. A converted
+                // file is stored under the typed name (the starred
+                // `guided_files` row and the selection, or the bell
+                // chooser's category, as GTK's import on_done); a
+                // failed store keeps the dialog open with the name and
+                // the converted file for a retry. A failed conversion
+                // closes it: its picked source is used up, so a retry
+                // starts from a fresh pick (as GTK).
                 // Clone the pending tuple out into its own `let`
                 // FIRST so the immutable borrow is dropped before
                 // the `borrow_mut()` below — an `if let
@@ -4841,82 +4780,43 @@ fn build_ui() -> MainWindow {
                             if let Some(pct) =
                                 guided::import_progress(app, &uuid)
                             {
-                                ui.set_guided_import_progress(
+                                ui.set_name_dialog_progress(
                                     f32::from(pct) / 100.0,
                                 );
                             }
                         }
                         if let Some(res) = result {
+                            let kind = guided_import_kind_tick.get();
                             // A guided file sync couldn't carry is
                             // refused, and removed, like GTK's.
-                            let res = if guided_import_kind_tick.get() == 1 {
+                            let res = if kind == 1 {
                                 res
                             } else {
                                 res.and_then(|()| meditate_core::sound::keep_if_syncable(std::path::Path::new(&dest)))
                             };
-                            let failure_text = res
-                                .as_ref()
-                                .err()
-                                .map(|e| audio_file_error_text(&ui, e));
-                            let res =
-                                res.map_err(|e| format!("{e:?}"));
                             *guided_import_finalize.borrow_mut() =
                                 None;
-                            let kind = guided_import_kind_tick.get();
-                            let outcome = if kind == 1 {
-                                // Bell-sound import (BI): insert
-                                // into the chooser's category,
-                                // refresh the chooser (highlight
-                                // intact) + the Setup bell rows.
-                                res.and_then(|()| {
-                                    insert_bell_sound_import(
-                                        &uuid,
-                                        &name,
-                                        &dest,
-                                        BELL_CHOOSER_CATEGORY.get(),
-                                    )
-                                })
-                                .map(|()| {
-                                    repopulate_bell_chooser(&ui, BELL_CHOOSER_CATEGORY.get(), &bell_chooser_current_tick.borrow());
-                                    refresh_bell_rows(&ui);
-                                })
-                            } else {
-                                res.and_then(|()| {
-                                    insert_guided_file(&uuid, &name, &dest, secs)
-                                })
-                                .map(|()| {
-                                    *guided_sel.borrow_mut() = Some(GuidedSel {
-                                        name: name.clone(),
-                                        path: dest,
-                                        duration_secs: secs,
-                                        uuid: Some(uuid.clone()),
-                                        local_id: None,
-                                        folder: None,
-                                        local_root: None,
-                                    });
-                                    // New import is auto-starred →
-                                    // surfaces in both lists now
-                                    // (Manage page may be open via
-                                    // the Create row).
-                                    guided_files_changed(&ui);
-                                    show_guided_sel(&ui, guided_sel.borrow().as_ref());
-                                })
-                            };
-                            // Success or failure, the dialog closes,
-                            // as in GTK: its picked source is used up,
-                            // so a retry starts from a fresh pick.
-                            ui.set_guided_import_busy(false);
-                            close_modal(&ui, Modal::GuidedImport);
-                            match outcome {
-                                Ok(()) => ui.set_guided_import_progress(1.0),
-                                Err(e) => {
-                                    meditate_core::log(
-                                        if kind == 1 { "sound.import" } else { "guided" },
-                                        &format!("import failed: {e}"),
+                            ui.set_name_dialog_busy(false);
+                            let tag = if kind == 1 { "sound.import" } else { "guided" };
+                            match res {
+                                Ok(()) => {
+                                    ui.set_name_dialog_progress(1.0);
+                                    let stored = finish_import(
+                                        &ui,
+                                        kind,
+                                        (&uuid, &name, &dest, secs),
+                                        &guided_sel,
+                                        &bell_chooser_current_tick,
                                     );
-                                    show_notice(&ui, failure_text.unwrap_or_else(|| {
-                                        ui.global::<Tr>().invoke_import_failed()
-                                    }), None, 4);
+                                    if !name_saved(&ui, tag, stored) {
+                                        *guided_import_converted_tick.borrow_mut() = Some((uuid, dest, secs));
+                                    }
+                                }
+                                Err(e) => {
+                                    meditate_core::log(tag, &format!("import failed: {e:?}"));
+                                    NAME_DIALOG.set(None);
+                                    close_modal(&ui, Modal::Name);
+                                    show_notice(&ui, audio_file_error_text(&ui, &e), None, 4);
                                 }
                             }
                         }
@@ -5401,95 +5301,157 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Live-validate the import name (non-empty + no case-
-    // insensitive collision against the flow's library — guided
-    // files or the full bell-sound set, per import kind).
+    // ── The one name dialog (#415) ──────────────────────────────
+    // Every keystroke asks core whether the name is taken (a failed
+    // read counts as free; the write decides). Confirm writes through
+    // core, which trims and checks again; the dialog closes on success
+    // and otherwise stays open with the name and says why (#428).
     {
         let weak = ui.as_weak();
-        let guided_import_kind = guided_import_kind.clone();
-        ui.on_guided_import_changed(move |name| {
-            if let Some(ui) = weak.upgrade() {
-                let kind = guided_import_kind.get();
-                let v = meditate_core::naming::validate(
-                    name.trim(),
-                    |n| import_name_taken(kind, n),
-                );
-                ui.set_guided_import_valid(v.is_savable());
+        ui.on_name_dialog_changed(move |text| {
+            let Some(ui) = weak.upgrade() else { return; };
+            NAME_DIALOG.with_borrow_mut(|open| {
+                if let Some((target, field)) = open {
+                    field.changed(&text, |n| target.taken(n));
+                    show_name_field(&ui, field);
+                }
+            });
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        let pending_save_snapshot = pending_save_snapshot.clone();
+        let guided_sel = guided_sel.clone();
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        let pending_deletes = pending_deletes.clone();
+        let guided_import_src = guided_import_src.clone();
+        let guided_import_finalize = guided_import_finalize.clone();
+        let guided_import_converted = guided_import_converted.clone();
+        let bell_chooser_current = bell_chooser_current.clone();
+        ui.on_name_dialog_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            // Save is off (a stale Enter): nothing to do.
+            let Some((target, name)) = name_to_save() else { return; };
+            let mode: meditate_core::SessionMode = current_mode.get().into();
+            match target {
+                NameTarget::PresetCreate => {
+                    // Kept until the next Save tap replaces it, so a retry works.
+                    let Some((json, mode)) = pending_save_snapshot.borrow().clone() else {
+                        // No setup to save: fails like any write.
+                        name_saved(&ui, "preset.save", None);
+                        return;
+                    };
+                    let created = lock_db().map(|db| db.insert_preset(&name, mode, &json).map(drop));
+                    if name_saved(&ui, "preset.save", created) {
+                        ui.set_preset_chooser_page(false);
+                        presets_changed(&ui, mode);
+                    }
+                }
+                NameTarget::PresetRename(uuid) => {
+                    let renamed = lock_db().map(|db| db.update_preset_name(&uuid, &name));
+                    if name_saved(&ui, "preset.rename", renamed) {
+                        presets_changed(&ui, mode);
+                    }
+                }
+                NameTarget::LabelCreate => {
+                    let created = lock_db().map(|db| db.insert_label(&name));
+                    let label = created.as_ref().and_then(|r| r.as_ref().ok()).cloned();
+                    if !name_saved(&ui, "labels.create", created.map(|r| r.map(drop))) {
+                        return;
+                    }
+                    let Some(label) = label else { return; };
+                    // Creating is choosing, as GTK.
+                    match ui.get_label_target() {
+                        LabelTarget::Edit => {
+                            ui.set_edit_label_id(label.id as i32);
+                            ui.set_edit_label_name(label.name.into());
+                            ui.set_edit_label_enabled(true);
+                        }
+                        LabelTarget::Setup => {
+                            write_label_uuid_for_mode(&ui, mode, label.uuid.as_str());
+                            refresh_label_state(&ui, mode);
+                        }
+                    }
+                    ui.set_labels_page(false);
+                }
+                NameTarget::LabelRename(id) => {
+                    let renamed = lock_db().map(|db| db.update_label(id, &name));
+                    if name_saved(&ui, "labels.rename", renamed) {
+                        refresh_after_label_change(&ui, mode);
+                        refresh_filter_label_items(&ui);
+                        reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                    }
+                }
+                NameTarget::GuidedRename(uuid) => {
+                    let renamed = lock_db().map(|db| db.rename_guided_file(&uuid, &name));
+                    if name_saved(&ui, "guided.rename", renamed) {
+                        // The renamed file may be the selection.
+                        follow_guided_sel(&ui, &guided_sel);
+                        guided_files_changed(&ui);
+                    }
+                }
+                NameTarget::BellRename(uuid) => {
+                    let renamed = lock_db().map(|db| db.rename_bell_sound(&uuid, &name));
+                    if name_saved(&ui, "bell_sound.rename", renamed) {
+                        bell_names_changed(&ui);
+                    }
+                }
+                NameTarget::Import(kind) => {
+                    // Converted already, its store failed: store it again.
+                    let converted = guided_import_converted.borrow_mut().take();
+                    if let Some((uuid, dest, secs)) = converted {
+                        let stored = finish_import(&ui, kind, (&uuid, &name, &dest, secs), &guided_sel, &bell_chooser_current);
+                        if !name_saved(&ui, if kind == 1 { "sound.import" } else { "guided" }, stored) {
+                            *guided_import_converted.borrow_mut() = Some((uuid, dest, secs));
+                        }
+                        return;
+                    }
+                    // Kick off the Kotlin transcode worker; the result
+                    // lands via the tick-loop poll (guided_import_finalize
+                    // + guided::take_import_result). Mirrors GTK's import
+                    // button spawning `do_import_io`.
+                    let Some((src, secs)) = guided_import_src.borrow_mut().take() else { return; };
+                    let Some(app) = android_app() else { return; };
+                    let Some(data_root) = app.internal_data_path() else { return; };
+                    let uuid = meditate_core::db::mint_uuid();
+                    let dest = data_root
+                        .join("meditate")
+                        .join(if kind == 1 { "sounds" } else { "guided" })
+                        .join(format!("{uuid}.ogg"));
+                    let dest_str = dest.to_string_lossy().to_string();
+                    ui.set_name_dialog_progress(0.0);
+                    if !guided::start_import(app, &src, &dest_str, secs) {
+                        // Keep the dialog usable: the user can retry or cancel.
+                        *guided_import_src.borrow_mut() = Some((src, secs));
+                        ui.set_name_dialog_busy(false);
+                        show_notice(&ui, ui.global::<Tr>().invoke_import_failed(), None, 4);
+                        return;
+                    }
+                    *guided_import_finalize.borrow_mut() = Some((uuid, name, dest_str, secs));
+                    ui.set_name_dialog_busy(true);
+                }
             }
         });
     }
 
-    // Import confirm → kick off the Kotlin transcode worker. The
-    // result lands via the tick-loop poll (guided_import_finalize
-    // + guided::take_import_result). Mirrors GTK's import-button
-    // click spawning `do_import_io`.
+    // Cancel, Back or the scrim. An import also aborts a running
+    // transcode and drops its state: without this, closing the dialog
+    // left the Kotlin worker running; it finished, wrote "ok", and the
+    // tick poll inserted + selected the file anyway (cancelled at
+    // 13 %). Clearing the finalize slot ALSO defends the race where
+    // the worker completed a hair before the abort landed. A file
+    // converted whose store failed is removed. Mirrors GTK's cancel flag.
     {
         let weak = ui.as_weak();
-        let guided_import_src = guided_import_src.clone();
         let guided_import_finalize = guided_import_finalize.clone();
-        let guided_import_kind = guided_import_kind.clone();
-        ui.on_guided_import_confirm(move || {
-            {
-                let Some(ui) = weak.upgrade() else { return; };
-                let kind = guided_import_kind.get();
-                let name =
-                    ui.get_guided_import_text().trim().to_string();
-                // Re-validate (defends a stale Enter / race).
-                let v = meditate_core::naming::validate(&name, |n| {
-                    import_name_taken(kind, n)
-                });
-                if !v.is_savable() {
-                    return;
-                }
-                let Some((src, secs)) =
-                    guided_import_src.borrow_mut().take()
-                else {
-                    return;
-                };
-                let Some(app) = android_app() else { return; };
-                let Some(data_root) = app.internal_data_path()
-                else {
-                    return;
-                };
-                let uuid = meditate_core::db::mint_uuid();
-                let dest = data_root
-                    .join("meditate")
-                    .join(if kind == 1 { "sounds" } else { "guided" })
-                    .join(format!("{uuid}.ogg"));
-                let dest_str =
-                    dest.to_string_lossy().to_string();
-                ui.set_guided_import_progress(0.0);
-                if !guided::start_import(app, &src, &dest_str, secs) {
-                    // Keep the dialog usable: the user can retry or cancel.
-                    *guided_import_src.borrow_mut() = Some((src, secs));
-                    ui.set_guided_import_busy(false);
-                    show_notice(&ui, ui.global::<Tr>().invoke_import_failed(), None, 4);
-                    return;
-                }
-                *guided_import_finalize.borrow_mut() = Some((
-                    uuid,
-                    name,
-                    dest_str,
-                    secs,
-                ));
-                ui.set_guided_import_busy(true);
+        let guided_import_src = guided_import_src.clone();
+        let guided_import_converted = guided_import_converted.clone();
+        ui.on_name_dialog_cancel(move || {
+            let was_import = matches!(NAME_DIALOG.take(), Some((NameTarget::Import(_), _)));
+            if !was_import {
+                return;
             }
-            let _ = weak.clone();
-        });
-    }
-
-    // Import Cancel — abort a running transcode and reset all
-    // import state. Without this, closing the dialog left the
-    // Kotlin worker running; it finished, wrote "ok", and the
-    // tick poll inserted + selected the file anyway (the bug
-    // the user hit cancelling at 13 %). Clearing the finalize
-    // slot ALSO defends the race where the worker completed a
-    // hair before the abort landed. Mirrors GTK's cancel flag.
-    {
-        let weak = ui.as_weak();
-        let guided_import_finalize = guided_import_finalize.clone();
-        let guided_import_src = guided_import_src.clone();
-        ui.on_guided_import_cancel(move || {
             if let Some(app) = android_app() {
                 // Tell the worker to stop and the tick poll to stop
                 // waiting; a result it wrote just before is dropped.
@@ -5497,13 +5459,15 @@ fn build_ui() -> MainWindow {
                     guided::request_import_cancel(app, &uuid);
                     let _ = guided::take_import_result(app, &uuid);
                 }
-                *guided_import_src.borrow_mut() = None;
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_guided_import_busy(false);
-                    ui.set_guided_import_progress(0.0);
-                }
             }
-            let _ = weak.clone();
+            if let Some((_, dest, _)) = guided_import_converted.borrow_mut().take() {
+                let _ = std::fs::remove_file(dest);
+            }
+            *guided_import_src.borrow_mut() = None;
+            if let Some(ui) = weak.upgrade() {
+                ui.set_name_dialog_busy(false);
+                ui.set_name_dialog_progress(0.0);
+            }
         });
     }
 
@@ -5772,72 +5736,14 @@ fn build_ui() -> MainWindow {
             }
         });
     }
-    // GM-F4b: rename. Open a live-validated dialog (collision
-    // check EXCEPTs this row's own uuid so an unchanged / case-
-    // only name stays valid). Mirrors GTK's present_rename_dialog.
+    // GM-F4b: rename, in the name dialog. Mirrors GTK's
+    // present_rename_dialog.
     {
         let weak = ui.as_weak();
-        let guided_rename_uuid = guided_rename_uuid.clone();
         ui.on_guided_manage_rename_tap(move |uuid, name| {
             if let Some(ui) = weak.upgrade() {
-                *guided_rename_uuid.borrow_mut() =
-                    Some(uuid.to_string());
-                ui.set_guided_rename_text(name.clone());
-                let v = meditate_core::naming::validate(
-                    name.trim(),
-                    |n| guided_name_taken(n, &uuid),
-                );
-                ui.set_guided_rename_valid(v.is_savable());
-                ui.set_modal(Modal::GuidedRename);
+                open_name_dialog(&ui, NameTarget::GuidedRename(uuid.to_string()), &name, "".into());
             }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let guided_rename_uuid = guided_rename_uuid.clone();
-        ui.on_guided_rename_changed(move |name| {
-            if let Some(ui) = weak.upgrade() {
-                let except = guided_rename_uuid
-                    .borrow()
-                    .clone()
-                    .unwrap_or_default();
-                let v = meditate_core::naming::validate(
-                    name.trim(),
-                    |n| guided_name_taken(n, &except),
-                );
-                ui.set_guided_rename_valid(v.is_savable());
-            }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let guided_rename_uuid = guided_rename_uuid.clone();
-        let guided_sel = guided_sel.clone();
-        ui.on_guided_rename_confirm(move || {
-            if let Some(ui) = weak.upgrade() {
-                let Some(uuid) = guided_rename_uuid.borrow().clone() else {
-                    return;
-                };
-                let new_name =
-                    ui.get_guided_rename_text().trim().to_string();
-                // Re-validate (defends a stale Enter / race).
-                let v = meditate_core::naming::validate(
-                    &new_name,
-                    |n| guided_name_taken(n, &uuid),
-                );
-                if !v.is_savable() {
-                    return;
-                }
-                let renamed = lock_db().map(|db| db.rename_guided_file(&uuid, &new_name));
-                close_modal(&ui, Modal::GuidedRename);
-                if !write_ok(&ui, "guided.rename", renamed) {
-                    return;
-                }
-                // The renamed file may be the selection.
-                follow_guided_sel(&ui, &guided_sel);
-                guided_files_changed(&ui);
-            }
-            let _ = weak.clone();
         });
     }
 
@@ -5975,59 +5881,7 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         ui.on_preset_chooser_create(move || {
             if let Some(ui) = weak.upgrade() {
-                ui.set_create_preset_text(slint::SharedString::new());
-                ui.set_create_preset_valid(false);
-                ui.set_modal(Modal::CreatePreset);
-            }
-            let _ = weak.clone();
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        ui.on_create_preset_changed(move |name| {
-            if let Some(ui) = weak.upgrade() {
-                let trimmed = name.trim();
-                let v = meditate_core::naming::validate(trimmed, |n| {
-                    preset_name_taken(n, "")
-                });
-                ui.set_create_preset_valid(v.is_savable());
-            }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let pending_save_snapshot = pending_save_snapshot.clone();
-        ui.on_create_preset_confirm(move || {
-            {
-                let Some(ui) = weak.upgrade() else { return; };
-                let name = ui.get_create_preset_text().trim().to_string();
-                // Re-validate (defends a stale Enter / race).
-                let v = meditate_core::naming::validate(&name, |n| {
-                    preset_name_taken(n, "")
-                });
-                if !v.is_savable() {
-                    return;
-                }
-                // Kept until the next Save tap replaces it, so a retry works.
-                let Some((json, mode)) = pending_save_snapshot.borrow().clone() else {
-                    return;
-                };
-                let starred =
-                    meditate_core::preset_config::default_starred_on_save();
-                let res = lock_db().map(|db| db.insert_preset(&name, mode, starred, &json));
-                match res {
-                    Some(Ok(_)) => {
-                        close_modal(&ui, Modal::CreatePreset);
-                        ui.set_preset_chooser_page(false);
-                        presets_changed(&ui, mode);
-                    }
-                    failed => {
-                        // The name was checked above, so this is a
-                        // database error. The dialog stays open for a
-                        // retry.
-                        write_ok(&ui, "preset.save", failed);
-                    }
-                }
+                open_name_dialog(&ui, NameTarget::PresetCreate, "", "".into());
             }
             let _ = weak.clone();
         });
@@ -6157,62 +6011,9 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let rename_preset_uuid = rename_preset_uuid.clone();
         ui.on_preset_rename_tap(move |uuid, name| {
             if let Some(ui) = weak.upgrade() {
-                *rename_preset_uuid.borrow_mut() = Some(uuid.to_string());
-                ui.set_rename_preset_text(name.clone());
-                // Unchanged name is valid (own-uuid exception).
-                let v = meditate_core::naming::validate(
-                    name.trim(),
-                    |n| preset_name_taken(n, uuid.as_str()),
-                );
-                ui.set_rename_preset_valid(v.is_savable());
-                ui.set_modal(Modal::RenamePreset);
-            }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let rename_preset_uuid = rename_preset_uuid.clone();
-        ui.on_rename_preset_changed(move |name| {
-            if let Some(ui) = weak.upgrade() {
-                let uuid =
-                    rename_preset_uuid.borrow().clone().unwrap_or_default();
-                let v = meditate_core::naming::validate(
-                    name.trim(),
-                    |n| preset_name_taken(n, &uuid),
-                );
-                ui.set_rename_preset_valid(v.is_savable());
-            }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let current_mode = current_mode.clone();
-        let rename_preset_uuid = rename_preset_uuid.clone();
-        ui.on_rename_preset_confirm(move || {
-            {
-                let Some(ui) = weak.upgrade() else { return; };
-                let core_mode: meditate_core::SessionMode =
-                    current_mode.get().into();
-                let Some(uuid) = rename_preset_uuid.borrow().clone() else {
-                    return;
-                };
-                let name =
-                    ui.get_rename_preset_text().trim().to_string();
-                let v = meditate_core::naming::validate(&name, |n| {
-                    preset_name_taken(n, &uuid)
-                });
-                if !v.is_savable() {
-                    return;
-                }
-                let renamed = lock_db().map(|db| db.update_preset_name(&uuid, &name));
-                close_modal(&ui, Modal::RenamePreset);
-                if !write_ok(&ui, "preset.rename", renamed) {
-                    return;
-                }
-                presets_changed(&ui, core_mode);
+                open_name_dialog(&ui, NameTarget::PresetRename(uuid.to_string()), &name, "".into());
             }
         });
     }
@@ -6684,48 +6485,10 @@ fn build_ui() -> MainWindow {
     let bell_edit_uuid: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     {
         let weak = ui.as_weak();
-        let bell_edit_uuid = bell_edit_uuid.clone();
         ui.on_bell_rename_tap(move |uuid, name| {
             if let Some(ui) = weak.upgrade() {
-                *bell_edit_uuid.borrow_mut() = Some(uuid.to_string());
-                ui.set_bell_rename_text(name.clone());
-                let v = meditate_core::naming::validate(name.trim(), |n| bell_sound_name_taken(n, &uuid));
-                ui.set_bell_rename_valid(v.is_savable());
-                ui.set_modal(Modal::BellRename);
+                open_name_dialog(&ui, NameTarget::BellRename(uuid.to_string()), &name, "".into());
             }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let bell_edit_uuid = bell_edit_uuid.clone();
-        ui.on_bell_rename_changed(move |name| {
-            if let Some(ui) = weak.upgrade() {
-                let except = bell_edit_uuid.borrow().clone().unwrap_or_default();
-                let v = meditate_core::naming::validate(name.trim(), |n| bell_sound_name_taken(n, &except));
-                ui.set_bell_rename_valid(v.is_savable());
-            }
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let bell_edit_uuid = bell_edit_uuid.clone();
-        ui.on_bell_rename_confirm(move || {
-            if let Some(ui) = weak.upgrade() {
-                let Some(uuid) = bell_edit_uuid.borrow().clone() else { return; };
-                let new_name = ui.get_bell_rename_text().trim().to_string();
-                // Re-validate (defends a stale tap / race).
-                let v = meditate_core::naming::validate(&new_name, |n| bell_sound_name_taken(n, &uuid));
-                if !v.is_savable() {
-                    return;
-                }
-                let renamed = lock_db().map(|db| db.rename_bell_sound(&uuid, &new_name));
-                close_modal(&ui, Modal::BellRename);
-                if !write_ok(&ui, "bell_sound.rename", renamed) {
-                    return;
-                }
-                bell_names_changed(&ui);
-            }
-            let _ = weak.clone();
         });
     }
     {
@@ -7062,24 +6825,20 @@ fn build_ui() -> MainWindow {
             std::rc::Rc::new(slint::VecModel::from(xlabels)).into(),
         );
     }
-    // Gate Save: non-empty, non-colliding name (case-insensitive,
-    // excluding the row being edited). Mirrors GTK's editor name
-    // validation via `is_vibration_pattern_name_taken`.
+    // Gate Save through the name rules (core's `validate`): not
+    // empty, not another pattern's name (the edited one excepted);
+    // a taken name says so under the field, as the name dialog.
     fn ve_recompute_save(ui: &MainWindow, except_uuid: &str) {
-        let name = ui.get_ve_name().trim().to_string();
-        if name.is_empty() {
-            ui.set_ve_save_enabled(false);
-            return;
-        }
-        let taken = lock_db()
-            .and_then(|db| {
-                meditate_core::db::is_vibration_pattern_name_taken_from_db(
-                    &db, &name, except_uuid,
-                )
-                .ok()
-            })
-            .unwrap_or(false);
-        ui.set_ve_save_enabled(!taken);
+        let field = meditate_core::naming::NameField::new(&ui.get_ve_name(), |name| {
+            lock_db()
+                .and_then(|db| meditate_core::db::is_vibration_pattern_name_taken_from_db(&db, name, except_uuid).ok())
+                .unwrap_or(false)
+        });
+        ve_show_name(ui, &field);
+    }
+    fn ve_show_name(ui: &MainWindow, field: &meditate_core::naming::NameField) {
+        ui.set_ve_save_enabled(field.can_save());
+        ui.set_ve_name_taken(field.note == meditate_core::naming::NameNote::Taken);
     }
     // Build a transient pattern from the live editor fields for
     // Preview (it isn't saved yet). duration_ms = tenths * 100.
@@ -7458,7 +7217,14 @@ fn build_ui() -> MainWindow {
                         // pattern doesn't pick it for the bell (as GTK).
                         bell_names_changed(&ui);
                     }
-                    // Kept open for a retry.
+                    // A name taken meanwhile (a sync) says so under the
+                    // field; any other failure is reported. Kept open
+                    // for a retry.
+                    Some(Err(e)) if e.is_name_taken() => {
+                        let mut field = meditate_core::naming::NameField::new(&name, |_| false);
+                        field.confirm("vibration.editor", Some(Err(e)));
+                        ve_show_name(&ui, &field);
+                    }
                     failed => {
                         write_ok(&ui, "vibration.editor", failed);
                     }
@@ -7975,135 +7741,26 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Synthetic "Create new label…" row tap — clear any prior
-    // entry text, mark Create disabled, and open the dialog.
-    // Mirrors the GTK `create_row.activated` handler at
-    // `labels.rs:118`.
+    // Synthetic "Create new label…" row tap: the name dialog, empty.
+    // Creating is choosing (see the name dialog's confirm), as GTK's
+    // `labels.rs` create row.
     {
         let weak = ui.as_weak();
         ui.on_create_label_tap(move || {
             if let Some(ui) = weak.upgrade() {
-                ui.set_create_label_text("".into());
-                ui.set_create_label_valid(false);
-                ui.set_modal(Modal::CreateLabel);
+                open_name_dialog(&ui, NameTarget::LabelCreate, "", "".into());
             }
         });
     }
 
-    // Create-label text changed — revalidate against
-    // `is_label_name_taken_from_db` and update Create's enabled
-    // state. Mirrors the GTK `entry.connect_changed` validate
-    // closure at `labels.rs:267`.
-    {
-        let weak = ui.as_weak();
-        ui.on_create_label_changed(move |text| {
-            if let Some(ui) = weak.upgrade() {
-                ui.set_create_label_valid(validate_label_name(&text));
-            }
-        });
-    }
-
-    // Create button pressed — insert the new label, then route
-    // by `label-target`:
-    //   setup → Setup flow → persist UUID, refresh Setup state, close.
-    //   edit → adopt it as the session's label.
-    // Treating creation as selection mirrors GTK's
-    // `labels.rs:125-134`.
-    {
-        let weak = ui.as_weak();
-        let current_mode = current_mode.clone();
-        ui.on_create_label_confirm(move || {
-            let Some(ui) = weak.upgrade() else { return; };
-            {
-                let text = ui.get_create_label_text().to_string();
-                if let Some((id, uuid)) = create_label_in_db(&text) {
-                    match ui.get_label_target() {
-                        LabelTarget::Edit => {
-                            // Edit-Session flow
-                            ui.set_edit_label_id(id as i32);
-                            ui.set_edit_label_name(text.trim().into());
-                            ui.set_edit_label_enabled(true);
-                        }
-                        LabelTarget::Setup => {
-                            // Setup flow
-                            let mode: meditate_core::SessionMode = current_mode.get().into();
-                            write_label_uuid_for_mode(&ui, mode, &uuid);
-                            refresh_label_state(&ui, mode);
-                        }
-                    }
-                } else {
-                    show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
-                }
-            }
-            close_modal(&ui, Modal::CreateLabel);
-            ui.set_labels_page(false);
-            let _ = current_mode.get();
-        });
-    }
-
-    // Rename pencil tap — pre-fill the dialog with the row's
-    // current name + open it. `rename-label-valid` starts true
-    // (the unchanged name is always valid against the row's own
-    // id, thanks to `except_id`). Mirrors GTK's
-    // `present_rename_label_dialog`'s initial `validate()` call
-    // at `labels.rs:333`.
+    // Rename pencil tap: the name dialog with the row's current
+    // name. Mirrors GTK's `present_rename_label_dialog`.
     {
         let weak = ui.as_weak();
         ui.on_rename_label_tap(move |id| {
             let Some(ui) = weak.upgrade() else { return; };
-            {
-                let current = lookup_label_name(id as i64).unwrap_or_default();
-                ui.set_rename_label_id(id);
-                ui.set_rename_label_text(current.into());
-                ui.set_rename_label_valid(true);
-                ui.set_modal(Modal::RenameLabel);
-            }
-        });
-    }
-
-    // Rename-label text changed — revalidate against the same
-    // collision check Create uses, but with the row's id as
-    // `except_id` so the user can keep typing the existing name
-    // (case-only edits, undo a typo, etc.). Mirrors GTK's
-    // `entry.connect_changed` at `labels.rs:335`.
-    {
-        let weak = ui.as_weak();
-        ui.on_rename_label_changed(move |text| {
-            if let Some(ui) = weak.upgrade() {
-                {
-                    let id = ui.get_rename_label_id() as i64;
-                    ui.set_rename_label_valid(validate_rename_label_name(&text, id));
-                }
-            }
-        });
-    }
-
-    // Rename button pressed — call `db.update_label` and refresh
-    // the chooser + ExpanderRow. The active-mode UUID setting
-    // doesn't need a write — the row's UUID is unchanged, only
-    // the name is. Mirrors GTK's `update_label + rebuilder()` at
-    // `labels.rs:344-350`.
-    {
-        let weak = ui.as_weak();
-        let current_mode = current_mode.clone();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
-        ui.on_rename_label_confirm(move || {
-            let Some(ui) = weak.upgrade() else { return; };
-            {
-                let id = ui.get_rename_label_id() as i64;
-                let text = ui.get_rename_label_text().to_string();
-                if rename_label_in_db(id, &text) {
-                    let mode: meditate_core::SessionMode = current_mode.get().into();
-                    refresh_after_label_change(&ui, mode);
-                    refresh_filter_label_items(&ui);
-                    reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
-                } else {
-                    show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
-                }
-            }
-            close_modal(&ui, Modal::RenameLabel);
-            let _ = current_mode.get();
+            let current = lookup_label_name(i64::from(id)).unwrap_or_default();
+            open_name_dialog(&ui, NameTarget::LabelRename(i64::from(id)), &current, "".into());
         });
     }
 

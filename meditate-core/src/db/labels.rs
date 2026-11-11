@@ -132,6 +132,7 @@ impl Database {
     /// of itself) succeeds, since SQLite's UNIQUE check excludes the
     /// row being updated.
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
+        let name = crate::naming::clean(name)?;
         let tx = self.tx()?;
         let row: Option<(String, String)> = self.conn.query_row(
             "SELECT uuid, name FROM labels WHERE id = ?1",
@@ -157,13 +158,14 @@ impl Database {
         Ok(())
     }
 
-    /// Insert a new label and return its AUTOINCREMENT rowid. Returns
+    /// Insert a new label (trimmed) and return it. Returns
     /// `DbError::DuplicateLabel` if `name` (case-insensitive) already
-    /// exists — the column is `COLLATE NOCASE UNIQUE`. UIs that want to
-    /// silently reuse an existing row (e.g. CSV import) should call
-    /// `find_or_create_label` instead.
-    pub fn insert_label(&self, name: &str) -> Result<i64> {
-        self.insert_label_with_uuid(&super::mint_uuid(), name)
+    /// exists — the column is `COLLATE NOCASE UNIQUE`.
+    pub fn insert_label(&self, name: &str) -> Result<Label> {
+        let name = crate::naming::clean(name)?;
+        let uuid = super::mint_uuid();
+        let id = self.insert_label_with_uuid(&uuid, name)?;
+        Ok(Label { id, name: name.to_string(), uuid: LabelUuid::new(uuid) })
     }
 
     /// Insert a label with a caller-supplied uuid. Idempotent on the
@@ -212,10 +214,6 @@ impl Database {
         self.insert_label_with_uuid(&uuid, name)
     }
 
-    /// Return a label id by name, creating the label if missing. Lookup
-    /// is case-insensitive (column COLLATE NOCASE), so an import of
-    /// "Meditation" finds an existing "meditation" instead of producing
-    /// a duplicate row.
     /// Every unresolved label-name conflict: labels whose name
     /// carries the `(conflict-<their own uuid prefix>)` suffix,
     /// paired with the label that kept the base name. Requiring
@@ -312,13 +310,6 @@ impl Database {
         self.set_sync_state(CONFLICT_DISMISSED_KEY, &next)
     }
 
-    pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
-        if let Some(id) = find_label_by_name_from_db(self, name)? {
-            return Ok(id);
-        }
-        self.insert_label(name)
-    }
-
     /// Recompute the `labels` row for `label_uuid` from the events table.
     /// Same precedence rules as sessions: tombstone wins on tie/precedence,
     /// else the highest-(lamport, device_id) mutate event drives the name.
@@ -390,7 +381,7 @@ mod tests {
     #[test]
     fn label_names_are_keyed_by_uuid() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Walking").unwrap();
+        let id = db.insert_label("Walking").unwrap().id;
         let uuid = list_labels_from_db(&db).unwrap().into_iter().find(|l| l.id == id).unwrap().uuid;
         let names = label_names_from_db(&db).unwrap();
         assert_eq!(names.get(uuid.as_str()).map(String::as_str), Some("Walking"));
@@ -421,8 +412,8 @@ mod tests {
     #[test]
     fn a_rename_keeps_a_label_colour_and_a_delete_moves_later_ones_up() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let walking = db.insert_label("Walking").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let walking = db.insert_label("Walking").unwrap().id;
         db.insert_label("Evening").unwrap();
         db.update_label(walking, "Walk").unwrap();
         assert_eq!(places_by_name(&db), [("Morning".into(), 0), ("Walk".into(), 1), ("Evening".into(), 2)]);
@@ -473,8 +464,8 @@ mod tests {
         // One write per session: a failure partway left the sessions
         // split between the two labels, and nothing said so.
         let db = Database::open_in_memory().unwrap();
-        let from = db.insert_label("Walking").unwrap();
-        let into = db.insert_label("Walk").unwrap();
+        let from = db.insert_label("Walking").unwrap().id;
+        let into = db.insert_label("Walk").unwrap().id;
         for i in 0..3 {
             db.insert_session(&Session::from_unix(1_700_000_000 + i * 3600, 600, Some(from), None, SessionMode::Timer, None, None))
                 .unwrap();
@@ -504,6 +495,16 @@ mod tests {
     }
 
     #[test]
+    fn creating_a_label_returns_it() {
+        let db = Database::open_in_memory().unwrap();
+        let label = db.insert_label("  Walk ").unwrap();
+        let stored = list_labels_from_db(&db).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(label.name, "Walk");
+        assert_eq!(label, stored[0]);
+    }
+
+    #[test]
     fn inserting_duplicate_label_returns_err() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
@@ -522,21 +523,21 @@ mod tests {
     fn is_label_name_taken_true_for_existing_other_label() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let evening = db.insert_label("Evening").unwrap().id;
         assert!(is_label_name_taken_from_db(&db, "Morning", evening).unwrap());
     }
 
     #[test]
     fn is_label_name_taken_false_when_only_owner_is_excluded() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         assert!(!is_label_name_taken_from_db(&db, "Morning", morning).unwrap());
     }
 
     #[test]
     fn is_label_name_taken_is_case_insensitive() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         assert!(is_label_name_taken_from_db(&db, "morning", 0).unwrap());
         assert!(is_label_name_taken_from_db(&db, "MORNING", 0).unwrap());
         assert!(!is_label_name_taken_from_db(&db, "morning", morning).unwrap());
@@ -545,15 +546,15 @@ mod tests {
     #[test]
     fn label_session_count_zero_for_unreferenced_label() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         assert_eq!(label_session_count_from_db(&db, id).unwrap(), 0);
     }
 
     #[test]
     fn label_session_count_counts_referencing_sessions() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         for i in 0..3 {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-2{i}T10:00:00Z"),
@@ -601,8 +602,8 @@ mod tests {
     #[test]
     fn delete_label_removes_only_that_row() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         db.delete_label(morning).unwrap();
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), None);
         assert_eq!(find_label_by_name_from_db(&db, "Evening").unwrap(), Some(evening));
@@ -615,7 +616,7 @@ mod tests {
     #[test]
     fn delete_label_unknown_id_is_noop() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         db.delete_label(id + 999).unwrap();
         assert_eq!(count_labels_from_db(&db).unwrap(), 1);
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id));
@@ -624,7 +625,7 @@ mod tests {
     #[test]
     fn delete_label_unlinks_sessions_via_set_null() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         let labeled_id = db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,
@@ -671,8 +672,8 @@ mod tests {
     #[test]
     fn delete_label_does_not_affect_unrelated_sessions() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         let evening_id = db.insert_session(&Session {
             start_iso: "2026-04-27T19:00:00Z".to_string(),
             duration_secs: 600,
@@ -692,8 +693,8 @@ mod tests {
     #[test]
     fn update_label_renames_row() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         db.update_label(morning, "Pre-coffee").unwrap();
         assert_eq!(find_label_by_name_from_db(&db, "Pre-coffee").unwrap(), Some(morning));
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), None);
@@ -704,7 +705,7 @@ mod tests {
     #[test]
     fn update_label_to_same_name_is_idempotent() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         db.update_label(id, "Morning").unwrap();
         assert_eq!(count_labels_from_db(&db).unwrap(), 1);
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id));
@@ -713,9 +714,9 @@ mod tests {
     #[test]
     fn list_labels_returns_label_per_row_alphabetic_by_name() {
         let db = Database::open_in_memory().unwrap();
-        let evening = db.insert_label("Evening").unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let afternoon = db.insert_label("Afternoon").unwrap();
+        let evening = db.insert_label("Evening").unwrap().id;
+        let morning = db.insert_label("Morning").unwrap().id;
+        let afternoon = db.insert_label("Afternoon").unwrap().id;
         let rows = list_labels_from_db(&db).unwrap();
         assert_eq!(rows.len(), 3);
         let uuids: std::collections::HashSet<_> =
@@ -739,9 +740,9 @@ mod tests {
     #[test]
     fn list_labels_returns_label_per_row_case_insensitive_sort() {
         let db = Database::open_in_memory().unwrap();
-        let banana = db.insert_label("Banana").unwrap();
-        let cherry = db.insert_label("cherry").unwrap();
-        let apple = db.insert_label("apple").unwrap();
+        let banana = db.insert_label("Banana").unwrap().id;
+        let cherry = db.insert_label("cherry").unwrap().id;
+        let apple = db.insert_label("apple").unwrap().id;
         let rows = list_labels_from_db(&db).unwrap();
         let names: Vec<&str> = rows.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, vec!["apple", "Banana", "cherry"]);
@@ -753,7 +754,7 @@ mod tests {
     #[test]
     fn update_label_to_case_variant_of_own_name_succeeds() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("morning").unwrap();
+        let id = db.insert_label("morning").unwrap().id;
         db.update_label(id, "Morning").unwrap();
         assert_eq!(find_label_by_name_from_db(&db, "morning").unwrap(), Some(id));
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id));
@@ -765,8 +766,8 @@ mod tests {
     #[test]
     fn update_label_to_existing_other_name_returns_duplicate_error() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let _evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let _evening = db.insert_label("Evening").unwrap().id;
         let result = db.update_label(morning, "Evening");
         assert!(
             matches!(result, Err(DbError::DuplicateLabel(ref n)) if n == "Evening"),
@@ -778,7 +779,7 @@ mod tests {
     #[test]
     fn update_label_to_case_variant_of_other_name_returns_duplicate_error() {
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         db.insert_label("Evening").unwrap();
         let result = db.update_label(morning, "evening");
         assert!(
@@ -790,7 +791,7 @@ mod tests {
     #[test]
     fn update_label_unknown_id_is_noop() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         db.update_label(id + 999, "Phantom").unwrap();
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id));
         assert_eq!(find_label_by_name_from_db(&db, "Phantom").unwrap(), None);
@@ -800,53 +801,14 @@ mod tests {
     #[test]
     fn insert_label_returns_new_rowid() {
         let db = Database::open_in_memory().unwrap();
-        let id1 = db.insert_label("Morning").unwrap();
-        let id2 = db.insert_label("Evening").unwrap();
-        let id3 = db.insert_label("Afternoon").unwrap();
+        let id1 = db.insert_label("Morning").unwrap().id;
+        let id2 = db.insert_label("Evening").unwrap().id;
+        let id3 = db.insert_label("Afternoon").unwrap().id;
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
         assert_eq!(id3, 3);
         assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id1));
         assert_eq!(find_label_by_name_from_db(&db, "Evening").unwrap(), Some(id2));
-    }
-
-    #[test]
-    fn find_or_create_label_creates_when_missing() {
-        let db = Database::open_in_memory().unwrap();
-        let id = db.find_or_create_label("Morning").unwrap();
-        assert_eq!(count_labels_from_db(&db).unwrap(), 1);
-        assert_eq!(find_label_by_name_from_db(&db, "Morning").unwrap(), Some(id));
-    }
-
-    #[test]
-    fn find_or_create_label_returns_existing_id() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let existing = find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
-        let got = db.find_or_create_label("Morning").unwrap();
-        assert_eq!(got, existing);
-        assert_eq!(count_labels_from_db(&db).unwrap(), 1);
-    }
-
-    #[test]
-    fn find_or_create_label_is_case_insensitive() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let existing = find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
-        assert_eq!(db.find_or_create_label("morning").unwrap(), existing);
-        assert_eq!(db.find_or_create_label("MORNING").unwrap(), existing);
-        assert_eq!(count_labels_from_db(&db).unwrap(), 1);
-    }
-
-    #[test]
-    fn find_or_create_label_idempotent_across_calls() {
-        let db = Database::open_in_memory().unwrap();
-        let id1 = db.find_or_create_label("Evening").unwrap();
-        let id2 = db.find_or_create_label("Evening").unwrap();
-        let id3 = db.find_or_create_label("evening").unwrap();
-        assert_eq!(id1, id2);
-        assert_eq!(id1, id3);
-        assert_eq!(count_labels_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -937,7 +899,7 @@ mod tests {
     #[test]
     fn update_label_appends_a_label_rename_event() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         let row_uuid = list_labels_from_db(&db).unwrap()[0].uuid.clone();
         drain_events(&db);
         db.update_label(id, "Sunrise").unwrap();
@@ -961,7 +923,7 @@ mod tests {
     fn update_label_to_duplicate_emits_no_event() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let evening_id = db.insert_label("Evening").unwrap();
+        let evening_id = db.insert_label("Evening").unwrap().id;
         drain_events(&db);
         let result = db.update_label(evening_id, "Morning");
         assert!(result.is_err());
@@ -971,7 +933,7 @@ mod tests {
     #[test]
     fn delete_label_appends_a_label_delete_event() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Morning").unwrap();
+        let id = db.insert_label("Morning").unwrap().id;
         let row_uuid = list_labels_from_db(&db).unwrap()[0].uuid.clone();
         drain_events(&db);
         db.delete_label(id).unwrap();
@@ -1529,7 +1491,7 @@ mod tests {
     #[test]
     fn renaming_a_label_to_its_own_name_writes_nothing() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.insert_label("Yoga").unwrap();
+        let id = db.insert_label("Yoga").unwrap().id;
         let before = db.pending_events().unwrap().len();
         db.update_label(id, "Yoga").unwrap();
         assert_eq!(db.pending_events().unwrap().len(), before);
@@ -1547,7 +1509,7 @@ mod tests {
             Sync::new(db, &server, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         };
         let (laptop, phone) = (Database::open_in_memory().unwrap(), Database::open_in_memory().unwrap());
-        let yoga = laptop.insert_label("Yoga").unwrap();
+        let yoga = laptop.insert_label("Yoga").unwrap().id;
         laptop.insert_session(&Session {
             start_iso: "2026-10-10T08:00:00".into(),
             duration_secs: 600,

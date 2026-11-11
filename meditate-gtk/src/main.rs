@@ -10,6 +10,7 @@ pub mod keychain;
 pub mod labels;
 pub mod local_folder;
 pub mod log;
+mod name_dialog;
 mod mpris;
 mod preferences;
 pub mod preset_subtitle;
@@ -105,5 +106,36 @@ fn setup_gettext() {
         let msg = format!("textdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");
         meditate_core::log("gettext", &msg);
+    }
+}
+
+/// GTK lives on the thread that first initialised it, and the tests
+/// run on many: every test that needs GTK runs its body here.
+#[cfg(test)]
+mod gtk_test {
+    use std::sync::{mpsc, Mutex, OnceLock};
+
+    type Job = Box<dyn FnOnce() + Send>;
+    type Done = mpsc::Sender<std::thread::Result<()>>;
+
+    /// Run `body` on the one GTK thread (libadwaita initialised) and
+    /// pass on its panic.
+    pub fn run(body: impl FnOnce() + Send + 'static) {
+        static GTK: OnceLock<Mutex<mpsc::Sender<(Job, Done)>>> = OnceLock::new();
+        let jobs = GTK.get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<(Job, Done)>();
+            std::thread::spawn(move || {
+                adw::init().expect("needs a display");
+                for (job, done) in rx {
+                    let _ = done.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)));
+                }
+            });
+            Mutex::new(tx)
+        });
+        let (done, result) = mpsc::channel();
+        jobs.lock().unwrap().send((Box::new(body), done)).unwrap();
+        if let Err(panic) = result.recv().unwrap() {
+            std::panic::resume_unwind(panic);
+        }
     }
 }

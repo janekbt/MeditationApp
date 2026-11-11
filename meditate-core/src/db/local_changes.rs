@@ -170,12 +170,12 @@ mod tests {
         check("merge labels", &|db| { db.merge_labels(b, a).unwrap(); });
         check("delete label", &|db| db.delete_label(a).unwrap());
 
-        check("insert preset", &|db| { db.insert_preset("P", SessionMode::Timer, false, "{}").unwrap(); });
+        check("insert preset", &|db| { db.insert_preset("P", SessionMode::Timer, "{}").unwrap(); });
         let preset = crate::db::list_presets_from_db(&db).unwrap()
             .into_iter().find(|p| p.name == "P").unwrap().uuid.to_string();
         check("rename preset", &|db| db.update_preset_name(&preset, "P2").unwrap());
         check("change preset", &|db| db.update_preset_config(&preset, r#"{"x":1}"#).unwrap());
-        check("star preset", &|db| db.update_preset_starred(&preset, StarredState::Starred).unwrap());
+        check("unstar preset", &|db| db.update_preset_starred(&preset, StarredState::Unstarred).unwrap());
         check("delete preset", &|db| db.delete_preset(&preset).unwrap());
 
         check("change setting", &|db| db.set_setting("daily_goal", "25").unwrap());

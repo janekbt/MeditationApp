@@ -16,8 +16,8 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use meditate_core::db::Refresh;
 use crate::db::{write_ok, Failed, Label};
-use meditate_core::db::DbError;
 use crate::i18n::{gettext, ngettext};
+use crate::name_dialog::{name_dialog, taken_in};
 use meditate_core::labels::DeleteImpactKey;
 
 /// Selection-mode parameters: the row tapped becomes the active
@@ -236,68 +236,12 @@ fn present_create_label_dialog(
     app: &MeditateApplication,
     on_created: Box<dyn Fn(Label)>,
 ) {
-    let entry = gtk::Entry::builder()
-        .placeholder_text(gettext("Label name"))
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Create Label"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("create")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("create", &gettext("Create"));
-    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-    dialog.set_response_enabled("create", false);
-
-    // Live validation — non-empty + no collision with existing names.
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| meditate_core::db::is_label_name_taken_from_db(db, name, 0))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false)
-            });
-            dialog.set_response_enabled("create", validity.is_savable());
-        })
-    };
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
-    let on_created = Rc::new(on_created);
+    let taken = taken_in(app, |db, name| meditate_core::db::is_label_name_taken_from_db(db, name, 0));
     let app = app.clone();
-    let entry_for_response = entry.clone();
-    let anchor_for_response = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "create" { return; }
-        let name = entry_for_response.text().trim().to_string();
-        if name.is_empty() { return; }
-        let outcome = app.with_db(|db| {
-            let id = db.insert_label(&name)?;
-            meditate_core::db::list_labels_from_db(db)?.into_iter().find(|l| l.id == id)
-                .ok_or(DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
-        });
-        match outcome {
-            Some(Ok(label)) => {
-                on_created(label);
-            }
-            // A name clash that raced past the live validation, or a
-            // failed write: say so, so the action doesn't just vanish.
-            failed => {
-                write_ok(&anchor_for_response, "label.create", failed, Failed::Save);
-            }
-        }
+    name_dialog(anchor, &gettext("Create Label"), "", &gettext("Label name"), &gettext("Create"), taken, move |name| {
+        let created = app.with_db(|db| db.insert_label(name))?;
+        Some(created.map(&*on_created))
     });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
 }
 
 fn present_rename_label_dialog(
@@ -307,60 +251,19 @@ fn present_rename_label_dialog(
     current_name: &str,
     rebuilder: crate::Rebuilder,
 ) {
-    let entry = gtk::Entry::builder()
-        .text(current_name)
-        .activates_default(true)
-        .build();
-
-    let dialog = adw::AlertDialog::builder()
-        .heading(gettext("Rename Label"))
-        .extra_child(&entry)
-        .close_response("cancel")
-        .default_response("rename")
-        .build();
-    dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("rename", &gettext("Rename"));
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-
-    let validate: Rc<dyn Fn()> = {
-        let app = app.clone();
-        let entry = entry.clone();
-        let dialog = dialog.clone();
-        Rc::new(move || {
-            let text = entry.text();
-            let trimmed = text.trim();
-            let validity = meditate_core::validate(trimmed, |name| {
-                app.with_db(|db| meditate_core::db::is_label_name_taken_from_db(db, name, label_id))
-                    .and_then(std::result::Result::ok)
-                    .unwrap_or(false)
-            });
-            dialog.set_response_enabled("rename", validity.is_savable());
-        })
-    };
-    validate();
-    let validate_for_change = validate.clone();
-    entry.connect_changed(move |_| validate_for_change());
-
+    let taken = taken_in(app, move |db, name| meditate_core::db::is_label_name_taken_from_db(db, name, label_id));
     let app = app.clone();
-    let entry_for_response = entry.clone();
-    let anchor_for_response = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "rename" { return; }
-        let new_name = entry_for_response.text().trim().to_string();
-        if new_name.is_empty() { return; }
-        let renamed = app.with_db(|db| db.update_label(label_id, &new_name));
-        if !write_ok(&anchor_for_response, "label.rename", renamed, Failed::Save) {
-            return;
+    name_dialog(anchor, &gettext("Rename Label"), current_name, "", &gettext("Rename"), taken, move |name| {
+        let renamed = app.with_db(|db| db.update_label(label_id, name));
+        if matches!(renamed, Some(Ok(()))) {
+            // The chooser rebuilds here, Setup's row when the chooser
+            // closes; the Log edit dialog re-reads on close.
+            if let Some(rb) = rebuilder.borrow().as_ref() {
+                rb();
+            }
         }
-        // The chooser rebuilds below, Setup's row when the chooser closes;
-        // the Log edit dialog re-reads on close.
-        if let Some(rb) = rebuilder.borrow().as_ref() {
-            rb();
-        }
+        renamed
     });
-
-    dialog.present(Some(anchor));
-    entry.grab_focus();
 }
 
 fn present_delete_label_dialog(

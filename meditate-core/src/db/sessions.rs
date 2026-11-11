@@ -964,7 +964,7 @@ mod tests {
         // A new id for a restored label made it a "(conflict)" copy of
         // the synced one.
         let db = Database::open_in_memory().unwrap();
-        let calm = db.insert_label("Calm").unwrap();
+        let calm = db.insert_label("Calm").unwrap().id;
         let work_id = "3f0e9a2b-5c1d-4e8f-a7b6-9d2c1e0f4a3b";
         let labels = [
             ("Work".to_string(), Some(crate::db::LabelUuid::new(work_id))),
@@ -1262,7 +1262,7 @@ mod tests {
         // link to it via local label_id. (Ensures cross-device
         // referential integrity survives the rowid-to-uuid translation.)
         let db = Database::open_in_memory().unwrap();
-        let local_label_id = db.insert_label("Morning").unwrap();
+        let local_label_id = db.insert_label("Morning").unwrap().id;
         let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         drain_events(&db);
 
@@ -1359,7 +1359,7 @@ mod tests {
         // time so a peer can apply the event without needing this
         // device's rowid space.
         let db = Database::open_in_memory().unwrap();
-        let label_id = db.insert_label("Morning").unwrap();
+        let label_id = db.insert_label("Morning").unwrap().id;
         let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         // insert_label also emits an event — drain it before the session
         // insert so we can assert on a single event below.
@@ -1569,7 +1569,7 @@ mod tests {
         // Updates can change the label — the event payload must reflect
         // the *new* label's uuid, not the old one or the rowid.
         let db = Database::open_in_memory().unwrap();
-        let label_id = db.insert_label("Evening").unwrap();
+        let label_id = db.insert_label("Evening").unwrap().id;
         let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         let id = db.insert_session(&Session {
             start_iso: "2026-04-30T10:00:00".to_string(),
@@ -1877,10 +1877,10 @@ mod tests {
         // and labels with zero sessions are excluded — INNER JOIN drops
         // them at the SQL level. Sort: total_secs DESC, name ASC NOCASE.
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         // An extra label with no sessions — must NOT appear in output.
-        let _unused = db.insert_label("Unused").unwrap();
+        let _unused = db.insert_label("Unused").unwrap().id;
 
         // Morning: 2 sessions, 900s total.
         db.insert_session(&Session {
@@ -1929,8 +1929,8 @@ mod tests {
     fn label_totals_seconds_ties_break_case_insensitive_alphabetic() {
         // Same total ⇒ secondary sort by name, NOCASE.
         let db = Database::open_in_memory().unwrap();
-        let zebra = db.insert_label("Zebra").unwrap();
-        let alpha = db.insert_label("alpha").unwrap();
+        let zebra = db.insert_label("Zebra").unwrap().id;
+        let alpha = db.insert_label("alpha").unwrap().id;
         db.insert_session(&Session {
             start_iso: "2026-04-27T12:00:00".to_string(),
             duration_secs: 600, label_id: Some(zebra), notes: None,
@@ -1958,7 +1958,7 @@ mod tests {
         // total_minutes_by_label returns minutes (lossy integer division).
         // This variant must NOT lose sub-minute precision.
         let db = Database::open_in_memory().unwrap();
-        let lid = db.insert_label("Morning").unwrap();
+        let lid = db.insert_label("Morning").unwrap().id;
         // 90s + 45s = 135s — would round to 2 minutes (=120s) under
         // the minutes-then-converted approach.
         db.insert_session(&Session {
@@ -2442,8 +2442,8 @@ mod tests {
     fn query_sessions_label_id_filters_by_label() {
         // label_id=Some(id) keeps only sessions referencing that label.
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
-        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
+        let evening = db.insert_label("Evening").unwrap().id;
         // 2 Morning, 1 Evening, 1 unlabeled.
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
@@ -2533,7 +2533,7 @@ mod tests {
     fn query_sessions_combines_label_filter_and_notes_filter() {
         // Compound filter: label_id AND only_with_notes both apply.
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        let morning = db.insert_label("Morning").unwrap().id;
         // Morning + note → kept.
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
@@ -3636,7 +3636,7 @@ mod tests {
     #[test]
     fn a_session_on_a_deleted_label_saves_without_it() {
         let db = Database::open_in_memory().unwrap();
-        let label = db.insert_label("Yoga").unwrap();
+        let label = db.insert_label("Yoga").unwrap().id;
         db.delete_label(label).unwrap();
         let mut session = crate::db::Session {
             start_iso: "2026-10-10T08:00:00".into(),

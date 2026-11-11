@@ -73,6 +73,15 @@ struct Editor {
 impl Editor {
     fn new(initial: Option<VibrationPattern>) -> Rc<Self> {
         let (edit_uuid, name, duration_s, intensities, chart_kind) = match initial {
+            // A bundled pattern is changed through a copy: a new
+            // pattern with its shape.
+            Some(p) if p.is_bundled => (
+                None,
+                gettext("{name} copy").replace("{name}", &p.name),
+                f64::from(p.duration_ms) / 1000.0,
+                p.intensities,
+                p.chart_kind,
+            ),
             Some(p) => (
                 Some(p.uuid.0),
                 p.name,
@@ -156,7 +165,18 @@ pub fn push_pattern_editor(
         .text(&*editor.name.borrow())
         .build();
     name_group.add(&name_row);
-    name_clamp.set_child(Some(&name_group));
+    // Why Save is off: the name is another pattern's.
+    let name_hint = gtk::Label::builder()
+        .css_classes(["error", "caption"])
+        .halign(gtk::Align::Start)
+        .wrap(true)
+        .margin_top(6)
+        .visible(false)
+        .build();
+    let name_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+    name_box.append(&name_group);
+    name_box.append(&name_hint);
+    name_clamp.set_child(Some(&name_box));
     body.append(&name_clamp);
 
     // Shape group: Duration + Points.
@@ -450,24 +470,19 @@ pub fn push_pattern_editor(
         area_for_kind.queue_draw();
     });
 
-    // Live name validation — Save button gates on (non-empty trimmed)
-    // && (no other row holds the same name, case-insensitive).
+    // Live name validation: Save gates on core's name rule (no other
+    // row holds the name, case-insensitive), the hint says why.
     let revalidate: Rc<dyn Fn()> = {
         let app = app.clone();
         let editor = editor.clone();
         let save_btn = save_btn.clone();
+        let name_hint = name_hint.clone();
         Rc::new(move || {
-            let name = editor.name.borrow().trim().to_string();
-            if name.is_empty() {
-                save_btn.set_sensitive(false);
-                return;
-            }
             let except = editor.edit_uuid.borrow().clone().unwrap_or_default();
-            let collision = app
-                .with_db(|db| meditate_core::db::is_vibration_pattern_name_taken_from_db(db, &name, &except))
-                .and_then(std::result::Result::ok)
-                .unwrap_or(false);
-            save_btn.set_sensitive(!collision);
+            let taken = crate::name_dialog::taken_in(&app, move |db, name| {
+                meditate_core::db::is_vibration_pattern_name_taken_from_db(db, name, &except)
+            });
+            gate_name(&save_btn, &name_hint, &editor.name.borrow(), taken);
         })
     };
 
@@ -491,6 +506,7 @@ pub fn push_pattern_editor(
     let on_saved = Rc::new(on_saved);
     let on_saved_for_save = on_saved.clone();
     let save_btn_for_toast = save_btn.clone();
+    let name_hint_for_save = name_hint.clone();
     save_btn.connect_clicked(move |_| {
         let name = editor_for_save.name.borrow().trim().to_string();
         if name.is_empty() {
@@ -518,6 +534,11 @@ pub fn push_pattern_editor(
             Some(Ok((uuid, changed))) => {
                 on_saved_for_save(uuid, changed);
                 nav_for_save.pop();
+            }
+            // Taken meanwhile (a sync): said under the field.
+            Some(Err(e)) if e.is_name_taken() => {
+                meditate_core::log("pattern.save", &format!("failed: {e:?}"));
+                gate_name(&save_btn_for_toast, &name_hint_for_save, &name, |_| true);
             }
             failed => {
                 crate::db::write_ok(&save_btn_for_toast, "pattern.save", failed, crate::db::Failed::Save);
@@ -762,9 +783,65 @@ fn points_subtitle(max: u32) -> String {
     gettext("Min 100 ms between points (up to {max} for this duration)").replace("{max}", &max.to_string())
 }
 
+/// Save's gate on the Name field: core's name rule, with the line
+/// under the field saying why Save is off.
+fn gate_name(save_btn: &gtk::Button, hint: &gtk::Label, name: &str, is_taken: impl FnOnce(&str) -> bool) {
+    let field = meditate_core::naming::NameField::new(name, is_taken);
+    save_btn.set_sensitive(field.can_save());
+    let text = crate::name_dialog::note_text(field.note);
+    hint.set_visible(text.is_some());
+    hint.set_label(&text.unwrap_or_default());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bundled pattern opens as a new pattern with its shape.
+    #[test]
+    fn a_bundled_pattern_opens_as_a_copy() {
+        let pulse = VibrationPattern {
+            id: 1,
+            uuid: "pulse".into(),
+            name: "Pulse".into(),
+            duration_ms: 1500,
+            intensities: vec![0.2, 0.9, 0.2],
+            chart_kind: ChartKind::Line,
+            is_bundled: true,
+            created_iso: String::new(),
+            updated_iso: String::new(),
+        };
+        let copy = Editor::new(Some(pulse.clone()));
+        assert_eq!(*copy.edit_uuid.borrow(), None, "Save inserts");
+        assert_eq!(*copy.name.borrow(), "Pulse copy");
+        assert_eq!(*copy.intensities.borrow(), [0.2, 0.9, 0.2]);
+        assert!((copy.duration_s.get() - 1.5).abs() < 1e-9);
+        assert_eq!(copy.chart_kind.get(), ChartKind::Line);
+        let own = Editor::new(Some(VibrationPattern { is_bundled: false, ..pulse }));
+        assert_eq!(own.edit_uuid.borrow().as_deref(), Some("pulse"), "your own is edited in place");
+    }
+
+    #[test]
+    fn the_pattern_editor_says_a_taken_name() {
+        crate::gtk_test::run(|| {
+            let save = gtk::Button::new();
+            let hint = gtk::Label::new(None);
+            let taken = |n: &str| n.eq_ignore_ascii_case("Pulse");
+            gate_name(&save, &hint, "Pulse copy", taken);
+            assert!(save.is_sensitive());
+            assert!(!hint.is_visible());
+            gate_name(&save, &hint, "PULSE ", taken);
+            assert!(!save.is_sensitive());
+            assert!(hint.is_visible());
+            assert_eq!(hint.label(), "This name is already in use");
+            gate_name(&save, &hint, "Wave", taken);
+            assert!(save.is_sensitive());
+            assert!(!hint.is_visible());
+            gate_name(&save, &hint, "  ", taken);
+            assert!(!save.is_sensitive(), "empty: Save off");
+            assert!(!hint.is_visible(), "and no hint");
+        });
+    }
 
     #[test]
     fn max_points_floors_to_100ms_spacing() {
