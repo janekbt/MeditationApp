@@ -22,7 +22,7 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 | [ ] | GG. Android Edit Session | #472, #473, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
-| [ ] | HH. Timer engine and bells | #279, #280, #293, #309, #518 | bells and lengths that are off |
+| [ ] | HH. Timer engine and bells | #309, #518 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
@@ -343,21 +343,6 @@ Decided 2026-11-03: each skipped item stays visible in the sync status that the 
 ## HH. Timer engine and bells
 
 Mostly core, host-testable.
-
-### #279 After a suspend, every missed fixed bell rings at once
-- Where: `fire_due_bells` (`mod.rs:1151-1174`) with `ActiveBell::advance` (`bells.rs:267`): an interval bell rings once for its latest due time after a jump, but each fixed bell flips and fires on its own.
-- Scenario: a 60 min Timer with fixed bells at 10, 20 and 30 min; the phone sleeps from minute 5 to 35. The first tick fires three bells (plus any interval bell) on the stacking channel.
-- Fix: after a jump, ring only the latest due fixed bell and skip the earlier ones, as interval bells do. Related: slice 6 (bells).
-
-### #280 The bell counter counts the starting bell as heard when it never rang
-- Where: `bell_ring` (`mod.rs:938`): `rung += !preparing`.
-- Scenario: the per-mode signal override mutes it (`starting_bell_effect` returns nothing), or a suspend through prep past the end skips it (`tick_prep` 586-592); the counter still shows it as heard, "1 of N" before any bell. The end bell has the same blind spot for the override.
-- Fix: record in the session whether the starting and end bells actually fired, and count that.
-
-### #293 The Bells subtitle counts bells that won't ring
-- Where: `bells.rs:771-778` (`interval_bells_count`) filters only the stopwatch case; `build_active_bells` also drops a fixed bell at or past the target, a "before end" offset at or past it, and a repeating bell longer than the session.
-- Scenario: a 10 min countdown with one bell "at 30 min": the row says "1 interval bell", nothing rings.
-- Fix: count what `build_active_bells` would build for the current target.
 
 ### #518 After a guided track ends well before its probed length, Add saves less than Save
 - Where: `session/mod.rs`: `finish_overtime` saves the planned (probed) length; `add_overtime_and_finish` and the crash-recovery heartbeat save the time so far.

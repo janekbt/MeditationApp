@@ -39,7 +39,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [x] | P4. Names and dialogs | done: one-name-dialog (#358, #374, #415, #486), one-dialog-frame (#465) | DD, FF |
-| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430), one-android-session (#429, #394, #395, #272, the rest of #430); open: #269 (P5-c), #274 | HH |
+| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430), one-android-session (#429, #394, #395, #272, the rest of #430), bells-that-ring (#269, and OPEN-ISSUES #279, #280, #293); open: #274 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
@@ -249,11 +249,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
-#### #269 One bell effect that carries a `BellCue`
-- Where: `effect.rs:31-76` (`FireBell`, `FireStartingBell`, `FireEndBell`, `FireBoxBreathCue`, each with sound uuid, pattern uuid, signal mode and volume), `effect.rs:155-203` (`fire_route` folds the four back into one `FireRoute`), and the four builders `mod.rs:1084-1134, 1165-1174` (`starting_bell_effect`, `end_bell_effect`, `box_breath_cue_effect`, `fire_due_bells`), which each repeat `effective_signal_mode`, clone `.0` of both uuids and copy the volume.
-- Problem: a new cue field (as `volume` was) means about ten edits. The uuids lose their `BellSoundUuid`/`VibrationPatternUuid` types on the way. Both apps only read these through `fire_route()` (gtk `timer/imp.rs:4349`, android `ui.rs:437`); the variant names appear only in tests and two `matches!` in android `app.rs` (2481, 4511).
-- Fix: one `Effect::Fire { channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: BellCue }`, the log tag derived from channel and phase, built by one `fn fire(channel, &BellCue, override) -> Option<Effect>`; `FireRoute` and `fire_route` go. About -80 lines; touches about 15 test asserts in core and two in android.
-
 #### #274 The ring is rebuilt every frame
 - Where: `mod.rs:883-960` (`bell_ring`), `bells.rs:210` (`rings_before` allocates a `Vec` of every planned ring from 0); called each frame by gtk `window/imp.rs:250` and at least 5 times a second on Android (`ui.rs:535`).
 - Problem: a 5 s bell over an hour builds and drops two vectors of about 720 elements per frame, plus the counters the frame callback ignores. Already marked as a known `ponytail:` shortcut (gtk `window/imp.rs:246-248`).
@@ -276,7 +271,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
   - Keys as bare strings: `"starting_bell_active"`, `"starting_bell_sound"`, `"starting_bell_pattern"`, `"starting_bell_signal_mode"`, `"interval_bells_active"`, `"boxbreath_cues_active"`, 6 to 20 times each across bells.rs, preset_config.rs, bell_volume.rs, format.rs, session/settings.rs, gtk `timer/imp.rs` and android `ui.rs`; `settings_keys` holds the rest of this family as constants.
   - `snapshot` re-reads values that have their own readers and has drifted: `preparation_time_secs` through `read_u32` without the 5-300 clamp of `format::parse_prep_secs` (`format.rs:643`), the label without `labels::label_uuid_from_db`, `keep_screen_awake` and `auto_finish` without their `settings_keys` readers.
 - Problem: every new per-bell field (volume was the last) means about eight edits, and defaults drift: GTK still defaults the starting sound to the old `"bowl"` (#61).
-- Fix: one `bell_cue(db, BellSlot) -> BellCue` and `set_bell_cue(db, BellSlot, &BellCue)` with key constants in `settings_keys`; `bell_volume::read`, `sound_uuid`, `snapshot`, `apply` and both apps use them; `snapshot` uses the existing readers. Related: #61, #269 (the effect carries the same `BellCue`).
+- Fix: one `bell_cue(db, BellSlot) -> BellCue` and `set_bell_cue(db, BellSlot, &BellCue)` with key constants in `settings_keys`; `bell_volume::read`, `sound_uuid`, `snapshot`, `apply` and both apps use them; `snapshot` uses the existing readers. Related: #61; the session's `Effect::Fire` already carries a `BellCue` (bells-that-ring).
 
 #### #282 Preset enums as typed fields
 - Where: `preset_config.rs:85-86, 107, 114, 234, 255-257` and `cues_signal_mode` (29) store signal mode, bell kind and phase as `String`; `apply` parses them back and silently `continue`s on a bad one (701-706, 737-743); GTK's fallback repeats `"both"` because `Default` gives `""` (`timer/imp.rs:3870-3880`).

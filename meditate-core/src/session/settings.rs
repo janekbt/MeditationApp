@@ -118,8 +118,7 @@ pub struct SessionSettings {
     pub signal_mode_override: SignalMode,
     /// Starting-bell cue, if the user enabled it. Fired at the
     /// prep→Running boundary (or immediately when there's no prep).
-    /// `None` means starting bell is off — no FireStartingBell
-    /// effect emitted.
+    /// `None` means the starting bell is off.
     pub starting_bell: Option<BellCue>,
     /// End-bell cue, if the user enabled it. Fired when a countdown
     /// reaches its end (overtime, Auto-Finish, Box Breath's
@@ -251,6 +250,28 @@ mod tests {
         )
         .unwrap();
         db
+    }
+
+    /// A bell the Timer's signal setting mutes is left out of the
+    /// Bells count and of the session's ring and counter.
+    #[test]
+    fn a_muted_bell_is_left_out() {
+        use crate::bells::{BellTime, TimeUnit};
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("interval_bells_active", "true").unwrap();
+        db.set_setting(crate::settings_keys::signal_mode_key_for_mode(SessionMode::Timer), SignalMode::Vibration.as_db_str()).unwrap();
+        for (min, signal) in [(5, SignalMode::Sound), (6, SignalMode::Vibration)] {
+            db.insert_interval_bell(
+                IntervalBellKind::FixedFromStart, BellTime::new(min, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, signal,
+            )
+            .unwrap();
+        }
+        assert_eq!(bells::interval_bells_count(&db), 1);
+        let settings = SessionSettings::from_db(&db, SessionShape::TimerCountdown { target_secs: 600 });
+        let (s, _) = crate::session::Session::start(settings, std::time::Duration::ZERO);
+        let ring = s.bell_ring(std::time::Duration::ZERO);
+        assert_eq!(ring.ring.map(|r| r.beads.len()), Some(1));
+        assert_eq!(ring.counters, [crate::session::BellCounter { rung: 0, total: Some(1) }]);
     }
 
     #[test]

@@ -197,10 +197,7 @@ pub enum BellSchedule {
 /// dispatch loop has everything it needs without a second DB lookup.
 #[derive(Debug, Clone)]
 pub struct ActiveBell {
-    pub sound_uuid: crate::db::BellSoundUuid,
-    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
-    pub signal_mode: SignalMode,
-    pub volume: crate::bell_volume::BellVolume,
+    pub cue: BellCue,
     pub schedule: BellSchedule,
 }
 
@@ -706,7 +703,7 @@ fn read_volume(db: &Database, key: &str) -> crate::bell_volume::BellVolume {
 /// Starting-bell cue config from the persisted settings rows.
 /// `None` when the user disabled the master starting-bell toggle, or
 /// when `mode`'s Setup view doesn't show the starting bell (it's a
-/// Timer setting; Session simply skips emitting `FireStartingBell`).
+/// Timer setting; Session simply rings no starting bell).
 pub fn starting_bell_cue_from_db(db: &Database, mode: SessionMode) -> Option<BellCue> {
     if !crate::preset_config::setup_visibility(mode).starting_bell
         || !read_bool(db, "starting_bell_active", false)
@@ -762,18 +759,45 @@ pub fn display_mode_from_db(db: &Database, mode: crate::db::SessionMode) -> Disp
     ))
 }
 
-/// Count of enabled, currently-firing interval bells. Used by the
-/// Setup view's "Manage Bells" subtitle ("3 enabled" / "None enabled")
-/// and by any shell surface that needs the same number. The
-/// `display` filter mirrors `is_bell_inert_in_stopwatch` —
-/// `FixedFromEnd` bells can't fire without a target, so they don't
-/// contribute to the active count in stopwatch sessions.
-pub fn interval_bells_count(db: &Database, display: DisplayMode) -> usize {
+/// What decides whether a Timer bell can ring: the end (none in
+/// Stopwatch) and the mode's signal setting.
+#[derive(Debug, Clone, Copy)]
+pub struct RingLimits {
+    pub end: Option<u64>,
+    pub signal: SignalMode,
+}
+
+impl RingLimits {
+    /// From the Timer's Setup: interval bells ring only in Timer.
+    pub fn from_db(db: &Database) -> Self {
+        let stopwatch = display_mode_from_db(db, SessionMode::Timer).is_stopwatch();
+        Self {
+            end: (!stopwatch).then(|| u64::from(crate::settings_keys::timer_session_secs_from_db(db))),
+            signal: signal_mode_override_from_db(db, SessionMode::Timer),
+        }
+    }
+
+    /// Whether a bell can ring in a session: the mode's signal setting
+    /// leaves it something to play, and it can come before the end.
+    pub fn rings(self, kind: IntervalBellKind, time: BellTime, jitter: BellTime, signal: SignalMode) -> bool {
+        effective_signal_mode(signal, self.signal).is_some()
+            && match kind {
+                IntervalBellKind::Interval => self
+                    .end
+                    .map_or(true, |end| earliest_ring_secs(u64::from(time.secs), ringing_jitter(time, jitter).secs) < end),
+                IntervalBellKind::FixedFromStart => fixed_from_start_target_secs(time.secs, self.end).is_some(),
+                IntervalBellKind::FixedFromEnd => self.end.is_some_and(|end| fixed_from_end_target_secs(time.secs, end).is_some()),
+            }
+    }
+}
+
+/// The Bells subtitle's count: the switched-on bells that can ring.
+pub fn interval_bells_count(db: &Database) -> usize {
+    let limits = RingLimits::from_db(db);
     db.list_interval_bells()
         .unwrap_or_default()
-        .into_iter()
-        .filter(|b| b.enabled)
-        .filter(|b| !is_bell_inert_in_stopwatch(b.kind, display))
+        .iter()
+        .filter(|b| b.enabled && limits.rings(b.kind, b.time, b.jitter, b.signal_mode))
         .count()
 }
 
@@ -858,25 +882,18 @@ pub struct BellRowSwitchState {
     pub sensitive: bool,
 }
 
-/// Compose the per-row switch state for an interval-bell library
-/// entry. Inert-in-stopwatch bells visually flip OFF + insensitive
-/// without touching the persisted `enabled` flag.
-pub fn bell_row_switch_state(
-    enabled: bool,
-    kind: IntervalBellKind,
-    display: DisplayMode,
-) -> BellRowSwitchState {
-    let inert = is_bell_inert_in_stopwatch(kind, display);
-    BellRowSwitchState {
-        active: enabled && !inert,
-        sensitive: !inert,
-    }
+/// A Manage Bells row's switch: a bell that can't ring (past the end,
+/// timed from the end in Stopwatch, or muted) shows off and greyed,
+/// without touching the saved `enabled` flag.
+pub fn bell_row_switch_state(bell: &IntervalBell, limits: RingLimits) -> BellRowSwitchState {
+    let rings = limits.rings(bell.kind, bell.time, bell.jitter, bell.signal_mode);
+    BellRowSwitchState { active: bell.enabled && rings, sensitive: rings }
 }
 
 /// Box-Breath per-phase cue config from the settings + phase rows.
 /// Always returns a value (with `master_enabled` reflecting the
 /// user's toggle); Session checks the master flag + the per-phase
-/// `Option<BellCue>` internally before emitting `FireBoxBreathCue`.
+/// `Option<BellCue>` internally before emitting a phase cue.
 pub fn box_breath_cues_from_db(db: &Database) -> BoxBreathCueConfig {
     let master_enabled = read_bool(db, "boxbreath_cues_active", false);
     let load = |phase: BoxBreathPhaseId| -> Option<BellCue> {
@@ -908,15 +925,6 @@ pub fn box_breath_cues_from_db(db: &Database) -> BoxBreathCueConfig {
 pub const DEFAULT_NEW_BELL_KIND: IntervalBellKind = IntervalBellKind::Interval;
 pub const DEFAULT_NEW_BELL_TIME: BellTime = BellTime { secs: 300, unit: TimeUnit::Min };
 pub const DEFAULT_NEW_BELL_SIGNAL_MODE: SignalMode = SignalMode::Sound;
-
-/// Whether a bell of `kind` is inert in a stopwatch session.
-/// Fixed-from-end bells can't fire when there's no end to count
-/// backwards from — every UI surface that shows / counts bells
-/// should consult this predicate to mute them visually, and
-/// `build_active_bells` already skips them at construction time.
-pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, display: DisplayMode) -> bool {
-    display.is_stopwatch() && kind == IntervalBellKind::FixedFromEnd
-}
 
 /// Build per-session bell schedules from raw `interval_bells` DB
 /// rows. Skips disabled rows; also skips `FixedFromEnd` rows when
@@ -968,10 +976,12 @@ pub(crate) fn build_active_bells(
             }
         };
         bells.push(ActiveBell {
-            sound_uuid: row.sound_uuid.clone(),
-            vibration_pattern_uuid: row.vibration_pattern_uuid.clone(),
-            signal_mode: row.signal_mode,
-            volume: row.volume,
+            cue: BellCue {
+                sound_uuid: row.sound_uuid.clone(),
+                vibration_pattern_uuid: row.vibration_pattern_uuid.clone(),
+                signal_mode: row.signal_mode,
+                volume: row.volume,
+            },
             schedule,
         });
     }
@@ -1009,11 +1019,13 @@ mod tests {
 
     fn fixed_bell(target_secs: u64) -> ActiveBell {
         ActiveBell {
-            sound_uuid: "sound-uuid".into(),
-            vibration_pattern_uuid: "pattern-uuid".into(),
-            signal_mode: SignalMode::Sound,
+            cue: BellCue {
+                sound_uuid: "sound-uuid".into(),
+                vibration_pattern_uuid: "pattern-uuid".into(),
+                signal_mode: SignalMode::Sound,
+                volume: Default::default(),
+            },
             schedule: BellSchedule::Fixed { target_secs, fired: None },
-            volume: Default::default(),
         }
     }
 
@@ -1024,11 +1036,13 @@ mod tests {
             *next = next_ring_secs;
         }
         ActiveBell {
-            sound_uuid: "sound-uuid".into(),
-            vibration_pattern_uuid: "pattern-uuid".into(),
-            signal_mode: SignalMode::Sound,
+            cue: BellCue {
+                sound_uuid: "sound-uuid".into(),
+                vibration_pattern_uuid: "pattern-uuid".into(),
+                signal_mode: SignalMode::Sound,
+                volume: Default::default(),
+            },
             schedule,
-            volume: Default::default(),
         }
     }
 
@@ -1251,18 +1265,6 @@ mod tests {
         // Per-bell wants sound, per-mode wants vibration — AND yields
         // nothing. Mirrors the "user disabled audio in this mode" path.
         assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Vibration), Channels { sound: false, vib: false });
-    }
-
-    #[test]
-    fn is_bell_inert_in_stopwatch_targets_only_fixed_from_end() {
-        // Only FixedFromEnd goes inert with stopwatch on.
-        assert!(is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, DisplayMode::Stopwatch));
-        // The other two kinds are fine in stopwatch.
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, DisplayMode::Stopwatch));
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromStart, DisplayMode::Stopwatch));
-        // Nothing's inert when stopwatch is off.
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, DisplayMode::Countdown));
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, DisplayMode::Countdown));
     }
 
     #[test]
@@ -1581,8 +1583,49 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(interval_bells_count(&db, DisplayMode::Countdown), 2);
-        assert_eq!(interval_bells_count(&db, DisplayMode::Stopwatch), 1, "a before-end bell can't ring");
+        assert_eq!(interval_bells_count(&db), 2);
+        db.set_setting(crate::settings_keys::stopwatch_key_for_mode(SessionMode::Timer), "true").unwrap();
+        assert_eq!(interval_bells_count(&db), 1, "a before-end bell can't ring");
+    }
+
+    /// #293: the count is what can ring before the Timer's set end.
+    #[test]
+    fn the_bell_count_leaves_out_bells_that_cannot_ring() {
+        let db = Database::open_in_memory().unwrap();
+        for (kind, min) in [
+            (IntervalBellKind::FixedFromStart, 5),
+            (IntervalBellKind::FixedFromStart, 30),
+            (IntervalBellKind::Interval, 15),
+            (IntervalBellKind::FixedFromEnd, 20),
+        ] {
+            db.insert_interval_bell(
+                kind, BellTime::new(min, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
+            .unwrap();
+        }
+        crate::settings_keys::set_timer_session_secs(&db, 600).unwrap();
+        assert_eq!(interval_bells_count(&db), 1);
+        crate::settings_keys::set_timer_session_secs(&db, 2400).unwrap();
+        assert_eq!(interval_bells_count(&db), 4);
+    }
+
+    /// Manage Bells greys a switched-on bell that can't ring at the set
+    /// length, as Stopwatch does; a switched-off one stays switchable.
+    #[test]
+    fn a_bell_that_cannot_ring_is_greyed_off() {
+        let db = Database::open_in_memory().unwrap();
+        crate::settings_keys::set_timer_session_secs(&db, 600).unwrap();
+        let limits = RingLimits::from_db(&db);
+        let bell = |min: u32, enabled: bool| IntervalBell {
+            enabled,
+            ..timed_row(IntervalBellKind::FixedFromStart, BellTime::new(min, TimeUnit::Min), BellTime::ZERO, BellTime::ZERO)
+        };
+        assert_eq!(bell_row_switch_state(&bell(30, true), limits), BellRowSwitchState { active: false, sensitive: false });
+        assert_eq!(bell_row_switch_state(&bell(5, true), limits), BellRowSwitchState { active: true, sensitive: true });
+        assert_eq!(bell_row_switch_state(&bell(5, false), limits), BellRowSwitchState { active: false, sensitive: true });
+        // Muted by the Timer's signal setting.
+        let muted = RingLimits { signal: SignalMode::Vibration, ..limits };
+        assert_eq!(bell_row_switch_state(&bell(5, true), muted), BellRowSwitchState { active: false, sensitive: false });
     }
 
     #[test]
@@ -1594,7 +1637,7 @@ mod tests {
         .unwrap();
         let row = db.list_interval_bells().unwrap().remove(0);
         db.update_interval_bell(&IntervalBell { enabled: false, ..row }).unwrap();
-        assert_eq!(interval_bells_count(&db, DisplayMode::Countdown), 0);
+        assert_eq!(interval_bells_count(&db), 0);
     }
 
     #[test]
@@ -1707,7 +1750,7 @@ mod tests {
         db.update_interval_bell(&IntervalBell { volume: pct(15.0), ..rows[1].clone() }).unwrap();
         let (bells, _) =
             session_bells_from_db(&db, Some(600), DisplayMode::Countdown, SessionMode::Timer);
-        let volumes: Vec<BellVolume> = bells.iter().map(|b| b.volume).collect();
+        let volumes: Vec<BellVolume> = bells.iter().map(|b| b.cue.volume).collect();
         assert_eq!(volumes, vec![BellVolume::default(), pct(15.0)]);
     }
 
@@ -1856,8 +1899,8 @@ mod tests {
         }
         let count = |pred: fn(&Effect) -> bool| effects.iter().filter(|e| pred(e)).count();
         (
-            count(|e| matches!(e, Effect::FireStartingBell { .. })),
-            count(|e| matches!(e, Effect::FireBell { .. })),
+            count(|e| matches!(e, Effect::Fire { channel: crate::session::FireChannel::Starting, .. })),
+            count(|e| matches!(e, Effect::Fire { channel: crate::session::FireChannel::Interval, phase: None, .. })),
         )
     }
 

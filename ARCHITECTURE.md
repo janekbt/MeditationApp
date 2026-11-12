@@ -274,14 +274,12 @@ Each variant is one thing the shell should do this tick. All in
   track now, before the end bell. Emitted first at the end.
 - `Completed { planned_secs }`: the session reached its planned end
   by itself; "Meditation complete" while the app is not in front.
-- `FireStartingBell { sound_uuid, vibration_pattern_uuid,
-  signal_mode, volume }`: play the starting bell. `signal_mode` is
-  already the effective mode (see below); the shell dispatches with
-  no extra gating.
-- `FireEndBell { … }`: same shape, at the end of the target.
-- `FireBell { … }`: an interval or fixed bell reached its time.
-- `FireBoxBreathCue { phase, … }`: a Box Breath phase boundary was
-  crossed and a cue is set for the new phase.
+- `Fire { channel, phase, cue }`: ring a bell or a Box Breath phase
+  cue. `channel` is the slot it plays on (Starting, End, or Interval
+  for interval and fixed bells and phase cues, which stack); `phase`
+  is set for a phase cue; `cue` is a `BellCue` whose `signal_mode` is
+  already the effective mode (see below), so the shell dispatches with
+  no extra gating. `FireChannel::log_tag(phase)` names it in the log.
 - `Ended { duration_secs, save_now }`: the session is over (any
   path); `duration_secs` is what the saved row records. `save_now`
   is Auto-Finish: save at once (with the note) and offer Undo; the
@@ -289,10 +287,12 @@ Each variant is one thing the shell should do this tick. All in
 - `StopActiveSignals`: cut any bell or vibration in flight. Emitted
   on Pause, Stop, Finish and Add.
 
-`Effect::fire_route()` turns each of the four Fire variants into a
-`FireRoute` (channel slot, log tag, sound uuid, vibration pattern
-uuid, effective signal mode, volume), so the shell's dispatch is one
-loop over `effects.iter().filter_map(Effect::fire_route)`.
+A bell the mode's signal setting mutes never rings: `Session` drops
+it at the start, so it shows no bead and the counter doesn't count
+it. After a time jump only the latest due fixed bell rings, as a
+repeating bell rings once. Whether a Timer bell can ring at all (its
+signal and the Timer's length) is `bells::RingLimits`, which the Bells
+count, the Manage Bells switches and the preset subtitle share.
 
 **Signal mode has two levels.** Each bell and cue has its own
 `signal_mode` (Sound, Vibration or Both; stored default Sound). Each
@@ -396,7 +396,7 @@ meditate-core/src/
 │   └── fake.rs                in-memory WebDav for tests
 └── session/         the session state machine
     ├── mod.rs                 Session, SessionPhase, UiState
-    ├── effect.rs              Effect, FireRoute, FireChannel
+    ├── effect.rs              Effect, FireChannel
     └── settings.rs            SessionShape, SessionSettings::from_db
 ```
 

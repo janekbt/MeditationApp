@@ -42,6 +42,8 @@ use std::rc::Rc;
 /// Single alias keeps the chooser code from drowning in a 5-deep
 /// nested generic at every function signature.
 pub(crate) type Rebuilder = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+/// A page's `Rebuilder` held without keeping the page alive.
+pub(crate) type WeakRebuilder = std::rc::Weak<RefCell<Option<Box<dyn Fn()>>>>;
 
 fn main() -> glib::ExitCode {
     // Diag comes up first so a panic anywhere below still lands in the log.

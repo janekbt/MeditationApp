@@ -304,7 +304,7 @@ pub fn preload_end_bell(app: &MeditateApplication, mode: meditate_core::SessionM
 }
 
 /// Play the end bell by an explicit `uuid` — the post-migration
-/// path where the Session's `FireEndBell` effect carries the
+/// path where the Session's end bell effect carries the
 /// resolved sound uuid. Loads on the spot (no pre-warm reuse;
 /// that's reserved for the `play_end_bell` entry the gtk app
 /// preloads against the user's currently-configured uuid).
@@ -607,9 +607,9 @@ mod tests {
             assert!(fn_body(&src, name).contains("-> Duration {"), "{name}");
         }
         let fire = source("src/timer/imp.rs");
-        let fire = &fire[fire.find("fn dispatch_fire_route(").unwrap()..];
+        let fire = &fire[fire.find("fn dispatch_fire(").unwrap()..];
         let fire = &fire[..fire.find("\n    }\n").unwrap()];
-        assert!(fire.contains("let wait = if route.signal_mode.includes_sound() {"));
+        assert!(fire.contains("let wait = if cue.signal_mode.includes_sound() {"));
         assert!(fire.contains("glib::timeout_add_local_once(wait, move || {"));
         // A Stop meanwhile drops the waiting buzz.
         assert!(fire.contains("if this.imp().signal_gen.get() != generation {"));
@@ -708,11 +708,11 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
         )
         .unwrap();
-        let route = fn_body(&imp, "dispatch_fire_route");
+        let route = fn_body(&imp, "dispatch_fire");
         for play in ["play_interval_sound(", "play_starting_uuid(", "play_end_bell_uuid("] {
             let at = route.find(play).unwrap_or_else(|| panic!("{play} missing"));
             let call = route[at..].split_once(';').unwrap().0;
-            assert!(call.contains("route.volume"), "{call}");
+            assert!(call.contains("cue.volume"), "{call}");
         }
     }
 

@@ -6,53 +6,16 @@
 //! overtime are read from the session after every call. Both apps
 //! consume the same enum.
 
-use crate::bell_volume::BellVolume;
-use crate::db::{BoxBreathPhaseId, SignalMode};
+use crate::bells::BellCue;
+use crate::db::BoxBreathPhaseId;
 
 /// Side effect the app should dispatch now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Box Breath: a phase boundary was just crossed AND a cue is
-    /// configured for the new phase (master toggle on + per-phase
-    /// row enabled). Carries the resolved sound + vibration + the
-    /// effective signal_mode (per-phase AND per-mode override
-    /// already applied). `Session::start` emits it for the first
-    /// inhale; after that, each phase change emits it.
-    FireBoxBreathCue {
-        phase: BoxBreathPhaseId,
-        sound_uuid: String,
-        vibration_pattern_uuid: String,
-        signal_mode: SignalMode,
-        volume: BellVolume,
-    },
-    /// Starting bell — fired at the prep→Running boundary, or
-    /// immediately at session start when there's no prep. Carries
-    /// the effective signal_mode (per-bell AND per-mode override).
-    FireStartingBell {
-        sound_uuid: String,
-        vibration_pattern_uuid: String,
-        signal_mode: SignalMode,
-        volume: BellVolume,
-    },
-    /// End bell: the countdown reached its end (overtime, Auto-Finish,
-    /// a Box Breath end). Stopwatch sessions never get there.
-    FireEndBell {
-        sound_uuid: String,
-        vibration_pattern_uuid: String,
-        signal_mode: SignalMode,
-        volume: BellVolume,
-    },
-    /// Interval / fixed bell crossed its ring boundary this tick.
-    /// `signal_mode` is the *effective* mode (per-bell AND per-mode
-    /// override already applied by Session); the shell dispatches
-    /// sound + vibration based on that variant directly — no extra
-    /// gating needed.
-    FireBell {
-        sound_uuid: String,
-        vibration_pattern_uuid: String,
-        signal_mode: SignalMode,
-        volume: BellVolume,
-    },
+    /// Ring a bell or a Box Breath phase cue on `channel`. `cue`
+    /// carries the effective signal mode (the mode's signal setting
+    /// already applied), so the apps play what it includes.
+    Fire { channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: BellCue },
     /// Guided: the planned length is reached, so the track stops now,
     /// ahead of the end bell. The timer can reach the probed length a
     /// moment before the audio ends (length rounded down at import,
@@ -72,7 +35,7 @@ pub enum Effect {
     Ended { duration_secs: u64, save_now: bool },
 }
 
-/// Which "fire channel" a `Fire*` effect belongs to — the abstract
+/// Which "fire channel" a `Fire` effect belongs to — the abstract
 /// slot the shell routes the sound through. The gtk shell maps to
 /// its three thread-local `MediaFile` slots (Starting, End,
 /// Interval); the Android shell maps to its `MediaPlayer` channels.
@@ -86,20 +49,16 @@ pub enum FireChannel {
     Interval,
 }
 
-/// Resolved routing info for a `Fire*` effect: the channel slot, a
-/// stable diag tag (logged via `meditate_core::log`), and the
-/// three carried fields (sound uuid, vibration pattern uuid,
-/// effective signal_mode). The shell dispatches sound + vibration
-/// based on `signal_mode.includes_*` — no extra gating needed
-/// because Session already AND'd the per-mode override.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FireRoute<'a> {
-    pub channel: FireChannel,
-    pub log_tag: &'static str,
-    pub sound_uuid: &'a str,
-    pub vibration_pattern_uuid: &'a str,
-    pub signal_mode: SignalMode,
-    pub volume: BellVolume,
+impl FireChannel {
+    /// The diag tag a fired cue is logged under.
+    pub fn log_tag(self, phase: Option<BoxBreathPhaseId>) -> &'static str {
+        match (self, phase) {
+            (_, Some(_)) => "fire_box_breath_phase_cue",
+            (FireChannel::Starting, None) => "fire_starting_bell",
+            (FireChannel::End, None) => "fire_end_bell",
+            (FireChannel::Interval, None) => "fire_interval_bell",
+        }
+    }
 }
 
 impl Effect {
@@ -123,57 +82,5 @@ impl Effect {
             Effect::Ended { duration_secs, .. } => Some(*duration_secs),
             _ => None,
         })
-    }
-
-    /// Resolve a Fire effect to its routing info; `None` for every
-    /// other variant.
-    pub fn fire_route(&self) -> Option<FireRoute<'_>> {
-        match self {
-            Effect::FireBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
-                Some(FireRoute {
-                    channel: FireChannel::Interval,
-                    log_tag: "fire_interval_bell",
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode: *signal_mode,
-                    volume: *volume,
-                })
-            }
-            Effect::FireStartingBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
-                Some(FireRoute {
-                    channel: FireChannel::Starting,
-                    log_tag: "fire_starting_bell",
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode: *signal_mode,
-                    volume: *volume,
-                })
-            }
-            Effect::FireEndBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
-                Some(FireRoute {
-                    channel: FireChannel::End,
-                    log_tag: "fire_end_bell",
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode: *signal_mode,
-                    volume: *volume,
-                })
-            }
-            Effect::FireBoxBreathCue {
-                phase: _,
-                sound_uuid,
-                vibration_pattern_uuid,
-                signal_mode,
-                volume,
-            } => Some(FireRoute {
-                channel: FireChannel::Interval,
-                log_tag: "fire_box_breath_phase_cue",
-                sound_uuid,
-                vibration_pattern_uuid,
-                signal_mode: *signal_mode,
-                volume: *volume,
-            }),
-            _ => None,
-        }
     }
 }

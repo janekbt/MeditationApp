@@ -403,11 +403,10 @@ thread_local! {
 
 /// Run portable core `Session` effects through the Android native
 /// layer — the direct analogue of GTK's
-/// `dispatch_session_effects` / `dispatch_fire_route`.
+/// `dispatch_session_effects` / `dispatch_fire`.
 ///
 /// `StopActiveSignals` cuts any in-flight sound + vibration. Each
-/// `Fire*` effect resolves via `Effect::fire_route()` to an
-/// already-effective `signal_mode` (Session has AND'd per-cue
+/// `Fire` effect carries an already-effective `signal_mode` (Session has AND'd per-cue
 /// with the per-mode override), so the shell just plays the sound
 /// when it `includes_sound()` and the vibration pattern when it
 /// `includes_vibration()` — no extra gating. The end and "complete"
@@ -415,7 +414,7 @@ thread_local! {
 ///
 /// This is why Stop is silent but a natural countdown finish
 /// rings: `stop` emits only `StopActiveSignals`, while `tick`
-/// emits `FireEndBell` at the zero-crossing.
+/// emits the end bell at the zero-crossing.
 fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     use meditate_core::session::Effect;
     let Some(app) = android_app() else { return; };
@@ -430,21 +429,21 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
         if matches!(effect, Effect::StopGuidedAudio) {
             guided::stop(app);
         }
-        let Some(route) = effect.fire_route() else { continue; };
-        let wait = if route.signal_mode.includes_sound() {
-            let path = bell_sound_path(route.sound_uuid);
+        let Effect::Fire { channel, phase, cue } = effect else { continue; };
+        let wait = if cue.signal_mode.includes_sound() {
+            let path = bell_sound_path(cue.sound_uuid.as_str());
             // Each bell rings on its core channel's own slot, so it
             // doesn't cut off the others (GTK sound.rs).
-            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())
+            audio::play_bell(app, app::bell_channel_slot(*channel), &path, &bell_levels(cue.volume), &lead_in())
         } else {
             0
         };
-        if route.signal_mode.includes_vibration() {
+        if cue.signal_mode.includes_vibration() {
             if let Some(db) = lock_db() {
                 if let Ok(Some(p)) =
                     meditate_core::db::find_vibration_pattern_by_uuid_from_db(
                         &db,
-                        route.vibration_pattern_uuid,
+                        cue.vibration_pattern_uuid.as_str(),
                     )
                 {
                     let env =
@@ -462,11 +461,11 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             }
         }
         meditate_core::log(
-            route.log_tag,
+            channel.log_tag(*phase),
             &format!(
                 "signal_mode={} channel={:?}",
-                route.signal_mode.as_db_str(),
-                route.channel,
+                cue.signal_mode.as_db_str(),
+                channel,
             ),
         );
     }
@@ -2531,7 +2530,12 @@ fn read_timer_session_secs() -> u32 {
 /// False when it could not be saved (the user was told).
 fn write_timer_session_secs(ui: &MainWindow, secs: u32) -> bool {
     if RELOADING.get() { return true; }
-    setting_saved(ui, "settings.timer_secs", lock_db().map(|db| meditate_core::settings_keys::set_timer_session_secs(&db, secs)))
+    let saved = setting_saved(ui, "settings.timer_secs", lock_db().map(|db| meditate_core::settings_keys::set_timer_session_secs(&db, secs)));
+    // Bells past the new end drop out of the counts and grey out.
+    if saved {
+        refresh_setup_summaries(ui, setup_session_mode(ui));
+    }
+    saved
 }
 
 /// Update the Setup view's hours / minutes Slint properties from
@@ -2755,6 +2759,7 @@ fn refresh_setup_summaries(ui: &MainWindow, mode: meditate_core::SessionMode) {
     use meditate_core::preset_config::{bells_summary, session_summary, BellsSummaryPart, SessionSummaryPart};
     let Some(db) = lock_db() else { return; };
     let (session, bells) = (session_summary(&db, mode), bells_summary(&db, mode));
+    ui.set_interval_bells_summary(interval_bells_summary(ui, &db).into());
     drop(db);
     // Core's parts in core's order, " · " as in preset_subtitle; GTK mirrors it.
     let tr = ui.global::<Tr>();
@@ -2771,6 +2776,10 @@ fn refresh_setup_summaries(ui: &MainWindow, mode: meditate_core::SessionMode) {
     }).collect();
     ui.set_session_summary(session.join(" · ").into());
     ui.set_bells_summary(if bells.is_empty() { tr.invoke_no_bells().to_string() } else { bells.join(" · ") }.into());
+    // An open Manage Bells greys or frees its bells with the new inputs.
+    if ui.get_interval_bells_page() {
+        populate_interval_bells(ui);
+    }
 }
 
 /// Re-read the screens `refresh` names, each once, whichever page is
@@ -3290,7 +3299,10 @@ fn write_signal_mode_for_mode(
 ) {
     if RELOADING.get() { return; }
     let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
-    setting_saved(ui, "settings.cues", lock_db().map(|db| db.set_setting(key, value.as_db_str())));
+    // A muted bell drops out of the counts.
+    if setting_saved(ui, "settings.cues", lock_db().map(|db| db.set_setting(key, value.as_db_str()))) {
+        refresh_setup_summaries(ui, mode);
+    }
 }
 
 fn finalize_session(
@@ -3680,17 +3692,13 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
 /// "N enabled" / "1 enabled" / "None enabled" for the Manage
 /// Bells row subtitle. Mirrors GTK's `intervals_count_subtitle`
 /// (`meditate-gtk/src/timer/imp.rs:4031`); the count +
-/// bucketing live in core. Follows the mode's Stopwatch switch:
-/// before-end bells can't ring without an end, so they drop out.
+/// bucketing live in core, which counts only what will ring.
 fn interval_bells_summary(
     ui: &MainWindow,
     db: &meditate_core::db::Database,
 ) -> String {
     use meditate_core::format::IntervalsCountKey;
-    let n = meditate_core::bells::interval_bells_count(
-        db,
-        meditate_core::bells::display_mode_from_db(db, setup_session_mode(ui)),
-    );
+    let n = meditate_core::bells::interval_bells_count(db);
     match meditate_core::format::intervals_count_key(n) {
         IntervalsCountKey::None => {
             ui.global::<Tr>().invoke_none_enabled().into()
@@ -3764,7 +3772,7 @@ fn render_bell_title(
 /// Mirrors GTK's `rebuild_list` over `db.list_interval_bells`.
 fn populate_interval_bells(ui: &MainWindow) {
     let Some(db) = lock_db() else { return; };
-    let display = meditate_core::bells::display_mode_from_db(&db, setup_session_mode(ui));
+    let limits = meditate_core::bells::RingLimits::from_db(&db);
     let library = db.list_bell_sounds().unwrap_or_default();
     let items: Vec<IntervalBellRow> = db
         .list_interval_bells()
@@ -3772,11 +3780,7 @@ fn populate_interval_bells(ui: &MainWindow) {
         .into_iter()
         .map(|b| {
             let sound = resolved_name_text(ui, meditate_core::bells::sound_name(b.sound_uuid.as_str(), &library));
-            let switch = meditate_core::bells::bell_row_switch_state(
-                b.enabled,
-                b.kind,
-                display,
-            );
+            let switch = meditate_core::bells::bell_row_switch_state(&b, limits);
             IntervalBellRow {
                 uuid: b.uuid.to_string().into(),
                 title: render_bell_title(ui, &b).into(),

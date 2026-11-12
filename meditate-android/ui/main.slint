@@ -5876,8 +5876,8 @@ export component MainWindow inherits Window {
                 // phases" expander wrapping the four phase cue
                 // expanders. Cue firing itself is already wired
                 // (B-6 feeds box_breath_cues_from_db into the
-                // session; dispatch_effects routes
-                // FireBoxBreathCue) — this is the config surface.
+                // session; dispatch_effects routes its
+                // `Effect::Fire`) — this is the config surface.
                 Text {
                     text: @tr("Box Breath cues");
                     font-size: 14px;

@@ -27,7 +27,7 @@ pub fn push_bells_page<F>(
     app: &MeditateApplication,
     start_bar: &gtk::Widget,
     on_changed: F,
-)
+) -> Rebuilder
 where F: Fn() + Clone + 'static,
 {
     let group = adw::PreferencesGroup::new();
@@ -84,7 +84,25 @@ where F: Fn() + Clone + 'static,
             rb();
         }
     });
+    // Leaving the page drops its rebuild: that frees the rows (they hold
+    // the rebuilder) and stops the Timer's handle from rebuilding it.
+    let handler: Rc<RefCell<Option<gtk::glib::SignalHandlerId>>> = Rc::default();
+    let (weak_page, weak_rebuilder, handler_in) = (page.downgrade(), Rc::downgrade(&rebuilder), handler.clone());
+    let id = nav_view.connect_popped(move |nav, popped| {
+        if weak_page.upgrade().as_ref() != Some(popped) {
+            return;
+        }
+        // Not while it runs; then the page stays (a rare, small leak).
+        if let Some(Ok(mut rebuild)) = weak_rebuilder.upgrade().as_ref().map(|rb| rb.try_borrow_mut()) {
+            rebuild.take();
+        }
+        if let Some(id) = handler_in.borrow_mut().take() {
+            nav.disconnect(id);
+        }
+    });
+    handler.replace(Some(id));
     nav_view.push(&page);
+    rebuilder
 }
 
 type Rebuilder = crate::Rebuilder;
@@ -112,20 +130,6 @@ fn rebuild_list(
     group.add(&create_row);
     rows.borrow_mut().push(create_row);
 
-    // Stopwatch mode disables fixed-from-end bells (no end to count
-    // backwards from). The bell library is global, so we override the
-    // visual switch state without writing to the DB — flipping
-    // stopwatch off restores the user's persisted enabled flag.
-    // Interval bells fire in Timer mode (the only mode that calls
-    // build_session_bells with a real schedule), so the relevant
-    // stopwatch toggle is Timer's.
-    let stopwatch_key = meditate_core::settings_keys::stopwatch_key_for_mode(
-        meditate_core::SessionMode::Timer,
-    );
-    let stopwatch_on = app
-        .with_db(|db| meditate_core::read_bool(db, stopwatch_key, false))
-        .unwrap_or(false);
-
     let bells = app
         .with_db(super::db::Database::list_interval_bells)
         .and_then(std::result::Result::ok)
@@ -143,6 +147,11 @@ fn rebuild_list(
         return;
     }
 
+    // A bell that can't ring (past the Timer's end, timed from the end
+    // in Stopwatch, or muted) shows off and greyed; the saved switch
+    // stays.
+    let Some(limits) = app.with_db(meditate_core::bells::RingLimits::from_db) else { return; };
+
     for bell in bells {
         let row = build_bell_row(
             &bell,
@@ -150,7 +159,7 @@ fn rebuild_list(
             nav_view,
             rebuilder.clone(),
             on_changed.clone(),
-            stopwatch_on,
+            limits,
             &library,
         );
         group.add(&row);
@@ -224,7 +233,7 @@ fn build_bell_row(
     nav_view: &adw::NavigationView,
     rebuilder: Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
-    stopwatch_on: bool,
+    limits: meditate_core::bells::RingLimits,
     library: &[meditate_core::db::BellSound],
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -233,17 +242,10 @@ fn build_bell_row(
         .activatable(true)
         .build();
 
-    // Fixed-from-end bells are inert in stopwatch mode (no end to
-    // count backwards from). Switch shows OFF + insensitive without
-    // touching the persisted enabled flag — the user's previous
-    // intent comes back as soon as stopwatch flips off. The row
-    // stays activatable so the user can still drill into Edit to
-    // change kind or delete.
-    let switch_state = meditate_core::bells::bell_row_switch_state(
-        bell.enabled,
-        bell.kind,
-        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
-    );
+    // A bell that can't ring shows OFF + insensitive without touching
+    // the saved flag; it comes back once it can ring. The row stays
+    // activatable so the user can still drill into Edit.
+    let switch_state = meditate_core::bells::bell_row_switch_state(bell, limits);
     if !switch_state.sensitive {
         row.add_css_class("dim-label");
     }
@@ -283,10 +285,12 @@ fn build_bell_row(
     let app_for_del = app.clone();
     let rebuilder_for_del = rebuilder.clone();
     let on_changed_for_del = on_changed.clone();
-    let row_for_del = row.clone();
+    // Weak: the row owns the button, so a strong row here would keep every rebuilt-away row alive.
+    let row_for_del = row.downgrade();
     delete_btn.connect_clicked(move |_| {
+        let Some(row) = row_for_del.upgrade() else { return };
         let (rebuilder, on_changed) = (rebuilder_for_del.clone(), on_changed_for_del.clone());
-        confirm_and_delete(&row_for_del, &app_for_del, &bell_uuid_for_del, move || {
+        confirm_and_delete(&row, &app_for_del, &bell_uuid_for_del, move || {
             if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
             on_changed();
         });

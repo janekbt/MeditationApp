@@ -2302,7 +2302,7 @@ mod tests {
     }
 
     fn starting_bells(effects: &[Effect]) -> usize {
-        effects.iter().filter(|e| matches!(e, Effect::FireStartingBell { .. })).count()
+        effects.iter().filter(|e| matches!(e, Effect::Fire { channel: meditate_core::session::FireChannel::Starting, .. })).count()
     }
 
     #[test]
@@ -2708,7 +2708,7 @@ mod tests {
         let dispatch = code.find("fn dispatch_effects(").expect("dispatcher");
         let dispatch = &code[dispatch..dispatch + code[dispatch..].find("\n}\n").unwrap()];
         let arm = dispatch.find("Effect::StopGuidedAudio").expect("dispatcher handles it");
-        let fire = dispatch.find("fire_route()").unwrap();
+        let fire = dispatch.find("Effect::Fire {").unwrap();
         assert!(arm < fire, "handled before the loop moves on to bells");
         assert!(dispatch[arm..fire].contains("guided::stop(app)"), "and stops the track");
     }
@@ -2735,10 +2735,10 @@ mod tests {
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let dispatch = code.find("fn dispatch_effects(").unwrap();
         let dispatch = &code[dispatch..dispatch + code[dispatch..].find("\n}\n").unwrap()];
-        let sound = &dispatch[dispatch.find("route.signal_mode.includes_sound()").unwrap()..];
-        let sound = &sound[..sound.find("route.signal_mode.includes_vibration()").unwrap()];
+        let sound = &dispatch[dispatch.find("cue.signal_mode.includes_sound()").unwrap()..];
+        let sound = &sound[..sound.find("cue.signal_mode.includes_vibration()").unwrap()];
         assert!(!sound.contains("audio::stop("), "a bell must not stop the others");
-        assert!(sound.contains("audio::play_bell(app, app::bell_channel_slot(route.channel),"));
+        assert!(sound.contains("audio::play_bell(app, app::bell_channel_slot(*channel),"));
 
         let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateAudio.kt")).unwrap();
         for (name, slot) in [("CHANNEL_STARTING", 0), ("CHANNEL_END", 1), ("CHANNEL_INTERVAL", 2)] {
@@ -2878,6 +2878,22 @@ mod tests {
         assert!(slint.contains("public pure function missing() -> string { return @tr(\"Missing\"); }"));
     }
 
+    /// Whatever changes a bell input ends in the summary refresh,
+    /// which also rebuilds an open Manage Bells.
+    #[test]
+    fn the_summary_refresh_rebuilds_an_open_manage_bells() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let body = |f: &str| {
+            let at = code.find(f).unwrap_or_else(|| panic!("{f}"));
+            &code[at..at + code[at..].find("\n}\n").unwrap()]
+        };
+        let refresh = body("fn refresh_setup_summaries(");
+        assert!(refresh.contains("if ui.get_interval_bells_page() {\n        populate_interval_bells(ui);"));
+        assert!(!body("fn write_timer_session_secs(").contains("populate_interval_bells"), "one place");
+    }
+
     /// The Stopwatch switch drives the End Bell row (off and greyed)
     /// and the Manage Bells count (before-end bells drop out) through
     /// core, like GTK; flipping it refreshes both, and greying the row
@@ -2899,8 +2915,7 @@ mod tests {
         assert!(rows.contains("set_end_bell_active(row.active)"));
 
         let count = body("fn interval_bells_summary(");
-        assert!(count.contains("meditate_core::bells::display_mode_from_db(db,"), "count follows Stopwatch");
-        assert!(!count.contains("DisplayMode::Countdown"));
+        assert!(count.contains("meditate_core::bells::interval_bells_count(db)"), "core's count follows Stopwatch");
 
         let sw = code.find("ui.on_stopwatch_toggled(").unwrap();
         assert!(code[sw..sw + 600].contains("refresh_bell_rows(&ui)"), "flipping Stopwatch refreshes both");
@@ -4337,14 +4352,16 @@ mod tests {
 
     #[test]
     fn an_ended_session_keeps_its_ring() {
-        use meditate_core::bells::{ActiveBell, BellSchedule};
+        use meditate_core::bells::{ActiveBell, BellCue, BellSchedule};
         let at = Duration::from_secs;
         let bell = ActiveBell {
-            sound_uuid: "sound".into(),
-            vibration_pattern_uuid: "pattern".into(),
-            signal_mode: meditate_core::SignalMode::Sound,
+            cue: BellCue {
+                sound_uuid: "sound".into(),
+                vibration_pattern_uuid: "pattern".into(),
+                signal_mode: meditate_core::SignalMode::Sound,
+                volume: Default::default(),
+            },
             schedule: BellSchedule::every(30, 0, 0, None, 0.5),
-            volume: Default::default(),
         };
         let settings = SessionSettings { shape: timer_countdown(at(120)), bells: vec![bell], ..Default::default() };
         let mut run = start_with(settings, Duration::ZERO);
@@ -4489,7 +4506,7 @@ mod tests {
         assert_eq!(t.effects.first(), Some(&Effect::StopActiveSignals));
         assert_eq!(Effect::ended_secs(&t.effects), Some(90));
         assert!(
-            !t.effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })),
+            !t.effects.iter().any(|e| matches!(e, Effect::Fire { channel: meditate_core::session::FireChannel::End, .. })),
             "Stop is silent",
         );
     }
@@ -5574,8 +5591,8 @@ mod tests {
     fn a_bell_vibrates_when_its_sound_starts() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        assert!(lib.contains("let wait = if route.signal_mode.includes_sound() {"));
-        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())"));
+        assert!(lib.contains("let wait = if cue.signal_mode.includes_sound() {"));
+        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(*channel), &path, &bell_levels(cue.volume), &lead_in())"));
         assert!(lib.contains("slint::Timer::single_shot(Duration::from_millis(wait as u64), move || {"));
         // A Stop meanwhile drops the waiting buzz.
         assert!(lib.contains("if SIGNAL_GEN.get() != generation {"));

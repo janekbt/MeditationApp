@@ -12,7 +12,7 @@
 //! returned effects (bells, signals, the end) and then redraws the
 //! time, the buttons and the overtime from the session.
 
-use crate::bells::ActiveBell;
+use crate::bells::{ActiveBell, BellCue, BellSchedule};
 use crate::breath::{Phase, PhaseInfo};
 use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
@@ -20,7 +20,7 @@ use std::time::Duration;
 
 mod effect;
 mod settings;
-pub use effect::{Effect, FireChannel, FireRoute};
+pub use effect::{Effect, FireChannel};
 pub use settings::{SessionSettings, SessionShape};
 
 /// What the running page should reflect right now: the phase, with
@@ -196,7 +196,7 @@ pub struct Session {
     /// Box-Breath phase boundary tracking. `None` until the first
     /// Running tick, which seeds it silently because `Session::start`
     /// already cued the first inhale. `Some(p)` thereafter; a tick observes
-    /// `phase_at(elapsed) != p` and fires `FireBoxBreathCue`.
+    /// `phase_at(elapsed) != p` and fires its phase cue.
     /// Always `None` outside Box Breath mode.
     last_breath_phase: Option<Phase>,
     /// Per-session bell schedule. Mutated each tick: Interval
@@ -282,7 +282,13 @@ impl Session {
     }
 
     fn new(mut settings: SessionSettings, phase: SessionPhase, now: Duration) -> Self {
-        let bells = std::mem::take(&mut settings.bells);
+        // A bell the mode's signal setting mutes never rings: not on the ring, not counted.
+        let signal = settings.signal_mode_override;
+        let rings = |cue: &BellCue| crate::bells::effective_signal_mode(cue.signal_mode, signal).is_some();
+        settings.starting_bell = settings.starting_bell.take().filter(|cue| rings(cue));
+        settings.end_bell = settings.end_bell.take().filter(|cue| rings(cue));
+        let mut bells = std::mem::take(&mut settings.bells);
+        bells.retain(|bell| rings(&bell.cue));
         let bell_rng_state = settings.bell_rng_seed;
         Self {
             settings,
@@ -454,6 +460,8 @@ impl Session {
             .target_secs()
             .is_some_and(|t| late >= Duration::from_secs(u64::from(t)));
         if past_end {
+            // It never rings, so it isn't counted either.
+            self.settings.starting_bell = None;
             Vec::new()
         } else {
             starting_bell_effect(&self.settings).into_iter().collect()
@@ -615,7 +623,6 @@ impl Session {
 
     /// The ring and the bell counters for the running page right now.
     pub fn bell_ring(&self, now: Duration) -> BellRing {
-        use crate::bells::BellSchedule;
         let end = match self.settings.shape {
             SessionShape::BoxBreathCountdown { .. } => None,
             ref shape => shape.target_secs().map(u64::from),
@@ -762,60 +769,25 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
     }
 }
 
-/// Build a `FireStartingBell` effect from the session's settings,
-/// AND-combining the per-bell signal_mode with the per-mode
-/// override. `None` when the user disabled the starting bell or
-/// when the effective channel mix is empty (both gates off).
+/// A bell's or phase cue's effect on `channel`, with the mode's signal
+/// setting applied; `None` when that leaves nothing to play.
+fn fire(channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: &BellCue, signal_override: SignalMode) -> Option<Effect> {
+    let signal_mode = crate::bells::effective_signal_mode(cue.signal_mode, signal_override)?;
+    Some(Effect::Fire { channel, phase, cue: BellCue { signal_mode, ..cue.clone() } })
+}
+
 fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
-    let cue = settings.starting_bell.as_ref()?;
-    let signal_mode = crate::bells::effective_signal_mode(
-        cue.signal_mode,
-        settings.signal_mode_override,
-    )?;
-    Some(Effect::FireStartingBell {
-        sound_uuid: cue.sound_uuid.0.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
-        signal_mode,
-        volume: cue.volume,
-    })
+    fire(FireChannel::Starting, None, settings.starting_bell.as_ref()?, settings.signal_mode_override)
 }
 
-/// Mirror of `starting_bell_effect` for the end bell.
 fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
-    let cue = settings.end_bell.as_ref()?;
-    let signal_mode = crate::bells::effective_signal_mode(
-        cue.signal_mode,
-        settings.signal_mode_override,
-    )?;
-    Some(Effect::FireEndBell {
-        sound_uuid: cue.sound_uuid.0.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
-        signal_mode,
-        volume: cue.volume,
-    })
+    fire(FireChannel::End, None, settings.end_bell.as_ref()?, settings.signal_mode_override)
 }
 
-/// Build a `FireBoxBreathCue` effect for `phase`, AND-combining
-/// the per-phase signal_mode with the per-mode override. `None`
-/// when the master toggle is off, the per-phase row is missing
-/// / disabled, or the effective channel mix is empty.
-fn box_breath_cue_effect(
-    settings: &SessionSettings,
-    phase: BoxBreathPhaseId,
-) -> Option<Effect> {
-    let cfg = settings.box_breath_cues.as_ref()?;
-    let cue = cfg.cue_for(phase)?;
-    let signal_mode = crate::bells::effective_signal_mode(
-        cue.signal_mode,
-        settings.signal_mode_override,
-    )?;
-    Some(Effect::FireBoxBreathCue {
-        phase,
-        sound_uuid: cue.sound_uuid.0.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
-        signal_mode,
-        volume: cue.volume,
-    })
+/// Box Breath's cue for `phase`; `None` when the cues are off or the phase has none.
+fn box_breath_cue_effect(settings: &SessionSettings, phase: BoxBreathPhaseId) -> Option<Effect> {
+    let cue = settings.box_breath_cues.as_ref()?.cue_for(phase)?;
+    fire(FireChannel::Interval, Some(phase), cue, settings.signal_mode_override)
 }
 
 /// The session's jitter draws, advancing its xorshift state.
@@ -828,7 +800,7 @@ fn bell_rng(state: &mut u64) -> impl FnMut() -> f64 + '_ {
 }
 
 /// Iterate over the session's bells, tick each against `elapsed`,
-/// and emit `FireBell` effects for every bell that crosses its
+/// and emit `Fire` effects for every bell that crosses its
 /// ring boundary this tick. Mutates `bells` (Interval bells reroll
 /// their next_ring_secs; Fixed bells flip their fired flag) and
 /// the xorshift state (one draw per interval an Interval bell steps over).
@@ -845,19 +817,17 @@ fn fire_due_bells(
     let mut effects = Vec::new();
     let elapsed_secs = elapsed.as_secs();
     let mut rng = bell_rng(rng_state);
+    // After a time jump only the latest due fixed bell rings, as a repeating bell rings once.
+    let due = |bell: &ActiveBell| match bell.schedule {
+        BellSchedule::Fixed { target_secs, fired: None } if target_secs <= elapsed_secs => Some(target_secs),
+        _ => None,
+    };
+    let latest = bells.iter().filter_map(due).max();
     for bell in bells.iter_mut() {
-        if bell.tick(elapsed_secs, &mut rng) {
-            if let Some(eff) = crate::bells::effective_signal_mode(
-                bell.signal_mode,
-                signal_mode_override,
-            ) {
-                effects.push(Effect::FireBell {
-                    sound_uuid: bell.sound_uuid.0.clone(),
-                    vibration_pattern_uuid: bell.vibration_pattern_uuid.0.clone(),
-                    signal_mode: eff,
-                    volume: bell.volume,
-                });
-            }
+        if due(bell).is_some_and(|t| Some(t) < latest) {
+            bell.skip_due(elapsed_secs, &mut rng);
+        } else if bell.tick(elapsed_secs, &mut rng) {
+            effects.extend(fire(FireChannel::Interval, None, &bell.cue, signal_mode_override));
         }
     }
     effects
@@ -937,7 +907,7 @@ mod tests {
             starting_bell: None,
             end_bell: None,
             // Wire all four phases so phase-boundary tests see
-            // FireBoxBreathCue emissions; the gate-disabled cases
+            // phase cue emissions; the gate-disabled cases
             // get tested via their own dedicated tests.
             box_breath_cues: Some(crate::bells::BoxBreathCueConfig {
                 master_enabled: true,
@@ -953,22 +923,26 @@ mod tests {
     fn fixed_bell(target_secs: u64, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound_uuid: sound_uuid.into(),
-            vibration_pattern_uuid: "pattern".into(),
-            signal_mode: SignalMode::Sound,
+            cue: BellCue {
+                sound_uuid: sound_uuid.into(),
+                vibration_pattern_uuid: "pattern".into(),
+                signal_mode: SignalMode::Sound,
+                volume: Default::default(),
+            },
             schedule: BellSchedule::Fixed { target_secs, fired: None },
-            volume: Default::default(),
         }
     }
 
     fn interval_bell(base_min: u32, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound_uuid: sound_uuid.into(),
-            vibration_pattern_uuid: "pattern".into(),
-            signal_mode: SignalMode::Sound,
+            cue: BellCue {
+                sound_uuid: sound_uuid.into(),
+                vibration_pattern_uuid: "pattern".into(),
+                signal_mode: SignalMode::Sound,
+                volume: Default::default(),
+            },
             schedule: BellSchedule::every(base_min * 60, 0, 0, None, 0.5),
-            volume: Default::default(),
         }
     }
 
@@ -1128,12 +1102,12 @@ mod tests {
     #[test]
     fn first_box_breath_tick_seeds_phase_silently() {
         // First tick into a Box-Breath running session must NOT
-        // emit FireBoxBreathCue: `Session::start` already cued the
+        // emit a phase cue: `Session::start` already cued the
         // first inhale, so a Phase::In cue here would be a duplicate.
         let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
         let effects = s.tick(Duration::from_millis(100_500)); // 0.5 s in, still Phase::In
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
+            !effects.iter().any(|e| matches!(e, Effect::Fire { phase: Some(_), .. })),
             "first tick must not fire a phase cue: {effects:?}"
         );
         assert!(effects.is_empty(), "{effects:?}");
@@ -1151,7 +1125,7 @@ mod tests {
         assert!(
             effects.iter().any(|e| matches!(
                 e,
-                Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldIn, .. }
+                Effect::Fire { phase: Some(BoxBreathPhaseId::HoldIn), .. }
             )),
             "expected HoldIn cue, got {effects:?}"
         );
@@ -1165,7 +1139,7 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed In
         let effects = s.tick(Duration::from_millis(101_500)); // still In
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
+            !effects.iter().any(|e| matches!(e, Effect::Fire { phase: Some(_), .. })),
             "no cue for same-phase tick"
         );
     }
@@ -1178,22 +1152,22 @@ mod tests {
         assert!(s
             .tick(Duration::from_secs(104))
             .iter()
-            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldIn, .. })));
+            .any(|e| matches!(e, Effect::Fire { phase: Some(BoxBreathPhaseId::HoldIn), .. })));
         // Out boundary at t=108
         assert!(s
             .tick(Duration::from_secs(108))
             .iter()
-            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::Out, .. })));
+            .any(|e| matches!(e, Effect::Fire { phase: Some(BoxBreathPhaseId::Out), .. })));
         // HoldOut boundary at t=112
         assert!(s
             .tick(Duration::from_secs(112))
             .iter()
-            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldOut, .. })));
+            .any(|e| matches!(e, Effect::Fire { phase: Some(BoxBreathPhaseId::HoldOut), .. })));
         // Wrap to In at t=116
         assert!(s
             .tick(Duration::from_secs(116))
             .iter()
-            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::In, .. })));
+            .any(|e| matches!(e, Effect::Fire { phase: Some(BoxBreathPhaseId::In), .. })));
     }
 
     #[test]
@@ -1322,9 +1296,9 @@ mod tests {
         assert!(
             effects.iter().any(|e| matches!(
                 e,
-                Effect::FireBell { sound_uuid, .. } if sound_uuid == "halftime"
+                Effect::Fire { channel: FireChannel::Interval, cue, .. } if cue.sound_uuid.as_str() == "halftime"
             )),
-            "expected FireBell for 'halftime', got {effects:?}"
+            "expected the 'halftime' bell, got {effects:?}"
         );
     }
 
@@ -1336,7 +1310,7 @@ mod tests {
         let _ = s.tick(Duration::from_secs(160)); // fires
         let effects = s.tick(Duration::from_secs(180)); // shouldn't re-fire
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            !effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })),
             "fixed bell must not re-fire: {effects:?}"
         );
     }
@@ -1350,16 +1324,16 @@ mod tests {
         let mut s = Session::start_running(settings, Duration::from_secs(100));
         // Just before — no fire.
         let effects = s.tick(Duration::from_secs(399));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })));
         // At 300 s in — fires, reroll to 600.
         let effects = s.tick(Duration::from_secs(400));
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })));
         // At 599 s in — no fire yet.
         let effects = s.tick(Duration::from_secs(699));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })));
         // At 600 s in — fires.
         let effects = s.tick(Duration::from_secs(700));
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })));
     }
 
     #[test]
@@ -1371,7 +1345,7 @@ mod tests {
         let mut s = Session::start_prep(settings, Duration::from_secs(100));
         let effects = s.tick(Duration::from_secs(110));
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            !effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })),
             "bells must not fire during prep: {effects:?}"
         );
     }
@@ -1388,7 +1362,7 @@ mod tests {
         let _ = s.tick(Duration::from_secs(200)); // 100 s elapsed, still no fire
         let effects = s.tick(Duration::from_secs(400)); // 300 s elapsed
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })),
             "bell at 5-min mark should fire even through overtime"
         );
     }
@@ -1401,7 +1375,7 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed phase
         let effects = s.tick(Duration::from_secs(160));
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })),
             "Box-Breath running ticks must dispatch interval bells"
         );
     }
@@ -1426,12 +1400,12 @@ mod tests {
         for offset in 1..=1800 {
             let now = Duration::from_secs(100 + offset);
             for e in a.tick(now) {
-                if matches!(e, Effect::FireBell { .. }) {
+                if matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. }) {
                     a_fires.push(offset);
                 }
             }
             for e in b.tick(now) {
-                if matches!(e, Effect::FireBell { .. }) {
+                if matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. }) {
                     b_fires.push(offset);
                 }
             }
@@ -1775,49 +1749,11 @@ mod tests {
     }
 
     #[test]
-    fn fire_route_dispatches_each_fire_variant_to_its_channel() {
-        let starting = Effect::FireStartingBell {
-            sound_uuid: "s".into(),
-            vibration_pattern_uuid: "v".into(),
-            signal_mode: SignalMode::Both,
-            volume: Default::default(),
-        };
-        let r = starting.fire_route().expect("FireStartingBell routes");
-        assert_eq!(r.channel, FireChannel::Starting);
-        assert_eq!(r.log_tag, "fire_starting_bell");
-
-        let interval = Effect::FireBell {
-            sound_uuid: "s".into(),
-            vibration_pattern_uuid: "v".into(),
-            signal_mode: SignalMode::Sound,
-            volume: Default::default(),
-        };
-        assert_eq!(interval.fire_route().unwrap().channel, FireChannel::Interval);
-
-        let end = Effect::FireEndBell {
-            sound_uuid: "s".into(),
-            vibration_pattern_uuid: "v".into(),
-            signal_mode: SignalMode::Sound,
-            volume: Default::default(),
-        };
-        assert_eq!(end.fire_route().unwrap().channel, FireChannel::End);
-
-        let phase = Effect::FireBoxBreathCue {
-            phase: BoxBreathPhaseId::In,
-            sound_uuid: "s".into(),
-            vibration_pattern_uuid: "v".into(),
-            signal_mode: SignalMode::Both,
-            volume: Default::default(),
-        };
-        assert_eq!(phase.fire_route().unwrap().channel, FireChannel::Interval);
-    }
-
-    #[test]
-    fn fire_route_returns_none_for_non_fire_effects() {
-        assert!(Effect::StopGuidedAudio.fire_route().is_none());
-        assert!(Effect::StopActiveSignals.fire_route().is_none());
-        assert!(Effect::Ended { duration_secs: 10, save_now: false }.fire_route().is_none());
-        assert!(Effect::Completed { planned_secs: 10 }.fire_route().is_none());
+    fn each_fire_logs_under_its_own_tag() {
+        assert_eq!(FireChannel::Starting.log_tag(None), "fire_starting_bell");
+        assert_eq!(FireChannel::End.log_tag(None), "fire_end_bell");
+        assert_eq!(FireChannel::Interval.log_tag(None), "fire_interval_bell");
+        assert_eq!(FireChannel::Interval.log_tag(Some(BoxBreathPhaseId::In)), "fire_box_breath_phase_cue");
     }
 
     #[test]
@@ -1962,7 +1898,7 @@ mod tests {
         let mut s = Session::start_running(settings, t0);
         let effects = s.tick(t0 + Duration::from_secs(605));
         assert_eq!(effects[..2], [Effect::Completed { planned_secs: 600 }, Effect::Ended { duration_secs: 600, save_now: true }], "{effects:?}");
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "the end bell rings");
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })), "the end bell rings");
         assert_ne!(s.phase(), SessionPhase::Overtime);
         assert!(!effects.contains(&Effect::StopActiveSignals), "the end bell is not cut");
         assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
@@ -1977,7 +1913,7 @@ mod tests {
         let (mut s, _) = Session::start(settings(), t0);
         let effects = s.tick(t0 + Duration::from_secs(600));
         assert_eq!(effects[..3], [Effect::StopGuidedAudio, Effect::Completed { planned_secs: 600 }, Effect::Ended { duration_secs: 600, save_now: true }], "{effects:?}");
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })));
         assert!(matches!(s.phase(), SessionPhase::Stopped { .. }));
         // The file ends first: the stored length is saved.
         let (mut s, _) = Session::start(settings(), t0);
@@ -2081,12 +2017,7 @@ mod tests {
     }
 
     fn the_starting_bell() -> Effect {
-        Effect::FireStartingBell {
-            sound_uuid: "start-sound".into(),
-            vibration_pattern_uuid: "start-pattern".into(),
-            signal_mode: SignalMode::Sound,
-            volume: Default::default(),
-        }
+        Effect::Fire { channel: FireChannel::Starting, phase: None, cue: starting_cue() }
     }
 
     fn with_starting_bell(mut settings: SessionSettings) -> SessionSettings {
@@ -2095,7 +2026,7 @@ mod tests {
     }
 
     fn starting_bells(effects: &[Effect]) -> usize {
-        effects.iter().filter(|e| matches!(e, Effect::FireStartingBell { .. })).count()
+        effects.iter().filter(|e| matches!(e, Effect::Fire { channel: FireChannel::Starting, .. })).count()
     }
 
     /// Start at 100 s, tick every second through prep, the 600 s
@@ -2191,11 +2122,10 @@ mod tests {
         let (_, effects) = Session::start(settings, Duration::from_secs(100));
         assert_eq!(
             effects,
-            vec![Effect::FireStartingBell {
-                sound_uuid: "start-sound".into(),
-                vibration_pattern_uuid: "start-pattern".into(),
-                signal_mode: SignalMode::Vibration,
-                volume: Default::default(),
+            vec![Effect::Fire {
+                channel: FireChannel::Starting,
+                phase: None,
+                cue: crate::bells::BellCue { signal_mode: SignalMode::Vibration, ..starting_cue() },
             }],
         );
     }
@@ -2220,7 +2150,8 @@ mod tests {
     }
 
     fn volume_of(effect: &Effect) -> u8 {
-        effect.fire_route().expect("a fire effect").volume.percent()
+        let Effect::Fire { cue, .. } = effect else { panic!("a fire effect: {effect:?}") };
+        cue.volume.percent()
     }
 
     #[test]
@@ -2239,7 +2170,7 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let (mut s, _) = Session::start(settings, t0);
         let effects = s.tick(t0 + Duration::from_secs(60));
-        let end = effects.iter().find(|e| matches!(e, Effect::FireEndBell { .. })).expect("end bell");
+        let end = effects.iter().find(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })).expect("end bell");
         assert_eq!(volume_of(end), 85);
     }
 
@@ -2247,17 +2178,17 @@ mod tests {
     fn each_interval_bell_rings_at_its_own_volume() {
         let mut settings = timer_countdown_settings(600);
         let mut quiet = fixed_bell(60, "quiet");
-        quiet.volume = crate::bell_volume::BellVolume::from_percent(10.0);
+        quiet.cue.volume = crate::bell_volume::BellVolume::from_percent(10.0);
         let mut loud = fixed_bell(120, "loud");
-        loud.volume = crate::bell_volume::BellVolume::from_percent(95.0);
+        loud.cue.volume = crate::bell_volume::BellVolume::from_percent(95.0);
         settings.bells = vec![quiet, loud];
         let t0 = Duration::from_secs(100);
         let (mut s, _) = Session::start(settings, t0);
         let mut fired = Vec::new();
         for secs in 1..=130 {
             for e in s.tick(t0 + Duration::from_secs(secs)) {
-                if let Effect::FireBell { ref sound_uuid, .. } = e {
-                    fired.push((sound_uuid.clone(), volume_of(&e)));
+                if let Effect::Fire { channel: FireChannel::Interval, ref cue, .. } = e {
+                    fired.push((cue.sound_uuid.as_str().to_string(), volume_of(&e)));
                 }
             }
         }
@@ -2277,7 +2208,7 @@ mod tests {
         let mut by_phase = std::collections::BTreeMap::new();
         for ms in (0..=20_000).step_by(250) {
             for e in s.tick(t0 + Duration::from_millis(ms)) {
-                if let Effect::FireBoxBreathCue { phase, .. } = e {
+                if let Effect::Fire { phase: Some(phase), .. } = e {
                     by_phase.entry(format!("{phase:?}")).or_insert(volume_of(&e));
                 }
             }
@@ -2389,7 +2320,7 @@ mod tests {
         let (mut s, _) = Session::start(guided_settings(60, false), t0);
         let effects = s.tick(t0 + Duration::from_secs(60));
         let stop = position(&effects, |e| matches!(e, Effect::StopGuidedAudio));
-        let bell = position(&effects, |e| matches!(e, Effect::FireEndBell { .. }));
+        let bell = position(&effects, |e| matches!(e, Effect::Fire { channel: FireChannel::End, .. }));
         assert!(stop < bell, "the track goes quiet before the end bell: {effects:?}");
         assert!(effects.iter().any(|e| matches!(e, Effect::Completed { .. })));
     }
@@ -2402,7 +2333,7 @@ mod tests {
         let _ = s.tick(t0 + Duration::from_secs(30));
         let effects = s.enter_overtime(Duration::ZERO);
         assert_eq!(effects.first(), Some(&Effect::StopGuidedAudio), "{effects:?}");
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })));
     }
 
     #[test]
@@ -2453,11 +2384,6 @@ mod tests {
         }
         assert!(all.iter().any(|e| matches!(e, Effect::Ended { save_now: false, .. })));
         assert!(!all.contains(&Effect::StopGuidedAudio));
-    }
-
-    #[test]
-    fn stopping_the_track_is_not_a_bell() {
-        assert!(Effect::StopGuidedAudio.fire_route().is_none());
     }
 
     // ── The hero freezes at the planned length in Overtime ──────────
@@ -2547,12 +2473,12 @@ mod tests {
         });
         let t0 = Duration::from_secs(100);
         let mut s = Session::start_running(settings, t0);
-        assert!(s.tick(t0 + Duration::from_secs(300)).iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        assert!(s.tick(t0 + Duration::from_secs(300)).iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })));
         let effects = s.tick(t0 + Duration::from_secs(600));
-        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{effects:?}");
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })), "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })), "{effects:?}");
         let effects = s.tick(t0 + Duration::from_secs(601));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })), "{effects:?}");
     }
 
     /// The last tick of a cycle-aligned session also entered the next
@@ -2566,7 +2492,7 @@ mod tests {
             last = s.tick(t0 + Duration::from_secs(sec));
         }
         assert!(last.contains(&Effect::Ended { duration_secs: 320, save_now: false }), "{last:?}");
-        assert!(!last.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })), "{last:?}");
+        assert!(!last.iter().any(|e| matches!(e, Effect::Fire { phase: Some(_), .. })), "{last:?}");
     }
 
     /// Box Breath has no starting bell, so with cues on the first
@@ -2575,11 +2501,11 @@ mod tests {
     fn box_breath_cues_the_first_inhale_at_the_start() {
         let (mut s, effects) = Session::start(box_breath_settings(None), Duration::from_secs(100));
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::In, .. })),
+            effects.iter().any(|e| matches!(e, Effect::Fire { phase: Some(BoxBreathPhaseId::In), .. })),
             "{effects:?}"
         );
         let effects = s.tick(Duration::from_millis(100_500));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })), "no second inhale cue");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { phase: Some(_), .. })), "no second inhale cue");
     }
 
     /// A suspend that covered preparation and the whole countdown rang
@@ -2600,8 +2526,8 @@ mod tests {
         let _ = s.tick(t0 + Duration::from_secs(5));
         let mut effects = s.tick(t0 + Duration::from_secs(20 * 60));
         effects.extend(s.tick(t0 + Duration::from_secs(20 * 60 + 1)));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireStartingBell { .. })), "{effects:?}");
-        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::FireEndBell { .. })).count(), 1, "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Starting, .. })), "{effects:?}");
+        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })).count(), 1, "{effects:?}");
     }
 
     #[test]
@@ -2623,8 +2549,8 @@ mod tests {
         for secs in 180..185 {
             effects.extend(s.tick(t0 + Duration::from_secs(secs)));
         }
-        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })), "{effects:?}");
-        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::FireEndBell { .. })).count(), 1, "{effects:?}");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })), "{effects:?}");
+        assert_eq!(effects.iter().filter(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })).count(), 1, "{effects:?}");
     }
 
     // ── The bell ring ─────────────────────────────────────────────
@@ -2760,6 +2686,65 @@ mod tests {
         assert_eq!(ring_of(&s, 255).beads[0], small(255.0, 1800.0, false));
         s.tick(at(270));
         assert_eq!(ring_of(&s, 280).beads[..2], [small(270.0, 1800.0, true), small(540.0, 1800.0, false)]);
+    }
+
+    /// #280: a bell the mode's signal setting mutes never rang, so it
+    /// is neither heard nor in the total.
+    #[test]
+    fn a_muted_starting_or_end_bell_is_not_counted() {
+        let mut ten = fixed_bell(600, "ten");
+        ten.cue.signal_mode = SignalMode::Both;
+        let settings = SessionSettings {
+            bells: vec![ten],
+            starting_bell: Some(starting_cue()),
+            end_bell: Some(starting_cue()),
+            signal_mode_override: SignalMode::Vibration,
+            ..timer_countdown_settings(1800)
+        };
+        let (mut s, _) = Session::start(settings, Duration::ZERO);
+        assert_eq!(s.bell_ring(at(0)).counters, [BellCounter { rung: 0, total: Some(1) }]);
+        s.tick(at(720));
+        assert_eq!(s.bell_ring(at(720)).counters, [BellCounter { rung: 1, total: Some(1) }]);
+        s.tick(at(1800));
+        assert_eq!(s.bell_ring(at(1800)).counters, [BellCounter { rung: 1, total: None }]);
+    }
+
+    /// #280: a suspend through preparation past the end skips the
+    /// starting bell; the counter must not hear it.
+    #[test]
+    fn a_starting_bell_skipped_by_a_suspend_is_not_counted() {
+        let settings = SessionSettings {
+            bells: vec![fixed_bell(30, "half")],
+            starting_bell: Some(starting_cue()),
+            end_bell: Some(starting_cue()),
+            ..timer_prep_settings(30, 60)
+        };
+        let (mut s, _) = Session::start(settings, Duration::ZERO);
+        let mut rang = s.tick(at(5));
+        rang.extend(s.tick(at(185)));
+        rang.extend(s.tick(at(186)));
+        let channels: Vec<FireChannel> = rang.iter().filter_map(|e| match e {
+            Effect::Fire { channel, .. } => Some(*channel),
+            _ => None,
+        }).collect();
+        assert_eq!(channels, [FireChannel::End], "only the end bell rings");
+        assert_eq!(s.bell_ring(at(186)).counters, [BellCounter { rung: 1, total: None }]);
+    }
+
+    /// #279: woken past three fixed bells, only the latest rings.
+    #[test]
+    fn after_a_suspend_only_the_latest_missed_fixed_bell_rings() {
+        let mut s = timer_with(3600, vec![fixed_bell(600, "10"), fixed_bell(1200, "20"), fixed_bell(1800, "30")]);
+        s.tick(at(300));
+        let rang: Vec<String> = s.tick(at(2100)).iter().filter_map(|e| match e {
+            Effect::Fire { cue, .. } => Some(cue.sound_uuid.as_str().to_string()),
+            _ => None,
+        }).collect();
+        assert_eq!(rang, ["30"]);
+        let ring = s.bell_ring(at(2100));
+        let heard: Vec<bool> = ring.ring.unwrap().beads.iter().map(|b| b.rung).collect();
+        assert_eq!(heard, [false, false, true]);
+        assert_eq!(ring.counters, [BellCounter { rung: 1, total: Some(3) }]);
     }
 
     #[test]
@@ -2942,8 +2927,8 @@ mod tests {
         // The track ends at 899.4 s, before the tick reaches 900; the 899 s
         // bell's tick never came.
         let end = s.enter_overtime(Duration::ZERO);
-        assert!(end.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{end:?}");
-        let rung = |effects: Vec<Effect>| effects.iter().filter(|e| matches!(e, Effect::FireBell { .. })).count();
+        assert!(end.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })), "{end:?}");
+        let rung = |effects: Vec<Effect>| effects.iter().filter(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, phase: None, .. })).count();
         assert_eq!(rung(s.tick(t0 + Duration::from_secs(901))), 0, "nothing due by 900 s rings after the end bell");
         assert_eq!(rung(s.tick(t0 + Duration::from_secs(960))), 1, "a bell due in overtime still rings");
         // A suspend carries the session past its length and the track's
@@ -2962,7 +2947,7 @@ mod tests {
         assert_eq!(s.ui_state(), UiState::Paused);
         s.resume(t0 + Duration::from_secs(700));
         let end = s.tick(t0 + Duration::from_secs(701));
-        assert!(end.iter().any(|e| matches!(e, Effect::FireEndBell { .. })), "{end:?}");
+        assert!(end.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::End, .. })), "{end:?}");
         assert_eq!(s.ui_state(), UiState::Overtime);
         // Add right after an early end: the ring still says the end was
         // reached, and the end bell is counted as heard.

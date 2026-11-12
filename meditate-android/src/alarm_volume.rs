@@ -167,7 +167,7 @@ mod tests {
         assert!(lib.contains("fn bell_levels(volume: meditate_core::bell_volume::BellVolume) -> alarm_volume::Levels {"));
         assert!(lib.contains("alarm_volume::levels(volume, !bells_as_alarm())"));
         assert!(lib.contains("lock_db().is_some_and(|db| meditate_core::settings_keys::bells_as_alarm_from_db(&db))"));
-        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(route.channel), &path, &bell_levels(route.volume), &lead_in())"));
+        assert!(lib.contains("audio::play_bell(app, app::bell_channel_slot(*channel), &path, &bell_levels(cue.volume), &lead_in())"));
         assert!(lib.contains("audio::set_volume(app, &bell_levels(volume));"));
         assert!(!lib.contains("alarm_volume::level("), "no play site skips the switch");
         assert!(!lib.contains("bell_gain"), "the global bell gain is gone");

@@ -454,29 +454,33 @@ pub enum BellsSummaryPart {
 }
 
 /// What will ring, not what is switched on: Stopwatch drops the end
-/// bell and bells timed from the end, as the Bells page greys them.
+/// bell and bells timed from the end, the mode's signal setting drops
+/// what it mutes, and the Timer's length drops bells past its end.
 pub fn bells_summary(db: &Database, mode: SessionMode) -> Vec<BellsSummaryPart> {
-    use crate::bells::{box_breath_cues_from_db, display_mode_from_db, end_bell_cue_from_db, interval_bells_count, starting_bell_cue_from_db};
+    use crate::bells::{box_breath_cues_from_db, display_mode_from_db, effective_signal_mode, end_bell_cue_from_db, interval_bells_count, signal_mode_override_from_db, starting_bell_cue_from_db, BellCue};
     use crate::settings_keys::read_bool;
     let display = display_mode_from_db(db, mode);
     let vis = setup_visibility(mode);
+    // The mode's signal setting can mute a cue.
+    let override_ = signal_mode_override_from_db(db, mode);
+    let rings = |cue: &Option<BellCue>| cue.as_ref().is_some_and(|c| effective_signal_mode(c.signal_mode, override_).is_some());
     let mut parts = Vec::new();
-    if starting_bell_cue_from_db(db, mode).is_some() {
+    if rings(&starting_bell_cue_from_db(db, mode)) {
         parts.push(BellsSummaryPart::StartingBell);
     }
     if vis.interval_bells && read_bool(db, "interval_bells_active", false) {
-        let n = interval_bells_count(db, display);
+        let n = interval_bells_count(db);
         if n > 0 {
             parts.push(BellsSummaryPart::IntervalBells(n));
         }
     }
-    if end_bell_cue_from_db(db, display, mode).is_some() {
+    if rings(&end_bell_cue_from_db(db, display, mode)) {
         parts.push(BellsSummaryPart::EndBell);
     }
     if vis.boxbreath_phase {
         let cues = box_breath_cues_from_db(db);
         if cues.master_enabled
-            && [&cues.in_phase, &cues.hold_in, &cues.out_phase, &cues.hold_out].iter().any(|c| c.is_some())
+            && [&cues.in_phase, &cues.hold_in, &cues.out_phase, &cues.hold_out].into_iter().any(rings)
         {
             parts.push(BellsSummaryPart::PhaseCues);
         }
@@ -1976,6 +1980,23 @@ mod tests {
         assert_eq!(bells_summary(&db, SessionMode::Timer), vec![StartingBell, IntervalBells(2), EndBell]);
         assert_eq!(bells_summary(&db, SessionMode::BoxBreath), vec![EndBell, PhaseCues]);
         assert_eq!(bells_summary(&db, SessionMode::Guided), vec![EndBell]);
+    }
+
+    #[test]
+    fn bells_summary_leaves_out_muted_bells() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        db.set_setting("starting_bell_signal_mode", "sound").unwrap();
+        db.set_setting(crate::settings_keys::end_bell_signal_mode_key_for_mode(SessionMode::Timer), "sound").unwrap();
+        db.set_setting(crate::settings_keys::signal_mode_key_for_mode(SessionMode::Timer), "vibration").unwrap();
+        assert_eq!(bells_summary(&db, SessionMode::Timer), vec![]);
+        // Box Breath: sound-only phase cues under a vibration-only setting.
+        db.set_setting("boxbreath_cues_active", "true").unwrap();
+        for phase in BoxBreathPhaseId::all() {
+            db.set_box_breath_phase(*phase, true, SignalMode::Sound, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, Default::default()).unwrap();
+        }
+        db.set_setting(crate::settings_keys::signal_mode_key_for_mode(SessionMode::BoxBreath), "vibration").unwrap();
+        assert!(!bells_summary(&db, SessionMode::BoxBreath).contains(&BellsSummaryPart::PhaseCues));
     }
 
     #[test]

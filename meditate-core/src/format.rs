@@ -552,15 +552,21 @@ pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
 
     // Only bells that ring count; Box Breath rings no interval bells.
     let n = match cfg.timing {
-        PresetTiming::Timer { stopwatch, .. } if cfg.interval_bells.enabled => {
-            let display = crate::bells::DisplayMode::from_stopwatch_flag(stopwatch);
+        PresetTiming::Timer { stopwatch, duration_secs } if cfg.interval_bells.enabled => {
+            use crate::db::{IntervalBellKind, SignalMode};
+            let limits = crate::bells::RingLimits {
+                end: (!stopwatch).then_some(u64::from(duration_secs)),
+                signal: SignalMode::from_db_str(&cfg.cues_signal_mode).unwrap_or(SignalMode::Both),
+            };
             cfg.interval_bells
                 .bells
                 .iter()
                 .filter(|b| {
                     b.enabled
-                        && !crate::db::IntervalBellKind::from_db_str(&b.kind)
-                            .is_some_and(|k| crate::bells::is_bell_inert_in_stopwatch(k, display))
+                        // Applying skips a bell whose kind or signal doesn't read.
+                        && IntervalBellKind::from_db_str(&b.kind)
+                            .zip(SignalMode::from_db_str(&b.signal_mode))
+                            .is_some_and(|(kind, signal)| limits.rings(kind, b.time, b.jitter, signal))
                 })
                 .count()
         }
@@ -1096,6 +1102,30 @@ mod tests {
         cfg.label = PresetLabel { enabled: true, uuid: None };
         let json = cfg_to_json(&cfg);
         assert_eq!(preset_subtitle_parts(&json).unwrap().label_uuid, None);
+    }
+
+    /// A preset counts only what rings at its length and under its signal setting.
+    #[test]
+    fn a_preset_counts_only_bells_that_can_ring() {
+        let fixed = |min: u32, signal: &str| PresetIntervalBell {
+            kind: "fixed_from_start".into(),
+            time: crate::bells::BellTime::new(min, crate::bells::TimeUnit::Min),
+            jitter: crate::bells::BellTime::ZERO,
+            step: crate::bells::BellTime::ZERO,
+            sound_uuid: "s".into(),
+            enabled: true,
+            signal_mode: signal.into(),
+            vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
+            volume: Default::default(),
+            uuid: Default::default(),
+        };
+        let mut cfg = timer_cfg(false, 600);
+        cfg.cues_signal_mode = "vibration".into();
+        cfg.interval_bells = PresetIntervalBells {
+            enabled: true,
+            bells: vec![fixed(5, "both"), fixed(15, "both"), fixed(20, "both"), fixed(6, "sound")],
+        };
+        assert_eq!(preset_subtitle_parts(&cfg_to_json(&cfg)).unwrap().bells, Some(BellsCountKey::One));
     }
 
     #[test]

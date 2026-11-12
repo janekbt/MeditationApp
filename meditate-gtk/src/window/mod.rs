@@ -45,13 +45,19 @@ impl MeditateWindow {
     /// subtitle stays in sync without the user having to leave + return.
     pub fn push_bells_page(&self, app: &crate::application::MeditateApplication) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
+        // A second tap during the push: the page is already there.
+        if self.imp().nav_view.find_page("interval-bells").is_some() {
+            return;
+        }
         let timer_view = self.imp().timer_view.clone();
-        crate::bells::push_bells_page(
+        let rebuild = crate::bells::push_bells_page(
             &self.imp().nav_view,
             app,
             &timer_view.build_start_bar(),
             move || timer_view.refresh_interval_bells_count(),
         );
+        // Its start bar can change the length, which greys or frees bells.
+        self.imp().timer_view.imp().manage_bells.replace(std::rc::Rc::downgrade(&rebuild));
     }
 
     /// Push one of the timer's settings pages (Session, Bells).
