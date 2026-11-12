@@ -757,6 +757,16 @@ component NoteField inherits Rectangle {
     }
 }
 
+// The old number of an emptied number field, pale, until the first
+// digit replaces it. Screen readers keep to the field's own name.
+component PaleNumber inherits Text {
+    accessible-role: none;
+    // Material's disabled level: on-surface-variant looked like the number itself.
+    color: MaterialPalette.on-surface.with-alpha(0.38);
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
 // Vertical +/value/− stack mirroring the GTK shell's vertical
 // `gtk::SpinButton`. Custom Time, Preparation Time and Daily Goal.
 component VerticalSpinBox {
@@ -777,8 +787,9 @@ component VerticalSpinBox {
     // no binding to `value`, so every value change writes it back.
     // The number before the typing, which an emptied field goes back to.
     property <int> shown;
+    pure function padded(n: int) -> string { return n < 10 ? "0" + n : "" + n; }
     function sync-text() {
-        input.text = root.value < 10 ? "0" + root.value : "" + root.value;
+        input.text = root.padded(root.value);
         root.shown = root.value;
     }
     // The typed number, clamped; the text stays as typed.
@@ -800,28 +811,37 @@ component VerticalSpinBox {
                 root.sync-text();
             }
         }
-        input := TextInput {
-            init => { root.sync-text(); }
-            accessible-label: root.name;
-            input-type: InputType.number;
-            font-size: 32px;
-            color: MaterialPalette.on-surface;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            accepted => { self.clear-focus(); KeyboardArea.hide(); }
-            // Set's on/off follows the typing.
-            edited => { root.take-typed(); }
-            changed has-focus => {
-                if (self.has-focus) {
-                    // Empty the field on tap so typing replaces the
-                    // number (blur restores it if nothing was typed).
-                    // Not select-all: on Android a selection summons
-                    // the cut/copy/paste popup right over the number.
-                    root.shown = root.value;
-                    self.text = "";
-                } else {
-                    root.sync-text();
+        // Its children fill it, so it takes no height from them.
+        Rectangle {
+            min-height: input.preferred-height;
+            input := TextInput {
+                init => { root.sync-text(); }
+                accessible-label: root.name;
+                input-type: InputType.number;
+                font-size: 32px;
+                color: MaterialPalette.on-surface;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                accepted => { self.clear-focus(); KeyboardArea.hide(); }
+                // Set's on/off follows the typing.
+                edited => { root.take-typed(); }
+                changed has-focus => {
+                    if (self.has-focus) {
+                        // Empty the field on tap so typing replaces the
+                        // number (blur restores it if nothing was typed).
+                        // Not select-all: on Android a selection summons
+                        // the cut/copy/paste popup right over the number.
+                        root.shown = root.value;
+                        self.text = "";
+                    } else {
+                        root.sync-text();
+                    }
                 }
+            }
+            // The old number, pale, until the first digit replaces it.
+            if input.has-focus && input.text == "" : PaleNumber {
+                text: root.padded(root.shown);
+                font-size: input.font-size;
             }
         }
         TonalButton {
@@ -1865,6 +1885,11 @@ component StepperRow inherits Rectangle {
                                 root.commit-text();
                             }
                         }
+                    }
+                    // The old number, pale, until the first digit replaces it.
+                    if input.has-focus && input.text == "" : PaleNumber {
+                        text: root.shown();
+                        font-size: input.font-size;
                     }
                 }
                 TonalButton {

@@ -199,3 +199,193 @@ fn clear_focus_before_push(window: &MeditateWindow) {
     use gtk::prelude::GtkWindowExt;
     window.set_focus(None::<&gtk::Widget>);
 }
+
+/// A click or tap into a number field selects its number, as Tab
+/// already does, so typing replaces it and leaving without typing
+/// keeps it.
+fn select_number_on_click(window: &impl IsA<gtk::Widget>) {
+    use gtk::{gdk, prelude::*};
+    // The field pressed, until its release.
+    let pressed = std::cell::Cell::new(None);
+    let events = gtk::EventControllerLegacy::new();
+    events.set_name(Some("select-number"));
+    // Capture: before the field's own press and release.
+    events.set_propagation_phase(gtk::PropagationPhase::Capture);
+    events.connect_event(move |events, event| {
+        match event.event_type() {
+            gdk::EventType::ButtonPress | gdk::EventType::TouchBegin => pressed.set(number_under(events, event)),
+            gdk::EventType::ButtonRelease | gdk::EventType::TouchEnd => {
+                if let Some(text) = pressed.take() { select_after_release(text); }
+            }
+            gdk::EventType::TouchCancel | gdk::EventType::GrabBroken => pressed.set(None),
+            _ => {}
+        }
+        glib::Propagation::Proceed
+    });
+    window.add_controller(events);
+}
+
+/// The number field a plain primary press lands on, picked in the
+/// whole window (the controller may sit on a dialog inside it), through
+/// `number_pressed`. Shift+click extends a selection: GTK's.
+fn number_under(events: &gtk::EventControllerLegacy, event: &gtk::gdk::Event) -> Option<gtk::Text> {
+    use gtk::{gdk, prelude::*};
+    let primary = event.downcast_ref::<gdk::ButtonEvent>().map_or(true, |b| b.button() == gdk::BUTTON_PRIMARY);
+    if !primary || event.modifier_state().contains(gdk::ModifierType::SHIFT_MASK) { return None; }
+    let (x, y) = event.position()?;
+    let native = events.widget()?.native()?;
+    // A popover's press comes in its own surface's coordinates.
+    if event.surface() != native.surface() { return None; }
+    let (dx, dy) = native.surface_transform();
+    number_pressed(native.upcast_ref(), x - dx, y - dy)
+}
+
+/// The number field's text under a press at `x`, `y`, if the click
+/// is to select it: the field gets the focus, or its whole number is
+/// already selected (Tab, a dialog's first field). Mid-edit a click
+/// just moves the cursor. Its selection is emptied: a press inside a
+/// selection would drag it, or on a touchscreen pop the copy bubble;
+/// outside it GTK just places the cursor.
+fn number_pressed(window: &gtk::Widget, x: f64, y: f64) -> Option<gtk::Text> {
+    use gtk::prelude::*;
+    let text = window.pick(x, y, gtk::PickFlags::DEFAULT).and_downcast::<gtk::Text>()?;
+    text.ancestor(gtk::SpinButton::static_type())?;
+    if text.is_focus() && text.selection_bounds() != Some((0, text.text().chars().count() as i32)) { return None; }
+    text.select_region(0, 0);
+    Some(text)
+}
+
+/// Select the whole number once GTK's own release is done: that
+/// release brings the on-screen keyboard back only while nothing is
+/// selected. A selection GTK made since the press is the user's drag
+/// and stays.
+fn select_after_release(text: gtk::Text) {
+    use gtk::prelude::*;
+    glib::idle_add_local_once(move || {
+        if text.is_focus() && text.selection_bounds().is_none() { text.select_region(0, -1); }
+    });
+}
+
+/// `select_number_on_click` on the window and on every dialog it
+/// shows: a dialog keeps its events to itself (libadwaita sets
+/// `limit-events`), so the window's handler never sees them.
+fn select_number_on_click_with_dialogs(window: &adw::ApplicationWindow) {
+    use adw::prelude::*;
+    select_number_on_click(window);
+    window.connect_visible_dialog_notify(|window| {
+        let Some(dialog) = window.visible_dialog() else { return };
+        let ours = dialog.observe_controllers().iter::<glib::Object>()
+            .any(|c| c.ok().and_downcast::<gtk::EventController>().is_some_and(|c| c.name().as_deref() == Some("select-number")));
+        if !ours { select_number_on_click(&dialog); }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use adw::prelude::*;
+
+    #[test]
+    fn every_dialog_selects_numbers_on_click() {
+        crate::gtk_test::run(|| {
+            let ours = |w: &gtk::Widget| w.observe_controllers().iter::<glib::Object>()
+                .filter_map(|c| c.ok()?.downcast::<gtk::EventController>().ok())
+                .filter(|c| c.name().as_deref() == Some("select-number"))
+                .count();
+            let window = adw::ApplicationWindow::builder().content(&gtk::Button::with_label("x")).build();
+            super::select_number_on_click_with_dialogs(&window);
+            window.present();
+            let first = adw::AlertDialog::new(Some("a"), None);
+            first.present(Some(&window));
+            let second = adw::AlertDialog::new(Some("b"), None);
+            second.present(Some(&window));
+            let ctx = glib::MainContext::default();
+            while ctx.iteration(false) {}
+            assert_eq!(ours(window.upcast_ref()), 1, "the window");
+            assert_eq!(ours(first.upcast_ref()), 1, "a dialog");
+            assert_eq!(ours(second.upcast_ref()), 1, "a dialog over a dialog");
+            second.force_close();
+            while ctx.iteration(false) {}
+            assert_eq!(ours(first.upcast_ref()), 1, "shown again, still one");
+            first.force_close();
+            window.destroy();
+        });
+    }
+
+    /// The text a click lands in: a spin row's sits inside its spin button.
+    fn text_of(field: &gtk::Widget) -> Option<gtk::Text> {
+        std::iter::successors(field.first_child(), |c| c.next_sibling())
+            .find_map(|c| c.clone().downcast::<gtk::Text>().ok().or_else(|| text_of(&c)))
+    }
+
+    #[test]
+    fn a_clicked_number_field_selects_its_number() {
+        crate::gtk_test::run(|| {
+            let spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
+            spin.set_value(10.0);
+            let row = adw::SpinRow::with_range(0.0, 59.0, 1.0);
+            row.set_value(10.0);
+            let other = gtk::Button::with_label("x");
+            let entry = gtk::Entry::builder().text("name").build();
+            let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            column.append(&spin);
+            column.append(&row);
+            column.append(&other);
+            column.append(&entry);
+            let window = gtk::Window::builder().child(&column).build();
+            window.present();
+            // Laid out, so a press finds the field under the pointer.
+            let ctx = glib::MainContext::default();
+            for _ in 0..500 {
+                if row.width() > 0 { break; }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                while ctx.iteration(false) {}
+            }
+            let widget = window.upcast_ref::<gtk::Widget>();
+            for field in [spin.upcast_ref::<gtk::Widget>(), row.upcast_ref()] {
+                let name = field.type_().name();
+                let editable = field.downcast_ref::<gtk::Editable>().unwrap();
+                let text = text_of(field).unwrap();
+                let at = text.compute_point(widget, &gtk::graphene::Point::new(2.0, 2.0)).unwrap();
+                let (x, y) = (f64::from(at.x()), f64::from(at.y()));
+                // A click: ours first (capture), then GTK's press (focus
+                // without selecting, the cursor where the pointer is),
+                // GTK's release, then ours.
+                let click = || {
+                    let pressed = super::number_pressed(widget, x, y).unwrap();
+                    assert_eq!(editable.selection_bounds(), None, "{name}: a press finds no selection to drag");
+                    if !text.is_focus() { text.grab_focus_without_selecting(); }
+                    text.set_position(1);
+                    super::select_after_release(pressed);
+                    assert_eq!(editable.selection_bounds(), None, "{name}: nothing selected before GTK's release is done");
+                    while ctx.iteration(false) {}
+                };
+                // Into a field without the focus.
+                other.grab_focus();
+                click();
+                assert_eq!(editable.selection_bounds(), Some((0, 2)), "{name} from elsewhere");
+                // Into a field that has it with its number selected (Tab,
+                // a dialog's first field).
+                text.grab_focus();
+                click();
+                assert_eq!(editable.selection_bounds(), Some((0, 2)), "{name} already focused");
+                // Mid-edit (focused, cursor placed): a click just moves the cursor.
+                text.set_position(1);
+                assert!(super::number_pressed(widget, x, y).is_none(), "{name} mid-edit");
+                text.select_region(0, -1);
+                // A drag over the first digit keeps what it selected.
+                let pressed = super::number_pressed(widget, x, y).unwrap();
+                text.select_region(0, 1);
+                super::select_after_release(pressed);
+                while ctx.iteration(false) {}
+                assert_eq!(editable.selection_bounds(), Some((0, 1)), "{name} drag");
+            }
+            // A text field that is not a number is left alone.
+            let entry_text = text_of(entry.upcast_ref()).unwrap();
+            let at = entry_text.compute_point(widget, &gtk::graphene::Point::new(2.0, 2.0)).unwrap();
+            let (x, y) = (f64::from(at.x()), f64::from(at.y()));
+            assert_eq!(widget.pick(x, y, gtk::PickFlags::DEFAULT).as_ref(), Some(entry_text.upcast_ref()), "the press lands in the entry");
+            assert!(super::number_pressed(widget, x, y).is_none());
+            window.destroy();
+        });
+    }
+}

@@ -1895,7 +1895,7 @@ mod tests {
         // A field typed into and emptied again goes back to its number,
         // not to the half-typed one: Prep at 30, "4" typed and deleted.
         assert!(spin.contains("            : root.shown;"));
-        assert!(spin.contains("root.shown = root.value;\n                    self.text = \"\";"));
+        assert!(spin.contains("root.shown = root.value;\n                        self.text = \"\";"));
 
         let dialog = |modal: &str| {
             let at = slint.find(&format!("if root.modal == Modal.{modal} : ConfirmDialog {{")).unwrap_or_else(|| panic!("{modal}"));
@@ -1916,7 +1916,10 @@ mod tests {
         assert!(spin.contains("accessible-label: root.name;"));
         assert!(goal.contains("name: @tr(\"Minutes per day\");") && prep.contains("name: @tr(\"Seconds\");"));
         // One place formats the number.
-        assert_eq!(spin.matches("\"0\" + root.value").count(), 1);
+        assert_eq!(spin.matches("\"0\" + ").count(), 1);
+        assert!(spin.contains("input.text = root.padded(root.value);") && spin.contains("text: root.padded(root.shown);"));
+        let pale = component(&slint, "PaleNumber");
+        assert!(pale.contains("color: MaterialPalette.on-surface.with-alpha(0.38);") && pale.contains("accessible-role: none;"));
         assert!(spin.contains("init => { root.sync-text(); }"), "the number shows as the dialog opens");
         assert!(goal.contains("min-value: root.goal-min-mins;") && goal.contains("max-value: root.goal-max-mins;"));
         assert!(goal.contains("root.prefs-goal-mins = root.goal-dialog-mins;"));
@@ -3207,6 +3210,8 @@ mod tests {
             let c = component(name);
             assert!(!c.contains("select-all()"), "{name}: no selection on tap");
             assert!(c.contains("self.text = \"\";"), "{name}: tap empties the field");
+            // The emptied field still shows its old number, pale.
+            assert!(c.contains("if input.has-focus && input.text == \"\" : PaleNumber {"), "{name}: pale old number");
         }
 
         let editor = slint.find("// ── Interval-bell editor (overlay").unwrap();

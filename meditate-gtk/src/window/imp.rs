@@ -76,6 +76,7 @@ impl ObjectImpl for MeditateWindow {
         self.setup_help_overlay();
         self.setup_window_actions();
         self.bind_settings();
+        super::select_number_on_click_with_dialogs(self.obj().upcast_ref());
 
         // Blueprint may silently drop icon-name on AdwViewStackPage in some
         // compiler versions.  Set it explicitly here so we bypass that.
