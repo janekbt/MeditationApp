@@ -94,6 +94,12 @@ pub fn resolve_label_for_mode(db: &Database, mode: SessionMode) -> Option<Label>
         .find(|l| l.uuid == uuid)
 }
 
+/// The label a session of `mode` saves with: the mode's label while
+/// its switch is on and the row still exists.
+pub fn session_label(db: &Database, mode: SessionMode) -> Option<Label> {
+    label_active_from_db(db, mode).then(|| resolve_label_for_mode(db, mode)).flatten()
+}
+
 /// Typed key for the delete-label dialog's body copy. The shell
 /// maps each variant to its gettext template — "Sessions tagged
 /// '{name}': {n}" for `InUse`, "'{name}' isn't used by any saved
@@ -124,6 +130,18 @@ pub fn delete_impact_key(session_count: i64) -> DeleteImpactKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_takes_its_label_only_when_the_switch_is_on() {
+        let db = Database::open_in_memory().unwrap();
+        let label = db.insert_label("Morning").unwrap();
+        persist_uuid_for_mode(&db, SessionMode::Timer, label.uuid.as_str()).unwrap();
+        assert_eq!(session_label(&db, SessionMode::Timer), None);
+        persist_active_for_mode(&db, SessionMode::Timer, true).unwrap();
+        assert_eq!(session_label(&db, SessionMode::Timer).map(|l| l.id), Some(label.id));
+        db.delete_label(label.id).unwrap();
+        assert_eq!(session_label(&db, SessionMode::Timer), None);
+    }
 
     #[test]
     fn label_active_from_db_defaults_to_off_for_timer_and_box_breath() {

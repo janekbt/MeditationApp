@@ -433,10 +433,8 @@ pub fn session_summary(db: &Database, mode: SessionMode) -> Vec<SessionSummaryPa
     if stopwatch {
         parts.push(SessionSummaryPart::Stopwatch);
     }
-    if crate::labels::label_active_from_db(db, mode) {
-        if let Some(label) = crate::labels::resolve_label_for_mode(db, mode) {
-            parts.push(SessionSummaryPart::Label(label.name));
-        }
+    if let Some(label) = crate::labels::session_label(db, mode) {
+        parts.push(SessionSummaryPart::Label(label.name));
     }
     // A stopwatch has no end to finish at; both apps grey the switch then.
     if !stopwatch && crate::settings_keys::auto_finish_from_db(db, mode) {

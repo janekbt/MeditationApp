@@ -39,7 +39,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [x] | P4. Names and dialogs | done: one-name-dialog (#358, #374, #415, #486), one-dialog-frame (#465) | DD, FF |
-| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430); open: #429, #394, #395, #272, #430 (P5-b), #269 (P5-c), #274 | HH |
+| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430), one-android-session (#429, #394, #395, #272, the rest of #430); open: #269 (P5-c), #274 | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
@@ -254,12 +254,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - Problem: a new cue field (as `volume` was) means about ten edits. The uuids lose their `BellSoundUuid`/`VibrationPatternUuid` types on the way. Both apps only read these through `fire_route()` (gtk `timer/imp.rs:4349`, android `ui.rs:437`); the variant names appear only in tests and two `matches!` in android `app.rs` (2481, 4511).
 - Fix: one `Effect::Fire { channel: FireChannel, phase: Option<BoxBreathPhaseId>, cue: BellCue }`, the log tag derived from channel and phase, built by one `fn fire(channel, &BellCue, override) -> Option<Effect>`; `FireRoute` and `fire_route` go. About -80 lines; touches about 15 test asserts in core and two in android.
 
-#### #272 The session shape is built in each app
-- Related: #312 (the other decisions the GTK timer page makes).
-- Where: gtk `timer/imp.rs:2191-2292`, android `ui.rs:4463-4510` (its comment: "Mirrors GTK's SessionShape::Guided build"); core `settings.rs:28-72` has `mode()`, `stopwatch_on()` and `target_secs()` but no constructor.
-- Problem: both apps repeat the decision tree, including `pattern.cycle_aligned_target_secs(..)` for a Box Breath countdown and "Guided: the stopwatch flag means count-up display". They already differ: GTK returns early on a 0 target, Android reads Guided's stopwatch flag from the db and the other modes' from the UI. Against "decisions go in core".
-- Fix: `SessionShape::new(mode, stopwatch_on, target_secs, pattern)` next to `from_db`, used by both apps. Related: slice 18.
-
 #### #274 The ring is rebuilt every frame
 - Where: `mod.rs:883-960` (`bell_ring`), `bells.rs:210` (`rings_before` allocates a `Vec` of every planned ring from 0); called each frame by gtk `window/imp.rs:250` and at least 5 times a second on Android (`ui.rs:535`).
 - Problem: a 5 s bell over an hour builds and drops two vectors of about 720 elements per frame, plus the counters the frame callback ignores. Already marked as a known `ponytail:` shortcut (gtk `window/imp.rs:246-248`).
@@ -404,13 +398,14 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are under `meditate-gtk/` unless named. Ordered by gain.
 
 #### #312 Decisions the timer page makes that belong in core
-- Related: #395 (the Android side: three statics, the label rule four times).
+- Related: #395 (the Android side, done in one-android-session: `app::Started` fixed at Start, core `labels::session_label`).
 - Where and problem:
-  - The session shape (`timer/imp.rs:2190-2289`): #272.
-  - The saved session and the crash-recovery snapshot are built separately from the same facts: `on_save` (2609) and `write_in_progress_snapshot` (2835), each with the "guided uuid only in Guided" rule and a hand-written `TimerMode` to `SessionMode` match; Android has both again (`ui.rs:3072`, `app.rs:320`). The 60 s heartbeat re-reads the Setup label each time.
+  - The session shape: done (#272, one-android-session: core `SessionShape::new`).
+  - The saved session and the crash-recovery snapshot are built separately from the same facts: `on_save` (2609) and `write_in_progress_snapshot` (2835), with the "guided uuid only in Guided" rule now core's `SessionMode::guided_file`. Android builds both from `app::Started`, fixed at Start, with `record()` (one-android-session); that type and its snapshot builder are platform-free and belong in core for both apps (/simplify 2026-11-11), after which `guided_file` can go. The 60 s heartbeat re-reads the Setup label each time.
+  - Which length counts for a mode: `on_start` picks Timer's countdown, Box Breath's length or Guided's file length with its own match, as `format::idle_hero_label_from_modes` does; a core helper returning the seconds would leave one choice (/simplify 2026-11-11).
   - What the Save button does (`end_button_clicked` 2521-2527: Overtime finishes, Done does nothing, else stop), again in Android `AppState::save_end`.
   - Which ending gets a completion notice (`notify_complete` 2547, called from 2534, 3015, 3073), again in Android `completion_notice_secs`.
-- Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision is core's `Completed` (done, one-session-end). Related: #272, slice 18.
+- Fix: build the record once at Start (core already turns a snapshot into a session in `finalize_session_in_progress`); the heartbeat only updates `accumulated_secs`, Save saves it with the final seconds and note. A core `Session::press(EndButton, now)`. The notice decision is core's `Completed` (done, one-session-end). Related: slice 18.
 
 - Also (from #505, /simplify 2026-11-10): `refresh_shown` (`window/imp.rs`) follows the `Refresh` argument for the Timer page but the dirty flags for Log and Stats, which is why the session save must add its card before `data_changed` (a source test pins the order). Fix: a Setup mark beside the two, and `refresh_shown` re-reads only what is marked; with the one `load_setup()`.
 
@@ -630,16 +625,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/ui.rs` unless named. Already covered and only linked: the session shape (#272), the saved session and snapshot built separately (#312). Ordered by gain.
 
-#### #394 One path for every session transition
-- Related: #429 (the `AppState` API the seven swaps come from).
-- Where: "swap the state out, run the transition, write back, dispatch effects, react to active to inactive (`end_session`, `on_auto_finish`, `on_state_changed`), refresh" is written seven times (4546, 4648, 5064, 5095, 5140, 5324 and around): Stop, natural end, guided end of track, focus loss and the tick; the end-of-track path already calls `on_state_changed(true, false)` directly instead of the was/is pair. Pause and resume add `wake_follows_pause` and `guided_follows_pause` in two blocks under the same condition (4612-4628, 5106-5107).
-- Also: `AppState::toggle(shape, now)` (`app.rs:610`) takes a shape only for its Idle branch, which its comment calls a test convenience; so focus loss passes a made-up `TimerStopwatch` (5100-5103) and the action tap reads every Setup property to build a shape on each pause (4463).
-- Fix: one `apply(ui, &state, |s| s.tick(now))` that owns the edges; `AppState::pause_or_resume(now)`, with `start_session` the only start. Linux has its one reaction already (`react`, one-session-end).
-
-#### #395 The running session in one place
-- Where: three statics `SESSION_GUIDED_FILE`, `_NAME`, `_LOCAL_FILE` (3023-3065), always set together (4575-4584), in Mutexes on the UI thread; Save recomputes the guided uuid from the live selection with its own Guided gate (5285-5294) instead of the value fixed at start by `app::snapshot_guided_file` (#407); "the label if the mode's switch is on" four times (2507-2511, 2538, 3077-3081, 5274-5278), each locking twice, and GTK has it as `setup_selected_label_id` (`timer/imp.rs:4167`).
-- Fix: build one core `SessionInProgress` at Start and keep it in one cell; heartbeat, hold and `finalize_session` read it (that is #312's fix); a core `active_label_id_for_mode(db, mode)` for both apps. Related: #312.
-
 #### #396 The tick loop
 - Related: #439 (the general form: an in-memory event queue, files only where they must survive).
 - Where: about ten drop files are polled every 200 ms in every state, idle and in the background too (`drop_file::take` builds the path and fails an `open` each): widget launch, guided pick, sound pick, folder pick, local scan, lengths, export result, CSV pick, end of track, focus loss, session tap. The import result is already polled only while an import runs (4939).
@@ -745,16 +730,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Paths are `meditate-android/src/app.rs` unless named. About 1350 of its 6195 lines are production code; the rest are tests. Ordered by gain.
 
-#### #429 The state machine API
-- Also (one-session-end, 2026-11-11): `AppState::Finished(u64)` keeps only the saved length, so the phone's ended page has no ring and bell counter while Linux keeps core's ring at the saved length. Keeping the ended `Session` in the state (as GTK does) brings them back.
-- Where: `Transition::{toggle, tick, stop, finish_overtime, enter_overtime, add_overtime, dismiss}` and `prepend` (478-544) exist so tests can chain ("The shell never chains", 495); the consuming `self -> Transition` API makes ui.rs swap the state out with `std::mem::replace(&mut *s, AppState::idle())` seven times (4546, 4648, 5066, 5097, 5140, 5324, 8470). `toggle(shape, now)` (606-640) has an Idle start branch only tests use, so production passes a shape it ignores (ui.rs 5101 makes one up); its Active branch decides pause or resume itself instead of core's `Session::toggle_action`, which treats Overtime as no-op (#430). `remaining()` (765-771) has no production caller, with four tests. `media_tap`/`void_tap` are `pub` with one internal caller (114, 133); `is_running_page` is `!is_idle()`, `finish_overtime` is `pub` for `save_end` only (710-777).
-- Fix: transitions as `&mut self -> Vec<Effect>` (drops `Transition`, `Deref`, `prepend`, the forwarders and every `mem::replace`), or at least `#[derive(Default)]` and `mem::take`; `pause_or_resume(now)` through `toggle_action`; tests start through `start_session`; delete `remaining`. Related: #394.
-
-#### #430 Android reads Setup and the play key the way GTK does
-- Done (2026-11-11, one-session-end): the ended length and the "complete" notice come from core in both apps.
-- Where: `snapshot_guided_file` (`app.rs`) is the gate GTK writes inline twice (`on_save`, `write_in_progress_snapshot`); the Idle `hero_label` re-derives core's `idle_hero_label_from_modes`, whose doc names Android as its caller; the headphone button (`media_tap`) rebuilds Pause/Resume where core's `toggle_action` decides it (GTK's MPRIS uses it).
-- Fix: the guided gate in core; call `idle_hero_label_from_modes` and `toggle_action`. Related: #312, #429.
-
 #### #431 Typed values instead of index and string codes
 - Related: #456 (insight icon id), #459 (`setup-mode` codes).
 - Where: four two-way index maps written as match pairs (75-95 end buttons, 267-284 bell kind, 332-346 signal mode chips, 360-384 `TimerMode` chips), each order twice with its own round-trip test; GTK uses one const table (`MODE_NAMES`, `timer/imp.rs:56`); the bell-kind order is also inline in GTK (`bells.rs:590-594, 768-772`) with another fallback (#354). End buttons travel as bare `i32` codes inside Rust and Slint decodes `kind == 0`/`kind == 4` (main.slint 176, 687). Volume rows are named by strings ("start", "holdin" ..) kept in step with main.slint by a source-grep test (845-860, test at 2421), unknown strings falling to the interval-editor case. `TimerMode` is `SessionMode` with one variant renamed (17-53), converted back and forth 22 times in ui.rs.
@@ -853,7 +828,8 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #459 Whether Start is allowed is decided in Slint
 - Where: `start-enabled` (3149-3153) decides in the layout that Timer and Box Breath need Stopwatch or a non-zero duration and Guided a file with a known length; GTK leaves Start on and returns silently on a zero countdown (`timer/imp.rs:2199`), greying it only while reading (3737). The mode is compared as `setup-mode == 0/1/2` 15 times.
-- Fix: core `can_start(mode, stopwatch, target_secs, guided_ready)` for both apps; Rust sets `start-enabled`; the mode as an enum (#431). Related: #430.
+- Also (one-android-session, 2026-11-11): core `SessionShape::new` gives no shape for a 0 s countdown or file; Android's Start then shows "Couldn't start playback" for Guided and returns silently otherwise (a 0 min widget preset), GTK returns silently. `can_start` can be `SessionShape::new(..).is_some()`. Decided 2026-11-12: GTK gets the same "Couldn't start playback" for an empty Guided file (a new msgid, the nine translations from "Couldn't start playback: {error}"); the 0 min widget preset waits for this item.
+- Fix: core `can_start(mode, stopwatch, target_secs, guided_ready)` for both apps; Rust sets `start-enabled`; the mode as an enum (#431).
 
 #### #460 Reorderable rows and letting go of focus
 - Related: #467 (the RowDrop copy in the preset chooser).
@@ -917,7 +893,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 #### #480 One Guided selection in core
 - Where: the pick type is kept twice with the same fields and the same `reading_length()` (`local_id.is_some() && duration_secs == 0`, which holds Start): gtk `guided.rs:65-90` `GuidedFilePick`, android `ui.rs:4166-4191` `GuidedSel`. Applying `follow_selection` (gtk `timer/imp.rs:3747-3777`, android `ui.rs:1749-1773`, both with one `Follow::Refresh | Follow::Reselect(_)` arm, so the payload is never read), the remember key (gtk 3690-3696, android 4199-4206), the restore (gtk 3704-3733; android 4325-4328 and 9936-9947, which turns the id into a key and parses it back) and the Local Folder pick (gtk `local_folder.rs:182-195`, android `ui.rs:1400-1432`) are each written twice. GTK builds `local:{id}` by hand too (`timer/imp.rs:3522`, where the loop already holds `entry.id().key()` at 3515, and 3548). The "found" rule is in core twice and android once (`ui.rs:1405`); GTK's restore doesn't check it.
-- Fix: core `GuidedPick` (`from_library`, `from_local` holding the found rule, `reading_length`, `key`) and `GuidedChoice` (`follow`, `select` which remembers, `restore`); merge `Refresh` and `Reselect`. Each app keeps only its rows. Related: #402, #405, #312, #395.
+- Fix: core `GuidedPick` (`from_library`, `from_local` holding the found rule, `reading_length`, `key`) and `GuidedChoice` (`follow`, `select` which remembers, `restore`); merge `Refresh` and `Reselect`. Each app keeps only its rows. Related: #402, #405, #312.
 
 #### #481 The Local Folder job in core
 - Where: the job state (scanning, queue, reading, failed, unreachable), "another folder was chosen during the walk, scan again" and the unread filter `!f.missing && f.duration_secs.is_none()` are in gtk `local_folder.rs:14-34, 98-180` and android `ui.rs:1272-1296, 1354-1366, 1515-1608`; both re-read the whole table right after `apply_local_scan`, which had every row in its transaction. They already differ: after a failed write GTK reads the lengths anyway (`unwrap_or(true)`, 117), Android doesn't (1546). The "a failed write says Save failed" helper is written twice (gtk 73-82, android 1310-1328).

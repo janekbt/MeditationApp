@@ -24,7 +24,7 @@ use crate::db::{SessionMode, SignalMode};
 /// - `Guided` carries an explicit `count_up_display` flag — the file
 ///   always has a probed duration, but the user can flip the running
 ///   readout between count-up and count-down independently.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionShape {
     TimerCountdown { target_secs: u32 },
     TimerStopwatch,
@@ -34,6 +34,25 @@ pub enum SessionShape {
 }
 
 impl SessionShape {
+    /// The shape a Start builds from the Setup page: `target_secs` is
+    /// the set length (Guided: the file's length); `None` when there is
+    /// nothing to count down.
+    pub fn new(mode: SessionMode, stopwatch_on: bool, target_secs: u32, pattern: BreathPattern) -> Option<Self> {
+        let shape = match (mode, stopwatch_on) {
+            (SessionMode::Timer, true) => Self::TimerStopwatch,
+            (SessionMode::Timer, false) => Self::TimerCountdown { target_secs },
+            (SessionMode::BoxBreath, true) => Self::BoxBreathStopwatch { pattern },
+            // Ends on a full cycle, never mid-breath.
+            (SessionMode::BoxBreath, false) => Self::BoxBreathCountdown {
+                pattern,
+                target_secs: u32::try_from(pattern.cycle_aligned_target_secs(u64::from(target_secs))).unwrap_or(u32::MAX),
+            },
+            // The file has its length either way; the switch only flips the time.
+            (SessionMode::Guided, count_up_display) => Self::Guided { duration_secs: target_secs, count_up_display },
+        };
+        (shape.target_secs() != Some(0)).then_some(shape)
+    }
+
     /// The legacy `SessionMode` enum tag, derived from the variant.
     /// Kept around for the small handful of code paths (notifications,
     /// stats categorisation) that key off the user-visible mode label
@@ -169,9 +188,26 @@ impl Default for SessionSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::bells::{self, DisplayMode};
     use crate::db::{Database, IntervalBellKind};
     use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+
+    #[test]
+    fn each_mode_builds_its_shape() {
+        use SessionMode::{BoxBreath, Guided, Timer};
+        let p = BreathPattern::clamp_from_raw(4, 4, 4, 4);
+        let new = |mode, stopwatch_on, secs| SessionShape::new(mode, stopwatch_on, secs, p);
+        assert_eq!(new(Timer, false, 600), Some(SessionShape::TimerCountdown { target_secs: 600 }));
+        assert_eq!(new(Timer, true, 600), Some(SessionShape::TimerStopwatch));
+        assert_eq!(new(BoxBreath, false, 60), Some(SessionShape::BoxBreathCountdown { pattern: p, target_secs: 64 }));
+        assert_eq!(new(BoxBreath, true, 60), Some(SessionShape::BoxBreathStopwatch { pattern: p }));
+        assert_eq!(new(Guided, false, 900), Some(SessionShape::Guided { duration_secs: 900, count_up_display: false }));
+        assert_eq!(new(Guided, true, 900), Some(SessionShape::Guided { duration_secs: 900, count_up_display: true }));
+        assert_eq!(new(Timer, false, 0), None);
+        assert_eq!(new(Guided, false, 0), None);
+        assert_eq!(new(Guided, true, 0), None);
+    }
 
     /// The composition each shell built by hand before `from_db`.
     fn by_hand(db: &Database, shape: SessionShape, stopwatch_on: bool) -> SessionSettings {

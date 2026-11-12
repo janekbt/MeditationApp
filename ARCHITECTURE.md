@@ -207,7 +207,9 @@ SessionShape + DB  ->  SessionSettings  ->  Session  ->  Effect
  (user's setup)          (frozen plan)    (decisions)   (output)
 ```
 
-The shell picks a `SessionShape`, calls
+The shell builds the shape with
+`SessionShape::new(mode, stopwatch_on, length, pattern)` (`None` when
+there is nothing to count down), calls
 `SessionSettings::from_db(db, shape)`, starts a `Session`, then calls
 `tick(now)` on a repeating timer (1 s on GTK, 200 ms for GTK Box Breath and on Android) and
 dispatches the effects that come back.
@@ -225,7 +227,7 @@ breath pattern), `prep_secs`, the interval-bell schedule `bells` with
 its `bell_rng_seed`, the per-mode `signal_mode_override`,
 `starting_bell`, `end_bell` and `box_breath_cues`.
 
-The shell only chooses the shape. `SessionSettings::from_db` reads
+The shell only hands over the Setup values for the shape. `SessionSettings::from_db` reads
 everything else from the stored settings, and both shells call it
 exactly once (tests in each shell enforce that). It is plain data:
 clonable, with no Database, clock or shell reference.
@@ -404,6 +406,16 @@ feedbackd haptics, gettext lookups.
 
 `meditate-android/src/` is glue only too. Android-specific patterns
 worth knowing before reading it:
+
+- **One path for every session transition.** `AppState` (`app.rs`)
+  keeps the running page's session, live or ended until Save or
+  Discard as on Linux, together with what Start fixed (`Started`:
+  start time, guided file, title, Local Folder row). Its transitions
+  return core's effects; `apply` in `ui.rs` runs each one and carries
+  out what follows (effects, the notice, the service and wake lock
+  across a start, pause or end, the recovery snapshot, Auto-Finish's
+  save, the redraw), like GTK's `react`. Save writes the row from
+  `Started::record`, never from the Guided tab's selection.
 
 - **App-classloader JNI bridge.** A native thread attached via
   `attach_current_thread` only sees the system classloader, so every

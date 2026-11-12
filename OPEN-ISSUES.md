@@ -15,14 +15,14 @@ From the audits of 2026-10-09 and the whole-repo sweep of 2026-11-10 (REFACTORIN
 
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
-| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #407, #422, #497 | what the user typed or saved goes missing |
+| [ ] | DD. Passwords and edits lost or doubled | #488, #451, #387, #422, #497 | what the user typed or saved goes missing |
 | [x] | K3. Presets and multi-step writes all or nothing | #193, #306, #291, #292, #325, #324 | a preset or pattern that lands halfway |
 | [ ] | EE. Failures nobody sees: core and Linux | #347, #366, #489, #251, #247, #344, #365 | the user thinks it worked |
 | [ ] | FF. Failures nobody sees: Android | #409, #411, #425, #426, #427, #448 | the user thinks it worked |
 | [ ] | GG. Android Edit Session | #472, #473, #478, #479 | wrong times, lost words, popping bars |
 | [ ] | Q. Sync efficiency | #92, #100 | wasted network, disk and rebuilds |
 | [ ] | W. Sync that stops on one bad item | #164, #165, #172, #173, #188, #192, #263-#268 | one bad file or event blocks sync |
-| [ ] | HH. Timer engine and bells | #279, #280, #437, #293, #309, #518 | bells and lengths that are off |
+| [ ] | HH. Timer engine and bells | #279, #280, #293, #309, #518 | bells and lengths that are off |
 | [ ] | II. Linux audio and guided playback | #367, #383, #384, #385, #386, #364, #388, #389, #390, #493 | freezes and silent audio errors |
 | [ ] | JJ. Guided files and Local Folder | #446, #447, #413, #443, #250 | freezes and wrong lengths |
 | [ ] | KK. Android screen recreate and widget (manifest: ask first) | #406, #424, #435, #445, #449, #450 | rotation, recreate and widget taps |
@@ -67,11 +67,6 @@ Data the user typed or saved goes missing, moves, or exists twice.
 - Where: `keychain.rs:214-240`: when a store can't open the portal or D-Bus Secret Service, it switches to the self-keyed file backend (`nextcloud-sync.keyring` plus `nextcloud-sync.master` in the same folder); once the master file exists, every later launch uses that backend (220-224) and never tries the keyring again. Only logged.
 - Scenario: the Secret Service starts slowly after login and the user saves sync settings in that moment: the app password is stored in a file that anyone with the user's files can decrypt, from then on, with no notice. Against the "never a password in a plain file" rule.
 - Fix (maintainer decision): drop the fallback and tell the user the keyring isn't reachable (retry later), or at least ask before using it and move back to the keyring once it opens.
-
-### #407 Save can store one guided file's uuid with another's name
-- Where: Save takes the uuid from the live `guided_sel` (5285-5294), the name from `SESSION_GUIDED_NAME` fixed at Start; an import that finishes during a session overwrites `guided_sel` (5006-5021), which `follow_guided_sel` guards against and this path doesn't.
-- Scenario (plausible): an import is transcoding, a widget tap starts a Guided session with file A, the import finishes and selects file B; Save writes uuid B with name A, and per-file stats count the wrong file.
-- Fix: read the uuid from the session record (#395); don't change the selection under a running session.
 
 ### #422 Saving a new interval bell with a changed volume can create it twice
 - Where: `insert_interval_bell`, `find_interval_bell_by_id`, `update_interval_bell` (8117-8137) are three writes without a transaction.
@@ -358,9 +353,6 @@ Mostly core, host-testable.
 - Where: `bell_ring` (`mod.rs:938`): `rung += !preparing`.
 - Scenario: the per-mode signal override mutes it (`starting_bell_effect` returns nothing), or a suspend through prep past the end skips it (`tick_prep` 586-592); the counter still shows it as heard, "1 of N" before any bell. The end bell has the same blind spot for the override.
 - Fix: record in the session whether the starting and end bells actually fired, and count that.
-
-### #437 A pause in Overtime would freeze it and save the wrong length
-- `AppState::toggle` pauses any Active state (626-640); core's `toggle_action` makes Overtime a no-op; a paused Overtime then saves through `stop()` with the overtime included. Latent: the Overtime buttons offer no Pause today. Fix with #429.
 
 ### #293 The Bells subtitle counts bells that won't ring
 - Where: `bells.rs:771-778` (`interval_bells_count`) filters only the stopwatch case; `build_active_bells` also drops a fixed bell at or past the target, a "before end" offset at or past it, and a repeating bell longer than the session.

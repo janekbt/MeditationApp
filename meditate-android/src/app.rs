@@ -2,16 +2,13 @@
 // machine and the Slint UI's properties / callbacks. Lifted out of
 // ui.rs so it's unit-testable without a Slint runtime.
 //
-// Sits one level above `meditate_core::session::Session`: the
-// adapter exposes the four-state Idle/Active/Finished UI model the
-// Slint screens want, while `Session` owns the underlying
-// phase clock + pause / resume / overtime mechanics. When the
-// session's target hits zero we auto-finalise (the Android shell
-// doesn't expose "Add time" yet); finalising drops the session and
-// lands us in `Finished`, so a subsequent `toggle` starts fresh.
+// `AppState` holds the running page's session (live, or ended until
+// Save or Discard, as on Linux) and what its Start fixed; every
+// transition goes to core's `Session`, which owns the phases, pause,
+// overtime and the end.
 
-use meditate_core::format::{format_hhmm, format_time};
-use meditate_core::session::{Effect, Session, SessionSettings, SessionShape, UiState};
+use meditate_core::format::format_time;
+use meditate_core::session::{Effect, Session, SessionSettings, UiState};
 use std::time::Duration;
 
 /// User-visible mode chip group at the top of the Setup view —
@@ -111,14 +108,16 @@ pub fn media_buttons(state: &AppState, note_empty: bool) -> Vec<i32> {
 
 /// The running page's button a media-control tap stands for, or
 /// `None` when the control doesn't offer it now (a stale tap).
-pub fn media_tap(state: &AppState, note_empty: bool, code: i32) -> Option<i32> {
-    let offered = media_buttons(state, note_empty);
+fn media_tap(state: &AppState, note_empty: bool, code: i32) -> Option<i32> {
+    use meditate_core::session::{EndButton, ToggleAction};
     if code == MEDIA_HEADPHONES {
-        use meditate_core::session::EndButton::{Pause, Resume};
-        let toggles = [end_button_code(Pause), end_button_code(Resume)];
-        return offered.into_iter().find(|c| toggles.contains(c));
+        return match state.toggle_action() {
+            ToggleAction::Pause => Some(end_button_code(EndButton::Pause)),
+            ToggleAction::Resume => Some(end_button_code(EndButton::Resume)),
+            ToggleAction::Start | ToggleAction::NoOp => None,
+        };
     }
-    offered.contains(&code).then_some(code)
+    media_buttons(state, note_empty).contains(&code).then_some(code)
 }
 
 /// Void-Controls (#17): the phone turned face down, turned face up,
@@ -130,7 +129,7 @@ pub const VOID_SHAKE: i32 = 8;
 /// The running page's button a Void-Controls gesture stands for, or
 /// `None` when the session doesn't offer it now. A shake saves; in
 /// overtime of more than a minute it saves with the overtime (Add).
-pub fn void_tap(state: &AppState, note_empty: bool, now: Duration, code: i32) -> Option<i32> {
+fn void_tap(state: &AppState, note_empty: bool, now: Duration, code: i32) -> Option<i32> {
     use meditate_core::session::{EndButton as B, MediaLine};
     let over_a_minute = state.media_status(now).is_some_and(|m| matches!(m.line, MediaLine::Overtime(s) if s > 60));
     let wanted: &[B] = match code {
@@ -290,18 +289,6 @@ pub fn bell_channel_slot(channel: meditate_core::session::FireChannel) -> i32 {
     }
 }
 
-/// The guided library file a session's recovery snapshot records:
-/// the selected row's uuid for a Guided session, nothing for an
-/// Open-File pick (no library row) or any other mode (a leftover
-/// guided selection doesn't belong to it). Mirrors GTK's
-/// `guided_selected_uuid` gate in `write_in_progress_snapshot`.
-pub fn snapshot_guided_file(mode: TimerMode, selected_uuid: Option<&str>) -> Option<String> {
-    match mode {
-        TimerMode::Guided => selected_uuid.map(str::to_string),
-        TimerMode::Timer | TimerMode::Breathing => None,
-    }
-}
-
 /// Helpers for the per-mode Cues SegmentedButton — bridge the
 /// Slint `current-index: int` to core's `SignalMode`. Index order
 /// matches GTK's `cues_signal_toggle_host` toggle list (Sound /
@@ -428,348 +415,173 @@ pub fn group_digits(n: i64, sep: &str) -> String {
     }
 }
 
-#[derive(Debug)]
-pub enum AppState {
-    Idle,
-    /// A live Session — its `ui_state()` distinguishes Running from
-    /// Paused (and Overtime, transiently, before `tick` finalises it
-    /// into `Finished` here). Boxed so the enum's largest-variant
-    /// size doesn't dominate the stack footprint of every `AppState`
-    /// store (Session carries a few hundred bytes; Idle / Finished
-    /// are unit variants).
-    Active(Box<Session>),
-    /// Ended, not yet saved or discarded: the length it saves.
-    Finished(u64),
+/// What a Start fixes for the session's save: when it began and the
+/// guided file it plays (library uuid, title, Local Folder row).
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(Default, PartialEq, Eq))]
+pub struct Started {
+    pub unix_start: i64,
+    pub guided_file: Option<meditate_core::db::GuidedFileUuid>,
+    pub guided_name: Option<String>,
+    pub local_file: Option<i64>,
 }
 
-/// An `AppState` transition plus the core `Session` effects it
-/// emitted. `toggle` / `tick` / `stop` return this so the shell
-/// can dispatch the effects (bell sound / vibration / cut
-/// in-flight signals) exactly the way GTK's
-/// `dispatch_session_effects` does — the decision (which cue, or
-/// none) stays in core; the shell only carries it out.
-///
-/// `Deref<Target = AppState>` so every read-only query
-/// (`is_running`, `remaining`, `hero_label`, …) and the unit
-/// tests that chain transitions keep working unchanged — they
-/// see through to the inner state; only the shell reaches for
-/// `.effects`.
-pub struct Transition {
-    pub state: AppState,
-    pub effects: Vec<Effect>,
-}
-
-impl std::ops::Deref for Transition {
-    type Target = AppState;
-    fn deref(&self) -> &AppState {
-        &self.state
+impl Started {
+    /// The row Save writes for `session` once it ended: Start's time
+    /// and file, never the Guided tab's selection at Save.
+    pub fn record(&self, session: &Session, note: Option<String>, label_id: Option<i64>) -> meditate_core::db::Session {
+        meditate_core::db::Session::from_unix(
+            self.unix_start,
+            i64::try_from(session.final_duration_secs().unwrap_or(0)).unwrap_or(i64::MAX),
+            label_id,
+            note,
+            session.mode(),
+            self.guided_file.clone(),
+            self.guided_name.clone(),
+        )
     }
 }
 
-impl Transition {
-    fn new(state: AppState, effects: Vec<Effect>) -> Self {
-        Self { state, effects }
-    }
-
-    /// Chain another transition off this one. The shell never
-    /// chains (it dispatches after each user action), but the
-    /// state-machine tests do (`toggle(..).toggle(..).tick(..)`);
-    /// prior effects are carried forward so nothing is silently
-    /// dropped if a caller ever does chain.
-    pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
-        let mut t = self.state.toggle(shape, now);
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    pub fn tick(self, now: Duration) -> Transition {
-        let mut t = self.state.tick(now);
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    pub fn stop(self, now: Duration) -> Transition {
-        let mut t = self.state.stop(now);
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    pub fn finish_overtime(self) -> Transition {
-        let mut t = self.state.finish_overtime();
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    pub fn enter_overtime(self, now: Duration) -> Transition {
-        let mut t = self.state.enter_overtime(now);
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    pub fn add_overtime(self, now: Duration) -> Transition {
-        let mut t = self.state.add_overtime(now);
-        prepend(&mut t.effects, self.effects);
-        t
-    }
-    /// Done-screen Save / Discard — a pure UI transition with no
-    /// core effects, so it returns the bare `AppState` (keeps the
-    /// `ui.rs` `*s = …dismiss();` sites unchanged).
-    pub fn dismiss(self) -> AppState {
-        self.state.dismiss()
-    }
-}
-
-fn prepend(effects: &mut Vec<Effect>, mut earlier: Vec<Effect>) {
-    if earlier.is_empty() {
-        return;
-    }
-    earlier.append(effects);
-    *effects = earlier;
-}
+/// The running page's session: none on Setup; live, or ended and
+/// waiting for Save or Discard, as on Linux. Every transition goes to
+/// core and returns its effects for the shell to carry out.
+#[derive(Debug, Default)]
+pub struct AppState(Option<Box<(Session, Started)>>);
 
 impl AppState {
-    pub fn idle() -> Self {
-        Self::Idle
+    pub fn session(&self) -> Option<&Session> {
+        self.0.as_ref().map(|b| &b.0)
     }
 
-    /// The ended session, keeping the length it saves.
-    fn finished(s: &Session) -> Self {
-        Self::Finished(s.final_duration_secs().unwrap_or(0))
+    /// Run `f` on the session; nothing without one.
+    fn with(&mut self, f: impl FnOnce(&mut Session) -> Vec<Effect>) -> Vec<Effect> {
+        self.0.as_mut().map(|b| f(&mut b.0)).unwrap_or_default()
+    }
+
+    fn ui_state(&self) -> UiState {
+        self.session().map_or(UiState::Idle, Session::ui_state)
+    }
+
+    /// What Start fixed; `None` on Setup.
+    pub fn started(&self) -> Option<&Started> {
+        self.0.as_ref().map(|b| &b.1)
+    }
+
+    pub fn mode(&self) -> Option<meditate_core::SessionMode> {
+        self.session().map(Session::mode)
     }
 
     pub fn is_idle(&self) -> bool {
-        matches!(self, Self::Idle)
+        self.0.is_none()
     }
     pub fn is_running(&self) -> bool {
-        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Running))
+        self.ui_state() == UiState::Running
     }
     pub fn is_paused(&self) -> bool {
-        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Paused))
+        self.ui_state() == UiState::Paused
     }
-    /// In overtime: the countdown crossed zero, the end bell rang,
-    /// and the session keeps ticking until the user taps Finish or
-    /// Add. The running overlay stays up but its buttons morph
-    /// (mirrors GTK's Overtime phase).
     pub fn is_overtime(&self) -> bool {
-        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Overtime))
+        self.ui_state() == UiState::Overtime
     }
+    /// Ended, not saved or discarded yet.
     pub fn is_finished(&self) -> bool {
-        matches!(self, Self::Finished(_))
+        self.ui_state() == UiState::Done
     }
-    /// Whether the timer is in flight (Running OR Paused). Distinct
-    /// from `is_running` because Paused is also "active": the
-    /// foreground service should stay up across pause, so the OS
-    /// doesn't reclaim the process and lose the frozen-elapsed
-    /// state stored in the Stopwatch.
+    /// A live session (preparing, running, paused or in overtime): the
+    /// foreground service stays up across a pause.
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Active(_))
+        !matches!(self.ui_state(), UiState::Idle | UiState::Done)
     }
 
     /// How far into overtime the session is; `None` outside it.
     pub fn overtime(&self, now: Duration) -> Option<Duration> {
-        match self {
-            Self::Active(s) => s.overtime(now),
-            Self::Idle | Self::Finished(_) => None,
-        }
+        self.session().and_then(|s| s.overtime(now))
     }
 
     /// The media control's line and bar; `None` without a live session.
     pub fn media_status(&self, now: Duration) -> Option<meditate_core::session::MediaStatus> {
-        match self {
-            Self::Active(s) => s.media_status(now),
-            Self::Idle | Self::Finished(_) => None,
-        }
+        self.session().and_then(|s| s.media_status(now))
     }
 
-    /// Start a fresh session from fully-built `SessionSettings`.
-    /// The shell assembles these from the DB (interval bells,
-    /// starting/end cue, per-mode signal-mode override, prep)
-    /// exactly like GTK's `build_timer_settings`, so core gets
-    /// the real cue config and emits the right `Fire*` / end
-    /// effects. Core picks Prep or Running from `prep_secs`; the
-    /// returned effects are what plays at the start (the starting
-    /// bell when there is no prep, else it comes with the tick that
-    /// ends prep) and must be dispatched like any other transition.
-    pub fn start_session(settings: SessionSettings, now: Duration) -> Transition {
-        let (session, start_effects) = Session::start(settings, now);
-        Transition::new(Self::Active(Box::new(session)), start_effects)
+    /// Meditation time so far, for the recovery heartbeat.
+    pub fn saved_secs(&self, now: Duration) -> u64 {
+        self.session().map_or(0, |s| s.saved_secs(now))
     }
 
-    /// Primary action: Start / Pause / Resume / Restart depending
-    /// on current state. `shape` is consulted only when starting a
-    /// fresh session; pause/resume ignore it (Session already
-    /// remembers its shape). The shell picks the variant based on
-    /// the active mode chip plus the Stopwatch-Mode switch — Timer
-    /// with stopwatch off → `TimerCountdown`, with stopwatch on →
-    /// `TimerStopwatch`, etc. Keeping shape construction shell-side
-    /// matches the GTK shell's `on_start` (it builds the right
-    /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
-    pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
-        match self {
-            Self::Idle | Self::Finished(_) => {
-                // Test / host convenience: a bare default session
-                // with no cues. The Android shell does NOT take
-                // this path to start — it calls `start_session`
-                // with DB-built settings so core has the real
-                // bell config (see ui.rs).
-                Self::start_session(
-                    SessionSettings {
-                        shape,
-                        ..Default::default()
-                    },
-                    now,
-                )
+    /// Start from DB-built settings (the shell builds them like GTK's
+    /// `on_start`); core opens in preparation when `prep_secs` is set.
+    pub fn start_session(&mut self, settings: SessionSettings, started: Started, now: Duration) -> Vec<Effect> {
+        let (session, effects) = Session::start(settings, now);
+        self.0 = Some(Box::new((session, started)));
+        effects
+    }
+
+    /// Core's play-key decision; Start on Setup.
+    pub fn toggle_action(&self) -> meditate_core::session::ToggleAction {
+        self.session().map_or(meditate_core::session::ToggleAction::Start, Session::toggle_action)
+    }
+
+    /// The play key: pause or resume as core's `toggle_action` says;
+    /// nothing in overtime or once ended.
+    pub fn pause_or_resume(&mut self, now: Duration) -> Vec<Effect> {
+        use meditate_core::session::ToggleAction;
+        self.with(|s| match s.toggle_action() {
+            ToggleAction::Pause => s.pause(now),
+            ToggleAction::Resume => {
+                s.resume(now);
+                Vec::new()
             }
-            Self::Active(mut s) => {
-                // Pause emits StopActiveSignals (the user wants
-                // everything to hush); resume emits nothing. Both
-                // flow back to the shell so a paused-mid-bell
-                // session cuts the cue, exactly like GTK.
-                let effects = if matches!(s.ui_state(), UiState::Paused) {
-                    s.resume(now);
-                    Vec::new()
-                } else {
-                    s.pause(now)
-                };
-                Transition::new(Self::Active(s), effects)
-            }
+            ToggleAction::Start | ToggleAction::NoOp => Vec::new(),
+        })
+    }
+
+    /// Stop: silent, saves the time so far.
+    pub fn stop(&mut self, now: Duration) -> Vec<Effect> {
+        self.with(|s| s.stop(now))
+    }
+
+    /// Save or Discard done: back to Setup. A live session stays.
+    pub fn dismiss(&mut self) -> Vec<Effect> {
+        if self.is_finished() {
+            self.0 = None;
         }
+        Vec::new()
     }
 
-    /// Stop button. Active → Finished so the shell can present the
-    /// Done screen (elapsed readout + note field + Save / Discard).
-    /// Idle / Finished pass through unchanged — Stop is only
-    /// reachable from a live session, but defending against a
-    /// double-tap or stale callback is cheap. The actual persistence
-    /// decision happens later on the Done screen via `dismiss` (the
-    /// Android shell stores the in-flight unix_start + elapsed in
-    /// `ui.rs` cells; Finished keeps only the length for the time).
-    pub fn stop(self, now: Duration) -> Transition {
-        match self {
-            // Core's `Session::stop` emits `StopActiveSignals` (cut
-            // any in-flight bell / vibration) and `Ended` with the
-            // length to save. No `FireEndBell`: Stop is silent, while a
-            // natural countdown finish (FireEndBell from `tick`)
-            // still rings.
-            Self::Active(mut s) => {
-                let effects = s.stop(now);
-                Transition::new(Self::finished(&s), effects)
-            }
-            other => Transition::new(other, Vec::new()),
-        }
+    /// The ended session waiting for Save, with what its Start fixed.
+    pub fn ended(&self) -> Option<(&Started, &Session)> {
+        self.0.as_deref().filter(|b| b.0.ui_state() == UiState::Done).map(|(session, started)| (started, session))
     }
 
-    /// Done-screen Save or Discard tap. Always returns to Idle. The
-    /// Save vs Discard difference (write DB row or not) is handled
-    /// in `ui.rs` before this call; AppState itself only models the
-    /// UI screen transition.
-    pub fn dismiss(self) -> Self {
-        match self {
-            Self::Finished(_) => Self::Idle,
-            other => other,
-        }
+    pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
+        self.with(|s| s.tick(now))
     }
 
-    /// Called by the tick loop. Drives Session's internal phase
-    /// transitions and surfaces the effects it emits.
-    ///
-    /// At the countdown's end core emits `Completed` + `FireEndBell`;
-    /// we stay `Active` (now in Overtime) so the session keeps ticking
-    /// until the user taps Save or Add, mirroring GTK. An end by itself
-    /// (Box Breath, Auto-Finish) goes to `Finished`.
-    pub fn tick(self, now: Duration) -> Transition {
-        match self {
-            Self::Active(mut s) => {
-                let effects = s.tick(now);
-                match s.ui_state() {
-                    UiState::Done => Transition::new(Self::finished(&s), effects),
-                    // Running, Paused, AND Overtime all stay
-                    // Active — overtime is no longer auto-finished.
-                    _ => Transition::new(Self::Active(s), effects),
-                }
-            }
-            other => Transition::new(other, Vec::new()),
-        }
+    /// Overtime's Save: the planned length.
+    pub fn finish_overtime(&mut self) -> Vec<Effect> {
+        self.with(Session::finish_overtime)
     }
 
-    /// Overtime "Finish" tap — record exactly the planned
-    /// countdown duration (the overtime delta is discarded).
-    /// `finish_overtime` emits `StopActiveSignals` + `Ended` with the
-    /// planned length. No-op (passes through) outside
-    /// Overtime — defends a stale tap.
-    pub fn finish_overtime(self) -> Transition {
-        match self {
-            Self::Active(mut s)
-                if matches!(s.ui_state(), UiState::Overtime) =>
-            {
-                let effects = s.finish_overtime();
-                Transition::new(Self::finished(&s), effects)
-            }
-            other => Transition::new(other, Vec::new()),
-        }
+    /// Overtime's Add: the planned length plus the overtime.
+    pub fn add_overtime(&mut self, now: Duration) -> Vec<Effect> {
+        self.with(|s| s.add_overtime_and_finish(now))
     }
 
-    /// Overtime "Add" tap — record the full elapsed time
-    /// including the overtime the user let run. `add_overtime_
-    /// and_finish` emits `StopActiveSignals` + `Ended` with the total.
-    pub fn add_overtime(self, now: Duration) -> Transition {
-        match self {
-            Self::Active(mut s)
-                if matches!(s.ui_state(), UiState::Overtime) =>
-            {
-                let effects = s.add_overtime_and_finish(now);
-                Transition::new(Self::finished(&s), effects)
-            }
-            other => Transition::new(other, Vec::new()),
-        }
+    /// The guided track ended: overtime now rather than at the probed
+    /// length; core keeps it for Resume while paused.
+    pub fn enter_overtime(&mut self, now: Duration) -> Vec<Effect> {
+        self.with(|s| s.enter_overtime(now))
     }
 
-    /// Guided audio reached EOS — force the session into Overtime
-    /// now (core emits `Completed` + `FireEndBell`), instead
-    /// of waiting for the countdown tick to cross the *probed*
-    /// duration (which can be off by a beat). Idempotent once the
-    /// tick reached the end; while paused, core keeps the end for the
-    /// first tick after Resume. Same as GTK's track end.
-    pub fn enter_overtime(self, now: Duration) -> Transition {
-        match self {
-            // Core decides: a paused session keeps the end for Resume.
-            Self::Active(mut s) => {
-                let effects = s.enter_overtime(now);
-                // Auto-Finish stops the session at the file's end.
-                if matches!(s.ui_state(), UiState::Done) {
-                    return Transition::new(Self::finished(&s), effects);
-                }
-                Transition::new(Self::Active(s), effects)
-            }
-            other => Transition::new(other, Vec::new()),
-        }
-    }
-
-    /// Remaining time the big mm:ss display should show. `total` is
-    /// only consulted in the Idle branch; while a session is active
-    /// the remaining is `target − pause-aware-elapsed`, clamped at
-    /// zero post-target.
-    pub fn remaining(&self, total: Duration, now: Duration) -> Duration {
-        match self {
-            Self::Idle => total,
-            Self::Active(s) => total.saturating_sub(s.elapsed(now)),
-            Self::Finished(_) => Duration::ZERO,
-        }
-    }
-
-    /// Whether the Running overlay should be visible: a live session,
-    /// or one that ended and waits for Save or Discard.
-    pub fn is_running_page(&self) -> bool {
-        !self.is_idle()
-    }
-
-    /// The running page's buttons: core's set for a live session; an
-    /// ended one not saved yet shows Save and Discard.
+    /// The running page's buttons: core's set; without a session the
+    /// ended set (the page is hidden then).
     pub fn end_buttons(&self) -> meditate_core::session::EndButtons {
-        match self {
-            Self::Active(s) => s.end_buttons(),
-            Self::Idle | Self::Finished(_) => meditate_core::session::EndButtons::ENDED,
-        }
+        self.session().map_or(meditate_core::session::EndButtons::ENDED, Session::end_buttons)
     }
 
     /// Save tap on a live session: paused keeps the time so far, in
-    /// overtime the planned length. An ended session passes through.
-    pub fn save_end(self, now: Duration) -> Transition {
+    /// overtime the planned length.
+    pub fn save_end(&mut self, now: Duration) -> Vec<Effect> {
         if self.is_overtime() {
             self.finish_overtime()
         } else {
@@ -777,44 +589,21 @@ impl AppState {
         }
     }
 
-    /// The bell ring and counters round the running time; nothing
-    /// without a session.
+    /// The bell ring and counters; nothing without a session.
     pub fn bell_ring(&self, now: Duration) -> meditate_core::session::BellRing {
-        match self {
-            Self::Active(s) => s.bell_ring(now),
-            Self::Idle | Self::Finished(_) => Default::default(),
-        }
+        self.session().map(|s| s.bell_ring(now)).unwrap_or_default()
     }
 
-    /// Big hero-label text. Setup shows `HH:MM` of the configured
-    /// target (matching the GTK shell's `idle_hero_label` —
-    /// minute-precision since the user authors duration in minutes).
-    /// Stopwatch-on flips the Idle readout to `00:00` so the
-    /// stopwatch's count-up starts visibly from zero — mirrors GTK's
-    /// `refresh_stopwatch_dependent_ui` comment "stopwatch flips the
-    /// hero between 00:00 and the mode's target reading in every
-    /// mode". Running / Paused / Finished show `MM:SS` (or
-    /// `HH:MM:SS` past the hour) of the live remaining-or-elapsed
-    /// time — `Session::display_secs` handles the count-up vs
-    /// count-down branch per shape variant, so this layer can stay
-    /// shape-agnostic.
+    /// The big time: Setup shows the set length (`total`) as core's
+    /// idle hero, a session core's `display_secs` (the saved length
+    /// once ended).
     pub fn hero_label(&self, total: Duration, now: Duration, stopwatch_on: bool) -> String {
-        match self {
-            Self::Idle => {
-                if stopwatch_on {
-                    format_time(Duration::ZERO)
-                } else {
-                    format_hhmm(total.as_secs() as u32)
-                }
-            }
-            Self::Active(s) => {
-                // Session's `display_secs` is the canonical readout —
-                // ceiling-rounded remaining for countdowns, floor-
-                // rounded elapsed for stopwatches. Same value the
-                // GTK shell renders.
-                format_time(Duration::from_secs(s.display_secs(now)))
-            }
-            Self::Finished(secs) => format_time(Duration::from_secs(*secs)),
+        match self.session() {
+            None => meditate_core::format::idle_hero_label(
+                meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
+                u32::try_from(total.as_secs()).unwrap_or(u32::MAX),
+            ),
+            Some(s) => format_time(Duration::from_secs(s.display_secs(now))),
         }
     }
 }
@@ -1402,9 +1191,9 @@ mod tests {
         // starred preset) goes through the Start tap's start branch.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("// Idle/Finished → start.").unwrap();
-        let start = &lib[at..at + lib[at..].find("AppState::start_session(").unwrap()];
-        assert!(start.contains("\n                    finish_notice(&ui);\n"), "unconditionally");
+        let at = lib.find("ui.on_action_tap(move || {").unwrap();
+        let start = &lib[at..at + lib[at..].find("s.start_session(").unwrap()];
+        assert!(start.contains("\n            finish_notice(&ui);\n"), "unconditionally");
         let at = lib.find("ui.on_mode_changed(move |idx| {").unwrap();
         let switch = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(switch.contains("finish_notice(&ui);"));
@@ -2313,8 +2102,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
-        assert_eq!(code.matches("pending_done.set(Some((unix_start,").count(), 2, "end_session and the failed save");
-        assert_eq!(code.matches("end_session(").count(), 4, "the helper, the end taps, the tick and a guided file's end");
+        assert_eq!(code.matches("end_session(").count(), 2, "the helper and apply, which every end goes through");
         let at = code.find("fn end_session(").unwrap();
         let body = &code[at..at + code[at..].find("\n}\n").unwrap()];
         for step in [
@@ -2495,6 +2283,7 @@ mod tests {
     }
 
     use super::*;
+    use meditate_core::session::SessionShape;
 
     // ── start_session: what plays at the start ─────────────────
 
@@ -2518,7 +2307,7 @@ mod tests {
 
     #[test]
     fn starting_without_prep_rings_the_starting_bell_at_once() {
-        let t = AppState::start_session(timer_settings_with_starting_bell(None), Duration::from_secs(100));
+        let t = start_with(timer_settings_with_starting_bell(None), Duration::from_secs(100));
         assert!(t.is_running());
         assert_eq!(starting_bells(&t.effects), 1, "{:?}", t.effects);
     }
@@ -2526,12 +2315,12 @@ mod tests {
     #[test]
     fn starting_with_prep_rings_the_starting_bell_when_prep_ends() {
         let t0 = Duration::from_secs(100);
-        let t = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0);
+        let t = start_with(timer_settings_with_starting_bell(Some(10)), t0);
         assert_eq!(starting_bells(&t.effects), 0, "{:?}", t.effects);
-        let AppState::Active(mut session) = t.state else { panic!("not started") };
+        let mut state = t.state;
         let mut later = Vec::new();
         for secs in 1..=10 {
-            later.extend(session.tick(t0 + Duration::from_secs(secs)));
+            later.extend(state.tick(t0 + Duration::from_secs(secs)));
         }
         assert_eq!(starting_bells(&later), 1, "{later:?}");
     }
@@ -2543,7 +2332,7 @@ mod tests {
                 starting_bell: None,
                 ..timer_settings_with_starting_bell(prep)
             };
-            let t = AppState::start_session(settings, Duration::from_secs(100));
+            let t = start_with(settings, Duration::from_secs(100));
             assert!(t.effects.is_empty(), "prep {prep:?}: {:?}", t.effects);
         }
     }
@@ -2554,13 +2343,11 @@ mod tests {
     fn the_shell_dispatches_the_start_effects() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
-        assert_eq!(lib.matches("AppState::start_session(").count(), 1);
-        let call = lib.find("AppState::start_session(").unwrap();
-        let bound = lib[..call].rfind("let transition = ").expect("start feeds `transition`");
-        let dispatch = call
-            + lib[call..].find("dispatch_effects(&transition.effects)").expect("dispatched");
-        let between = &lib[bound..dispatch];
-        assert_eq!(between.matches("let transition = ").count(), 1, "same `transition`");
+        assert_eq!(lib.matches(".start_session(").count(), 1);
+        assert!(lib.contains("apply(&ui, &state, |s| s.start_session(settings, started, now));"), "through apply");
+        let apply = &lib[lib.find("fn apply(").unwrap()..];
+        let apply = &apply[..apply.find("\n}\n").unwrap()];
+        assert!(apply.contains("let effects = f(&mut s);\n    dispatch_effects(&effects);"), "apply dispatches what the transition returns");
         let app = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app.rs"),
         )
@@ -2848,31 +2635,22 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let first_play = code.find("guided::play(app, &source)").expect("session start plays the track");
-        let session_start = code.find("AppState::start_session(").expect("session start");
+        let session_start = code.find("s.start_session(").expect("session start");
         assert!(first_play < session_start, "the track starts before the session");
         let gate = &code[first_play..session_start];
         assert!(gate.contains("show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);"), "a failure says so");
         assert!(gate.contains("return;"), "and nothing starts");
         assert_eq!(code.matches("guided::play(app, &source)").count(), 1, "no second start after the session began");
+        // A Guided file whose length is 0 can't make a shape: Start says so.
+        let tap = &code[code.find("ui.on_action_tap(move || {").unwrap()..];
+        assert!(tap.contains("Some(g) => g.duration_secs,"), "the length of the file that plays");
+        assert!(tap.find("stop_all_previews(&ui);") < tap.find("guided::play(app, &source)"), "a preview shares the player: stopped before the track starts");
+        let no_shape = &tap[tap.find("SessionShape::new(").unwrap()..];
+        let no_shape = &no_shape[no_shape.find(") else {").unwrap()..no_shape.find("};").unwrap()];
+        assert!(no_shape.contains("if mode == TimerMode::Guided {") && no_shape.contains("invoke_playback_failed()"), "{no_shape}");
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("public pure function playback-failed() -> string { return @tr(\"Couldn't start playback\"); }"));
-    }
-
-    #[test]
-    fn a_guided_session_records_its_library_file() {
-        assert_eq!(snapshot_guided_file(TimerMode::Guided, Some("gf-1")), Some("gf-1".to_string()));
-    }
-
-    #[test]
-    fn an_open_file_pick_records_no_library_file() {
-        assert_eq!(snapshot_guided_file(TimerMode::Guided, None), None);
-    }
-
-    #[test]
-    fn other_modes_ignore_a_leftover_guided_selection() {
-        assert_eq!(snapshot_guided_file(TimerMode::Timer, Some("gf-1")), None);
-        assert_eq!(snapshot_guided_file(TimerMode::Breathing, Some("gf-1")), None);
     }
 
     /// A session killed in its first minute must still be recovered,
@@ -2887,18 +2665,14 @@ mod tests {
         let builder = code.find("fn session_in_progress_snapshot(").unwrap();
         let builder = &code[builder..builder + code[builder..].find("\n}\n").unwrap()];
         assert!(!builder.contains("guided_file_uuid: None"), "the guided file was always dropped");
-        assert!(builder.contains("session_guided_file()"), "every snapshot reads the session's file");
+        assert!(builder.contains("guided_file_uuid: started.guided_file.clone()"), "every snapshot reads the session's file");
 
-        let start = code.find("session_start_unix.set(Some(meditate_core::time::unix_now()));").expect("start edge");
-        let after = &code[start..];
-        let heartbeat = after.find("start_snapshot_heartbeat(").expect("heartbeat");
-        let edge = &after[..heartbeat];
-        assert!(edge.contains("set_session_guided_file(app::snapshot_guided_file("), "the file is fixed at start");
-        assert!(edge.contains("write_session_in_progress_snapshot("), "first snapshot at start, not after 60 s");
-        assert!(
-            edge.find("set_session_guided_file(").unwrap() < edge.find("write_session_in_progress_snapshot(").unwrap(),
-            "the first snapshot already names the file",
-        );
+        // The file is fixed in the state at Start, so the first snapshot,
+        // written on apply's start edge, already names it.
+        let apply = &code[code.find("fn apply(").unwrap()..];
+        let edge = &apply[apply.find("if !was_active && is_active {").expect("start edge")..];
+        let heartbeat = edge.find("start_snapshot_heartbeat(").expect("heartbeat");
+        assert!(edge[..heartbeat].contains("write_session_in_progress_snapshot("), "first snapshot at start, not after 60 s");
     }
 
     /// Leaving the Done screen silences a bell or vibration that is
@@ -3011,14 +2785,14 @@ mod tests {
         assert!(ok < err);
         let err_arm = &after[err..];
         let err_arm = &err_arm[..err_arm.find("return;").expect("a failed save leaves the Done screen up") + 7];
-        assert!(err_arm.contains("pending_done.set(Some((unix_start, elapsed_secs)))"), "the session is kept");
+        assert!(!err_arm.contains("dismiss()") && after[err..].find("return;") < after[err..].find("AppState::dismiss"), "the ended session is kept");
         assert!(err_arm.contains("show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);"), "and the failure is shown");
         let text = &code[code.find("fn session_save_failed_text(").unwrap()..];
         let text = &text[..text.find("\n}\n").unwrap()];
         assert!(text.contains("invoke_save_failed_storage()") && text.contains("invoke_save_failed_unavailable()"));
         assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
         // Saving clears the snapshot in the same write (core).
-        assert!(body.contains("insert_session_counting_local_play(&session, session_local_file())"), "cleared only once saved");
+        assert!(body.contains("insert_session_counting_local_play(&session, local_file)"), "cleared only once saved");
         assert!(!after[ok..err].contains("clear_session_in_progress_snapshot"), "no second clear");
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
@@ -3676,10 +3450,14 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("fn guided_follows_pause(app: &slint::android::AndroidApp, state: &AppState)"));
-        assert_eq!(lib.matches("guided_follows_pause(app, &").count(), 2);
+        // Both go through apply's pause edge, which pauses the player.
+        assert_eq!(lib.matches("guided_follows_pause(app, &").count(), 1);
         let at = lib.find("if guided::take_focus_loss(app)").unwrap();
-        let branch = &lib[at..at + 1500];
-        assert!(branch.contains("guided_follows_pause(app, &"), "focus-loss branch pauses the player");
+        let branch = &lib[at..at + 600];
+        assert!(branch.contains("apply(&ui, &state, |s| s.pause_or_resume(now_since_epoch()));"), "focus loss takes the Pause button's path");
+        let apply = &lib[lib.find("fn apply(").unwrap()..];
+        let edge = &apply[apply.find("was_paused != is_paused").unwrap()..];
+        assert!(edge[..400].contains("guided_follows_pause(app, &s);"));
     }
 
     #[test]
@@ -3963,7 +3741,9 @@ mod tests {
         assert!(body.contains("service::pause(app)"));
         assert!(body.contains("screen::set_keep_awake(app, false)"));
         assert!(body.contains("service::resume(app)"));
-        assert_eq!(ui.matches("wake_follows_pause(app, &").count(), 2, "Pause button and focus loss");
+        assert_eq!(ui.matches("wake_follows_pause(app, &").count(), 1, "every pause goes through apply");
+        let apply = &ui[ui.find("fn apply(").unwrap()..];
+        assert!(apply[..apply.find("\n}\n").unwrap()].contains("wake_follows_pause(app, &s, mode);"));
         let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
         let at = kt.find("ACTION_PAUSE_SESSION -> ").unwrap();
         assert!(kt[at..at + 120].contains("updateWakeLock()"));
@@ -4188,7 +3968,7 @@ mod tests {
         // Every end goes through end_session (see
         // `every_session_end_takes_one_path`), which stops the heartbeat
         // and then holds the snapshot.
-        assert!(lib.contains("    snapshot_timer.stop();\n    hold_ended_session_snapshot(pending_done.get(), mode);"));
+        assert!(lib.contains("    SNAPSHOT_TIMER.with(slint::Timer::stop);\n    hold_ended_session_snapshot(state, now);"));
 
         // Only Discard clears it here (Back on the running page does
         // nothing); Save clears it inside its insert, see
@@ -4215,23 +3995,28 @@ mod tests {
         }
     }
 
-    /// Building a snapshot looks up the label, which takes the DB lock;
-    /// the writers must build it before taking the lock themselves, or
-    /// the re-lock freezes the app (it did, at Stop and at the first
-    /// heartbeat).
+    /// The DB lock is not re-entrant: a second `lock_db()` while one is
+    /// held freezes the app (it did, at Stop and at the first heartbeat).
+    /// The snapshot is built from the writer's own lock.
     #[test]
-    fn snapshot_writers_build_the_snapshot_before_locking_the_db() {
+    fn snapshot_writers_take_the_db_lock_once() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
+        let body = |sig: &str| {
+            let start = lib.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            lib[start..start + lib[start..].find("\n}\n").unwrap()].to_string()
+        };
+        // The builder reads the label from the writer's own lock.
+        let builder = body("fn session_in_progress_snapshot(");
+        assert!(builder.contains("db: &meditate_core::db::Database") && !builder.contains("lock_db()") && !builder.contains("session_label_id("));
         for writer in ["fn write_session_in_progress_snapshot(", "fn hold_ended_session_snapshot("] {
-            let start = lib.find(writer).unwrap_or_else(|| panic!("{writer} not found"));
-            let body = &lib[start..start + lib[start..].find("\n}\n").unwrap()];
-            let build = body
-                .find("session_in_progress_snapshot(unix_start")
-                .unwrap_or_else(|| panic!("{writer} builds a snapshot"));
-            let lock = body.find("lock_db()").unwrap_or_else(|| panic!("{writer} locks"));
-            assert!(build < lock, "{writer} must build the snapshot before locking the DB");
+            let body = body(writer);
+            assert_eq!(body.matches("lock_db()").count(), 1, "{writer} locks once");
+            assert!(body.find("lock_db()") < body.find("session_in_progress_snapshot(&db, state, now)"), "{writer}");
         }
+        // Clearing locks again, so the hold lets go first.
+        let hold = body("fn hold_ended_session_snapshot(");
+        assert!(hold.contains("drop(db);\n        clear_session_in_progress_snapshot();"));
     }
 
     /// A row's stored `file_path` is the path on the device that created
@@ -4371,7 +4156,7 @@ mod tests {
         // idle hero formatter). This is the case the user's bug
         // report flagged: previously the hero showed total-minutes
         // (MM:SS) so 1h 10m read as "70:00".
-        let s = AppState::idle();
+        let s = AppState::default();
         assert_eq!(
             s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO, false),
             "00:10",
@@ -4381,7 +4166,7 @@ mod tests {
     #[test]
     fn hero_label_idle_with_hours_pads_zero_minutes() {
         // 1h 10m → "01:10", not "70:00".
-        let s = AppState::idle();
+        let s = AppState::default();
         assert_eq!(
             s.hero_label(Duration::from_secs(70 * 60), Duration::ZERO, false),
             "01:10",
@@ -4390,7 +4175,7 @@ mod tests {
 
     #[test]
     fn hero_label_idle_three_hours_renders_as_three_zero_zero() {
-        let s = AppState::idle();
+        let s = AppState::default();
         assert_eq!(
             s.hero_label(Duration::from_secs(3 * 3600), Duration::ZERO, false),
             "03:00",
@@ -4399,8 +4184,8 @@ mod tests {
 
     #[test]
     fn hero_label_finished_shows_the_saved_length() {
-        let s = AppState::Finished(420);
-        assert_eq!(s.hero_label(Duration::from_secs(600), Duration::ZERO, false), "07:00");
+        let s = start(timer_countdown(ten_minutes()), Duration::ZERO).stop(Duration::from_secs(420));
+        assert_eq!(s.hero_label(Duration::from_secs(600), Duration::from_secs(500), false), "07:00");
     }
 
     #[test]
@@ -4408,7 +4193,7 @@ mod tests {
         // 10-min session started at t=100, viewed at t=150 → 8:20
         // ceiling-remaining (Session does the ceiling-rounding).
         // format_time picks MM:SS since remaining is under an hour.
-        let s = AppState::idle().toggle(
+        let s = start(
             timer_countdown(Duration::from_secs(10 * 60)),
             Duration::from_secs(100),
         );
@@ -4421,7 +4206,7 @@ mod tests {
         // "00:00" — matches the GTK shell's
         // `refresh_stopwatch_dependent_ui` comment ("stopwatch flips
         // the hero between 00:00 and the mode's target reading").
-        let s = AppState::idle();
+        let s = AppState::default();
         assert_eq!(
             s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO, true),
             "00:00",
@@ -4431,8 +4216,7 @@ mod tests {
     #[test]
     fn hero_label_in_overtime_stays_at_the_planned_length() {
         // Was 00:00: the countdown clamped at zero.
-        let s = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let s = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(190), false), "01:00");
     }
@@ -4440,7 +4224,7 @@ mod tests {
     #[test]
     fn hero_label_in_guided_overtime_stops_counting_up() {
         let shape = SessionShape::Guided { duration_secs: 60, count_up_display: true };
-        let s = AppState::idle().toggle(shape, Duration::from_secs(100)).tick(Duration::from_secs(160));
+        let s = start(shape, Duration::from_secs(100)).tick(Duration::from_secs(160));
         assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(190), true), "01:00");
     }
 
@@ -4448,7 +4232,7 @@ mod tests {
     fn hero_label_running_stopwatch_counts_up() {
         // 50s into a TimerStopwatch session, hero shows "00:50".
         let shape = SessionShape::TimerStopwatch;
-        let s = AppState::idle().toggle(shape, Duration::from_secs(100));
+        let s = start(shape, Duration::from_secs(100));
         assert_eq!(
             s.hero_label(Duration::ZERO, Duration::from_secs(150), true),
             "00:50",
@@ -4459,7 +4243,7 @@ mod tests {
     fn hero_label_running_switches_to_hh_mm_ss_over_an_hour() {
         // 90-min session at t=0 viewed at t=1 → 1:29:59 remaining,
         // so the hero must use HH:MM:SS format.
-        let s = AppState::idle().toggle(
+        let s = start(
             timer_countdown(Duration::from_secs(90 * 60)),
             Duration::ZERO,
         );
@@ -4485,76 +4269,203 @@ mod tests {
         SessionShape::TimerCountdown { target_secs: target.as_secs() as u32 }
     }
 
+    /// Test chaining over the `&mut` transitions: the state and the
+    /// last transition's effects.
+    struct Run {
+        state: AppState,
+        effects: Vec<Effect>,
+    }
+
+    impl std::ops::Deref for Run {
+        type Target = AppState;
+        fn deref(&self) -> &AppState {
+            &self.state
+        }
+    }
+
+    /// A bare session of `shape` (no bells), started at `now`.
+    fn start(shape: SessionShape, now: Duration) -> Run {
+        start_with(SessionSettings { shape, ..Default::default() }, now)
+    }
+
+    fn start_with(settings: SessionSettings, now: Duration) -> Run {
+        let mut state = AppState::default();
+        let effects = state.start_session(settings, Started::default(), now);
+        Run { state, effects }
+    }
+
+    /// Setup: no session.
+    fn idle() -> Run {
+        Run { state: AppState::default(), effects: Vec::new() }
+    }
+
+    /// A session stopped at once: ended, nothing to save.
+    fn ended() -> Run {
+        start(timer_countdown(ten_minutes()), Duration::ZERO).stop(Duration::ZERO)
+    }
+
+    impl Run {
+        fn then(mut self, f: impl FnOnce(&mut AppState) -> Vec<Effect>) -> Self {
+            self.effects = f(&mut self.state);
+            self
+        }
+        fn toggle(self, now: Duration) -> Self {
+            self.then(|s| s.pause_or_resume(now))
+        }
+        fn tick(self, now: Duration) -> Self {
+            self.then(|s| s.tick(now))
+        }
+        fn stop(self, now: Duration) -> Self {
+            self.then(|s| s.stop(now))
+        }
+        fn finish_overtime(self) -> Self {
+            self.then(AppState::finish_overtime)
+        }
+        fn add_overtime(self, now: Duration) -> Self {
+            self.then(|s| s.add_overtime(now))
+        }
+        fn enter_overtime(self, now: Duration) -> Self {
+            self.then(|s| s.enter_overtime(now))
+        }
+        fn save_end(self, now: Duration) -> Self {
+            self.then(|s| s.save_end(now))
+        }
+        fn dismiss(self) -> Self {
+            self.then(AppState::dismiss)
+        }
+    }
+
+    #[test]
+    fn an_ended_session_keeps_its_ring() {
+        use meditate_core::bells::{ActiveBell, BellSchedule};
+        let at = Duration::from_secs;
+        let bell = ActiveBell {
+            sound_uuid: "sound".into(),
+            vibration_pattern_uuid: "pattern".into(),
+            signal_mode: meditate_core::SignalMode::Sound,
+            schedule: BellSchedule::every(30, 0, 0, None, 0.5),
+            volume: Default::default(),
+        };
+        let settings = SessionSettings { shape: timer_countdown(at(120)), bells: vec![bell], ..Default::default() };
+        let mut run = start_with(settings, Duration::ZERO);
+        for secs in 1..=125 {
+            run = run.tick(at(secs));
+        }
+        assert!(run.is_overtime());
+        // Save, and the save fails: the page stays on the ended session.
+        let run = run.save_end(at(130));
+        assert!(run.is_finished());
+        assert_eq!(run.hero_label(Duration::ZERO, at(200), false), "02:00");
+        let ring = run.bell_ring(at(200));
+        assert_eq!(ring.ring.map(|r| r.filled), Some(1.0));
+        assert_eq!(ring.counters.first().map(|c| c.rung), Some(3), "at 30, 60 and 90 s");
+    }
+
+    #[test]
+    fn a_pause_in_overtime_does_nothing() {
+        let at = Duration::from_secs;
+        let run = start(timer_countdown(at(60)), Duration::ZERO).tick(at(60)).tick(at(70));
+        assert!(run.is_overtime());
+        assert_eq!(media_tap(&run, true, MEDIA_HEADPHONES), None, "the headphones' key");
+        // The Pause button's and a call's path.
+        let run = run.toggle(at(75));
+        assert!(run.is_overtime() && run.effects.is_empty());
+        assert_eq!(run.overtime(at(90)), Some(at(30)), "the overtime keeps counting");
+        let run = run.save_end(at(90));
+        assert_eq!(Effect::ended_secs(&run.effects), Some(60));
+    }
+
+    #[test]
+    fn a_session_keeps_the_file_it_started_with() {
+        let at = Duration::from_secs;
+        let a = Started {
+            unix_start: 1_700_000_000,
+            guided_file: Some(meditate_core::db::GuidedFileUuid::new("file-a")),
+            guided_name: Some("A".into()),
+            local_file: Some(7),
+        };
+        let shape = SessionShape::Guided { duration_secs: 60, count_up_display: false };
+        let mut state = AppState::default();
+        state.start_session(SessionSettings { shape, ..Default::default() }, a.clone(), Duration::ZERO);
+        state.pause_or_resume(at(10));
+        state.pause_or_resume(at(20));
+        state.enter_overtime(at(50));
+        state.finish_overtime();
+        assert!(state.is_finished());
+        // Save reads these, not the Guided tab's selection now.
+        assert_eq!(state.started(), Some(&a));
+        assert_eq!(state.mode(), Some(meditate_core::SessionMode::Guided));
+        let (started, session) = state.ended().expect("ended");
+        let row = started.record(session, None, None);
+        assert_eq!(row.guided_file_uuid.as_ref().map(|u| u.as_str()), Some("file-a"));
+        assert_eq!(row.guided_file_name.as_deref(), Some("A"));
+        assert_eq!((row.start_unix(), row.duration_secs, row.mode), (1_700_000_000, 60, meditate_core::SessionMode::Guided));
+        // An Open-File pick: its title, no library file.
+        let open = Started { guided_file: None, guided_name: Some("pick".into()), ..a };
+        let row = open.record(session, None, None);
+        assert_eq!((row.guided_file_uuid, row.guided_file_name.as_deref()), (None, Some("pick")));
+        // ui.rs is Android-only: Save builds the row from the state alone.
+        let ui = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs")).unwrap();
+        let save = &ui[ui.find("ui.on_save_tap(").unwrap()..];
+        let save = &save[..save.find("\n        });").unwrap()];
+        assert!(!save.contains("guided_sel"), "not the selection at Save");
+        assert!(save.contains("(started.record(session, note, session_label_id(session.mode())), started.local_file)"), "the row and the play are the state's");
+        let fin = &ui[ui.find("fn finalize_session(").unwrap()..];
+        assert!(fin[..fin.find("\n}\n").unwrap()].contains("insert_session_counting_local_play(&session, local_file)"), "A's Local Folder play is counted");
+    }
+
     #[test]
     fn an_ended_session_shows_its_length() {
         let t0 = Duration::from_secs(100);
         let at = |secs| t0 + Duration::from_secs(secs);
         let target = Duration::from_secs(45 * 60);
         // Into overtime, then Save: the planned length.
-        let t = AppState::Idle.toggle(timer_countdown(target), t0).tick(at(2700)).tick(at(2760)).finish_overtime();
+        let t = start(timer_countdown(target), t0).tick(at(2700)).tick(at(2760)).finish_overtime();
         assert!(t.is_finished());
         assert_eq!(t.hero_label(target, at(2800), false), "45:00");
         // Save after 7 minutes.
-        let t = AppState::Idle.toggle(timer_countdown(target), t0).stop(at(420));
+        let t = start(timer_countdown(target), t0).stop(at(420));
         assert_eq!(t.hero_label(target, at(500), false), "07:00");
     }
 
     #[test]
     fn fresh_state_is_idle() {
-        assert!(AppState::idle().is_idle());
-    }
-
-    #[test]
-    fn toggle_from_idle_starts_running() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
-        assert!(s.is_running());
+        assert!(AppState::default().is_idle());
     }
 
     #[test]
     fn toggle_from_running_pauses() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110));
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(Duration::from_secs(110));
         assert!(s.is_paused());
     }
 
     #[test]
     fn toggle_from_paused_resumes() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(150));
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(Duration::from_secs(110))
+            .toggle(Duration::from_secs(150));
         assert!(s.is_running());
-    }
-
-    #[test]
-    fn toggle_from_finished_starts_a_fresh_countdown() {
-        let s = AppState::Finished(0).toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
-        assert!(s.is_running());
-        // And the countdown is brand new — full duration remaining.
-        assert_eq!(s.remaining(ten_minutes(), Duration::from_secs(100)), ten_minutes());
     }
 
     #[test]
     fn stop_from_idle_stays_idle() {
-        let t = AppState::idle().stop(Duration::from_secs(100));
+        let t = idle().stop(Duration::from_secs(100));
         assert!(t.is_idle());
         assert!(t.effects.is_empty());
     }
 
     #[test]
     fn stop_from_running_advances_to_finished() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .stop(Duration::from_secs(130));
         assert!(s.is_finished());
     }
 
     #[test]
     fn stop_from_paused_advances_to_finished() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110))
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(Duration::from_secs(110))
             .stop(Duration::from_secs(120));
         assert!(s.is_finished());
     }
@@ -4564,7 +4475,7 @@ mod tests {
         // Stop button isn't reachable from Finished (Done screen has
         // Save / Discard instead), but defending against a stale
         // callback is cheap.
-        let t = AppState::Finished(0).stop(Duration::from_secs(100));
+        let t = ended().stop(Duration::from_secs(100));
         assert!(t.is_finished());
         assert!(t.effects.is_empty());
     }
@@ -4573,8 +4484,7 @@ mod tests {
 
     #[test]
     fn stop_reports_cores_duration_and_silences_signals() {
-        let t = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+        let t = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .stop(Duration::from_secs(190));
         assert_eq!(t.effects.first(), Some(&Effect::StopActiveSignals));
         assert_eq!(Effect::ended_secs(&t.effects), Some(90));
@@ -4587,18 +4497,16 @@ mod tests {
     #[test]
     fn stop_leaves_paused_time_out() {
         let shape = || timer_countdown(ten_minutes());
-        let t = AppState::idle()
-            .toggle(shape(), Duration::from_secs(100))
-            .toggle(shape(), Duration::from_secs(130)) // pause after 30 s
-            .toggle(shape(), Duration::from_secs(400)) // resume
+        let t = start(shape(), Duration::from_secs(100))
+            .toggle(Duration::from_secs(130)) // pause after 30 s
+            .toggle(Duration::from_secs(400)) // resume
             .stop(Duration::from_secs(420));
         assert_eq!(Effect::ended_secs(&t.effects), Some(50));
     }
 
     #[test]
     fn stop_in_overtime_counts_the_overtime() {
-        let t = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let t = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160))
             .tick(Duration::from_secs(175));
         assert!(t.is_active(), "still in Overtime");
@@ -4612,7 +4520,7 @@ mod tests {
             pattern: meditate_core::breath::BreathPattern::box_breath(),
             target_secs: 16,
         };
-        let mut t = AppState::idle().toggle(shape, Duration::from_secs(100));
+        let mut t = start(shape, Duration::from_secs(100));
         for secs in 101..=116 {
             t = t.tick(Duration::from_secs(secs));
             if t.is_finished() {
@@ -4627,8 +4535,7 @@ mod tests {
 
     #[test]
     fn countdown_end_in_the_background_notifies_with_the_planned_length() {
-        let t = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let t = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(t.is_overtime());
         assert_eq!(completion_notice_secs(&t.effects, false), Some(60));
@@ -4638,28 +4545,24 @@ mod tests {
     fn countdown_end_in_the_foreground_does_not_notify() {
         // The in-app overtime screen already says so (GTK: only when
         // the window isn't focused).
-        let t = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let t = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert_eq!(completion_notice_secs(&t.effects, true), None);
     }
 
     #[test]
     fn running_and_overtime_ticks_do_not_notify() {
-        let running = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100));
-        let mid = running.state.tick(Duration::from_secs(130));
+        let running = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100));
+        let mid = running.tick(Duration::from_secs(130));
         assert_eq!(completion_notice_secs(&mid.effects, false), None);
-        let over = mid.state.tick(Duration::from_secs(160));
-        let later = over.state.tick(Duration::from_secs(175));
+        let over = mid.tick(Duration::from_secs(160));
+        let later = over.tick(Duration::from_secs(175));
         assert_eq!(completion_notice_secs(&later.effects, false), None, "once, at the crossing");
     }
 
     #[test]
     fn guided_end_of_track_notifies() {
-        let t = AppState::idle()
-            .toggle(guided(Duration::from_secs(300), false), Duration::from_secs(0))
-            .state
+        let t = start(guided(Duration::from_secs(300), false), Duration::from_secs(0))
             .enter_overtime(Duration::ZERO);
         assert_eq!(completion_notice_secs(&t.effects, false), Some(300));
     }
@@ -4670,9 +4573,9 @@ mod tests {
             pattern: meditate_core::breath::BreathPattern::box_breath(),
             target_secs: 16,
         };
-        let mut t = AppState::idle().toggle(shape, Duration::from_secs(100));
+        let mut t = start(shape, Duration::from_secs(100));
         for secs in 101..=116 {
-            t = t.state.tick(Duration::from_secs(secs));
+            t = t.tick(Duration::from_secs(secs));
             if t.is_finished() {
                 break;
             }
@@ -4684,15 +4587,10 @@ mod tests {
     #[test]
     fn ending_a_session_by_hand_does_not_notify() {
         let over = || {
-            AppState::idle()
-                .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
-                .state
+            start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
                 .tick(Duration::from_secs(160))
-                .state
         };
-        let stop = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
-            .state
+        let stop = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .stop(Duration::from_secs(120));
         assert_eq!(completion_notice_secs(&stop.effects, false), None);
         let finish = over().finish_overtime();
@@ -4706,9 +4604,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
-        // Both natural ends: the tick crossing and the guided track's EOS.
-        assert_eq!(code.matches("notify_if_complete(&t.effects);").count()
-            + code.matches("notify_if_complete(&transition.effects);").count(), 2);
+        // Every transition, so both natural ends (the tick crossing and
+        // the guided track's EOS), goes through apply, which posts it.
+        assert_eq!(code.matches("notify_if_complete(&").count(), 1);
+        assert!(code.contains("    dispatch_effects(&effects);\n    notify_if_complete(&effects);"));
         // Foreground tracking from the activity lifecycle; coming back
         // (or starting the next session) clears a stale notice.
         let listener = code.find("init_with_event_listener").unwrap();
@@ -4748,18 +4647,18 @@ mod tests {
     fn the_notification_offers_the_session_buttons() {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let running = start(shape.clone(), t0);
         assert_eq!(media_buttons(&running, true), vec![0, 2, 4], "Pause, Save, Discard");
-        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        let paused = running.toggle(t0 + Duration::from_secs(5));
         assert_eq!(media_buttons(&paused, true), vec![1, 2, 4], "Resume, Save, Discard");
-        let prep = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0).state;
+        let prep = start_with(timer_settings_with_starting_bell(Some(10)), t0);
         assert_eq!(media_buttons(&prep, true), vec![0, 4], "Pause, Discard");
-        let prep_paused = prep.toggle(shape.clone(), t0 + Duration::from_secs(2)).state;
+        let prep_paused = prep.toggle(t0 + Duration::from_secs(2));
         assert_eq!(media_buttons(&prep_paused, true), vec![1, 4], "Resume, Discard");
-        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        let over = start(shape, t0).tick(t0 + Duration::from_secs(90));
         assert_eq!(media_buttons(&over, true), vec![2, 3, 4], "Save, Add, Discard");
-        assert!(media_buttons(&AppState::idle(), true).is_empty());
-        assert!(media_buttons(&AppState::Finished(0), true).is_empty(), "the service is gone");
+        assert!(media_buttons(&AppState::default(), true).is_empty());
+        assert!(media_buttons(&ended(), true).is_empty(), "the service is gone");
     }
 
     #[test]
@@ -4773,8 +4672,8 @@ mod tests {
         let ui = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let send = &ui[ui.find("fn send_media_buttons(").unwrap()..];
         let send = &send[..send.find("\n}\n").unwrap()];
-        assert!(send.contains("media_title(guided_name.as_deref())") && send.contains("session_guided_name()"), "title from the session's name");
-        assert!(ui.contains("let sel = sel.as_ref().filter(|_| guided);") && ui.contains("set_session_guided_name(sel.map(|g| g.name.clone()));"), "a Timer after a Guided session has no name");
+        assert!(send.contains("media_title(state.started().and_then(|s| s.guided_name.as_deref()))"), "title from the session's name");
+        assert!(ui.contains("let pick = meditate_core::SessionMode::from(mode).guided_file(sel.as_ref());") && ui.contains("guided_name: pick.map(|g| g.name.clone()),"), "a Timer after a Guided session has no name");
     }
 
     #[test]
@@ -4810,16 +4709,16 @@ mod tests {
     fn a_notification_tap_goes_through_the_session_buttons() {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
-        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        let running = start(shape.clone(), t0);
+        let paused = running.toggle(t0 + Duration::from_secs(5));
         assert_eq!(media_tap(&paused, true, 1), Some(1), "Resume");
         assert_eq!(media_tap(&paused, true, 2), Some(2), "Save");
         assert_eq!(media_tap(&paused, true, 0), None, "a Pause sent while it was running");
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let running = start(shape.clone(), t0);
         assert_eq!(media_tap(&running, true, 2), Some(2), "Save while running");
-        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        let over = start(shape, t0).tick(t0 + Duration::from_secs(90));
         assert_eq!(media_tap(&over, true, 3), Some(3), "Add");
-        assert_eq!(media_tap(&AppState::idle(), true, MEDIA_DISCARD), None, "after the session ended");
+        assert_eq!(media_tap(&AppState::default(), true, MEDIA_DISCARD), None, "after the session ended");
         assert_eq!(media_tap(&over, true, 9), None);
 
         // The tick hands the tap to the app's own buttons; a new session
@@ -4842,7 +4741,7 @@ mod tests {
     fn discard_from_the_notification_spares_a_note() {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
-        let paused = AppState::idle().toggle(shape.clone(), t0).state.toggle(shape, t0 + Duration::from_secs(5)).state;
+        let paused = start(shape.clone(), t0).toggle(t0 + Duration::from_secs(5));
         assert_eq!(media_tap(&paused, true, MEDIA_DISCARD), Some(MEDIA_DISCARD));
         assert_eq!(media_buttons(&paused, false), vec![1, 2], "no Discard once a note is written");
         assert_eq!(media_tap(&paused, false, MEDIA_DISCARD), None, "a Discard sent before the note");
@@ -4852,11 +4751,11 @@ mod tests {
     fn the_headphone_button_toggles_the_pause() {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let running = start(shape.clone(), t0);
         assert_eq!(media_tap(&running, true, MEDIA_HEADPHONES), Some(0), "Pause");
-        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        let paused = running.toggle(t0 + Duration::from_secs(5));
         assert_eq!(media_tap(&paused, false, MEDIA_HEADPHONES), Some(1), "Resume");
-        let over = AppState::idle().toggle(shape, t0).tick(t0 + Duration::from_secs(90)).state;
+        let over = start(shape, t0).tick(t0 + Duration::from_secs(90));
         assert_eq!(media_tap(&over, true, MEDIA_HEADPHONES), None, "no Pause in overtime");
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -4871,28 +4770,28 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let shape = timer_countdown(Duration::from_secs(60));
         let gestures = |state: &AppState, now| [VOID_FACE_DOWN, VOID_FACE_UP, VOID_SHAKE].map(|g| void_tap(state, true, now, g));
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
+        let running = start(shape.clone(), t0);
         assert_eq!(gestures(&running, t0 + Duration::from_secs(1)), [Some(0), None, Some(2)], "running: Pause, -, Save");
         assert_eq!(void_tap(&running, true, t0, 2), None, "a media code is no gesture");
-        let paused = running.toggle(shape.clone(), t0 + Duration::from_secs(5)).state;
+        let paused = running.toggle(t0 + Duration::from_secs(5));
         assert_eq!(gestures(&paused, t0 + Duration::from_secs(6)), [None, Some(1), Some(2)], "paused: -, Resume, Save");
-        let prep = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0).state;
+        let prep = start_with(timer_settings_with_starting_bell(Some(10)), t0);
         assert_eq!(gestures(&prep, t0 + Duration::from_secs(1)), [Some(0), None, None], "preparing: Pause, -, -");
-        let prep_paused = prep.toggle(shape.clone(), t0 + Duration::from_secs(2)).state;
+        let prep_paused = prep.toggle(t0 + Duration::from_secs(2));
         assert_eq!(gestures(&prep_paused, t0 + Duration::from_secs(3)), [None, Some(1), None], "paused in preparation: -, Resume, -");
         let over_30 = t0 + Duration::from_secs(90);
-        let over = AppState::idle().toggle(shape, t0).tick(over_30).state;
+        let over = start(shape, t0).tick(over_30);
         assert_eq!(gestures(&over, over_30), [None, None, Some(2)], "overtime 30 s: Save");
         assert_eq!(void_tap(&over, true, t0 + Duration::from_secs(120), VOID_SHAKE), Some(2), "exactly a minute over: still Save");
         assert_eq!(void_tap(&over, true, t0 + Duration::from_secs(121), VOID_SHAKE), Some(3), "over a minute: Add");
         assert_eq!(gestures(&over, t0 + Duration::from_secs(150)), [None, None, Some(3)], "overtime 90 s: Add");
-        assert_eq!(gestures(&AppState::idle(), t0), [None, None, None], "no session");
+        assert_eq!(gestures(&AppState::default(), t0), [None, None, None], "no session");
     }
 
     #[test]
     fn a_void_gesture_goes_through_the_session_buttons() {
         let t0 = Duration::from_secs(100);
-        let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
+        let running = start(timer_countdown(Duration::from_secs(60)), t0);
         let now = t0 + Duration::from_secs(1);
         assert_eq!(session_tap(&running, true, now, VOID_FACE_DOWN), Some((0, true)), "Pause, with a pulse");
         assert_eq!(session_tap(&running, true, now, VOID_FACE_UP), None, "nothing, no pulse");
@@ -5001,17 +4900,17 @@ mod tests {
     fn the_running_page_is_the_only_end_screen() {
         use meditate_core::session::{EndButton, EndButtons};
         let t0 = Duration::from_secs(100);
-        let running = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).state;
-        assert!(running.is_running_page());
+        let running = start(timer_countdown(Duration::from_secs(60)), t0);
+        assert!(!running.is_idle());
         assert_eq!((running.end_buttons().first, running.end_buttons().second), (EndButton::Pause, Some(EndButton::Save)));
-        let paused = running.toggle(timer_countdown(Duration::from_secs(60)), t0 + Duration::from_secs(5)).state;
+        let paused = running.toggle(t0 + Duration::from_secs(5));
         assert_eq!((paused.end_buttons().first, paused.end_buttons().second), (EndButton::Resume, Some(EndButton::Save)));
         // Save while paused keeps the time so far; in overtime the planned length.
         let saved = paused.save_end(t0 + Duration::from_secs(9));
         assert_eq!(Effect::ended_secs(&saved.effects), Some(5));
-        assert!(saved.is_finished() && saved.is_running_page(), "an ended session stays on the running page");
+        assert!(saved.is_finished() && !saved.is_idle(), "an ended session stays on the running page");
         assert_eq!(saved.end_buttons(), EndButtons::ENDED);
-        let over = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).tick(t0 + Duration::from_secs(90)).state;
+        let over = start(timer_countdown(Duration::from_secs(60)), t0).tick(t0 + Duration::from_secs(90));
         assert_eq!(Effect::ended_secs(&over.save_end(t0 + Duration::from_secs(95)).effects), Some(60));
         for b in [EndButton::Pause, EndButton::Resume, EndButton::Save, EndButton::Add] {
             assert_eq!(end_button_from_code(end_button_code(b)), Some(b), "Slint hands back the button it was given");
@@ -5037,7 +4936,7 @@ mod tests {
         }
         let save = handler(&code, "save_tap");
         assert!(!save.contains("resolve_persist_action("), "Setup keeps the label for next time");
-        assert!(save.contains("resolved_label_for_mode(mode)"), "the session gets the Setup label");
+        assert!(save.contains("session_label_id(session.mode())"), "the session gets the Setup label");
     }
 
     #[test]
@@ -5046,9 +4945,9 @@ mod tests {
         let t0 = Duration::from_secs(100);
         let min = |m: u64| t0 + Duration::from_secs(m * 60);
         let shape = timer_countdown(Duration::from_secs(20 * 60));
-        let running = AppState::idle().toggle(shape.clone(), t0).state;
-        let paused = running.toggle(shape.clone(), min(3)).state;
-        let resumed = paused.toggle(shape, min(4)).state;
+        let running = start(shape.clone(), t0);
+        let paused = running.toggle(min(3));
+        let resumed = paused.toggle(min(4));
         let saved = resumed.save_end(min(8));
         assert_eq!(Effect::ended_secs(&saved.effects), Some(7 * 60));
         assert!(saved.is_finished());
@@ -5061,8 +4960,8 @@ mod tests {
     #[test]
     fn discard_returns_to_idle_without_saving() {
         let t0 = Duration::from_secs(100);
-        let ended = AppState::idle().toggle(timer_countdown(Duration::from_secs(60)), t0).stop(t0 + Duration::from_secs(5));
-        assert!(ended.state.dismiss().is_idle());
+        let ended = start(timer_countdown(Duration::from_secs(60)), t0).stop(t0 + Duration::from_secs(5));
+        assert!(ended.dismiss().is_idle());
         let code = ui_code();
         let at = code.find("let discard = Rc::new(move || {").unwrap();
         let discard = &code[at..at + code[at..].find("\n        });").unwrap()];
@@ -5079,7 +4978,7 @@ mod tests {
     fn an_auto_finished_session_is_saved_with_undo() {
         let t0 = Duration::from_secs(100);
         let settings = SessionSettings { auto_finish: true, ..SessionSettings { shape: timer_countdown(Duration::from_secs(60)), ..Default::default() } };
-        let t = AppState::start_session(settings, t0).state.tick(t0 + Duration::from_secs(61));
+        let t = start_with(settings, t0).tick(t0 + Duration::from_secs(61));
         assert!(t.is_finished(), "no overtime");
         assert_eq!(Effect::ended_secs(&t.effects), Some(60));
         assert_eq!(completion_notice_secs(&t.effects, false), Some(60), "the notification still comes");
@@ -5089,23 +4988,27 @@ mod tests {
             shape: SessionShape::Guided { duration_secs: 600, count_up_display: false },
             ..Default::default()
         };
-        assert!(AppState::start_session(guided, t0).state.enter_overtime(Duration::ZERO).is_finished());
+        assert!(start_with(guided, t0).enter_overtime(Duration::ZERO).is_finished());
 
         let code = ui_code();
-        assert_eq!(code.matches("on_auto_finish(&ui, &t").count(), 2, "the tick and the file's end");
-        let eos = &code[code.find("on_auto_finish(&ui, &t.effects").unwrap()..];
-        assert!(eos[..200].contains("on_state_changed(true, false,"), "a file's end releases the service and the track");
+        // The tick and the file's end both go through apply, which
+        // saves and releases the service and the track on every end.
+        assert!(code.contains("apply(&ui, &state, |s| s.tick(now));") && code.contains("apply(&ui, &state, |s| s.enter_overtime(now_since_epoch()));"));
+        let apply = &code[code.find("fn apply(").unwrap()..];
+        let apply = &apply[..apply.find("\n}\n").unwrap()];
+        let end = apply.find("if was_active && !is_active {").unwrap();
+        assert!(apply[end..].contains("on_auto_finish(ui, &effects);") && apply[end..].contains("on_state_changed(was_active, is_active, mode);"));
         let helper = &code[code.find("fn on_auto_finish(").unwrap()..];
-        assert!(helper[..800].contains("auto_finished.set(true);") && helper[..800].contains("ui.invoke_save_tap();"));
+        assert!(helper[..800].contains("AUTO_FINISHED.set(true);") && helper[..800].contains("ui.invoke_save_tap();"));
         let save = handler(&code, "save_tap");
         let ok = save.find("Ok(saved) =>").expect("the saved row comes back");
         let notice = &save[ok..];
         assert!(notice.contains("if auto && "));
         assert!(notice.contains("invoke_session_saved()"));
-        assert!(notice.contains("Some(app::PendingUndo::Recovery(uuid, session_local_file()))"), "the play goes with Undo");
+        assert!(notice.contains("Some(app::PendingUndo::Recovery(uuid, local_file))"), "the play goes with Undo");
         assert!(notice[..notice.find("invoke_session_saved()").unwrap()].contains("APP_IN_FOREGROUND.load("), "no notice left waiting in the background");
         let err = save.find("Err(kind) =>").unwrap();
-        assert!(save[err..].contains("pending_done.set(Some("), "a failed auto-save stays on the running page");
+        assert!(save[err..].find("return;") < save[err..].find("AppState::dismiss"), "a failed auto-save stays on the running page");
         let undo = handler(&code, "snackbar_undo_tap");
         let rec = &undo[undo.find("U::Recovery(uuid, local_file) =>").unwrap()..];
         assert!(rec[..300].contains("delete_ok(&ui, \"session.recovery.undo\""), "a failed Undo says Delete failed");
@@ -5205,8 +5108,8 @@ mod tests {
         let code = ui_code();
         let save = handler(&code, "save_tap");
         // Read once, so no path can leave it set for the next session.
-        let flag = save.find("let auto = auto_finished.take();").expect("the flag is read once, first");
-        assert_eq!(save.matches("auto_finished.").count(), 1);
+        let flag = save.find("let auto = AUTO_FINISHED.take();").expect("the flag is read once, first");
+        assert_eq!(save.matches("AUTO_FINISHED.").count(), 1);
         let stop = save.find("stop_active_signals();").expect("a tapped Save silences what rings");
         assert!(flag < stop && save[..stop].trim_end().ends_with("if !auto {"), "only a tapped Save");
     }
@@ -5226,8 +5129,7 @@ mod tests {
     #[test]
     fn finish_and_add_report_cores_duration() {
         let start = || {
-            AppState::idle()
-                .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
                 .tick(Duration::from_secs(160))
         };
         let finish = start().finish_overtime();
@@ -5242,8 +5144,8 @@ mod tests {
         assert_eq!(Effect::ended_secs(&[Effect::StopActiveSignals]), None);
     }
 
-    /// Every way a session ends takes its saved duration from core's
-    /// effect, not from the shell's own clock arithmetic.
+    /// Every way a session ends takes its saved duration from core:
+    /// the ended session's length, not the shell's own clock arithmetic.
     #[test]
     fn the_shell_saves_cores_duration_on_every_end() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
@@ -5252,32 +5154,31 @@ mod tests {
         assert!(!code.contains("fn end_session_duration("), "one helper, in core");
         assert!(!code.contains("pre_elapsed"));
         assert!(!code.contains("session.elapsed(now).as_secs() as i64"), "no shell-side duration");
-        assert_eq!(
-            code.matches("meditate_core::session::Effect::ended_secs(&transition.effects)").count(),
-            2,
-            "the end taps (Stop, Finish, Add) and the natural end",
-        );
+        let save = &code[code.find("ui.on_save_tap(").unwrap()..];
+        assert!(save[..900].contains("state.borrow().ended().map(|(started, session)|"), "only an ended session");
+        let app = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app.rs")).unwrap();
+        let record = &app[app.find("pub fn record(").unwrap()..];
+        assert!(record[..600].contains("session.final_duration_secs()"), "at the length core keeps");
     }
 
     // ── dismiss ─────────────────────────────────────────────────
 
     #[test]
     fn dismiss_from_finished_returns_to_idle() {
-        assert!(AppState::Finished(0).dismiss().is_idle());
+        assert!(ended().dismiss().is_idle());
     }
 
     #[test]
     fn dismiss_from_idle_stays_idle() {
-        assert!(AppState::idle().dismiss().is_idle());
+        let mut s = AppState::default();
+        s.dismiss();
+        assert!(s.is_idle());
     }
 
     #[test]
     fn dismiss_from_active_stays_active() {
-        // dismiss is the Save / Discard tap — only reachable when
-        // the Done screen is up, so Active passthrough is the
-        // defensive case.
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+        // dismiss is the Save / Discard tap; a live session stays.
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .dismiss();
         assert!(s.is_running());
     }
@@ -5289,8 +5190,7 @@ mod tests {
         // Target crossed: stays Active in Overtime (end bell rang,
         // session keeps ticking) — NOT auto-finished. The user
         // ends it via Finish / Add.
-        let s = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let s = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(!s.is_finished());
         assert!(s.is_overtime());
@@ -5298,8 +5198,7 @@ mod tests {
 
     #[test]
     fn finish_overtime_from_overtime_finishes() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let s = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160))
             .finish_overtime();
         assert!(s.is_finished());
@@ -5307,8 +5206,7 @@ mod tests {
 
     #[test]
     fn add_overtime_from_overtime_finishes() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+        let s = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160))
             .add_overtime(Duration::from_secs(175));
         assert!(s.is_finished());
@@ -5328,11 +5226,11 @@ mod tests {
     fn a_track_ending_during_a_pause_ends_the_session_after_resume() {
         let t0 = Duration::from_secs(100);
         let shape = || guided(Duration::from_secs(900), false);
-        let paused = AppState::idle().toggle(shape(), t0).toggle(shape(), t0 + Duration::from_secs(600));
+        let paused = start(shape(), t0).toggle(t0 + Duration::from_secs(600));
         assert!(paused.is_paused());
-        let t = paused.state.enter_overtime(Duration::ZERO);
+        let t = paused.enter_overtime(Duration::ZERO);
         assert!(t.is_paused(), "the end waits for Resume");
-        let t = t.state.toggle(shape(), t0 + Duration::from_secs(700)).tick(t0 + Duration::from_secs(701));
+        let t = t.toggle(t0 + Duration::from_secs(700)).tick(t0 + Duration::from_secs(701));
         assert!(t.is_overtime(), "the first tick after Resume ends it");
     }
 
@@ -5344,7 +5242,7 @@ mod tests {
         // enters Overtime (end bell), stays Active, and Finish
         // ends it — exactly the Timer-countdown contract, just
         // sourced from the file. Mirrors GTK's Guided session.
-        let running = AppState::idle().toggle(
+        let running = start(
             guided(Duration::from_secs(120), false),
             Duration::from_secs(100),
         );
@@ -5363,8 +5261,7 @@ mod tests {
         // Guided audio EOS forces overtime early (probe was a
         // beat short): Running → Overtime (stays Active), then
         // Finish ends it.
-        let s = AppState::idle()
-            .toggle(guided(Duration::from_secs(300), false),
+        let s = start(guided(Duration::from_secs(300), false),
                 Duration::from_secs(0))
             .enter_overtime(Duration::ZERO);
         assert!(s.is_overtime() && !s.is_finished());
@@ -5375,9 +5272,8 @@ mod tests {
     fn enter_overtime_outside_running_is_a_passthrough() {
         // Idle / already-overtime → no-op (defends a late EOS
         // after the tick already crossed the probed duration).
-        assert!(AppState::idle().enter_overtime(Duration::ZERO).is_idle());
-        let over = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)),
+        assert!(idle().enter_overtime(Duration::ZERO).is_idle());
+        let over = start(timer_countdown(Duration::from_secs(60)),
                 Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(over.is_overtime());
@@ -5388,8 +5284,7 @@ mod tests {
     fn guided_count_up_display_does_not_change_the_state_machine() {
         // The count_up flag is display-only; the session still
         // ends at the file's duration either way.
-        let s = AppState::idle()
-            .toggle(
+        let s = start(
                 guided(Duration::from_secs(60), true),
                 Duration::from_secs(0),
             )
@@ -5400,98 +5295,36 @@ mod tests {
     #[test]
     fn finish_overtime_outside_overtime_is_a_passthrough() {
         // Running (not yet overtime) → Finish is a no-op.
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .finish_overtime();
         assert!(s.is_running());
     }
 
     #[test]
     fn tick_running_with_time_left_stays_running() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+        let s = start(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .tick(Duration::from_secs(150));
         assert!(s.is_running());
     }
 
     #[test]
     fn tick_idle_stays_idle() {
-        assert!(AppState::idle().tick(Duration::from_secs(999)).is_idle());
+        assert!(idle().tick(Duration::from_secs(999)).is_idle());
     }
 
     #[test]
     fn tick_paused_does_not_auto_finish() {
         // Even if `now` is way past total, a paused countdown's
         // remaining is frozen — it must not auto-advance to Finished.
-        let s = AppState::idle()
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
-            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(110))
+        let s = start(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .toggle(Duration::from_secs(110))
             .tick(Duration::from_secs(9999));
         assert!(s.is_paused());
     }
 
     #[test]
     fn tick_finished_stays_finished() {
-        assert!(AppState::Finished(0).tick(Duration::from_secs(0)).is_finished());
-    }
-
-    // ── remaining ────────────────────────────────────────────────
-
-    #[test]
-    fn remaining_idle_is_full_total_duration() {
-        assert_eq!(
-            AppState::idle().remaining(ten_minutes(), Duration::from_secs(100)),
-            ten_minutes()
-        );
-    }
-
-    #[test]
-    fn remaining_finished_is_zero() {
-        assert_eq!(
-            AppState::Finished(0).remaining(ten_minutes(), Duration::from_secs(999)),
-            Duration::ZERO
-        );
-    }
-
-    #[test]
-    fn remaining_running_decrements_with_now() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
-        assert_eq!(
-            s.remaining(ten_minutes(), Duration::from_secs(150)),
-            Duration::from_secs(550)
-        );
-    }
-
-    #[test]
-    fn remaining_paused_freezes_at_pause_moment() {
-        let s = AppState::idle()
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
-            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(150));
-        // 50s elapsed before pause — remaining at any later `now`
-        // should still be 600 - 50 = 550s.
-        assert_eq!(
-            s.remaining(ten_minutes(), Duration::from_secs(9999)),
-            Duration::from_secs(550)
-        );
-    }
-
-    // ── labels + flags ──────────────────────────────────────────
-
-    #[test]
-    fn is_running_page_idle_false() {
-        assert!(!AppState::idle().is_running_page());
-    }
-
-    #[test]
-    fn is_running_page_running_true() {
-        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
-        assert!(s.is_running_page());
-    }
-
-    #[test]
-    fn is_running_page_finished_true() {
-        // An ended session waits on the running page for Save or Discard.
-        assert!(AppState::Finished(0).is_running_page());
+        assert!(ended().tick(Duration::from_secs(0)).is_finished());
     }
 
     #[test]
@@ -5684,7 +5517,7 @@ mod tests {
     #[test]
     fn a_pull_follows_the_guided_file_and_refills_choosers() {
         // #124: after a sync, the selected guided file is renamed or
-        // cleared (only on Setup: Save reads it on Done), and an open
+        // cleared (only on Setup, not under a running page), and an open
         // bell or pattern chooser drops what another device deleted.
         let code = ui_code();
         let tick = &code[code.find("timer.start(slint::TimerMode::Repeated, TICK,").expect("tick loop")..];

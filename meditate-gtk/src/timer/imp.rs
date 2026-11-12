@@ -2126,91 +2126,49 @@ impl TimerView {
         // (preparation, bells, cues), and `CoreSession::start` opens in
         // Prep when `prep_secs` is set.
         let stopwatch_on = self.stopwatch_toggle_on.get();
-        let shape = match mode {
-            TimerMode::Timer => {
-                // A 0-target countdown doesn't start at all.
-                if stopwatch_on {
-                    CoreSessionShape::TimerStopwatch
-                } else {
-                    let target_secs = self.countdown_target_secs.get();
-                    if target_secs == 0 {
-                        return;
-                    }
-                    CoreSessionShape::TimerCountdown { target_secs }
+        let pick = if mode == TimerMode::Guided { self.guided_pick.borrow().clone() } else { None };
+        let target_secs = match mode {
+            TimerMode::Timer => self.countdown_target_secs.get(),
+            TimerMode::Breathing => self.breathing_session_secs.get(),
+            TimerMode::Guided => match &pick {
+                Some(pick) => pick.duration_secs,
+                None => return,
+            },
+        };
+        // Nothing to count down (a 0 s countdown or file) starts nothing.
+        let Some(shape) = CoreSessionShape::new(mode.into(), stopwatch_on, target_secs, self.breathing_pattern.get()) else {
+            return;
+        };
+        if let Some(pick) = pick {
+            // Audio first: a failure here (corrupt file, missing
+            // codec) bails the whole start path so the user sees
+            // a toast and the session never enters Running. The
+            // track's end slides into Overtime in case the file ends
+            // slightly before the probed duration.
+            let obj_for_eos = self.obj().clone();
+            match crate::guided::GuidedPlayback::start(
+                &pick.source_path,
+                move |/* on_eos */| {
+                    // Nothing once the tick already reached the end.
+                    // The track drops itself here, from its own
+                    // callback, as StopGuidedAudio always did.
+                    let imp = obj_for_eos.imp();
+                    let now = imp.elapsed_since_start();
+                    let effects = imp.core_session.borrow_mut().as_mut()
+                        .map(|s| s.enter_overtime(now))
+                        .unwrap_or_default();
+                    imp.react(&effects);
+                },
+            ) {
+                Ok(playback) => {
+                    *self.guided_playback.borrow_mut() = Some(playback);
                 }
-            }
-            TimerMode::Breathing => {
-                let pattern = self.breathing_pattern.get();
-                // "Finish the breath" before stopping: round to the
-                // next full cycle so the session always ends on an
-                // exhale/hold-out boundary.
-                let target = pattern.cycle_aligned_target_secs(
-                    u64::from(self.breathing_session_secs.get()),
-                );
-                // Stopwatch toggle on → BoxBreathStopwatch (no auto-end;
-                // user must press Stop). Off → BoxBreathCountdown,
-                // cycle-aligned end fires off `target_secs`. Either
-                // way Box Breath shows count-up elapsed.
-                if stopwatch_on {
-                    CoreSessionShape::BoxBreathStopwatch { pattern }
-                } else {
-                    CoreSessionShape::BoxBreathCountdown {
-                        pattern,
-                        target_secs: target as u32,
-                    }
-                }
-            }
-            TimerMode::Guided => {
-                // Build the countdown core (drives the hero) AND the
-                // gst playbin (drives the audio). Both are tied to the
-                // same target duration probed at file-pick time. The
-                // playbin's EOS signal-watch slides into Overtime in
-                // case the file ends slightly before the probed
-                // duration — keeps the session.end-bell handshake
-                // honest even with sub-second drift between the two.
-                let pick = self.guided_pick.borrow().clone();
-                let Some(pick) = pick else { return; };
-                let target = u64::from(pick.duration_secs);
-                if target == 0 {
+                Err(e) => {
+                    crate::db::show_in_view(gettext("Couldn't start playback: {error}").replace("{error}", &e.to_string()));
                     return;
                 }
-
-                // Audio first: a failure here (corrupt file, missing
-                // codec) bails the whole start path so the user sees
-                // a toast and the session never enters Running.
-                let obj_for_eos = self.obj().clone();
-                match crate::guided::GuidedPlayback::start(
-                    &pick.source_path,
-                    move |/* on_eos */| {
-                        // Nothing once the tick already reached the end.
-                        // The track drops itself here, from its own
-                        // callback, as StopGuidedAudio always did.
-                        let imp = obj_for_eos.imp();
-                        let now = imp.elapsed_since_start();
-                        let effects = imp.core_session.borrow_mut().as_mut()
-                            .map(|s| s.enter_overtime(now))
-                            .unwrap_or_default();
-                        imp.react(&effects);
-                    },
-                ) {
-                    Ok(playback) => {
-                        *self.guided_playback.borrow_mut() = Some(playback);
-                    }
-                    Err(e) => {
-                        crate::db::show_in_view(gettext("Couldn't start playback: {error}").replace("{error}", &e.to_string()));
-                        return;
-                    }
-                }
-
-                // Guided always carries a target (the file's probed
-                // duration); the stopwatch toggle only flips the
-                // running display between count-up and count-down.
-                CoreSessionShape::Guided {
-                    duration_secs: target as u32,
-                    count_up_display: stopwatch_on,
-                }
             }
-        };
+        }
 
         let Some(app) = self.get_app() else { return; };
         let core_settings = app
@@ -2483,20 +2441,12 @@ impl TimerView {
         // Setup's label; Setup already keeps it for next time.
         let label_id = self.setup_selected_label_id();
 
-        let session_mode = match mode {
-            TimerMode::Timer => SessionMode::Timer,
-            TimerMode::Breathing => SessionMode::BoxBreath,
-            TimerMode::Guided => SessionMode::Guided,
-        };
+        let session_mode: SessionMode = mode.into();
 
         // Guided sessions log the file's uuid (when the user played a
         // starred library row) so per-file stats can resolve later.
         // Transient Open-File picks log None.
-        let guided_file_uuid = if mode == TimerMode::Guided {
-            self.guided_selected_uuid.borrow().clone()
-        } else {
-            None
-        };
+        let guided_file_uuid = session_mode.guided_file(self.guided_selected_uuid.borrow().clone());
 
         let data = SessionData {
             start_time,
@@ -2688,17 +2638,9 @@ impl TimerView {
             // to snapshot.
             return;
         }
-        let mode = match self.current_mode() {
-            TimerMode::Timer => meditate_core::SessionMode::Timer,
-            TimerMode::Breathing => meditate_core::SessionMode::BoxBreath,
-            TimerMode::Guided => meditate_core::SessionMode::Guided,
-        };
+        let mode: meditate_core::SessionMode = self.current_mode().into();
         let label_id = self.setup_selected_label_id();
-        let guided_file_uuid = if matches!(mode, meditate_core::SessionMode::Guided) {
-            self.guided_selected_uuid.borrow().clone().map(meditate_core::db::GuidedFileUuid::new)
-        } else {
-            None
-        };
+        let guided_file_uuid = mode.guided_file(self.guided_selected_uuid.borrow().clone()).map(meditate_core::db::GuidedFileUuid::new);
         let snapshot = meditate_core::db::SessionInProgress {
             start_iso: meditate_core::time::unix_to_local_iso(unix_start),
             accumulated_secs,
@@ -3739,11 +3681,8 @@ impl TimerView {
     /// view — `None` when the master toggle is off OR the resolved
     /// row no longer exists.
     fn setup_selected_label_id(&self) -> Option<i64> {
-        let mode = self.current_mode();
-        if !self.persisted_label_active_for_mode(mode) {
-            return None;
-        }
-        self.resolve_label_for_mode(mode).map(|l| l.id)
+        let mode = self.current_mode().into();
+        self.get_app()?.with_db(|db| meditate_core::labels::session_label(db, mode)).flatten().map(|l| l.id)
     }
 
     /// Refresh the Setup-view label chooser-row's subtitle to show
@@ -4591,7 +4530,7 @@ mod tests {
         // Every tick and the track end go through one reaction, which
         // saves at once when core's end says so.
         assert!(body(&code, "fn session_tick(&self)").contains("self.react(&effects)"));
-        assert!(code.contains("                        imp.react(&effects);\n"), "the track end too");
+        assert!(code.contains("                    imp.react(&effects);\n"), "the track end too");
         let auto = body(&code, "pub(crate) fn react(&self, effects: &[CoreSessionEffect])");
         let now = auto.find("if CoreSessionEffect::saves_now(effects) {").expect("Auto-Finish saves at once");
         assert!(auto[now..].contains("self.on_save(true)"));

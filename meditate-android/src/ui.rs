@@ -260,9 +260,8 @@ fn hide_soft_keyboard() {
     }
 }
 
-/// React to an AppState transition's service side. If the session
-/// just started (Idle/Finished → Active), kick the foreground
-/// service. If it just ended (Active → Idle/Finished), tear it
+/// React to an AppState transition's service side. If a live session
+/// just started, kick the foreground service. If it just ended, tear it
 /// down. Bell / vibration cues are NOT handled here — they flow
 /// through `dispatch_effects` off the core `Session` effects, so
 /// the "ring on natural completion, stay silent on Stop" decision
@@ -322,8 +321,7 @@ fn send_media_buttons(app: &slint::android::AndroidApp, ui: &MainWindow, state: 
         return;
     };
     let mut payload = ui.global::<MaterialPalette>().get_schemes().light.primary.as_argb_encoded().to_string();
-    let guided_name = session_guided_name();
-    let title = meditate_core::session::media_title(guided_name.as_deref());
+    let title = meditate_core::session::media_title(state.started().and_then(|s| s.guided_name.as_deref()));
     payload += "\n";
     payload += &app::media_header(title, &media_line_text(ui, status), status, now);
     for code in app::media_buttons(state, ui.get_note_text().is_empty()) {
@@ -481,7 +479,7 @@ const TICK: Duration = Duration::from_millis(200);
 
 /// Resolve the configured target duration from the Slint steppers.
 /// The setup hours / minutes properties drive both the Setup hero
-/// readout and `AppState::toggle`'s start path.
+/// readout and the Start tap's shape.
 fn configured_duration(ui: &MainWindow) -> Duration {
     // Guided has no duration stepper — the picked file's probed
     // length IS the duration (idle hero + countdown target).
@@ -556,18 +554,13 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_end_left(app::end_button_code(end.first));
     ui.set_end_right(end.second.map_or(-1, app::end_button_code));
     ui.set_end_note(end.note);
-    ui.set_running_page(state.is_running_page());
+    ui.set_running_page(!state.is_idle());
     // The Add button counts the overtime, like GTK's.
     if let Some(over) = state.overtime(now) {
         ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime(meditate_core::format::format_time(over).into()));
     }
 }
 
-/// Snapshot of an in-flight session that the persistence layer needs
-/// at end time. `unix_start` is captured at the Idle/Finished → Active
-/// transition (mirrors the GTK shell's `session_start_time` cell);
-/// elapsed comes from the live core::Session and is captured BEFORE
-/// the AppState mutation drops the session.
 // Per-mode setting helpers — wrap the DATABASE lock + the
 // `settings_keys` dispatchers in one place. `read_*` returns the
 // stored value or the meditate-core default; `write_*` is fire-
@@ -2464,12 +2457,7 @@ fn render_insight(
 /// behaviour. The Done flow uses the two helpers separately so
 /// the chooser list reflects `done-label-id` instead.
 fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
-    let current_id = if read_label_active_for_mode(mode) {
-        resolved_label_for_mode(mode).map(|(_, id)| id)
-    } else {
-        None
-    };
-    refresh_chooser_items(ui, current_id);
+    refresh_chooser_items(ui, session_label_id(mode));
     refresh_setup_label_name(ui, mode);
 }
 
@@ -2502,8 +2490,7 @@ fn refresh_label_users(ui: &MainWindow, mode: meditate_core::SessionMode) {
     let picked = |id: i32| (id > 0).then_some(i64::from(id));
     let current_id = match ui.get_label_target() {
         LabelTarget::Edit => picked(ui.get_edit_label_id()),
-        LabelTarget::Setup if read_label_active_for_mode(mode) => resolved_label_for_mode(mode).map(|(_, id)| id),
-        LabelTarget::Setup => None,
+        LabelTarget::Setup => session_label_id(mode),
     };
     refresh_chooser_items(ui, current_id);
 }
@@ -2993,87 +2980,32 @@ fn push_log_sections_to_ui(
     ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
 }
 
-/// The running session's guided library file, fixed at session
-/// start so every recovery snapshot (start, heartbeat, Done hold)
-/// records it without each caller reaching for the selection.
-static SESSION_GUIDED_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-fn set_session_guided_file(uuid: Option<String>) {
-    if let Ok(mut slot) = SESSION_GUIDED_FILE.lock() {
-        *slot = uuid;
-    }
+/// The label a session of `mode` saves with (core's rule).
+fn session_label_id(mode: meditate_core::SessionMode) -> Option<i64> {
+    let db = lock_db()?;
+    meditate_core::labels::session_label(&db, mode).map(|l| l.id)
 }
 
-/// The running session's guided file title, for the Log. Like
-/// `SESSION_GUIDED_FILE`, fixed at session start.
-static SESSION_GUIDED_NAME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-fn set_session_guided_name(name: Option<String>) {
-    if let Ok(mut slot) = SESSION_GUIDED_NAME.lock() {
-        *slot = name;
-    }
-}
-
-fn session_guided_name() -> Option<String> {
-    SESSION_GUIDED_NAME.lock().ok().and_then(|slot| slot.clone())
-}
-
-/// The running session's Local Folder file, whose play the save
-/// counts. Like `SESSION_GUIDED_FILE`, fixed at session start.
-static SESSION_LOCAL_FILE: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
-
-fn set_session_local_file(id: Option<i64>) {
-    if let Ok(mut slot) = SESSION_LOCAL_FILE.lock() {
-        *slot = id;
-    }
-}
-
-fn session_local_file() -> Option<i64> {
-    SESSION_LOCAL_FILE.lock().ok().and_then(|slot| *slot)
-}
-
-fn session_guided_file() -> Option<meditate_core::db::GuidedFileUuid> {
-    SESSION_GUIDED_FILE
-        .lock()
-        .ok()
-        .and_then(|slot| slot.clone())
-        .map(meditate_core::db::GuidedFileUuid::new)
-}
-
-/// Build the crash-recovery snapshot row. Mirrors GTK's
-/// `write_in_progress_snapshot` at `imp.rs:2536`: captures
-/// (unix_start, accumulated_secs, mode, label_id) so a process
-/// kill mid-session can be resurrected on the next launch via
-/// `finalize_session_in_progress`.
-fn session_in_progress_snapshot(
-    unix_start: i64,
-    elapsed_secs: u32,
-    mode: meditate_core::SessionMode,
-) -> meditate_core::db::SessionInProgress {
-    let label_id = if read_label_active_for_mode(mode) {
-        resolved_label_for_mode(mode).map(|(_, id)| id)
-    } else {
-        None
-    };
-    meditate_core::db::SessionInProgress {
-        start_iso: meditate_core::time::unix_to_local_iso(unix_start),
-        accumulated_secs: elapsed_secs,
+/// The crash-recovery snapshot of the session in `state`: what its
+/// Start fixed, the meditation time so far (the saved length once
+/// ended) and the mode's label now. Mirrors GTK's
+/// `write_in_progress_snapshot`. `None` without a session.
+fn session_in_progress_snapshot(db: &meditate_core::db::Database, state: &AppState, now: Duration) -> Option<meditate_core::db::SessionInProgress> {
+    let (started, mode) = (state.started()?, state.mode()?);
+    Some(meditate_core::db::SessionInProgress {
+        start_iso: meditate_core::time::unix_to_local_iso(started.unix_start),
+        accumulated_secs: u32::try_from(state.saved_secs(now)).unwrap_or(u32::MAX),
         mode,
-        guided_file_name: session_guided_name(),
-        label_id,
-        guided_file_uuid: session_guided_file(),
-    }
+        guided_file_name: started.guided_name.clone(),
+        label_id: meditate_core::labels::session_label(db, mode).map(|l| l.id),
+        guided_file_uuid: started.guided_file.clone(),
+    })
 }
 
 /// Write the snapshot for a running session (the heartbeat).
-fn write_session_in_progress_snapshot(
-    unix_start: i64,
-    elapsed_secs: u32,
-    mode: meditate_core::SessionMode,
-) {
-    // Build before locking: the label lookup takes the DB lock itself.
-    let snapshot = session_in_progress_snapshot(unix_start, elapsed_secs, mode);
+fn write_session_in_progress_snapshot(state: &AppState, now: Duration) {
     let Some(db) = lock_db() else { return; };
+    let Some(snapshot) = session_in_progress_snapshot(&db, state, now) else { return; };
     if let Err(e) = db.set_session_in_progress(&snapshot) {
         meditate_core::log(
             "session.recovery",
@@ -3082,36 +3014,25 @@ fn write_session_in_progress_snapshot(
     }
 }
 
-/// A session just ended (Stop, Finish, Add or its natural end): keep it
-/// for the Done screen, hold its recovery snapshot with the final
-/// duration until Save or Discard (the heartbeat stops so it can't
-/// overwrite it; GTK keeps it until `reset_mode` too), show it on Done,
-/// and clear what the running screen showed so the next session starts
-/// clean.
-fn end_session(
-    ui: &MainWindow,
-    secs: i64,
-    mode: meditate_core::SessionMode,
-    session_start_unix: &Cell<Option<i64>>,
-    pending_done: &Cell<Option<(i64, i64)>>,
-    snapshot_timer: &slint::Timer,
-) {
-    if let Some(unix_start) = session_start_unix.take() {
-        pending_done.set(Some((unix_start, secs)));
-    }
-    snapshot_timer.stop();
-    hold_ended_session_snapshot(pending_done.get(), mode);
+/// A session just ended (Stop, Finish, Add or its natural end): hold
+/// its recovery snapshot with the saved length until Save or Discard
+/// (the heartbeat stops so it can't overwrite it; GTK keeps it until
+/// `reset_mode` too), and clear what the running screen showed so the
+/// next session starts clean.
+fn end_session(ui: &MainWindow, state: &AppState, now: Duration) {
+    SNAPSHOT_TIMER.with(slint::Timer::stop);
+    hold_ended_session_snapshot(state, now);
     ui.set_bb_running_active(false);
     ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime("00:00".into()));
 }
 
 /// Auto-Finish ended the session: save it once the caller has let go
 /// of the state, and let the save say "Session saved" with Undo.
-fn on_auto_finish(ui: &MainWindow, effects: &[meditate_core::session::Effect], auto_finished: &Rc<Cell<bool>>) {
+fn on_auto_finish(ui: &MainWindow, effects: &[meditate_core::session::Effect]) {
     if !meditate_core::session::Effect::saves_now(effects) {
         return;
     }
-    auto_finished.set(true);
+    AUTO_FINISHED.set(true);
     // A pending "Discard Session?" no longer has a session to discard.
     close_modal(ui, Modal::Discard);
     let weak = ui.as_weak();
@@ -3122,20 +3043,15 @@ fn on_auto_finish(ui: &MainWindow, effects: &[meditate_core::session::Effect], a
     });
 }
 
-/// A session just ended: keep it
-/// recoverable with its final duration until Save or Discard clears
-/// it (core `hold_ended_session`). `done` is the `pending_done`
-/// pair (unix_start, final_secs); None means there is nothing to
-/// keep, so any stale snapshot goes.
-fn hold_ended_session_snapshot(done: Option<(i64, i64)>, mode: meditate_core::SessionMode) {
-    let Some((unix_start, final_secs)) = done else {
+/// Keep the ended session recoverable with its saved length until
+/// Save or Discard clears it (core `hold_ended_session`; 0 s clears).
+fn hold_ended_session_snapshot(state: &AppState, now: Duration) {
+    let Some(db) = lock_db() else { return; };
+    let Some(snapshot) = session_in_progress_snapshot(&db, state, now) else {
+        drop(db);
         clear_session_in_progress_snapshot();
         return;
     };
-    let secs = u32::try_from(final_secs.max(0)).unwrap_or(u32::MAX);
-    // Build before locking: the label lookup takes the DB lock itself.
-    let snapshot = session_in_progress_snapshot(unix_start, secs, mode);
-    let Some(db) = lock_db() else { return; };
     if let Err(e) = db.hold_ended_session(&snapshot) {
         meditate_core::log(
             "session.recovery",
@@ -3144,35 +3060,71 @@ fn hold_ended_session_snapshot(done: Option<(i64, i64)>, mode: meditate_core::Se
     }
 }
 
-fn start_snapshot_heartbeat(
-    timer: &'static slint::Timer,
-    state: std::rc::Rc<std::cell::RefCell<AppState>>,
-    current_mode: std::rc::Rc<std::cell::Cell<TimerMode>>,
-    session_start_unix: std::rc::Rc<std::cell::Cell<Option<i64>>>,
-) {
-    timer.stop();
-    timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_secs(60),
-        move || {
-            let now = now_since_epoch();
-            let s = state.borrow();
-            let AppState::Active(session) = &*s else { return; };
-            let Some(unix_start) = session_start_unix.get() else { return; };
-            // Preparation is never meditation, also after a crash.
-            let elapsed = session.saved_secs(now) as u32;
-            let mode: meditate_core::SessionMode = current_mode.get().into();
-            write_session_in_progress_snapshot(unix_start, elapsed, mode);
-        },
-    );
+thread_local! {
+    /// The crash-recovery heartbeat: every 60 s of a live session,
+    /// like GTK's `start_snapshot_tick`.
+    static SNAPSHOT_TIMER: slint::Timer = slint::Timer::default();
+    /// Auto-Finish ended the session: its save says "Session saved"
+    /// with Undo.
+    static AUTO_FINISHED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Drop the crash-recovery snapshot. Called on every transition
-/// out of Active so a normal Stop / auto-finish leaves no row for
-/// the next launch to "recover" (which would double-count). DB
+/// Run a session transition and carry out what follows from it: the
+/// effects and the notice; across a start, the first snapshot and the
+/// heartbeat; across an end, the held snapshot and Auto-Finish's save;
+/// the service, wake lock and guided track across a start, pause or
+/// end; then the redraw. Every transition goes through here, like
+/// GTK's `react`.
+fn apply(ui: &MainWindow, state: &Rc<RefCell<AppState>>, f: impl FnOnce(&mut AppState) -> Vec<meditate_core::session::Effect>) {
+    let now = now_since_epoch();
+    let mut s = state.borrow_mut();
+    let (was_active, was_paused) = (s.is_active(), s.is_paused());
+    let effects = f(&mut s);
+    dispatch_effects(&effects);
+    notify_if_complete(&effects);
+    let (is_active, is_paused) = (s.is_active(), s.is_paused());
+    let mode = s.mode().unwrap_or(meditate_core::SessionMode::Timer);
+    if !was_active && is_active {
+        // First snapshot right away, so a session killed in its first
+        // minute is still recovered (GTK writes one at start too).
+        write_session_in_progress_snapshot(&s, now);
+        start_snapshot_heartbeat(state.clone());
+    }
+    if was_active && !is_active {
+        end_session(ui, &s, now);
+        on_auto_finish(ui, &effects);
+    }
+    on_state_changed(was_active, is_active, mode);
+    if was_active && is_active && was_paused != is_paused {
+        if let Some(app) = android_app() {
+            if mode == meditate_core::SessionMode::Guided {
+                guided_follows_pause(app, &s);
+            }
+            wake_follows_pause(app, &s, mode);
+        }
+    }
+    refresh(ui, &s, now);
+}
+
+fn start_snapshot_heartbeat(state: Rc<RefCell<AppState>>) {
+    SNAPSHOT_TIMER.with(|timer| {
+        timer.stop();
+        timer.start(slint::TimerMode::Repeated, Duration::from_secs(60), move || {
+            // Preparation is never meditation, also after a crash.
+            // Only a live session; an ended one holds its own snapshot.
+            let s = state.borrow();
+            if s.is_active() {
+                write_session_in_progress_snapshot(&s, now_since_epoch());
+            }
+        });
+    });
+}
+
+/// Drop the crash-recovery snapshot: on Discard, and when an ended
+/// session has nothing to hold, so the next launch recovers nothing
+/// (which would double-count). An end holds it instead. DB
 /// errors are logged but swallowed — at worst the next launch
-/// auto-finalizes a stale row, which is harmless without the
-/// pending_done flow (we ignore it and move on).
+/// auto-finalizes a stale row.
 fn clear_session_in_progress_snapshot() {
     let Some(db) = lock_db() else { return; };
     if let Err(e) = db.clear_session_in_progress() {
@@ -3342,15 +3294,12 @@ fn write_signal_mode_for_mode(
 }
 
 fn finalize_session(
-    unix_start: i64,
-    elapsed_secs: i64,
-    note: Option<String>,
-    mode: meditate_core::SessionMode,
-    label_id: Option<i64>,
-    guided_uuid: Option<String>,
+    session: meditate_core::db::Session,
+    local_file: Option<i64>,
 ) -> Result<Option<String>, meditate_core::format::SessionSaveFailureKind> {
     use meditate_core::format::{session_save_failure_log_message, SessionSaveFailureKind};
-    if elapsed_secs <= 0 {
+    let (elapsed_secs, unix_start) = (session.duration_secs, session.start_unix());
+    if elapsed_secs == 0 {
         // Drop sessions that ended before any seconds elapsed —
         // matches the GTK shell, which also filters zero-duration
         // rows out of insert. Avoids noise in stats from accidental
@@ -3367,23 +3316,7 @@ fn finalize_session(
     let Some(db) = lock_db() else {
         return unopened("db not open (open failed at startup) or lock poisoned");
     };
-    let session = meditate_core::db::Session::from_unix(
-        unix_start,
-        elapsed_secs,
-        // `label_id` arrives resolved from the per-mode label
-        // toggle + persisted UUID; None when the master switch is
-        // off OR the seeded default row got deleted.
-        label_id,
-        note,
-        mode,
-        // Guided file UUID: `Some` only when the session ran a
-        // library file (starred-list tap or fresh import).
-        // Transient Open-File picks and Timer / Box Breath stay
-        // None. Mirrors GTK's `guided_selected_uuid` at save.
-        guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
-        session_guided_name(),
-    );
-    match db.insert_session_counting_local_play(&session, session_local_file()) {
+    match db.insert_session_counting_local_play(&session, local_file) {
         Ok((rowid, saved)) => {
             meditate_core::log(
                 "session.insert",
@@ -4102,7 +4035,7 @@ fn build_ui() -> MainWindow {
         ui.set_ie_offset_range(range(BellTimeField::Step));
     }
 
-    let state = Rc::new(RefCell::new(AppState::idle()));
+    let state = Rc::new(RefCell::new(AppState::default()));
     // Active mode chip — drives both the Setup body content and
     // the `SessionMode` recorded on Save. Defaults to Timer at
     // launch; persistence across launches lands when settings
@@ -4206,34 +4139,6 @@ fn build_ui() -> MainWindow {
     let editing_session: Rc<RefCell<Option<(i64, meditate_core::db::Session)>>> =
         Rc::new(RefCell::new(None));
 
-    // Crash-recovery snapshot timer handle. Heartbeat is started
-    // on the Idle/Finished → Active transition in `on_action_tap`
-    // and cancelled on every transition out of Active, mirroring
-    // GTK's `start_snapshot_tick` + `cancel_snapshot_tick` at
-    // `imp.rs:2600` / `imp.rs:2621`. `Box::leak` so the Timer
-    // outlives `build_ui`'s frame; we never drop it, only
-    // start/stop it.
-    let snapshot_timer: &'static slint::Timer =
-        Box::leak(Box::new(slint::Timer::default()));
-    // Unix timestamp captured at session start, taken at end.
-    // Mirrors the GTK shell's `Timer::session_start_time` cell.
-    // Holds None while idle; Some(unix_secs) while a session is
-    // in flight. The core::Session itself uses monotonic boot-time
-    // durations, so wall-clock start has to be carried separately.
-    let session_start_unix: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
-
-    // When a session ends (Stop tap or auto-finish), we stash the
-    // (start_unix, elapsed_secs) pair here so the Done-screen
-    // Save / Discard handler can either commit it as a DB row or
-    // drop it. None while the Done screen isn't up. Mirrors the
-    // GTK shell's `Timer::pending_save_data` deferral: persistence
-    // is the *user's* call on the Done screen, not an automatic
-    // side-effect of Stop.
-    let pending_done: Rc<Cell<Option<(i64, i64)>>> = Rc::new(Cell::new(None));
-    // Set when Auto-Finish ended the session: its save says "Session
-    // saved" with Undo.
-    let auto_finished: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-
     // Seed the stepper-driven duration from the persisted Timer
     // length (mirrors GTK's `load_timer_settings` restoring
     // `timer_session_secs` at startup) rather than the bare
@@ -4251,85 +4156,52 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let state = state.clone();
         let current_mode = current_mode.clone();
-        let session_start_unix = session_start_unix.clone();
         let guided_sel = guided_sel.clone();
         ui.on_action_tap(move || {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
-            let target = configured_duration(&ui);
-            // Shape picked from (mode chip × Stopwatch-Mode switch).
-            // Same shell-side choice the GTK `on_start` makes via
-            // `current_mode()` + `stopwatch_toggle_on`. Guided is
-            // still gated upstream by the disabled Start button
-            // until the audio engine ships (phase 5).
-            use meditate_core::session::SessionShape;
-            let shape = match TimerMode::from_chip_index(ui.get_setup_mode()) {
-                TimerMode::Breathing => {
-                    let pattern = meditate_core::breath::BreathPattern::clamp_from_raw(
-                        ui.get_bb_in().max(0) as u32,
-                        ui.get_bb_hold_in().max(0) as u32,
-                        ui.get_bb_out().max(0) as u32,
-                        ui.get_bb_hold_out().max(0) as u32,
-                    );
-                    if ui.get_stopwatch_on() {
-                        SessionShape::BoxBreathStopwatch { pattern }
-                    } else {
-                        // Cycle-aligned target so the session always
-                        // ends on a phase boundary, not mid-cycle.
-                        let raw = target.as_secs();
-                        let aligned = pattern.cycle_aligned_target_secs(raw) as u32;
-                        SessionShape::BoxBreathCountdown {
-                            pattern,
-                            target_secs: aligned,
-                        }
-                    }
-                }
-                TimerMode::Guided => {
-                    // Length = the picked file's probed duration;
-                    // count_up_display = the per-mode stopwatch
-                    // flag (true → hero counts up, false → counts
-                    // down from the file length). Mirrors GTK's
-                    // SessionShape::Guided build in on_start.
-                    {
-                        let dur = guided_sel
-                            .borrow()
-                            .as_ref()
-                            .map(|g| g.duration_secs)
-                            .unwrap_or(0);
-                        SessionShape::Guided {
-                            duration_secs: dur,
-                            count_up_display: read_stopwatch_for_mode(
-                                meditate_core::SessionMode::Guided,
-                            ),
-                        }
-                    }
-                }
-                _ => {
-                    if ui.get_stopwatch_on() {
-                        SessionShape::TimerStopwatch
-                    } else {
-                        SessionShape::TimerCountdown {
-                            target_secs: target.as_secs() as u32,
-                        }
-                    }
-                }
+            // A session: the play key, as core decides.
+            if !state.borrow().is_idle() {
+                apply(&ui, &state, |s| s.pause_or_resume(now));
+                return;
+            }
+            let mode = current_mode.get();
+            // The guided file goes with a Guided session only.
+            let sel = guided_sel.borrow();
+            let pick = meditate_core::SessionMode::from(mode).guided_file(sel.as_ref());
+            // Guided: the length of the file that plays.
+            let secs = match pick {
+                Some(g) => g.duration_secs,
+                None => u32::try_from(configured_duration(&ui).as_secs()).unwrap_or(u32::MAX),
             };
-            let mut s = state.borrow_mut();
-            // No live elapsed capture needed here: action_tap on Active
-            // pauses/resumes — both stay Active, so the session never
-            // ends through this path. Only Idle/Finished → Active
-            // matters for persistence wiring.
-            let was_active = s.is_active();
-            // Guided: start the track first. An unplayable file, or one
-            // whose length couldn't be read (0 s, the session would end
-            // at once), starts no session — mirrors GTK's audio-first
-            // start and its "Couldn't start playback" toast.
-            if !was_active && current_mode.get() == TimerMode::Guided {
+            let pattern = meditate_core::breath::BreathPattern::clamp_from_raw(
+                ui.get_bb_in().max(0) as u32,
+                ui.get_bb_hold_in().max(0) as u32,
+                ui.get_bb_out().max(0) as u32,
+                ui.get_bb_hold_out().max(0) as u32,
+            );
+            // Start is disabled for a 0 s Timer or Box Breath.
+            let Some(shape) = meditate_core::session::SessionShape::new(
+                mode.into(),
+                ui.get_stopwatch_on(),
+                secs,
+                pattern,
+            ) else {
+                // Only a Guided file whose length couldn't be read gets here.
+                if mode == TimerMode::Guided {
+                    show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
+                }
+                return;
+            };
+            // No preview plays into the session (a Manage Files preview
+            // shares the guided player, so before the track starts).
+            stop_all_previews(&ui);
+            // Guided: start the track first. An unplayable file starts no
+            // session, like GTK's audio-first start and its "Couldn't
+            // start playback" toast.
+            if mode == TimerMode::Guided {
                 let started = android_app().is_some_and(|app| {
-                    guided_sel.borrow().as_ref().is_some_and(|sel| {
-                        if sel.duration_secs == 0 {
-                            return false;
-                        }
+                    pick.is_some_and(|sel| {
                         // A Local Folder file plays from its content address.
                         let source = match sel.local_id {
                             None => Some(sel.path.clone()),
@@ -4346,90 +4218,23 @@ fn build_ui() -> MainWindow {
                     return;
                 }
             }
-            let prev = std::mem::replace(&mut *s, AppState::idle());
-            let transition = if was_active {
-                // Active → pause / resume (shape unused — Session
-                // remembers its own shape).
-                prev.toggle(shape, now)
-            } else {
-                // Idle/Finished → start. Build the real
-                // SessionSettings from the DB so core has the
-                // actual bell config and emits FireEndBell /
-                // FireBell / FireStartingBell — mirrors GTK's
-                // build_timer_settings.
-                {
-                    // No preview plays into the session.
-                    stop_all_previews(&ui);
-                    // An Undo would change the running session's settings:
-                    // every snackbar goes, a pending one is committed.
-                    finish_notice(&ui);
-                    let settings = match lock_db() {
-                        Some(db) => meditate_core::session::SessionSettings::from_db(&db, shape),
-                        None => meditate_core::session::SessionSettings { shape, ..Default::default() },
-                    };
-                    AppState::start_session(settings, now)
-                }
+            // An Undo would change the running session's settings:
+            // every snackbar goes, a pending one is committed.
+            finish_notice(&ui);
+            // The real settings from the DB, so core has the bell
+            // config, like GTK's `on_start`.
+            let settings = match lock_db() {
+                Some(db) => meditate_core::session::SessionSettings::from_db(&db, shape),
+                None => meditate_core::session::SessionSettings { shape, ..Default::default() },
             };
-            dispatch_effects(&transition.effects);
-            *s = transition.state;
-            let is_active = s.is_active();
-            if !was_active && is_active {
-                session_start_unix.set(Some(meditate_core::time::unix_now()));
-                set_session_guided_file(app::snapshot_guided_file(
-                    current_mode.get(),
-                    guided_sel.borrow().as_ref().and_then(|g| g.uuid.as_deref()),
-                ));
-                {
-                    let guided = current_mode.get() == TimerMode::Guided;
-                    let sel = guided_sel.borrow();
-                    let sel = sel.as_ref().filter(|_| guided);
-                    set_session_local_file(sel.and_then(|g| g.local_id));
-                    set_session_guided_name(sel.map(|g| g.name.clone()));
-                }
-                // First snapshot right away, so a session killed in
-                // its first minute is still recovered (GTK writes
-                // one at start too).
-                if let Some(unix_start) = session_start_unix.get() {
-                    write_session_in_progress_snapshot(
-                        unix_start,
-                        0,
-                        current_mode.get().into(),
-                    );
-                }
-                // Kick the snapshot heartbeat — fires every 60 s
-                // of session-elapsed (since GTK's
-                // `start_snapshot_tick` is also called from
-                // session start). Cancelled on the
-                // Active-out edges in stop_tap + tick.
-                start_snapshot_heartbeat(
-                    snapshot_timer,
-                    state.clone(),
-                    current_mode.clone(),
-                    session_start_unix.clone(),
-                );
-            }
-            on_state_changed(
-                was_active,
-                is_active,
-                current_mode.get().into(),
-            );
-            // Guided audio follows the session: started above,
-            // before the session; mirror pause/resume on the
-            // Active→Active toggle (Stop/Finish release it via
-            // on_state_changed). Mode-gated; harmless otherwise.
-            if current_mode.get() == TimerMode::Guided {
-                if let Some(app) = android_app() {
-                    if was_active && is_active {
-                        guided_follows_pause(app, &s);
-                    }
-                }
-            }
-            if was_active && is_active {
-                if let Some(app) = android_app() {
-                    wake_follows_pause(app, &s, current_mode.get().into());
-                }
-            }
-            refresh(&ui, &s, now);
+            let started = app::Started {
+                unix_start: meditate_core::time::unix_now(),
+                guided_file: pick.and_then(|g| g.uuid.clone()).map(meditate_core::db::GuidedFileUuid::new),
+                guided_name: pick.map(|g| g.name.clone()),
+                local_file: pick.and_then(|g| g.local_id),
+            };
+            drop(sel);
+            apply(&ui, &state, |s| s.start_session(settings, started, now));
         });
     }
 
@@ -4437,28 +4242,13 @@ fn build_ui() -> MainWindow {
     // core transition differs. Core's end carries the length to save:
     // the elapsed time for Stop, the planned length for Finish, the
     // full elapsed incl. overtime for Add.
-    let end_tap = |end: fn(AppState, Duration) -> app::Transition| {
+    let end_tap = |end: fn(&mut AppState, Duration) -> Vec<meditate_core::session::Effect>| {
         let weak = ui.as_weak();
         let state = state.clone();
-        let current_mode = current_mode.clone();
-        let session_start_unix = session_start_unix.clone();
-        let pending_done = pending_done.clone();
         move || {
-            let Some(ui) = weak.upgrade() else { return; };
-            let now = now_since_epoch();
-            let mut s = state.borrow_mut();
-            let was_active = s.is_active();
-            let transition = end(std::mem::replace(&mut *s, AppState::idle()), now);
-            dispatch_effects(&transition.effects);
-            let secs = meditate_core::session::Effect::ended_secs(&transition.effects).unwrap_or(0) as i64;
-            *s = transition.state;
-            let is_active = s.is_active();
-            let mode = current_mode.get().into();
-            if was_active && !is_active {
-                end_session(&ui, secs, mode, &session_start_unix, &pending_done, snapshot_timer);
+            if let Some(ui) = weak.upgrade() {
+                apply(&ui, &state, |s| end(s, now_since_epoch()));
             }
-            on_state_changed(was_active, is_active, mode);
-            refresh(&ui, &s, now);
         }
     };
     ui.on_stop_tap(end_tap(AppState::stop));
@@ -4513,10 +4303,6 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let state = state.clone();
         let current_mode = current_mode.clone();
-        let session_start_unix = session_start_unix.clone();
-        let pending_done = pending_done.clone();
-        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
-        let auto_finished = auto_finished.clone();
         let timer_session_secs = timer_session_secs.clone();
         let guided_sel = guided_sel.clone();
         let guided_import_finalize = guided_import_finalize.clone();
@@ -4654,8 +4440,8 @@ fn build_ui() -> MainWindow {
                         guided_follow_due.set(true);
                     }
                 }
-                // Follow a renamed or deleted guided file only on Setup
-                // (Save reads the selection on Done), so after a session.
+                // Follow a renamed or deleted guided file once back on
+                // Setup, not under a running or ended session.
                 if guided_follow_due.get() && state.borrow().is_idle() {
                     guided_follow_due.set(false);
                     follow_guided_sel(&ui, &guided_sel);
@@ -4818,8 +4604,8 @@ fn build_ui() -> MainWindow {
                         // A Manage-Files preview that played to its
                         // natural end shares the MeditateGuided
                         // slot + the same eos drop-file. Revert the
-                        // row's Stop→Play icon; enter_overtime is a
-                        // passthrough here anyway (idle, no session).
+                        // row's Stop→Play icon; enter_overtime does
+                        // nothing then (no live session).
                         if !ui
                             .get_guided_manage_preview_uuid()
                             .is_empty()
@@ -4828,26 +4614,7 @@ fn build_ui() -> MainWindow {
                                 "".into(),
                             );
                         }
-                        let prev = std::mem::replace(
-                            &mut *state.borrow_mut(),
-                            AppState::idle(),
-                        );
-                        let was_active = prev.is_active();
-                        let t = prev.enter_overtime(now_since_epoch());
-                        dispatch_effects(&t.effects);
-                        notify_if_complete(&t.effects);
-                        let ended = was_active && t.state.is_finished();
-                        *state.borrow_mut() = t.state;
-                        if ended {
-                            // Auto-Finish at the file's end.
-                            if let Some(ui) = weak.upgrade() {
-                                let secs = meditate_core::session::Effect::ended_secs(&t.effects).unwrap_or(0) as i64;
-                                end_session(&ui, secs, current_mode.get().into(), &session_start_unix, &pending_done, snapshot_timer_ref);
-                                on_auto_finish(&ui, &t.effects, &auto_finished);
-                                on_state_changed(true, false, current_mode.get().into());
-                                refresh(&ui, &state.borrow(), now_since_epoch());
-                            }
-                        }
+                        apply(&ui, &state, |s| s.enter_overtime(now_since_epoch()));
                     }
                     // Guided track lost audio focus (incoming call
                     // / another media app): route through the same
@@ -4859,23 +4626,7 @@ fn build_ui() -> MainWindow {
                     if guided::take_focus_loss(app)
                         && state.borrow().is_running()
                     {
-                        let prev = std::mem::replace(
-                            &mut *state.borrow_mut(),
-                            AppState::idle(),
-                        );
-                        // Shape is unused on the Active branch of
-                        // toggle; Timer default keeps it cheap.
-                        let t = prev.toggle(
-                            meditate_core::session::SessionShape::TimerStopwatch,
-                            now_since_epoch(),
-                        );
-                        dispatch_effects(&t.effects);
-                        *state.borrow_mut() = t.state;
-                        guided_follows_pause(app, &state.borrow());
-                        wake_follows_pause(app, &state.borrow(), meditate_core::SessionMode::Guided);
-                        if let Some(ui) = weak.upgrade() {
-                            refresh(&ui, &state.borrow(), now_since_epoch());
-                        }
+                        apply(&ui, &state, |s| s.pause_or_resume(now_since_epoch()));
                     }
                     // A button in the media control, or the headphones'
                     // play/pause, goes through the running page's own buttons.
@@ -4897,33 +4648,9 @@ fn build_ui() -> MainWindow {
                 }
             }
             let now = now_since_epoch();
-            let mut s = state.borrow_mut();
-            // Capture before/after active-state so an auto-finish
-            // (Active → Finished on Overtime cross) tears down the
-            // foreground service AND stashes the session for the
-            // Done screen. tick on an inactive state is a no-op,
-            // so the equality check is the cheap path.
-            let was_active = s.is_active();
-            let transition = std::mem::replace(&mut *s, AppState::idle()).tick(now);
-            // An end (Box Breath, Auto-Finish) carries the length to save.
-            let elapsed_secs = meditate_core::session::Effect::ended_secs(&transition.effects).unwrap_or(0) as i64;
-            dispatch_effects(&transition.effects);
-            notify_if_complete(&transition.effects);
-            *s = transition.state;
-            let is_active = s.is_active();
-            if was_active && !is_active {
-                if let Some(ui) = weak.upgrade() {
-                    end_session(
-                        &ui,
-                        elapsed_secs,
-                        current_mode.get().into(),
-                        &session_start_unix,
-                        &pending_done,
-                        snapshot_timer_ref,
-                    );
-                    on_auto_finish(&ui, &transition.effects, &auto_finished);
-                }
-            }
+            let Some(ui) = weak.upgrade() else { return; };
+            apply(&ui, &state, |s| s.tick(now));
+            let s = state.borrow();
             // While a Box-Breath session is running, push the
             // per-frame visualisation properties (phase label,
             // remaining seconds, dot perimeter coordinates,
@@ -4931,7 +4658,7 @@ fn build_ui() -> MainWindow {
             // None for non-BB or non-Running shapes, so this is
             // a single guarded path that handles all the
             // "not BB" cases correctly.
-            if let AppState::Active(session) = &*s {
+            if let Some(session) = s.session() {
                 if let Some(info) = session.box_breath_phase_info(now) {
                     if let Some(ui) = weak.upgrade() {
                         let elapsed = session.elapsed(now);
@@ -4987,15 +4714,6 @@ fn build_ui() -> MainWindow {
                     ui.set_bb_running_active(false);
                 }
             }
-            on_state_changed(
-                was_active,
-                is_active,
-                current_mode.get().into(),
-            );
-            if let Some(ui) = weak.upgrade() {
-                refresh(&ui, &s, now);
-            }
-            let _ = current_mode.get();
         });
     }
 
@@ -5009,57 +4727,32 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
-        let current_mode = current_mode.clone();
-        let pending_done = pending_done.clone();
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
-        let guided_sel = guided_sel.clone();
-        let auto_finished = auto_finished.clone();
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             // Read once: no path leaves it set for the next session.
-            let auto = auto_finished.take();
+            let auto = AUTO_FINISHED.take();
             // Auto-Finish's end bell plays on.
             if !auto {
                 stop_active_signals();
             }
-            if let Some((unix_start, elapsed_secs)) = pending_done.take() {
-                // Core saves a whitespace-only note as no note.
-                let note = Some(ui.get_note_text().to_string());
-                let mode: meditate_core::SessionMode = current_mode.get().into();
-                // The Setup label; Setup already keeps it for next time.
-                let picked = if read_label_active_for_mode(mode) {
-                    resolved_label_for_mode(mode).map(|(_, id)| id)
-                } else {
-                    None
-                };
-                // Per-file attribution: only a GUIDED session with a
-                // library selection (starred tap / import) carries a
-                // uuid — Timer / Box Breath must stay None even when
-                // a guided file is still selected in the other tab
-                // (bug-audit #3: the gate was missing and Timer rows
-                // got guided_file_uuid attribution).
-                let guided_uuid = if mode
-                    == meditate_core::SessionMode::Guided
-                {
-                    guided_sel
-                        .borrow()
-                        .as_ref()
-                        .and_then(|s| s.uuid.clone())
-                } else {
-                    None
-                };
-                match finalize_session(
-                    unix_start, elapsed_secs, note, mode, picked,
-                    guided_uuid,
-                ) {
+            // Core saves a whitespace-only note as no note.
+            let note = Some(ui.get_note_text().to_string());
+            // The Setup label (Setup already keeps it for next time),
+            // and Start's file, whatever is selected now.
+            let ended = state.borrow().ended().map(|(started, session)| {
+                (started.record(session, note, session_label_id(session.mode())), started.local_file)
+            });
+            if let Some((row, local_file)) = ended {
+                match finalize_session(row, local_file) {
                     // Saved: the insert cleared the held snapshot in
                     // the same write.
                     Ok(saved) => {
                         if auto && APP_IN_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed) {
                             if let Some(uuid) = saved {
                                 // Undo takes back the play it counted too (#324).
-                                show_notice(&ui, ui.global::<Tr>().invoke_session_saved(), Some(app::PendingUndo::Recovery(uuid, session_local_file())), 8);
+                                show_notice(&ui, ui.global::<Tr>().invoke_session_saved(), Some(app::PendingUndo::Recovery(uuid, local_file)), 8);
                             }
                         }
                     }
@@ -5067,7 +4760,6 @@ fn build_ui() -> MainWindow {
                         // Keep everything: the running page stays with
                         // Save and Discard, and the held snapshot still
                         // recovers the session on the next start.
-                        pending_done.set(Some((unix_start, elapsed_secs)));
                         show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);
                         return;
                     }
@@ -5078,9 +4770,7 @@ fn build_ui() -> MainWindow {
                 refresh_stats(&ui);
             }
             ui.set_note_text("".into());
-            let mut s = state.borrow_mut();
-            *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
-            refresh(&ui, &s, now_since_epoch());
+            apply(&ui, &state, AppState::dismiss);
         });
     }
 
@@ -7886,25 +7576,16 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
-        let pending_done = pending_done.clone();
         let discard = Rc::new(move || {
+            let Some(ui) = weak.upgrade() else { return; };
             let live = state.borrow().is_active();
             if live {
-                if let Some(ui) = weak.upgrade() {
-                    ui.invoke_stop_tap();
-                }
+                ui.invoke_stop_tap();
             }
-            {
-                stop_active_signals();
-                pending_done.set(None);
-                clear_session_in_progress_snapshot();
-            }
-            let mut s = state.borrow_mut();
-            *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
-            if let Some(ui) = weak.upgrade() {
-                ui.set_note_text("".into());
-                refresh(&ui, &s, now_since_epoch());
-            }
+            stop_active_signals();
+            clear_session_in_progress_snapshot();
+            ui.set_note_text("".into());
+            apply(&ui, &state, AppState::dismiss);
         });
         let weak = ui.as_weak();
         let discard_now = discard.clone();

@@ -88,6 +88,12 @@ pub enum SessionMode {
 }
 
 impl SessionMode {
+    /// The guided file a session of this mode records: only Guided
+    /// carries one, whatever the Guided tab has selected.
+    pub fn guided_file<T>(self, file: Option<T>) -> Option<T> {
+        file.filter(|_| self == SessionMode::Guided)
+    }
+
     /// On-disk and CSV string representation. Exposed so callers
     /// (CSV import/export, debug logging) don't need to re-implement
     /// this match against the enum.
@@ -775,6 +781,13 @@ mod tests {
     use super::*;
     use crate::db::test_helpers::*;
     use crate::test_macros::assert_f64_eq;
+
+    #[test]
+    fn only_guided_carries_a_guided_file() {
+        assert_eq!(SessionMode::Guided.guided_file(Some("a")), Some("a"));
+        assert_eq!(SessionMode::Timer.guided_file(Some("a")), None);
+        assert_eq!(SessionMode::BoxBreath.guided_file(Some("a")), None);
+    }
 
     // ── Guided file name ────────────────────────────────────────────────────
 
