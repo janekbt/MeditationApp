@@ -266,7 +266,7 @@ impl MeditateWindow {
                 #[strong] ring,
                 move |area, cr, w, h| {
                     if let Some(ring) = ring.borrow().as_ref() {
-                        draw_bell_ring(area, cr, w, h, ring);
+                        draw_bell_ring(cr, w, h, ring, accent_rgb(area));
                     }
                 }
             ));
@@ -1281,16 +1281,19 @@ fn show_counters(
 /// The bell ring round the running time: a faint track, the filled
 /// part in the accent colour from the top clockwise, the start point,
 /// the preparation's small ring round it, and a bead per bell.
-fn draw_bell_ring(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, w: i32, h: i32, ring: &meditate_core::session::Ring) {
+fn draw_bell_ring(cr: &gtk::cairo::Context, w: i32, h: i32, ring: &meditate_core::session::Ring, (ar, ag, ab): (f64, f64, f64)) {
     use std::f64::consts::PI;
-    let (ar, ag, ab) = accent_rgb(area);
     let (cx, cy) = (f64::from(w) / 2.0, f64::from(h) / 2.0);
     // Room outside the track for the preparation's ring.
     let r = f64::from(w.min(h)) / 2.0 - 22.0;
     let angle = |at: f64| -PI / 2.0 + 2.0 * PI * at;
+    // The faint colour: the accent at 25 % on the black page (CSS
+    // `.running-view-dark`), but opaque,
+    // so a bead's outline over the track can't make it brighter.
+    let faint = || cr.set_source_rgb(ar * 0.25, ag * 0.25, ab * 0.25);
     cr.set_line_width(4.0);
     cr.set_line_cap(gtk::cairo::LineCap::Round);
-    cr.set_source_rgba(ar, ag, ab, 0.25);
+    faint();
     cr.arc(cx, cy, r, 0.0, 2.0 * PI);
     let _ = cr.stroke();
     if ring.filled > 0.0 {
@@ -1310,7 +1313,7 @@ fn draw_bell_ring(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, w: i32, h: 
             cr.set_source_rgb(0.0, 0.0, 0.0);
             let _ = cr.fill_preserve();
             // The track's colour until it rings.
-            cr.set_source_rgba(ar, ag, ab, 0.25);
+            faint();
             cr.set_line_width(2.0);
             let _ = cr.stroke();
         }
@@ -1325,5 +1328,38 @@ fn draw_bell_ring(area: &gtk::DrawingArea, cr: &gtk::cairo::Context, w: i32, h: 
         cr.new_sub_path();
         cr.arc(cx, cy - r, 18.0, angle(0.0), angle(prep));
         let _ = cr.stroke();
+    }
+}
+
+#[cfg(test)]
+mod ring_tests {
+    use super::draw_bell_ring;
+    use meditate_core::session::{Bead, Ring};
+
+    /// Beside a hollow bead its outline crossed the faint track, and
+    /// the two see-through layers made a brighter spot.
+    #[test]
+    fn the_track_beside_a_hollow_bead_is_not_brighter() {
+        let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 200, 200).unwrap();
+        {
+            let cr = gtk::cairo::Context::new(&surface).unwrap();
+            cr.set_source_rgb(0.0, 0.0, 0.0);
+            cr.paint().unwrap();
+            let ring = Ring { filled: 0.0, prep: None, start_filled: false, beads: vec![Bead { at: 0.25, large: false, rung: false }] };
+            draw_bell_ring(&cr, 200, 200, &ring, (0.2, 0.4, 0.8));
+        }
+        let stride = surface.stride() as usize;
+        let data = surface.data().unwrap();
+        let px = |x: usize, y: usize| data[y * stride + x * 4..y * stride + x * 4 + 4].to_vec();
+        // The track's radius is 100 - 22 = 78. A bead's outline reaches
+        // past its black inside: the small bead at (178, 100) 5 to 6 px
+        // above it, the start point at (100, 22) 8 to 10 px beside it.
+        // (22, 100) is track far from both.
+        let track = px(22, 100);
+        assert_ne!(track, px(100, 100), "the probe sits on the track, not the page");
+        // Cairo may round a partly covered pixel one step either way.
+        let near = |a: Vec<u8>| a.iter().zip(&track).all(|(x, y)| x.abs_diff(*y) <= 1);
+        assert!(near(px(178, 94)), "beside a bead: {:?} against {track:?}", px(178, 94));
+        assert!(near(px(109, 22)), "beside the start point: {:?} against {track:?}", px(109, 22));
     }
 }

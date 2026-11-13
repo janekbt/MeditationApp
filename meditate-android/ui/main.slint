@@ -588,8 +588,12 @@ component BellRingView inherits Rectangle {
     in property <bool> start-filled;
     in property <[RingBead]> beads;
     property <color> accent: MaterialPalette.schemes.dark.primary;
-    // The faint track; a bead keeps its outline until it rings.
-    property <color> track: root.accent.with-alpha(0.25);
+    // The running page behind the ring.
+    in property <brush> page;
+    // The faint track; a bead keeps its outline until it rings. Opaque
+    // (25 % accent on the page), so an outline over the track or a
+    // bead's inside can't change its shade.
+    property <brush> track: root.accent.mix(root.page, 0.25);
     // Room outside the track for the preparation's ring.
     property <length> inset: 22px;
     property <length> r: self.width / 2 - self.inset;
@@ -632,12 +636,16 @@ component BellRingView inherits Rectangle {
     }
     for bead in root.beads : Rectangle {
         property <length> size: bead.large ? 14px : 10px;
-        x: root.width / 2 + root.r * sin(bead.at * 360deg) - self.size / 2;
-        y: root.height / 2 - root.r * cos(bead.at * 360deg) - self.size / 2;
+        // Glides like the arc, so a bead riding the fill's front keeps
+        // pace with it instead of jumping on every tick.
+        property <float> at: bead.at;
+        animate at { duration: 200ms; easing: linear; }
+        x: root.width / 2 + root.r * sin(self.at * 360deg) - self.size / 2;
+        y: root.height / 2 - root.r * cos(self.at * 360deg) - self.size / 2;
         width: self.size;
         height: self.size;
         border-radius: self.size / 2;
-        background: bead.rung ? root.accent : MaterialPalette.schemes.dark.background;
+        background: bead.rung ? root.accent : root.page;
         border-width: bead.rung ? 0px : 2px;
         border-color: root.track;
     }
@@ -647,7 +655,7 @@ component BellRingView inherits Rectangle {
         width: 18px;
         height: 18px;
         border-radius: 9px;
-        background: root.start-filled ? root.accent : MaterialPalette.schemes.dark.background;
+        background: root.start-filled ? root.accent : root.page;
         border-width: root.start-filled ? 0px : 2px;
         border-color: root.track;
     }
@@ -6268,6 +6276,7 @@ export component MainWindow inherits Window {
                         BellRingView {
                             width: min(root.height < 560px ? 220px : 320px, running-stack.width - 48px);
                             height: self.width;
+                            page: running-canvas.background;
                             filled: root.ring-filled;
                             prep: root.ring-prep;
                             start-filled: root.ring-start-filled;
