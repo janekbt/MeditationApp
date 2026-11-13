@@ -91,6 +91,35 @@ pub struct BellRing {
     pub counters: Vec<BellCounter>,
 }
 
+/// `secs` of `of` as a part of a ring in `steps`: about a pixel each, and a
+/// long ring stays the same between two, so it isn't built again each frame.
+/// The ring has 2000; preparation's small ring 200, so a short preparation
+/// doesn't rebuild every bead each frame either.
+fn step(secs: f64, of: f64, steps: f64) -> f64 {
+    // Down, so a ring stopped a second early never looks complete; times
+    // the steps first, so a whole second right on a step lands on it.
+    ((secs * steps / of).floor() / steps).min(1.0)
+}
+
+/// What the ring and its counters change with while a session runs;
+/// the same with 720 beads as with none, so it can be taken each frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingKey {
+    phase: SessionPhase,
+    paused: bool,
+    ring: bool,
+    filled: f64,
+    prep: Option<f64>,
+    bells: u32,
+}
+
+impl RingKey {
+    /// The ring moves by itself: there is one, running or preparing, not paused.
+    pub fn moving(&self) -> bool {
+        self.ring && !self.paused && matches!(self.phase, SessionPhase::Prep | SessionPhase::Running)
+    }
+}
+
 /// Positions are parts of the planned length, 0 at the top, 1 back
 /// at the top, clockwise.
 #[derive(Debug, Clone, PartialEq)]
@@ -622,16 +651,12 @@ impl Session {
     }
 
     /// The ring and the bell counters for the running page right now.
-    pub fn bell_ring(&self, now: Duration) -> BellRing {
-        let end = match self.settings.shape {
-            SessionShape::BoxBreathCountdown { .. } => None,
-            ref shape => shape.target_secs().map(u64::from),
-        };
+    pub(crate) fn bell_ring(&self, now: Duration) -> BellRing {
+        let end = self.ring_end();
         let preparing = self.phase == SessionPhase::Prep;
-        // Ended: the length it saves, as the time shows.
-        let elapsed = self.meditated(now).as_secs_f64();
         let past_end = self.reached_end();
         let part = |secs: f64| end.map_or(0.0, |end| (secs / end as f64).min(1.0));
+        let (filled, prep) = self.ring_steps(now);
         let mut beads = Vec::new();
         // One count for every bell heard; none without bells between start and end.
         let (mut rung, mut total, mut counted) = (0u32, 0u32, false);
@@ -644,10 +669,8 @@ impl Session {
                     total += 1;
                     counted = true;
                 }
-                BellSchedule::Interval { base_secs, step_secs, gaps, rang, .. } => {
-                    // A bell with no time (old data) rings each second;
-                    // a bead a second would say nothing.
-                    if *base_secs == 0 && *step_secs == 0 {
+                BellSchedule::Interval { gaps, rang, .. } => {
+                    if bell.schedule.untimed() {
                         continue;
                     }
                     // A bead per planned ring that can come before the end,
@@ -657,12 +680,14 @@ impl Session {
                         let mut heard = rang.iter().peekable();
                         for (index, earliest) in bell.schedule.rings_before(end) {
                             let at = heard.next_if(|&&(i, _)| i == index).map(|&(_, at)| at as f64);
-                            let secs = match at {
-                                Some(at) => at,
-                                None if index + 1 == *gaps => (earliest as f64).max(elapsed),
-                                None => earliest as f64,
+                            let at_part = match at {
+                                Some(at) => part(at),
+                                // Rides the fill once the fill reached its time: never early,
+                                // never backwards, and only when the check changes.
+                                None if index + 1 == *gaps && filled >= part(earliest as f64) => filled,
+                                None => part(earliest as f64),
                             };
-                            beads.push(Bead { at: part(secs), large: false, rung: at.is_some() });
+                            beads.push(Bead { at: at_part, large: false, rung: at.is_some() });
                             mine += 1;
                         }
                         if mine == 0 {
@@ -690,15 +715,62 @@ impl Session {
         let total = (end.is_some() && !past_end).then_some(total);
         let counters = if counted { vec![BellCounter { rung, total }] } else { Vec::new() };
         let ring = end.map(|_| Ring {
-            filled: if past_end { 1.0 } else { part(elapsed) },
-            prep: preparing.then(|| {
-                let prep = f64::from(self.settings.prep_secs.unwrap_or(1).max(1));
-                (self.phase_clock.elapsed(now).as_secs_f64() / prep).min(1.0)
-            }),
+            filled,
+            prep,
             start_filled: !preparing,
             beads,
         });
         BellRing { ring, counters }
+    }
+
+    /// A cheap check of what the ring and its counters change with:
+    /// build them again only when it changed.
+    fn ring_key(&self, now: Duration) -> RingKey {
+        let (filled, prep) = self.ring_steps(now);
+        // Grows with every bell heard or passed (`gaps` counts both).
+        let bells = self.bells.iter().map(|bell| match &bell.schedule {
+            BellSchedule::Fixed { fired, .. } => u32::from(fired.is_some()),
+            BellSchedule::Interval { .. } if bell.schedule.untimed() => 0,
+            BellSchedule::Interval { gaps, .. } => *gaps,
+        }).sum();
+        RingKey { phase: self.phase, paused: self.is_paused(), ring: self.ring_end().is_some(), filled, prep, bells }
+    }
+
+    /// The ring and counters when the quick check changed since `seen`
+    /// last saw it, from one look at the clock.
+    pub fn bell_ring_if_changed(&self, now: Duration, seen: &std::cell::Cell<Option<RingKey>>) -> Option<BellRing> {
+        let key = Some(self.ring_key(now));
+        (seen.replace(key) != key).then(|| self.bell_ring(now))
+    }
+
+    /// How long until the session's clock reaches its next whole second:
+    /// when a once-a-second tick is due, after preparation and Resume too.
+    pub fn until_next_second(&self, now: Duration) -> Duration {
+        let elapsed = self.phase_clock.elapsed(now);
+        Duration::from_secs(elapsed.as_secs() + 1) - elapsed
+    }
+
+    /// The planned length the ring is drawn against; none without a ring.
+    fn ring_end(&self) -> Option<u64> {
+        match self.settings.shape {
+            SessionShape::BoxBreathCountdown { .. } => None,
+            ref shape => shape.target_secs().map(u64::from),
+        }
+    }
+
+    /// The ring's fill and preparation ring, in steps.
+    fn ring_steps(&self, now: Duration) -> (f64, Option<f64>) {
+        let filled = match self.ring_end() {
+            _ if self.reached_end() => 1.0,
+            // Ended: the length it saves, as the time shows.
+            Some(end) => step(self.meditated(now).as_secs_f64(), end as f64, 2000.0),
+            None => 0.0,
+        };
+        let prep = (self.phase == SessionPhase::Prep).then(|| {
+            let prep = f64::from(self.settings.prep_secs.unwrap_or(1).max(1));
+            step(self.phase_clock.elapsed(now).as_secs_f64(), prep, 200.0)
+        });
+        (filled, prep)
     }
 
     /// The media control's line and bar; `None` once stopped.
@@ -2678,14 +2750,125 @@ mod tests {
         let hollow: Vec<Bead> = earliest.iter().map(|&t| small(t, 1800.0, false)).collect();
         assert_eq!(ring_of(&s, 180).beads, hollow);
         s.tick(at(320));
-        assert_eq!(ring_of(&s, 320).beads[0], small(320.0, 1800.0, false));
+        // 320 s is 355.56 steps of 2000: on the fill's step.
+        assert_eq!(ring_of(&s, 320).beads[0], Bead { at: 355.0 / 2000.0, large: false, rung: false });
         s.tick(at(340));
         assert_eq!(ring_of(&s, 400).beads[..2], [small(340.0, 1800.0, true), small(540.0, 1800.0, false)]);
         // Early: rings first at 4:30.
         let mut s = timer_with(1800, vec![every(300, 60, 0, Some(1800), 270)]);
-        assert_eq!(ring_of(&s, 255).beads[0], small(255.0, 1800.0, false));
+        // 255 s is 283.33 steps.
+        assert_eq!(ring_of(&s, 255).beads[0], Bead { at: 283.0 / 2000.0, large: false, rung: false });
         s.tick(at(270));
         assert_eq!(ring_of(&s, 280).beads[..2], [small(270.0, 1800.0, true), small(540.0, 1800.0, false)]);
+    }
+
+    #[test]
+    fn a_long_ring_holds_still_between_steps() {
+        let mut s = timer_with(3600, vec![every(5, 0, 0, Some(3600), 5)]);
+        for t in (5..=900).step_by(5) {
+            s.tick(at(t));
+        }
+        let ms = |ms| s.bell_ring(Duration::from_millis(ms)).ring.expect("a ring");
+        assert_eq!(ms(900_000).filled, 500.0 / 2000.0);
+        assert_eq!(ms(900_000), ms(901_000), "within one step: 500.56 steps");
+        assert_eq!(ms(902_000).filled, 501.0 / 2000.0);
+        // A random bell's first bead rides the stepped fill: 9:10 of an hour is 305.56 steps.
+        let s = timer_with(3600, vec![every(600, 60, 0, Some(3600), 620)]);
+        let ring = ring_of(&s, 550);
+        assert_eq!(ring.filled, 305.0 / 2000.0);
+        assert_eq!(ring.beads[0], Bead { at: 305.0 / 2000.0, large: false, rung: false });
+        // It waits at its time until the fill reaches it, then rides on the
+        // fill's step: 1001 s of 50 minutes is 667.33 steps.
+        let s = timer_with(3000, vec![every(1061, 60, 0, Some(3000), 1050)]);
+        let ring = s.bell_ring(Duration::from_millis(1_000_500)).ring.unwrap();
+        assert_eq!(ring.filled, 667.0 / 2000.0);
+        assert_eq!(ring.beads[0].at, 1001.0 / 3000.0, "not before its time");
+        let ring = s.bell_ring(Duration::from_millis(1_001_100)).ring.unwrap();
+        assert_eq!(ring.beads[0].at, 1001.0 / 3000.0, "the fill (667) has not reached it");
+        let ring = s.bell_ring(at(1003)).ring.unwrap();
+        assert_eq!((ring.filled, ring.beads[0].at), (668.0 / 2000.0, 668.0 / 2000.0), "on the fill");
+        // Stopped a second before its end, two hours never look complete: 1999.72 steps.
+        let mut s = timer_with(7200, Vec::new());
+        let _ = s.stop(at(7199));
+        assert_eq!(ring_of(&s, 7200).filled, 1999.0 / 2000.0);
+        // A whole second right on a step lands on it: 1809 s of an hour is 1005 steps.
+        let mut s = timer_with(3600, Vec::new());
+        let _ = s.stop(at(1809));
+        assert_eq!(ring_of(&s, 3600).filled, 1005.0 / 2000.0);
+    }
+
+    #[test]
+    fn the_next_tick_lands_on_the_sessions_whole_seconds() {
+        let ms = Duration::from_millis;
+        let settings = SessionSettings {
+            prep_secs: Some(10),
+            bells: vec![every(5, 0, 0, Some(3600), 5)],
+            ..timer_countdown_settings(3600)
+        };
+        let (mut s, _) = Session::start(settings, Duration::ZERO);
+        assert_eq!(s.until_next_second(ms(2250)), ms(750), "preparing");
+        // The tick that ends the preparation comes 0.4 s late; meditation counts from 10.0 s.
+        let _ = s.tick(ms(10_400));
+        assert_eq!(s.until_next_second(ms(10_400)), ms(600));
+        assert_eq!(s.until_next_second(ms(11_000)), ms(1000), "on a whole second: the next one, never zero");
+        let rings = |e: &[Effect]| e.iter().any(|e| matches!(e, Effect::Fire { channel: FireChannel::Interval, .. }));
+        assert!(rings(&s.tick(ms(15_000))), "the 5 s bell rings on that tick");
+        let _ = s.pause(ms(16_300));
+        s.resume(ms(20_000));
+        assert_eq!(s.until_next_second(ms(20_000)), ms(700), "after a pause at 6.3 s");
+    }
+
+    #[test]
+    fn the_ring_check_changes_with_the_ring() {
+        let ms = Duration::from_millis;
+        let settings = SessionSettings {
+            prep_secs: Some(10),
+            bells: vec![every(5, 0, 0, Some(3600), 5)],
+            ..timer_countdown_settings(3600)
+        };
+        let (mut s, _) = Session::start(settings, Duration::ZERO);
+        // Preparing: its small ring has 200 steps, 50 ms of a 10 s preparation.
+        assert!(s.ring_key(ms(2000)).moving());
+        assert_eq!(s.ring_key(ms(2000)), s.ring_key(ms(2040)));
+        assert_ne!(s.ring_key(ms(2000)), s.ring_key(ms(2060)));
+        // Each event changes it at the same instant.
+        let changes = |s: &mut Session, t: Duration, event: &dyn Fn(&mut Session, Duration)| {
+            let before = s.ring_key(t);
+            event(s, t);
+            assert_ne!(before, s.ring_key(t), "at {t:?}");
+        };
+        changes(&mut s, ms(10_000), &|s, t| drop(s.tick(t)));
+        assert!(s.ring_key(ms(10_000)).moving(), "running");
+        // A step of the hour is 1.8 s: 2.0 and 2.5 s in are on step 1, 4.0 s on step 2.
+        assert_eq!(s.ring_key(ms(12_000)), s.ring_key(ms(12_500)));
+        assert_ne!(s.ring_key(ms(12_000)), s.ring_key(ms(14_000)));
+        changes(&mut s, ms(15_000), &|s, t| drop(s.tick(t)));
+        changes(&mut s, ms(16_000), &|s, t| drop(s.pause(t)));
+        assert!(!s.ring_key(ms(16_000)).moving(), "paused");
+        assert_eq!(s.ring_key(ms(16_000)), s.ring_key(ms(19_000)));
+        s.resume(ms(20_000));
+        // The end, 4 s later for the pause.
+        changes(&mut s, ms(3_614_000), &|s, t| drop(s.tick(t)));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        assert!(!s.ring_key(ms(3_614_000)).moving(), "overtime");
+        // A bell with no time (old data) rings each second but has no bead:
+        // its rings change nothing on the ring.
+        let mut s = timer_with(3600, vec![every(0, 0, 0, Some(3600), 1)]);
+        let _ = s.tick(ms(10_000));
+        let before = s.ring_key(ms(11_000));
+        let _ = s.tick(ms(11_000));
+        assert_eq!(before, s.ring_key(ms(11_000)));
+        // A one-off bell, when nothing else changes.
+        let mut s = timer_with(3600, vec![fixed_bell(30, "a")]);
+        changes(&mut s, ms(30_000), &|s, t| drop(s.tick(t)));
+        // Without a ring nothing moves, though the stopwatch runs.
+        let stopwatch = SessionSettings { shape: SessionShape::TimerStopwatch, ..timer_countdown_settings(600) };
+        let (s, _) = Session::start(stopwatch, Duration::ZERO);
+        assert!(!s.ring_key(ms(1000)).moving(), "a stopwatch");
+        // Stopped early.
+        let mut s = timer_with(3600, Vec::new());
+        changes(&mut s, ms(100_000), &|s, t| drop(s.stop(t)));
+        assert!(!s.ring_key(ms(100_000)).moving(), "stopped");
     }
 
     /// #280: a bell the mode's signal setting mutes never rang, so it
@@ -2986,6 +3169,7 @@ mod tests {
         assert_eq!(s.display_secs(at(500)), 420);
         // The ring shows the same: 7 of 45 minutes, not a full circle.
         let ring = s.bell_ring(at(900)).ring.unwrap();
-        assert!((ring.filled - 420.0 / 2700.0).abs() < 1e-9, "{}", ring.filled);
+        // 311.1 steps of 2000.
+        assert_eq!(ring.filled, 311.0 / 2000.0);
     }
 }

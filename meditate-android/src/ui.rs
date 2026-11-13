@@ -527,21 +527,24 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     let target = configured_duration(ui);
     let stopwatch_on = ui.get_stopwatch_on();
     ui.set_remaining_text(state.hero_label(target, now, stopwatch_on).into());
-    let bells = state.bell_ring(now);
-    ui.set_ring_on(bells.ring.is_some());
-    if let Some(ring) = &bells.ring {
-        ui.set_ring_filled(ring.filled as f32);
-        ui.set_ring_prep(ring.prep.map_or(-1.0, |p| p as f32));
-        ui.set_ring_start_filled(ring.start_filled);
-        let beads: Vec<RingBead> = ring.beads.iter()
-            .map(|b| RingBead { at: b.at as f32, large: b.large, rung: b.rung })
+    // Built again only when core's quick check changed: a long ring with
+    // many bells would otherwise rebuild hundreds of beads each tick.
+    if let Some(bells) = state.bell_ring_if_changed(now) {
+        ui.set_ring_on(bells.ring.is_some());
+        if let Some(ring) = &bells.ring {
+            ui.set_ring_filled(ring.filled as f32);
+            ui.set_ring_prep(ring.prep.map_or(-1.0, |p| p as f32));
+            ui.set_ring_start_filled(ring.start_filled);
+            let beads: Vec<RingBead> = ring.beads.iter()
+                .map(|b| RingBead { at: b.at as f32, large: b.large, rung: b.rung })
+                .collect();
+            put_rows(ui.get_ring_beads(), beads, |m| ui.set_ring_beads(m));
+        }
+        let counts: Vec<BellCount> = bells.counters.iter()
+            .map(|c| BellCount { rung: c.rung as i32, total: c.total.map_or(-1, |t| t as i32) })
             .collect();
-        put_rows(ui.get_ring_beads(), beads, |m| ui.set_ring_beads(m));
+        put_rows(ui.get_bell_counts(), counts, |m| ui.set_bell_counts(m));
     }
-    let counts: Vec<BellCount> = bells.counters.iter()
-        .map(|c| BellCount { rung: c.rung as i32, total: c.total.map_or(-1, |t| t as i32) })
-        .collect();
-    put_rows(ui.get_bell_counts(), counts, |m| ui.set_bell_counts(m));
     // Duration-row value suffix: always shows the configured target
     // in HH:MM (mirrors the GTK Adw.ActionRow value label). On Setup
     // it matches the hero; while Running the row is hidden, so it's

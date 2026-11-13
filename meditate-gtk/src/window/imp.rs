@@ -203,52 +203,65 @@ impl MeditateWindow {
     }
 
     /// The running time inside the bell ring (Timer countdown, Guided),
-    /// with the session's bell counter under it. The ring follows every
-    /// frame, the counter every quarter second, so it moves with each bell.
+    /// with the session's bell counter under it. While the ring moves the
+    /// frame clock looks every frame, so the arc glides; the counter is
+    /// looked at every quarter second too, so it moves with each bell. Both
+    /// are built again only when core's quick check changed.
     fn bell_ring(&self, time_label: &gtk::Label) -> gtk::Box {
-        use std::{cell::RefCell, rc::Rc};
+        use std::{cell::{Cell, RefCell}, rc::Rc};
         let block = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(16).build();
         let counters = gtk::Box::builder().spacing(20).halign(gtk::Align::Center).visible(false).build();
-        let now = self.timer_view.bell_ring();
+        let seen = Cell::new(None);
+        let now = self.timer_view.bell_ring_if_changed(&seen).unwrap_or_default();
         if now.ring.is_none() && now.counters.is_empty() {
             block.append(time_label);
             return block;
         }
-        let ring = Rc::new(RefCell::new(now.ring.clone()));
+        let has_ring = now.ring.is_some();
+        let ring = Rc::new(RefCell::new(now.ring));
         let area = gtk::DrawingArea::builder().content_width(300).content_height(300).halign(gtk::Align::Center).build();
-        // While the ring moves it is redrawn every frame, so the arc glides;
-        // a still ring (paused, ended) lets the frame clock rest until the
-        // quarter-second refresh below sees it move again.
-        let ticking = Rc::new(std::cell::Cell::new(false));
-        let follow = clone!(
+        let shown = Rc::new(RefCell::new(None::<Vec<meditate_core::session::BellCounter>>));
+        // Builds what changed, draws a changed ring, and says whether it
+        // moves; `None` once the page is gone.
+        let sync = Rc::new(clone!(
             #[weak(rename_to = timer_view)] self.timer_view,
+            #[weak] area,
+            #[weak] counters,
             #[strong] ring,
+            #[strong] shown,
+            #[upgrade_or] None,
+            move || {
+                if let Some(now) = timer_view.bell_ring_if_changed(&seen) {
+                    *ring.borrow_mut() = now.ring;
+                    area.queue_draw();
+                    show_counters(&counters, &shown, now.counters);
+                }
+                Some(seen.get().is_some_and(|k| k.moving()))
+            }
+        ));
+        // A ring at rest (paused, ended) lets the frame clock rest until the
+        // quarter-second refresh below sees it move again.
+        let ticking = Rc::new(Cell::new(false));
+        let follow = clone!(
+            #[strong] sync,
             move |area: &gtk::DrawingArea| {
                 if ticking.replace(true) {
                     return;
                 }
                 area.add_tick_callback(clone!(
-                    #[weak] timer_view,
-                    #[strong] ring,
+                    #[strong] sync,
                     #[strong] ticking,
-                    #[upgrade_or] glib::ControlFlow::Break,
-                    move |area, _| {
-                        // ponytail: rebuilds the whole ring, beads included, each frame; fine
-                        // for a handful of bells, split out the fill if a 5 s bell over an
-                        // hour janks on the Librem 5.
-                        let now = timer_view.bell_ring().ring;
-                        if *ring.borrow() == now {
-                            ticking.set(false);
-                            return glib::ControlFlow::Break;
+                    move |_, _| {
+                        if sync() == Some(true) {
+                            return glib::ControlFlow::Continue;
                         }
-                        *ring.borrow_mut() = now;
-                        area.queue_draw();
-                        glib::ControlFlow::Continue
+                        ticking.set(false);
+                        glib::ControlFlow::Break
                     }
                 ));
             }
         );
-        if now.ring.is_some() {
+        if has_ring {
             area.set_draw_func(clone!(
                 #[strong] ring,
                 move |area, cr, w, h| {
@@ -275,41 +288,16 @@ impl MeditateWindow {
             block.append(time_label);
         }
         block.append(&counters);
-        let shown = RefCell::new(None::<Vec<meditate_core::session::BellCounter>>);
+        show_counters(&counters, &shown, now.counters);
         let refresh = clone!(
-            #[weak(rename_to = timer_view)] self.timer_view,
             // Held here: in the stopwatch it is on no page.
             #[strong] area,
-            #[weak] counters,
-            #[upgrade_or] glib::ControlFlow::Break,
             move || {
-                let now = timer_view.bell_ring();
-                // The frame clock stores and draws the new ring itself.
-                if *ring.borrow() != now.ring {
+                let Some(moving) = sync() else {
+                    return glib::ControlFlow::Break;
+                };
+                if moving {
                     follow(&area);
-                }
-                if shown.borrow().as_ref() != Some(&now.counters) {
-                    while let Some(child) = counters.first_child() {
-                        counters.remove(&child);
-                    }
-                    for c in &now.counters {
-                        let text = match c.total {
-                            Some(total) => gettext("{rung} of {total}")
-                                .replace("{rung}", &c.rung.to_string())
-                                .replace("{total}", &total.to_string()),
-                            None => c.rung.to_string(),
-                        };
-                        let counter = gtk::Box::builder().spacing(6).build();
-                        counter.append(&gtk::Label::builder()
-                            .label("●")
-                            .css_classes(["accent", "caption"])
-                            .accessible_role(gtk::AccessibleRole::Presentation)
-                            .build());
-                        counter.append(&gtk::Label::builder().label(text).css_classes(["numeric", "dim-label"]).build());
-                        counters.append(&counter);
-                    }
-                    counters.set_visible(!now.counters.is_empty());
-                    *shown.borrow_mut() = Some(now.counters);
                 }
                 glib::ControlFlow::Continue
             }
@@ -1210,21 +1198,25 @@ mod day_tests {
         assert!(reload.contains("data_changed(Refresh::ALL)"), "every page, the Timer's streak too");
     }
 
-    /// The ring jumped every quarter second; it follows the frame clock now.
+    /// The ring jumped every quarter second; it follows the frame clock now,
+    /// but builds and draws it only when core's quick check changed.
     #[test]
     fn the_ring_follows_every_frame() {
         let src = production();
         let ring = &src[src.find("fn bell_ring(&self").unwrap()..];
         let ring = &ring[..ring.find("\n    }\n").unwrap()];
-        let tick = &ring[ring.find("area.add_tick_callback(").expect("redraws with the frame clock")..];
-        assert!(tick.contains("timer_view.bell_ring().ring") && tick.contains("area.queue_draw()"));
-        // A still ring (paused, ended) lets the frame clock rest; the quarter-second
-        // refresh starts it again when the ring moves.
-        let still = &tick[tick.find("if *ring.borrow() == now {").expect("stops when still")..];
-        let still = &still[..still.find('}').unwrap()];
-        assert!(still.contains("ticking.set(false)") && still.contains("glib::ControlFlow::Break"), "lets `follow` start it again");
+        let sync = &ring[ring.find("let sync = Rc::new(clone!(").expect("one place builds what changed")..];
+        let sync = &sync[..sync.find("\n        ));").unwrap()];
+        let build = sync.find("timer_view.bell_ring_if_changed(&seen)").expect("only on a change");
+        assert!(build < sync.find("area.queue_draw()").unwrap() && sync.contains("show_counters("));
+        // A ring at rest (paused, ended) lets the frame clock rest, after its
+        // last change is drawn; the refresh starts it again.
+        let tick = &ring[ring.find("area.add_tick_callback(").expect("looks with the frame clock")..];
+        let rest = tick.find("if sync() == Some(true) {").expect("keeps ticking while it moves");
+        let stop = rest + tick[rest..].find("glib::ControlFlow::Break").unwrap();
+        assert!(tick[rest..stop].contains("ticking.set(false)"));
         let refresh = &ring[ring.find("let refresh = clone!(").unwrap()..];
-        assert!(refresh.contains("follow(&area)"), "the refresh starts the frame clock again");
+        assert!(refresh.contains("sync()") && refresh.contains("follow(&area)"), "starts the frame clock again");
     }
 
     /// Pausing used to move Discard and lift the whole column.
@@ -1252,6 +1244,38 @@ mod day_tests {
         assert!(!refresh.contains("discard"), "Discard is always there");
         assert!(refresh.contains("c.second.set_visible(buttons.second.is_some())"));
     }
+}
+
+/// The bell counters under the ring, rebuilt only when they changed.
+fn show_counters(
+    counters: &gtk::Box,
+    shown: &std::cell::RefCell<Option<Vec<meditate_core::session::BellCounter>>>,
+    now: Vec<meditate_core::session::BellCounter>,
+) {
+    if shown.borrow().as_ref() == Some(&now) {
+        return;
+    }
+    while let Some(child) = counters.first_child() {
+        counters.remove(&child);
+    }
+    for c in &now {
+        let text = match c.total {
+            Some(total) => gettext("{rung} of {total}")
+                .replace("{rung}", &c.rung.to_string())
+                .replace("{total}", &total.to_string()),
+            None => c.rung.to_string(),
+        };
+        let counter = gtk::Box::builder().spacing(6).build();
+        counter.append(&gtk::Label::builder()
+            .label("●")
+            .css_classes(["accent", "caption"])
+            .accessible_role(gtk::AccessibleRole::Presentation)
+            .build());
+        counter.append(&gtk::Label::builder().label(text).css_classes(["numeric", "dim-label"]).build());
+        counters.append(&counter);
+    }
+    counters.set_visible(!now.is_empty());
+    *shown.borrow_mut() = Some(now);
 }
 
 /// The bell ring round the running time: a faint track, the filled

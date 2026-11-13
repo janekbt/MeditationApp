@@ -39,7 +39,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 | [x] | P2. Refresh after writes and syncs | done: refresh-what-changed (#331, #378, #485, #397 refresh half), sync-after-real-writes (#484, #316, #283, #327, #507), one-refresh-per-change (#418, #353, #397, #505, #506, most of #468; its Interval Bells rest stays below) | Q, EE |
 | [x] | P3. Failure reporting and toasts | done: one-message-path-linux (#320, #357, #373), one-database-type-linux (#328) | EE, FF |
 | [x] | P4. Names and dialogs | done: one-name-dialog (#358, #374, #415, #486), one-dialog-frame (#465) | DD, FF |
-| [ ] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430), one-android-session (#429, #394, #395, #272, the rest of #430), bells-that-ring (#269, and OPEN-ISSUES #279, #280, #293); open: #274 | HH |
+| [x] | P5. Session engine | done: one-session-end (#270, #271, #273, #275, #313, the end half of #430), one-android-session (#429, #394, #395, #272, the rest of #430), bells-that-ring (#269, and OPEN-ISSUES #279, #280, #293), ring-steps (#274, measured on the Librem 5 first, and #289's `rings_before` half) | HH |
 | [ ] | P6. Bells, presets and breath | #281, #282, #284, #285, #286, #314, #354, #414, #466, #400, #455, #289, #500 | HH; bugs #365 (the "Missing" half), #308 (the Box Breath part) |
 | [ ] | P7. Guided files, Local Folder and imports | #300, #355, #356, #371, #372, #402, #440, #480, #481, #439, #375, #288 | JJ, II; bugs #305, #310 |
 | [ ] | P8. Sync core | #252, #253, #254, #255, #256, #257, #258, #259, #260, #261, #403 | W, Q |
@@ -249,11 +249,6 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 
 /simplify (four angles) and /code-review (high); every item re-checked against the code. Ordered by gain.
 
-#### #274 The ring is rebuilt every frame
-- Where: `mod.rs:883-960` (`bell_ring`), `bells.rs:210` (`rings_before` allocates a `Vec` of every planned ring from 0); called each frame by gtk `window/imp.rs:250` and at least 5 times a second on Android (`ui.rs:535`).
-- Problem: a 5 s bell over an hour builds and drops two vectors of about 720 elements per frame, plus the counters the frame callback ignores. Already marked as a known `ponytail:` shortcut (gtk `window/imp.rs:246-248`).
-- Fix, only if the Librem 5 janks (the iterator half is also in #289): `rings_before` as an iterator, and a cheap `ring_filled(now)` for the frame path; beads only when a bell rings or the phase changes.
-
 #### #276 Tests
 - `settings.rs:177-197`: `by_hand` copies `from_db` line for line, so `from_db_builds_what_the_shells_built` compares the function with itself. Delete `by_hand`, `same` and that test; `from_db_gates_prep_starting_bell_and_cues_by_mode` (239-252) checks the real rules; add one assert on `stopwatch_on()` per shape.
 - `mod.rs:1186-1265`: `timer_settings_with_prep`, `timer_countdown_settings`, `timer_stopwatch_settings` (and inline literals at 1976, 2328, 2747, 3148, 3184) spell out all nine fields; use `..Default::default()` as Android's tests do (`app.rs:619, 5010`). `timer_settings_with_prep(p)` is `timer_prep_settings(p, 600)` (16 call sites).
@@ -313,7 +308,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 - `bells.rs`:
   - The `display` parameter of `session_bells_from_db`/`build_active_bells` (788, 931) follows from `total_target_secs == None`; the stopwatch skip at 946 inlines `is_bell_inert_in_stopwatch` (917) and repeats the check at 963.
   - `bells_summary` (`preset_config.rs:449-473`) repeats the interval-bell gate of `session_bells_from_db` (795-797) and the four-field "any cue" test that `BoxBreathCueConfig::cue_for` folds in; it and `session_summary` (418) each read the stopwatch key, and both are always called together (gtk 4725, android 2813).
-  - `Channels`/`channel_allowed` (599-635) are pub but only feed `effective_signal_mode`; `ringing_jitter` (426-436) builds the same literal twice; `let mut index = *gaps - 1;` (284) is a dead store; `rings_before` (210) can be an iterator (see #274).
+  - `Channels`/`channel_allowed` (599-635) are pub but only feed `effective_signal_mode`; `ringing_jitter` (426-436) builds the same literal twice; `let mut index = *gaps - 1;` (284) is a dead store.
 - `preset_config.rs`:
   - `same_settings` (224-226) clones the whole bell per comparison; `edit_interval_bell` (784) clones `old` and `bell`.
   - `ModeSetupVisibility` (377-408) has eight fields from three booleans; `StarVisualState` (347-368) mirrors a bool (one user, gtk `presets.rs:414`); `default_starred_on_save()` (329) returns `true`.
@@ -488,7 +483,7 @@ Every item gets done; this is only the order. A package is one /spec change, or 
 #### #338 Smaller ones
 - `window/imp.rs:673-682`: the running page prunes the stack with a hard-coded tag list (`"setup-session" | "setup-bells" | "interval-bells"`); mark the pages where they are built.
 - Box Breath: each frame computes `phase_at` twice and sets three labels with `gettext` even when unchanged (411-463, 497-534); the pattern is kept twice (`pattern_cell`, `pattern_for_tick`, 407-409, 493); the stopwatch target is computed twice (355, 526).
-- The bell ring's 250 ms timer keeps running unmapped and after Stop (290-329). Related: #274.
+- The bell ring's 250 ms timer keeps running unmapped and after Stop (`fn bell_ring`'s `refresh`).
 - Stats: `x_label_text` rebuilds the month list for every bar (707-712, see #294); `series`/`values`, `max_snap`, `chart_h` (442-474); `cells_built` (47) is `contrib_cells.is_empty()`; the heatmap formats five class names per cell per reload (214-251); `while first_child` loops where `remove_all()` exists (269-271, 531-533); the progress clamped twice (100, 699); the best-streak dash by hand (515-521, Android `ui.rs:2050-2056`, see #301).
 - "Sync Now" (`window/imp.rs:726-729`, Android `ui.rs:9734`) clears refused uploads then syncs in both apps: one core `retry_now()` returning `Result`.
 - The Stats icon is set in code (80-82) and in `window.blp:144`; `switcher_bar` is an unread template child; `imp::add_toast` vs `toast_overlay` directly (1052, `mod.rs:27`); `ObjectSubclassIsExt` imported inside 17 methods; `gdk::Display::default()` twice (`application.rs:209, 217`).

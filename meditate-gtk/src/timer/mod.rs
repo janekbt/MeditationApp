@@ -55,9 +55,13 @@ impl TimerView {
         self.imp().current_display_secs()
     }
 
-    /// The ring and bell counters around the running time, right now.
-    pub fn bell_ring(&self) -> meditate_core::session::BellRing {
-        self.imp().bell_ring()
+    /// The ring and counters when core's quick check changed since `seen`
+    /// last saw it; `seen` then holds the new check (`None` without a session).
+    pub fn bell_ring_if_changed(
+        &self,
+        seen: &std::cell::Cell<Option<meditate_core::session::RingKey>>,
+    ) -> Option<meditate_core::session::BellRing> {
+        self.imp().bell_ring_if_changed(seen)
     }
 
     /// Store a reference to the running-page time label so tick updates it.
@@ -386,6 +390,18 @@ mod tests {
         assert!(!window.contains("box_breath_session_tick()"), "the frame callback only draws");
     }
 
+    /// The once-a-second tick counted from the session's start, so after
+    /// a preparation or a Resume each bell came up to a second late.
+    #[test]
+    fn the_tick_follows_the_sessions_seconds() {
+        let imp = read("src/timer/imp.rs");
+        let tick = body_of(&imp, "    fn start_tick(&self) {");
+        assert!(tick.contains("until_next_second("), "each tick waits for the session's next second");
+        assert!(!tick.contains("Duration::from_secs(1)"), "not a fixed second from the start");
+        assert!(tick.contains("imp.start_tick()"), "and sets the next one after it");
+        assert!(tick.contains("until_next_second(now) + Duration::from_millis(5)"), "a little after the second, never just before it");
+    }
+
     /// Automatic suspend could hit mid-session on Linux: only the
     /// screen was kept on, and only with "Keep screen awake".
     #[test]
@@ -452,7 +468,7 @@ mod tests {
         let imp = read("src/timer/imp.rs");
         // Every tick redraws the buttons from core, the one after the
         // preparation too.
-        assert!(method(&imp, "    fn session_tick(&self) -> glib::ControlFlow {").contains("self.react(&effects);"));
+        assert!(method(&imp, "    fn session_tick(&self) -> bool {").contains("self.react(&effects);"));
         let react = method(&imp, "    pub(crate) fn react(&self, effects: &[CoreSessionEffect]) {");
         assert!(react.contains("\n        self.refresh_end_buttons();\n"), "unconditionally");
     }

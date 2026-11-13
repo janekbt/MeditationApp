@@ -202,23 +202,27 @@ pub struct ActiveBell {
 }
 
 impl BellSchedule {
+    /// A repeating bell with no time (old data): it rings each second, and
+    /// a bead a second would say nothing, so the ring leaves it out.
+    pub(crate) fn untimed(&self) -> bool {
+        matches!(self, BellSchedule::Interval { base_secs: 0, step_secs: 0, .. })
+    }
+
     /// A repeating bell's planned rings whose earliest time is before
     /// `end_secs`, as `(index, earliest secs)`; none for a one-off bell.
-    pub(crate) fn rings_before(&self, end_secs: u64) -> Vec<(u32, u64)> {
-        let BellSchedule::Interval { base_secs, jitter_secs, step_secs, .. } = *self else {
-            return Vec::new();
+    pub(crate) fn rings_before(&self, end_secs: u64) -> impl Iterator<Item = (u32, u64)> {
+        let interval = match *self {
+            BellSchedule::Interval { base_secs, jitter_secs, step_secs, .. } => Some((base_secs, jitter_secs, step_secs)),
+            BellSchedule::Fixed { .. } => None,
         };
-        let mut rings = Vec::new();
-        let mut planned = u64::from(base_secs);
-        for index in 0u32.. {
-            let earliest = earliest_ring_secs(planned, jitter_secs);
-            if earliest >= end_secs {
-                break;
-            }
-            rings.push((index, earliest));
-            planned = next_planned_secs(planned, base_secs, step_secs, index + 1);
-        }
-        rings
+        interval.into_iter().flat_map(move |(base_secs, jitter_secs, step_secs)| {
+            let first = (0u32, u64::from(base_secs));
+            std::iter::successors(Some(first), move |&(index, planned)| {
+                Some((index + 1, next_planned_secs(planned, base_secs, step_secs, index + 1)))
+            })
+            .map(move |(index, planned)| (index, earliest_ring_secs(planned, jitter_secs)))
+            .take_while(move |&(_, earliest)| earliest < end_secs)
+        })
     }
 
     /// A repeating bell's schedule before its first ring, drawn by

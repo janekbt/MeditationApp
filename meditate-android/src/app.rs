@@ -8,7 +8,8 @@
 // overtime and the end.
 
 use meditate_core::format::format_time;
-use meditate_core::session::{Effect, Session, SessionSettings, UiState};
+use meditate_core::session::{Effect, RingKey, Session, SessionSettings, UiState};
+use std::cell::Cell;
 use std::time::Duration;
 
 /// User-visible mode chip group at the top of the Setup view —
@@ -446,16 +447,24 @@ impl Started {
 /// waiting for Save or Discard, as on Linux. Every transition goes to
 /// core and returns its effects for the shell to carry out.
 #[derive(Debug, Default)]
-pub struct AppState(Option<Box<(Session, Started)>>);
+pub struct AppState(Option<Box<Live>>);
+
+/// A session, what its Start fixed, and the ring check its page last saw.
+#[derive(Debug)]
+struct Live {
+    session: Session,
+    started: Started,
+    ring_seen: Cell<Option<RingKey>>,
+}
 
 impl AppState {
     pub fn session(&self) -> Option<&Session> {
-        self.0.as_ref().map(|b| &b.0)
+        self.0.as_ref().map(|b| &b.session)
     }
 
     /// Run `f` on the session; nothing without one.
     fn with(&mut self, f: impl FnOnce(&mut Session) -> Vec<Effect>) -> Vec<Effect> {
-        self.0.as_mut().map(|b| f(&mut b.0)).unwrap_or_default()
+        self.0.as_mut().map(|b| f(&mut b.session)).unwrap_or_default()
     }
 
     fn ui_state(&self) -> UiState {
@@ -464,7 +473,7 @@ impl AppState {
 
     /// What Start fixed; `None` on Setup.
     pub fn started(&self) -> Option<&Started> {
-        self.0.as_ref().map(|b| &b.1)
+        self.0.as_ref().map(|b| &b.started)
     }
 
     pub fn mode(&self) -> Option<meditate_core::SessionMode> {
@@ -512,7 +521,7 @@ impl AppState {
     /// `on_start`); core opens in preparation when `prep_secs` is set.
     pub fn start_session(&mut self, settings: SessionSettings, started: Started, now: Duration) -> Vec<Effect> {
         let (session, effects) = Session::start(settings, now);
-        self.0 = Some(Box::new((session, started)));
+        self.0 = Some(Box::new(Live { session, started, ring_seen: Cell::new(None) }));
         effects
     }
 
@@ -550,7 +559,7 @@ impl AppState {
 
     /// The ended session waiting for Save, with what its Start fixed.
     pub fn ended(&self) -> Option<(&Started, &Session)> {
-        self.0.as_deref().filter(|b| b.0.ui_state() == UiState::Done).map(|(session, started)| (started, session))
+        self.0.as_deref().filter(|b| b.session.ui_state() == UiState::Done).map(|b| (&b.started, &b.session))
     }
 
     pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
@@ -589,9 +598,13 @@ impl AppState {
         }
     }
 
-    /// The bell ring and counters; nothing without a session.
-    pub fn bell_ring(&self, now: Duration) -> meditate_core::session::BellRing {
-        self.session().map(|s| s.bell_ring(now)).unwrap_or_default()
+    /// The bell ring and counters when they changed since the last look.
+    /// The last look is kept with the session, so a new one starts fresh.
+    pub fn bell_ring_if_changed(&self, now: Duration) -> Option<meditate_core::session::BellRing> {
+        match self.0.as_deref() {
+            Some(live) => live.session.bell_ring_if_changed(now, &live.ring_seen),
+            None => Some(Default::default()),
+        }
     }
 
     /// The big time: Setup shows the set length (`total`) as core's
@@ -4355,10 +4368,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_ended_session_keeps_its_ring() {
+    /// A 2 minute countdown with a bell every `secs`.
+    fn two_minutes_ringing_every(secs: u32, end: Option<u64>) -> SessionSettings {
         use meditate_core::bells::{ActiveBell, BellCue, BellSchedule};
-        let at = Duration::from_secs;
         let bell = ActiveBell {
             cue: BellCue {
                 sound_uuid: "sound".into(),
@@ -4366,9 +4378,15 @@ mod tests {
                 signal_mode: meditate_core::SignalMode::Sound,
                 volume: Default::default(),
             },
-            schedule: BellSchedule::every(30, 0, 0, None, 0.5),
+            schedule: BellSchedule::every(secs, 0, 0, end, 0.5),
         };
-        let settings = SessionSettings { shape: timer_countdown(at(120)), bells: vec![bell], ..Default::default() };
+        SessionSettings { shape: timer_countdown(Duration::from_secs(120)), bells: vec![bell], ..Default::default() }
+    }
+
+    #[test]
+    fn an_ended_session_keeps_its_ring() {
+        let at = Duration::from_secs;
+        let settings = two_minutes_ringing_every(30, None);
         let mut run = start_with(settings, Duration::ZERO);
         for secs in 1..=125 {
             run = run.tick(at(secs));
@@ -4378,9 +4396,30 @@ mod tests {
         let run = run.save_end(at(130));
         assert!(run.is_finished());
         assert_eq!(run.hero_label(Duration::ZERO, at(200), false), "02:00");
-        let ring = run.bell_ring(at(200));
+        let ring = run.bell_ring_if_changed(at(200)).expect("the first look");
         assert_eq!(ring.ring.map(|r| r.filled), Some(1.0));
         assert_eq!(ring.counters.first().map(|c| c.rung), Some(3), "at 30, 60 and 90 s");
+    }
+
+    #[test]
+    fn a_new_session_brings_its_own_ring() {
+        let settings = |secs| two_minutes_ringing_every(secs, Some(120));
+        let t = Duration::from_millis(500);
+        let mut state = AppState::default();
+        let _ = state.start_session(settings(30), Started::default(), Duration::ZERO);
+        let first = state.bell_ring_if_changed(t).expect("the first look builds the ring");
+        assert_eq!(first.ring.map(|r| r.beads.len()), Some(3), "at 30, 60 and 90 s");
+        assert_eq!(state.bell_ring_if_changed(t), None, "unchanged");
+        // Discarded within its first second, another starts at the same moment.
+        let _ = state.stop(t);
+        let _ = state.dismiss();
+        let _ = state.start_session(settings(60), Started::default(), Duration::ZERO);
+        let second = state.bell_ring_if_changed(t).expect("its own ring");
+        assert_eq!(second.ring.map(|r| r.beads.len()), Some(1), "at 60 s");
+        // Without a session the page gets the empty ring, so nothing old stays.
+        let _ = state.stop(t);
+        let _ = state.dismiss();
+        assert_eq!(state.bell_ring_if_changed(t), Some(meditate_core::session::BellRing::default()));
     }
 
     #[test]

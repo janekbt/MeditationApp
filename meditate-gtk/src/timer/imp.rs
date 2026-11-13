@@ -2729,44 +2729,38 @@ impl TimerView {
         self.cancel_tick();
         let obj = self.obj().clone();
         // Box Breath cues land on phase boundaries, so it ticks every
-        // 200 ms like the Android app; the others show whole seconds.
-        let breathing = self.tick_mode.get() == TimerMode::Breathing;
-        let interval = if breathing {
-            std::time::Duration::from_millis(200)
-        } else {
-            std::time::Duration::from_secs(1)
+        // 200 ms like the Android app; the others tick on the session
+        // clock's whole seconds, which preparation's end and Resume shift.
+        // GLib cuts a wait to whole ms from its cached loop time: without
+        // the 5 ms it fires just before the second, then again on it.
+        let now = self.elapsed_since_start();
+        let wait = match self.core_session.borrow().as_ref() {
+            Some(s) if self.tick_mode.get() != TimerMode::Breathing => s.until_next_second(now) + Duration::from_millis(5),
+            _ => Duration::from_millis(200),
         };
-
-        let source_id = glib::timeout_add_local(
-            interval,
-            move || {
-                let imp = obj.imp();
-                let flow = imp.session_tick();
-                imp.refresh_media();
-                flow
-            },
-        );
+        let source_id = glib::timeout_add_local_once(wait, move || {
+            let imp = obj.imp();
+            // This source is done; the next tick is a new one.
+            imp.tick_source.borrow_mut().take();
+            let goes_on = imp.session_tick();
+            imp.refresh_media();
+            if goes_on {
+                imp.start_tick();
+            }
+        });
         *self.tick_source.borrow_mut() = Some(source_id);
     }
 
-    /// One tick: core moves the session on, the page follows.
-    fn session_tick(&self) -> glib::ControlFlow {
-        // Nothing left to tick (ended, paused, gone): the source ends
-        // itself; forget its id so no cancel_tick removes it again.
+    /// One tick: core moves the session on, the page follows. False
+    /// once nothing is left to tick (ended, paused, gone).
+    fn session_tick(&self) -> bool {
         if !matches!(self.ui_state(), UiState::Preparing | UiState::Running | UiState::Overtime) {
-            self.tick_source.borrow_mut().take();
-            return glib::ControlFlow::Break;
+            return false;
         }
         let now = self.elapsed_since_start();
         let effects = self.core_session.borrow_mut().as_mut().map(|s| s.tick(now)).unwrap_or_default();
-        // An end stops this source by returning Break; forget its id so
-        // the end's cancel_tick doesn't remove it a second time.
-        let ended = CoreSessionEffect::ended_secs(&effects).is_some();
-        if ended {
-            self.tick_source.borrow_mut().take();
-        }
         self.react(&effects);
-        if ended { glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
+        CoreSessionEffect::ended_secs(&effects).is_none()
     }
 
     /// Carry out a session call's effects, then redraw the running page
@@ -3736,10 +3730,17 @@ impl TimerView {
             .map_or(0, |s| s.display_secs(now))
     }
 
-    /// The ring and bell counters around the running time, right now.
-    pub fn bell_ring(&self) -> meditate_core::session::BellRing {
+    /// The ring and counters when core's check changed; without a session
+    /// the empty ring once, so the page doesn't keep the last one.
+    pub fn bell_ring_if_changed(
+        &self,
+        seen: &std::cell::Cell<Option<meditate_core::session::RingKey>>,
+    ) -> Option<meditate_core::session::BellRing> {
         let now = self.elapsed_since_start();
-        self.core_session.borrow().as_ref().map(|s| s.bell_ring(now)).unwrap_or_default()
+        match self.core_session.borrow().as_ref() {
+            Some(s) => s.bell_ring_if_changed(now, seen),
+            None => seen.replace(None).map(|_| Default::default()),
+        }
     }
 
     pub fn set_running_label(&self, label: gtk::Label) {
